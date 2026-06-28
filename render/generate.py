@@ -64,11 +64,18 @@ correctly targeted, not that data-plane traffic was enforced. The **substrate** 
 still seed state — every cell reads `pending (not-yet-measured)` until its first measured
 run.
 
+Every measured number here is a **reproducible floor, not a ceiling.** It is what a
+*vanilla* OSS build — the upstream controller from `main`, default runtime, no tuning,
+the cluster shape named in the build banner — delivers today. A bigger pool, denser nodes,
+or a tuned runtime should *beat* it; the value on the page is the honest lower bound you can
+reproduce from the recipe below and then improve on. We publish the floor we can stand
+behind, not the best number we could cherry-pick.
+
 - **Measured (N)** is the value we observed, with the sample size.
 - **Committed / Target / North-Star** render `(non-public)` here by construction — internal
   goal numbers never ship to this repo.
 
-Reproduce any row yourself — the suite is honest by construction:
+Reproduce any row yourself — then beat it. The suite is honest by construction:
 
 ```
 bash recipe/install-controller-from-main.sh   # OSS controller from upstream main
