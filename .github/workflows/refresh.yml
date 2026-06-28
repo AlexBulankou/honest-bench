@@ -1,4 +1,4 @@
-# Auto-refresh the honest-benchmark table (#3866).
+# Auto-refresh the honest-benchmark table.
 #
 # Spins a vanilla kind cluster on the GitHub-hosted runner, installs the OSS
 # controller from upstream main per the recipe, runs the portable harness, runs
@@ -7,10 +7,6 @@
 # the runner has no runsc, so gVisor isolation cells render
 # `pending (requires gVisor runtime)` — the cluster_substrate=kind banner makes
 # that explicit, so a kind number is never mis-read as a GKE SLA result.
-#
-# NOTE: while this file is staged under bench-repo/ in AlexBulankou/a it does NOT
-# run there (Actions only fire from .github/workflows/ at the repo root). It
-# activates once the #3863 seed step copies the tree into the public repo root.
 
 name: refresh-benchmarks
 
@@ -52,7 +48,7 @@ jobs:
       - name: Run sandbox harness
         env:
           BENCH_CLUSTER_SUBSTRATE: kind
-          # native_digest_cold true-cold-pull (#3885). The kind cluster is created
+          # native_digest_cold true-cold-pull. The kind cluster is created
           # fresh on each run (step above), so its node containerd cache is empty —
           # any image is provably never-pulled here, making the create→Ready
           # wall-clock a genuine cold *pull* (controller reconcile + schedule +
