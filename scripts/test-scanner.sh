@@ -34,7 +34,7 @@ controller_image: registry.k8s.io/agent-sandbox-controller:latest-main
 controller_digest: sha256:0123456789abcdef
 crd_version: v1beta1
 PASS Warm-pool activation (hit) n=20
-project: alexbu-gke-dev-d
+project: synthetic-public-project-id
 CLEAN
 if ! "$SCANNER" "$good" >/dev/null 2>&1; then
   echo "FAIL: scanner tripped on the clean fixture (should pass)"; "$SCANNER" "$good" || true; exit 1
