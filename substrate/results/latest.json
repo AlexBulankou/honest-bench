@@ -1,0 +1,25 @@
+{
+  "product": "substrate",
+  "generated_at": "2026-06-28T03:00:00Z",
+  "provenance": {},
+  "scenarios": [
+    {
+      "name": "cold_reconcile",
+      "outcome": "pending",
+      "pending_reason": "not-yet-measured",
+      "n": 0
+    },
+    {
+      "name": "suspend_resume_carryover",
+      "outcome": "pending",
+      "pending_reason": "not-yet-measured",
+      "n": 0
+    },
+    {
+      "name": "agent_identity_podcert",
+      "outcome": "pending",
+      "pending_reason": "not-yet-measured",
+      "n": 0
+    }
+  ]
+}

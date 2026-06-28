@@ -1,0 +1,254 @@
+"""Unique-image cold-start benchmark: full cold provision of a fresh Sandbox.
+
+    Setup    : Nothing pre-warmed. No SandboxWarmPool, no SandboxClaim — those
+               paths pre-provision a sandbox so a claim binds warm, which is
+               exactly the latency this cell isolates AGAINST.
+    Action   : Create ONE bare Sandbox CR on a configurable image with
+               imagePullPolicy=Always (so the kubelet always re-validates the
+               image rather than trusting a stale cache). Measure wall-clock
+               from create() return to the Sandbox's first Ready=True condition.
+    Expected : The Sandbox provisions cold — controller reconcile + Pod schedule
+               + image pull + container start — and reports Ready. The measured
+               cold_start_ms is recorded (no in-scenario SLO gate; the render
+               page compares it against targets).
+    Why      : Cold start is the worst-case provisioning latency an AI-agent
+               platform pays when neither a warm pool nor a snapshot serves the
+               request. Quantifying it on a vanilla cluster — separately from the
+               warm-pool-hit path (warmpool_cold_start) and the resume path
+               (suspend_resume) — gives the honest upper bound and a longitudinal
+               record across controller version updates.
+
+## Test shape
+
+1. Create a bare Sandbox CR (minimal single-container podTemplate) directly —
+   the base `agents.x-k8s.io` Sandbox kind, NOT a Template/WarmPool/Claim chain.
+   At v1beta1 a SandboxClaim binds only through a SandboxWarmPool, and the pool
+   pre-warms a sandbox; the direct Sandbox CR is the only provisioning path with
+   no pre-warming, so it is the faithful cold path.
+2. Record `t0` immediately after create() returns (user-perceived create-call
+   return, not loop start).
+3. Poll the Sandbox until a `type=Ready, status=True` condition is present;
+   record `t1` on first observation.
+4. cold_start_ms = (t1 - t0) * 1000.
+5. PASS with the measured cold_start_ms. Provisioning failure (never Ready
+   within the window) RAISES — see crash posture.
+6. Cleanup: delete the Sandbox (controller cascades the underlying Pod).
+
+## On "unique / never-cached image"
+
+A truly cold *layer pull* can only be guaranteed with an image tag/digest the
+node has never pulled. We cannot push to a registry from a portable harness, so
+the image is env-tunable (`NATIVE_DIGEST_COLD_SANDBOX_IMAGE`) and defaults to a
+small public image with imagePullPolicy=Always. With the default on a node that
+has the layers cached, the measurement is the cold PROVISION path (controller
+reconcile + schedule + manifest re-validation + container start) — the honest
+upper bound on a warm-cached node. To measure a genuine cold *pull*, point the
+env at a unique / never-cached tag (or a digest the target node has never
+pulled); then the same code path also captures full layer-download time. Either
+way the number is an honest no-warm-pool cold start; the env override only
+widens it to include layer download. Which mode a given run measured is recorded
+in provenance as `cold_start_mode` (cold-provision vs cold-pull, #3885) — set by
+the runner from `BENCH_NATIVE_DIGEST_COLD_MODE` (conservative default
+cold-provision) — so the render page can label which the published cold_start_ms
+represents.
+
+## Why a single sample (n=1)
+
+A cold pull is cold exactly once per (node, image): the first create downloads
+and caches the layers, so a second create of the SAME image on the SAME node is
+warm and would understate the cold path. Reporting the median of repeated
+same-image creates would therefore measure caching, not cold start. One cold
+provision is the honest measurement; the longitudinal record across runs (fresh
+nodes / fresh tags) is where the distribution lives.
+
+## Crash posture
+
+Infrastructure failures (controller unhealthy, CRDs missing, RBAC denied,
+Sandbox never Ready within the window) raise — the harness loop classifies a
+raised exception as a crash-fail cell. There is no in-scenario SLO threshold, so
+this scenario does not return a ("FAIL", ...) outcome of its own: it either
+measures a cold start (PASS) or the provision genuinely failed (raise).
+"""
+
+from __future__ import annotations
+
+from ._apiversion import sandbox_api_version, sandbox_gvr
+
+import logging
+import os
+import time
+import uuid
+
+log = logging.getLogger("sandbox-scenario.native-digest-cold")
+
+
+_NAMESPACE = os.environ.get("BENCH_NAMESPACE", "default")
+_SANDBOX_IMAGE = os.environ.get(
+    "NATIVE_DIGEST_COLD_SANDBOX_IMAGE", "busybox:1.36"
+)
+
+# Public benchmark metric key (milliseconds). The cold create→Ready wall-clock
+# this scenario measures internally in seconds is emitted via the run() 3-tuple
+# as cold_start_ms, converted to milliseconds to match the render schema's
+# metric vocabulary.
+_SLA_METRIC_KEY = "cold_start_ms"
+
+# Cold-provision budget. A cold image pull + schedule + container start can take
+# 30-120s on a fresh node depending on image size; 240s is a generous ceiling
+# that still bounds a hung provision so the cell fails rather than hanging.
+_READY_TIMEOUT_S = 240
+# Poll interval while timing. Cold start is a coarse measurement (tens of
+# seconds), so a 0.25s poll keeps measurement error well under 1% without
+# hammering the apiserver.
+_POLL_S = 0.25
+
+_SBX_GVR = sandbox_gvr()
+
+_SCENARIO_LABEL = {"honest-bench/scenario": "native-digest-cold"}
+
+
+def _build_sandbox_manifest(sandbox_name: str) -> dict:
+    """Minimal bare Sandbox CR — single container, sleeps, restartPolicy Never.
+
+    imagePullPolicy=Always so the kubelet always re-validates the image (closest
+    to cold on a reused tag; a full layer pull when the env points at a unique /
+    never-cached tag). Mirrors the upstream hello-world minimum; the controller
+    backfills the underlying Pod naming + UID + status.
+    """
+    return {
+        "apiVersion": sandbox_api_version(),
+        "kind": "Sandbox",
+        "metadata": {
+            "name": sandbox_name,
+            "namespace": _NAMESPACE,
+            "labels": dict(_SCENARIO_LABEL),
+        },
+        "spec": {
+            "podTemplate": {
+                "spec": {
+                    "containers": [
+                        {
+                            "name": "sandbox",
+                            "image": _SANDBOX_IMAGE,
+                            "imagePullPolicy": "Always",
+                            "command": ["sh", "-c", "sleep 600"],
+                            "resources": {
+                                "requests": {"cpu": "10m", "memory": "16Mi"},
+                                "limits": {"cpu": "100m", "memory": "64Mi"},
+                            },
+                        },
+                    ],
+                    "restartPolicy": "Never",
+                },
+            },
+        },
+    }
+
+
+def _is_ready(status: dict) -> bool:
+    """True iff status carries a Ready=True condition.
+
+    A freshly-created (never-suspended) Sandbox's Ready=True fires only once the
+    underlying Pod is Ready (the controller's computeReadyCondition with a live
+    Pod sets status=True / message "Pod is Ready"), so Ready=True is a faithful
+    "cold start complete" signal here — no suspended-vs-running ambiguity, since
+    this scenario never suspends the sandbox.
+    """
+    conds = (status or {}).get("conditions") or []
+    return any(
+        c.get("type") == "Ready" and c.get("status") == "True"
+        for c in conds
+    )
+
+
+def _wait_for_sandbox_ready(custom, *, sandbox_name: str) -> float:
+    """Poll the Sandbox until Ready=True; return the monotonic observation time.
+
+    Raises on timeout with the last-seen status so the crash-fail excerpt
+    surfaces controller state for diagnosis.
+    """
+    group, version, plural = _SBX_GVR
+    deadline = time.monotonic() + _READY_TIMEOUT_S
+    last_status: object = "<no-status>"
+    while time.monotonic() < deadline:
+        obj = custom.get_namespaced_custom_object(
+            group=group, version=version, namespace=_NAMESPACE,
+            plural=plural, name=sandbox_name,
+        )
+        status = (obj or {}).get("status") or {}
+        last_status = status
+        if _is_ready(status):
+            return time.monotonic()
+        time.sleep(_POLL_S)
+    raise RuntimeError(
+        f"Sandbox {sandbox_name} did not reach Ready=True within "
+        f"{_READY_TIMEOUT_S}s (last status={last_status!r}) — controller may be "
+        f"unhealthy, image pull failing, or CRD schema drifted"
+    )
+
+
+def _cleanup(custom, *, sandbox_name: str) -> None:
+    """Best-effort delete of the Sandbox (controller cascades the Pod)."""
+    from kubernetes.client.exceptions import ApiException
+    group, version, plural = _SBX_GVR
+    try:
+        custom.delete_namespaced_custom_object(
+            group=group, version=version, namespace=_NAMESPACE,
+            plural=plural, name=sandbox_name,
+        )
+    except ApiException as e:
+        if e.status != 404:
+            log.warning("cleanup: delete sandbox %s failed: %s", sandbox_name, e)
+
+
+def run(scenario_name: str) -> tuple[str, str, dict]:
+    """Create one bare Sandbox cold, time create→Ready, return the measurement.
+
+    Returns a 3-tuple (outcome, excerpt, sla_metrics). On success sla_metrics
+    carries {cold_start_ms, n=1} — a single cold provision (a cold pull is cold
+    exactly once per node+image, so n>1 would measure caching, not cold start).
+    A provisioning failure raises (crash-fail cell); this scenario has no
+    in-scenario SLO gate, so it never returns a ("FAIL", ...) outcome of its own.
+    """
+    from kubernetes import client as k8s_client
+    from kubernetes import config as k8s_config
+
+    # Portable kubeconfig load: in-cluster when running as a pod, otherwise
+    # whatever the runner's KUBECONFIG / default kubeconfig points at.
+    try:
+        k8s_config.load_incluster_config()
+    except k8s_config.ConfigException:
+        k8s_config.load_kube_config()
+
+    custom = k8s_client.CustomObjectsApi()
+
+    suffix = uuid.uuid4().hex[:8]
+    sandbox_name = f"cold-{suffix}"
+
+    log.info(
+        "creating bare Sandbox %s (image=%s, pull=Always) for cold-start timing",
+        sandbox_name, _SANDBOX_IMAGE,
+    )
+    custom.create_namespaced_custom_object(
+        group=_SBX_GVR[0], version=_SBX_GVR[1], namespace=_NAMESPACE,
+        plural=_SBX_GVR[2], body=_build_sandbox_manifest(sandbox_name),
+    )
+    # Record t0 immediately after create() returns — user-perceived start.
+    t0 = time.monotonic()
+
+    try:
+        t1 = _wait_for_sandbox_ready(custom, sandbox_name=sandbox_name)
+        cold_start_s = t1 - t0
+        sla_metrics = {_SLA_METRIC_KEY: cold_start_s * 1000.0, "n": 1}
+        log.info("Sandbox %s Ready in %.2fs (cold)", sandbox_name, cold_start_s)
+        return (
+            "PASS",
+            f"Cold provision of bare Sandbox {sandbox_name} (image={_SANDBOX_IMAGE}, "
+            f"pull=Always, no warm pool) reached Ready=True in "
+            f"{cold_start_s:.2f}s. cold_start_ms={cold_start_s * 1000.0:.0f} "
+            f"(n=1; single cold provision — a cold pull is cold once per "
+            f"node+image).",
+            sla_metrics,
+        )
+    finally:
+        _cleanup(custom, sandbox_name=sandbox_name)

@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+# check-public-safety.sh — gate-zero scanner for the public honest-benchmarks repo (Layer 2a).
+# Flags ONLY generic structural leak-patterns that are safe to name in a public file.
+# The internal codename denylist is NOT here (that is the our-side 2b pre-publish gate) —
+# shipping codenames in this file would leak the very list it guards.
+# Fail-closed: any match -> non-zero exit. Usage:
+#   check-public-safety.sh                   # NO ARGS: scan the full git-tracked tree
+#   check-public-safety.sh <file>...         # scan named files
+#   check-public-safety.sh --staged          # scan git staged files (pre-commit)
+#
+# The no-arg form is the load-bearing one for CI: a bare invocation (as the auto-refresh
+# Action calls it) MUST be a real whole-repo gate, not a silent no-op over zero files.
+# `git ls-files` is cwd-scoped, so it is the full public tree in the published repo and the
+# bench-repo subtree when run from the staging tree — the right set in both contexts.
+set -euo pipefail
+
+# pattern|human-readable reason  (extended regex, case-sensitive unless noted)
+PATTERNS=(
+  'go/[A-Za-z0-9/_-]+|internal go/ shortlink'
+  '\bb/[0-9]{4,}|buganizer b/ link'
+  '\bcl/[0-9]{4,}|internal cl/ changelist'
+  '[A-Za-z0-9.-]*\.googleplex\.com|internal *.googleplex.com host'
+  'paste\.googleplex|internal paste link'
+  'substrate-demo-cluster|internal cluster name'
+  'sandbox-scenarios-cluster|internal cluster name'
+  'postgres-obs-0|internal obs-Postgres host'
+  'postgres(ql)?://|database DSN'
+  'ya29\.[A-Za-z0-9_-]+|OAuth access token'
+  'BEGIN [A-Z ]*PRIVATE KEY|private key block'
+  '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}|email address (no emails belong in public results)'
+)
+
+scan_target() {
+  local f="$1" hit=0
+  [ -f "$f" ] || return 0
+  case "$f" in *check-public-safety.sh) return 0;; esac  # don't scan self (regex substrings)
+  for entry in "${PATTERNS[@]}"; do
+    local pat="${entry%%|*}" reason="${entry#*|}"
+    if grep -nE "$pat" "$f" >/tmp/_cps_hits 2>/dev/null; then
+      while IFS= read -r line; do
+        echo "FORBIDDEN [$reason]: $f:$line"
+        hit=1
+      done < /tmp/_cps_hits
+    fi
+  done
+  return $hit
+}
+
+rc=0
+if [ "${1:-}" = "--staged" ]; then
+  while IFS= read -r f; do scan_target "$f" || rc=1; done \
+    < <(git diff --cached --name-only --diff-filter=ACM)
+elif [ "$#" -eq 0 ]; then
+  # No args: fail-closed whole-tree scan. An empty tree is itself suspicious (the gate is
+  # meant to run inside a populated repo), so refuse rather than print a hollow "clean".
+  scanned=0
+  while IFS= read -r f; do scanned=1; scan_target "$f" || rc=1; done < <(git ls-files)
+  if [ "$scanned" -eq 0 ]; then
+    echo "check-public-safety: BLOCKED — no git-tracked files found to scan (run inside the repo)."
+    exit 1
+  fi
+else
+  for f in "$@"; do scan_target "$f" || rc=1; done
+fi
+
+if [ "$rc" -ne 0 ]; then
+  echo "---"
+  echo "check-public-safety: BLOCKED — remove the flagged content before it lands in the public repo."
+  exit 1
+fi
+echo "check-public-safety: clean"
+exit 0
