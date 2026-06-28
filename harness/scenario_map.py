@@ -42,6 +42,10 @@ class Cell:
 # and renderer on one vocabulary so every measured row renders (no closed-schema drop).
 SANDBOX_CELLS = (
     # --- perf matrix (substrate-agnostic: run on kind, gke, or gke-sandbox) ---
+    # burst_create is the fleet headline cell (alex #1: "X sandboxes in <1s" = a
+    # COUNT). requires_substrate=None so it runs for real on kind-with-controller
+    # (the auto-refresh Action), emitting sandboxes_ready_under_1s + density_per_vcpu.
+    Cell("burst_create"),
     Cell("warmpool_cold_start"),
     Cell("native_digest_cold"),
     Cell("suspend_resume"),
