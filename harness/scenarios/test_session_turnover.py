@@ -11,7 +11,8 @@ import statistics
 
 import session_turnover as cell
 
-_KR = cell._KEY_REFILL      # "refill_latency_ms"
+_KR = cell._KEY_REFILL          # "refill_latency_ms"
+_KP90 = cell._KEY_REFILL_P90    # "refill_p90_ms"
 
 
 def _refills(*vals):
@@ -30,6 +31,9 @@ def test_all_under_ceiling_passes_and_medians():
     assert bd["completed_count"] == 5
     assert bd["median_ms"] == statistics.median([400, 450, 500, 550, 600])
     assert sla[_KR] == 500.0
+    # p90 tail surfaced alongside the median headline (nearest-rank of 5 sorted
+    # values: idx = ceil(0.9*5)-1 = 4 -> 600.0).
+    assert sla[_KP90] == 600.0
     assert sla["n"] == 5
 
 
@@ -100,7 +104,7 @@ def test_zero_completion_emits_empty_metrics():
     assert passed is False
     assert bd["completed_count"] == 0
     assert bd["median_ms"] is None
-    assert sla == {}
+    assert sla == {}                    # no median AND no p90 fabricated
 
 
 def test_single_completer_medians_to_itself():
@@ -112,7 +116,22 @@ def test_single_completer_medians_to_itself():
     )
     assert bd["median_ms"] == 742.0
     assert sla[_KR] == 742.0
+    assert sla[_KP90] == 742.0          # p90 of a single value is that value
     assert passed is False
+
+
+def test_p90_emitted_alongside_median_and_distinct():
+    # the tail key surfaces the slow end: p90 > median when the distribution skews.
+    # nearest-rank p90 of 10 sorted values: idx = ceil(0.9*10)-1 = 8 -> 900.0.
+    _, bd, sla = cell._classify_turnover(
+        _refills(100.0, 200.0, 300.0, 400.0, 500.0,
+                 600.0, 700.0, 800.0, 900.0, 1000.0),
+        cycle_count=10, refill_ceiling_ms=10000.0, min_completed_ratio=0.8,
+    )
+    assert sla[_KR] == statistics.median(range(100, 1001, 100))  # 550.0
+    assert sla[_KP90] == 900.0
+    assert bd["p90_ms"] == 900.0
+    assert sla[_KP90] > sla[_KR]
 
 
 # ---- breakdown tail figures ----

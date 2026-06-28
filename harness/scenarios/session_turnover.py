@@ -121,10 +121,14 @@ _MIN_COMPLETED_RATIO = float(
     os.environ.get("SESSION_TURNOVER_MIN_COMPLETED_RATIO", "0.8")
 )
 
-# Public benchmark metric key. lowercase-alnum+underscore so it passes the
+# Public benchmark metric keys. lowercase-alnum+underscore so they pass the
 # emitter's _METRIC_KEY_RE with no harness-schema change; render/schema.py's
-# METRIC_LABELS registers its display label (a4s1's render-side lane).
+# METRIC_LABELS registers each display label (a4s1's render-side lane).
+# refill_latency_ms = MEDIAN replenishment latency (the headline, robust to a
+# single cold-tail provision); refill_p90_ms = the p90 tail, surfaced as a
+# tail column so the floor-not-ceiling framing shows the slow end too.
 _KEY_REFILL = "refill_latency_ms"
+_KEY_REFILL_P90 = "refill_p90_ms"
 
 # Timeouts. Pool warmup: 240s for the initial K-slot fill. Per-cycle refill:
 # 180s — a replenishment provisions a fresh pod, which can take 30-90s on a cold
@@ -269,6 +273,7 @@ def _classify_turnover(
     completed_sorted = sorted(completed)
 
     median_ms = statistics.median(completed_sorted) if completed_sorted else None
+    p90_ms = _percentile(completed_sorted, 0.9)
     threshold = math.ceil(cycle_count * min_completed_ratio)
     enough = len(completed) >= threshold
     passed = enough and median_ms is not None and median_ms < refill_ceiling_ms
@@ -279,7 +284,7 @@ def _classify_turnover(
         "completed_threshold": threshold,
         "refill_ceiling_ms": refill_ceiling_ms,
         "median_ms": median_ms,
-        "p90_ms": _percentile(completed_sorted, 0.9),
+        "p90_ms": p90_ms,
         "min_ms": completed_sorted[0] if completed_sorted else None,
         "max_ms": completed_sorted[-1] if completed_sorted else None,
         "timeouts": timeouts,
@@ -289,6 +294,7 @@ def _classify_turnover(
     if completed:
         sla_metrics = {
             _KEY_REFILL: float(median_ms),
+            _KEY_REFILL_P90: float(p90_ms),
             "n": cycle_count,
         }
     else:
