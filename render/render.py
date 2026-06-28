@@ -99,7 +99,7 @@ def _goal_cells():
     return {c: NON_PUBLIC for c in GOAL_COLUMNS}
 
 
-def _measured_cell(row):
+def _measured_cell(row, cold_start_mode=None):
     if row["outcome"] == "pending":
         reason = row["pending_reason"] or "not-yet-measured"
         return f"pending ({reason})"
@@ -107,7 +107,16 @@ def _measured_cell(row):
         reason = row["pending_reason"] or "not-yet-measured"
         return f"FAIL ({reason})"
     if row["metrics"]:
-        parts = [f"{METRIC_LABELS[k]} {row['metrics'][k]:g}" for k in sorted(row["metrics"])]
+        parts = []
+        for k in sorted(row["metrics"]):
+            part = f"{METRIC_LABELS[k]} {row['metrics'][k]:g}"
+            # cold_start_mode (#3894) is run-level provenance describing the image-cache
+            # posture of the cold-start measurement; surface it next to cold_start_ms so a
+            # cold-pull number (which includes full layer download) is not misread as a
+            # warm-cached cold-provision one. Absent ⇒ no label (graceful degradation).
+            if k == "cold_start_ms" and cold_start_mode:
+                part += f" ({cold_start_mode})"
+            parts.append(part)
         return "PASS · " + ", ".join(parts)
     return "PASS"
 
@@ -119,6 +128,9 @@ def render_product(results):
         raise ValueError(f"unknown product (not in closed schema): {product!r}")
 
     prov = _clean_provenance(results.get("provenance"))
+    # cold_start_mode rides in provenance (run-level) but renders on the cold_start_ms cell,
+    # not the build banner (kept out of banner_order below to avoid double-rendering).
+    cold_start_mode = prov.get("cold_start_mode")
     rows, dropped = _clean_scenarios(results.get("scenarios"))
     goals = _goal_cells()
 
@@ -130,7 +142,7 @@ def render_product(results):
     for r in rows:
         cells = [
             r["label"],
-            f"{_measured_cell(r)} (n={r['n']})",
+            f"{_measured_cell(r, cold_start_mode=cold_start_mode)} (n={r['n']})",
             goals["committed"],
             goals["target"],
             goals["north-star"],

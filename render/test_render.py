@@ -122,6 +122,94 @@ def test_unknown_provenance_field_dropped():
     assert "project" not in out
 
 
+def test_cold_start_mode_labeled_on_cold_start_cell():
+    # #3894: a valid cold_start_mode in provenance renders next to the native_digest_cold
+    # cell's cold_start_ms, so a cold-pull number (includes layer download) is not misread
+    # as a warm-cached cold-provision one.
+    out = _render(
+        {
+            "product": "sandbox",
+            "provenance": {"cold_start_mode": "cold-pull"},
+            "scenarios": [
+                {
+                    "name": "native_digest_cold",
+                    "outcome": "PASS",
+                    "n": 20,
+                    "sla_metrics": {"cold_start_ms": 4200},
+                }
+            ],
+        }
+    )
+    assert "Cold start (ms) 4200 (cold-pull)" in out
+    # cold_start_mode renders ONLY on the cell, never in the build banner
+    assert "cold_start_mode=" not in out
+
+
+def test_cold_start_mode_absent_renders_no_label():
+    # Absent ⇒ no label (graceful degradation on the empty-provenance seed): the cell
+    # renders the bare metric, unchanged from pre-#3894 behavior.
+    out = _render(
+        {
+            "product": "sandbox",
+            "scenarios": [
+                {
+                    "name": "native_digest_cold",
+                    "outcome": "PASS",
+                    "n": 20,
+                    "sla_metrics": {"cold_start_ms": 4200},
+                }
+            ],
+        }
+    )
+    assert "Cold start (ms) 4200" in out
+    assert "(cold-pull)" not in out
+    assert "(cold-provision)" not in out
+
+
+def test_cold_start_mode_invalid_dropped_no_label():
+    # The render guard is SECONDARY (the harness emitter fail-closes on a typo); an
+    # out-of-enum value is simply dropped here, so no bogus label leaks and the raw value
+    # never reaches the page.
+    out = _render(
+        {
+            "product": "sandbox",
+            "provenance": {"cold_start_mode": "warm-cached-lie"},
+            "scenarios": [
+                {
+                    "name": "native_digest_cold",
+                    "outcome": "PASS",
+                    "n": 20,
+                    "sla_metrics": {"cold_start_ms": 4200},
+                }
+            ],
+        }
+    )
+    assert "Cold start (ms) 4200" in out
+    assert "warm-cached-lie" not in out
+
+
+def test_cold_start_mode_no_label_when_no_cold_start_ms():
+    # A valid mode but a non-cold-start cell (no cold_start_ms metric) ⇒ the label has
+    # nothing to attach to and is not rendered: the mode describes the cold-start
+    # measurement, not the run at large.
+    out = _render(
+        {
+            "product": "sandbox",
+            "provenance": {"cold_start_mode": "cold-pull"},
+            "scenarios": [
+                {
+                    "name": "warmpool_cold_start",
+                    "outcome": "PASS",
+                    "n": 20,
+                    "sla_metrics": {"activation_ms": 180},
+                }
+            ],
+        }
+    )
+    assert "Activation (ms) 180" in out
+    assert "(cold-pull)" not in out
+
+
 def test_unknown_product_raises():
     try:
         _render({"product": "internal-prod", "scenarios": []})

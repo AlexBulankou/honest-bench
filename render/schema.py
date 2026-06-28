@@ -16,6 +16,15 @@ CLUSTER_SUBSTRATES = {"kind", "gke", "gke-sandbox"}
 
 OUTCOMES = {"PASS", "FAIL", "pending"}
 
+# native_digest_cold image-cache posture (#3885/#3894). "cold-provision" = the honest
+# upper bound on a node that may already have the image layers cached; "cold-pull" = the
+# same path on a guaranteed-empty node, so the number also includes the full layer
+# download. A closed enum mirroring the harness side (COLD_START_MODE_ENUM in
+# sandbox/harness/results_schema.py). The render guard is SECONDARY — the harness emitter
+# fail-closes on a typo'd value — so here an out-of-enum value is simply dropped, and an
+# absent value renders no label (graceful degradation on the empty-provenance seed).
+COLD_START_MODES = {"cold-provision", "cold-pull"}
+
 # pending/FAIL cells render an ENUM reason only — never harness free-text.
 PENDING_REASONS = {
     "requires-gvisor-runtime",
@@ -47,6 +56,7 @@ PROVENANCE_FIELDS = {
     "suite_git_sha": lambda v: isinstance(v, str) and bool(_GITSHA.match(v)),
     "run_id": lambda v: isinstance(v, str) and bool(_RUNID.match(v)),
     "node_count": lambda v: isinstance(v, int) and 0 < v < 10000,
+    "cold_start_mode": lambda v: v in COLD_START_MODES,
 }
 
 # scenario internal-name -> public display label. A scenario whose name is not in this
