@@ -116,8 +116,12 @@ _KEY_DENSITY = "density_per_vcpu"
 # Timeouts. Pool warmup: 240s for up to ~10-20 replicas (pull + schedule +
 # start). Per-claim bind: 180s — a cold-tail claim can take 30-90s on a fresh
 # node, and we want to measure it (as a >1s non-qualifier), not time it out early.
-_WARMUP_TIMEOUT_S = 240
-_BIND_TIMEOUT_S = 180
+# Both env-tunable: gVisor (runsc) adds per-pod sandbox-init overhead, so a large
+# burst on a gke-sandbox cluster may need a longer warmup window than runc/kind —
+# raise BURST_CREATE_WARMUP_TIMEOUT_S rather than crash-FAIL a slow-but-healthy
+# pool fill. Neither timeout affects the measured TTFI (per-claim, from create).
+_WARMUP_TIMEOUT_S = int(os.environ.get("BURST_CREATE_WARMUP_TIMEOUT_S", "240"))
+_BIND_TIMEOUT_S = int(os.environ.get("BURST_CREATE_BIND_TIMEOUT_S", "180"))
 _POLL_S = 0.05  # per-claim thread poll — must be << the sub-1s threshold
 
 # CR coordinates.
