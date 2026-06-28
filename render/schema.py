@@ -20,7 +20,7 @@ OUTCOMES = {"PASS", "FAIL", "pending"}
 # upper bound on a node that may already have the image layers cached; "cold-pull" = the
 # same path on a guaranteed-empty node, so the number also includes the full layer
 # download. A closed enum mirroring the harness side (COLD_START_MODE_ENUM in
-# sandbox/harness/results_schema.py). The render guard is SECONDARY — the harness emitter
+# harness/results_schema.py). The render guard is SECONDARY — the harness emitter
 # fail-closes on a typo'd value — so here an out-of-enum value is simply dropped, and an
 # absent value renders no label (graceful degradation on the empty-provenance seed).
 COLD_START_MODES = {"cold-provision", "cold-pull"}

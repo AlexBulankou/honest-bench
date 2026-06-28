@@ -1,10 +1,14 @@
-# Portable sandbox benchmark harness
+# Portable benchmark harness
 
-A stranger can `git clone` this repo and reproduce every cell of the sandbox
+A stranger can `git clone` this repo and reproduce every cell of a product's
 benchmark table on a vanilla cluster — a local `kind` cluster, or their own GKE /
 GKE-Sandbox. The table is **honest by construction**: every number is
-machine-rendered from `sandbox/results/latest.json`, which this harness writes.
+machine-rendered from `<product>/results/latest.json`, which this harness writes.
 There are no hand-typed numbers.
+
+`--product` selects the scenario suite (default: `sandbox`); its results land in
+`<product>/results/latest.json`. An unregistered product fails loud rather than
+overwriting a hand-seeded results file.
 
 ## Run it
 
@@ -13,7 +17,8 @@ There are no hand-typed numbers.
 kind create cluster
 # 2. install the OSS controller from upstream main (see the recipe/ at repo root)
 # 3. run the suite (writes sandbox/results/latest.json)
-python3 -m sandbox.harness.run
+python3 -m harness.run                 # default product: sandbox
+python3 -m harness.run --product substrate
 ```
 
 The harness reads whatever `KUBECONFIG` points at — it never pins a cluster name.
@@ -68,7 +73,7 @@ scanner is the backstop.
 ## Files
 
 - `results_schema.py` — closed-schema emitter (the safety guard); pure, offline-testable.
-- `scenario_map.py` — MVP cell → scenario module map, with substrate gating.
-- `run.py` — the in-process suite loop; writes `results/latest.json`.
-- `test_results_schema.py` — offline tests (`python3 -m sandbox.harness.test_results_schema`).
+- `scenario_map.py` — per-product cell → scenario module map, with substrate gating.
+- `run.py` — the in-process suite loop; writes `<product>/results/latest.json`.
+- `test_results_schema.py` — offline tests (`python3 -m harness.test_results_schema`).
 - `scenarios/` — the stripped scenario bodies (ported from the in-cluster runner).

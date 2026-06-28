@@ -1,8 +1,8 @@
 """Offline tests for the closed-schema emitter — no cluster, no I/O.
 
 Run with bare python3 (no pytest dependency, so the auto-refresh GH-runner needs
-nothing extra):  python3 -m sandbox.harness.test_results_schema
-or directly:      python3 bench-repo/sandbox/harness/test_results_schema.py
+nothing extra):  python3 -m harness.test_results_schema
+or directly:      python3 bench-repo/harness/test_results_schema.py
 
 Each test asserts a public-safety property of build_results. The leak-suspenders
 tests (excerpt-never-emitted, non-numeric-sla-dropped, unsafe-key-dropped,
@@ -198,6 +198,22 @@ def test_cold_start_mode_enum_only():
     # absent -> dropped, not an error (the base _prov() carries no mode)
     r = rs.build_results([], _prov(), GEN_AT)
     _check("cold_start_mode" not in r["provenance"], "absent mode dropped")
+
+
+def test_product_enum_only():
+    # #3868: product is a CLOSED enum. The default is sandbox (so existing callers
+    # are unchanged); substrate is accepted; a non-enum product fails closed (a
+    # misconfiguration, not a leak — must never publish under a bogus label).
+    r = rs.build_results([], _prov(), GEN_AT, product="substrate")
+    _check(r["product"] == "substrate", "substrate product kept")
+    r = rs.build_results([], _prov(), GEN_AT)  # defaulted
+    _check(r["product"] == "sandbox", "default product is sandbox")
+    try:
+        rs.build_results([], _prov(), GEN_AT, product="bogus")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("non-enum product must raise (fail-closed)")
 
 
 def test_n_coercion():

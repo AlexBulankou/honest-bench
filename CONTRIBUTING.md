@@ -53,10 +53,10 @@ python3 -m render.generate             # regenerate README.md from results/
 `generate.py` rewrites `README.md` in place; a clean run leaves it
 byte-identical when the inputs are unchanged.
 
-The harness has its own tests, run as a module from the product root:
+The harness has its own tests, run as a module from the repo root:
 
 ```
-python3 -m sandbox.harness.test_results_schema
+python3 -m harness.test_results_schema
 ```
 
 To reproduce a full run, follow the recipe in the README: install the controller
