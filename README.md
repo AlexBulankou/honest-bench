@@ -1,19 +1,17 @@
-# Honest benchmarks — GKE agent sandbox & substrate
+# Honest benchmarks — GKE agent sandbox
 
-These tables are **machine-rendered, never hand-entered**. A measured cell traces to a
+This table is **machine-rendered, never hand-entered**. A measured cell traces to a
 schema-validated field of a real harness run; anything the schema does not declare is
 dropped before it can reach this page. We publish only what we actually measured on the
-substrate named in each build banner — a `kind` run is labelled `kind`, so a local number
+cluster named in each build banner — a `kind` run is labelled `kind`, so a local number
 is never presented as a production SLA.
 
 A cell we have not yet measured renders `pending (<reason>)` — never a guess and never a
 false PASS/FAIL. The **sandbox** table below is measured against a live GKE cluster — the
-`cluster_substrate=gke-sandbox` build banner names the substrate, and the burst-create
+`cluster_substrate=gke-sandbox` build banner names the cluster, and the burst-create
 headline was measured with the gVisor (runsc) runtime. The two NetworkPolicy cells are
 qualified `(control-plane)` because a PASS there asserts the policy was admitted and
-correctly targeted, not that data-plane traffic was enforced. The **substrate** table is
-still seed state — every cell reads `pending (not-yet-measured)` until its first measured
-run.
+correctly targeted, not that data-plane traffic was enforced.
 
 Every measured number here is a **reproducible floor, not a ceiling.** It is what a
 *vanilla* OSS build — the upstream controller from `main`, default runtime, no tuning,
@@ -30,8 +28,8 @@ Reproduce any row yourself — then beat it. The suite is honest by construction
 
 ```
 bash recipe/install-controller-from-main.sh   # OSS controller from upstream main
-python3 -m harness.run                        # run the portable suite (substrate=kind)
-python3 -m render.generate                    # regenerate these tables
+python3 -m harness.run                        # run the portable suite (cluster=kind)
+python3 -m render.generate                    # regenerate this table
 bash scripts/check-public-safety.sh           # fail-closed public-safety scan
 ```
 
@@ -49,13 +47,3 @@ bash scripts/check-public-safety.sh           # fail-closed public-safety scan
 
 _build: cluster_substrate=gke-sandbox · controller_image=us-central1-docker.pkg.dev/k8s-staging-images/agent-sandbox/agent-sandbox-controller:latest-main · controller_digest=sha256:6edaf7b6b22d9dfaf6ab077cd1c6517acf5fc6cf96b1ad58fe83bcfd477977ec · crd_version=v1beta1 · suite_git_sha=c88d857 · run_id=a0e4f0ffae12440a826ac40a277f21f3 · node_count=3_
 _generated-at: 2026-06-28T14:42:40Z_
-
-## substrate
-
-| Scenario | Measured (N) | Committed | Target | North-Star |
-|---|---|---|---|---|
-| Cold reconcile | pending (not-yet-measured) (n=0) | (non-public) | (non-public) | (non-public) |
-| Suspend/resume carry-over | pending (not-yet-measured) (n=0) | (non-public) | (non-public) | (non-public) |
-| Agent-identity (Pod-Certificate) | pending (not-yet-measured) (n=0) | (non-public) | (non-public) | (non-public) |
-
-_generated-at: 2026-06-28T03:00:00Z_
