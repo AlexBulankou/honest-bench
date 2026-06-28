@@ -10,7 +10,10 @@ GitHub-hosted runner. A `kind` cluster has no gVisor runtime, so isolation
 scenarios that need one report `pending (requires-gvisor-runtime)` — that is the
 honest result on this substrate, and the build banner labels every number
 `cluster_substrate=kind`. To reproduce the `gke` / `gke-sandbox` rows, point your
-`kubectl` context at such a cluster before step 2.
+`kubectl` context at such a cluster **and** set `BENCH_CLUSTER_SUBSTRATE` to match
+before step 2 — the harness does not auto-detect the substrate from the cluster
+yet, so that env var is what selects which cells run and stamps the build banner
+(see the headline-cell section below for the full `gke-sandbox` invocation).
 
 ## Prerequisites
 
