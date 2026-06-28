@@ -41,6 +41,9 @@ _EMITTER_SHAPE_SANDBOX = {
         "suite_git_sha": "0123abc",
         "run_id": "sandbox-2026-06-28-0300",
         "node_count": 3,
+        # the emitter always sets cold_start_mode (run.py defaults it to cold-provision,
+        # #3885); #3894 renders it next to the native_digest_cold cell's cold_start_ms.
+        "cold_start_mode": "cold-provision",
     },
     "scenarios": [
         {"name": "warmpool_cold_start", "outcome": "PASS", "n": 20, "sla_metrics": {"activation_ms": 180}},
@@ -80,6 +83,9 @@ def test_inline_emitter_shape_renders_all_six_rows():
     assert "pending (requires-gvisor-runtime)" in out
     # goal columns are (non-public) for every one of the six rows
     assert out.count("(non-public)") == 6 * 3
+    # #3894: the emitter's cold_start_mode carries through to the cold-start cell label —
+    # a drift that dropped it (or rendered the raw value elsewhere) fails here.
+    assert "Cold start (ms) 4200 (cold-provision)" in out
 
 
 def test_committed_fixtures_render_without_drops():
