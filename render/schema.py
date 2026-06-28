@@ -25,6 +25,17 @@ OUTCOMES = {"PASS", "FAIL", "pending"}
 # absent value renders no label (graceful degradation on the empty-provenance seed).
 COLD_START_MODES = {"cold-provision", "cold-pull"}
 
+# badge_scope (#3905) is a per-SCENARIO closed enum qualifying what a security-isolation
+# PASS actually asserts. "control-plane" = the policy/runtime-class was admitted and
+# correctly targeted (NOT that data-plane traffic was enforced); "enforced" = data-plane
+# enforcement was actually exercised. It renders as a suffix on the scenario's PASS cell
+# (e.g. "PASS (control-plane)"), so the public badge cannot over-claim enforcement. This
+# replaces the interim hardcoded "(control-plane)" baked into SCENARIO_LABELS: the
+# qualifier is now data-driven (carried per-cell from the harness), so a cell can move
+# control-plane → enforced by emitting the new value, no label edit. Absent ⇒ no suffix
+# (graceful degradation); out-of-enum ⇒ dropped at render (the emitter fail-closes first).
+BADGE_SCOPES = {"control-plane", "enforced"}
+
 # pending/FAIL cells render an ENUM reason only — never harness free-text.
 PENDING_REASONS = {
     "requires-gvisor-runtime",
@@ -69,12 +80,14 @@ SCENARIO_LABELS = {
     "suspend_resume": "Resume from suspend",
     # The two NetworkPolicy cells assert CONTROL-PLANE admission only (policy admitted +
     # correctly targeted), NOT data-plane enforcement — so a PASS here means "the policy was
-    # accepted", not "traffic was actually blocked". The (control-plane) qualifier keeps the
-    # public badge from over-claiming enforcement; the data-plane scope-qualifier is #3905.
-    # gvisor_canary is NOT qualified — it is a genuine runtime-class enforcement check
-    # (asserts pod.spec.runtimeClassName == gvisor, phase Running).
-    "cross_tenant_network_isolation": "Cross-tenant network isolation (control-plane)",
-    "default_deny_egress": "Default-deny egress (control-plane)",
+    # accepted", not "traffic was actually blocked". The scope qualifier is now DATA-DRIVEN
+    # via the per-cell badge_scope enum (#3905) — the harness emits "control-plane" on these
+    # cells and the renderer suffixes "PASS (control-plane)", so the label stays plain here
+    # and a cell can later move to "enforced" by emitting the new value (no label edit).
+    # gvisor_canary carries no badge_scope — it is a genuine runtime-class enforcement check
+    # (asserts pod.spec.runtimeClassName == gvisor, phase Running), so its PASS is unqualified.
+    "cross_tenant_network_isolation": "Cross-tenant network isolation",
+    "default_deny_egress": "Default-deny egress",
     "gvisor_canary": "gVisor isolation canary",
     # substrate MVP
     "cold_reconcile": "Cold reconcile",

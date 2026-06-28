@@ -210,6 +210,84 @@ def test_cold_start_mode_no_label_when_no_cold_start_ms():
     assert "(cold-pull)" not in out
 
 
+def test_badge_scope_suffixes_isolation_pass_cell():
+    # #3905: a valid badge_scope renders as a suffix on the scenario's PASS cell, so the
+    # public badge says exactly what the PASS asserts (control-plane admission, not
+    # data-plane enforcement) — data-driven, no hardcoded label.
+    out = _render(
+        {
+            "product": "sandbox",
+            "scenarios": [
+                {
+                    "name": "cross_tenant_network_isolation",
+                    "outcome": "PASS",
+                    "badge_scope": "control-plane",
+                    "n": 12,
+                }
+            ],
+        }
+    )
+    # label is now PLAIN; the qualifier rides the cell
+    assert "Cross-tenant network isolation |" in out
+    assert "Cross-tenant network isolation (control-plane)" not in out
+    assert "PASS (control-plane) (n=12)" in out
+
+
+def test_badge_scope_absent_renders_bare_pass():
+    # Absent ⇒ no suffix (graceful degradation): an isolation cell with no badge_scope
+    # renders a bare PASS, unchanged from pre-#3905 behavior.
+    out = _render(
+        {
+            "product": "sandbox",
+            "scenarios": [
+                {"name": "gvisor_canary", "outcome": "PASS", "n": 0},
+            ],
+        }
+    )
+    assert "gVisor isolation canary | PASS (n=0)" in out
+    assert "(control-plane)" not in out
+    assert "(enforced)" not in out
+
+
+def test_badge_scope_invalid_dropped_bare_pass():
+    # The render guard is SECONDARY (the emitter fail-closes on a typo); an out-of-enum
+    # value is simply dropped here, so no bogus scope leaks onto the public badge.
+    out = _render(
+        {
+            "product": "sandbox",
+            "scenarios": [
+                {
+                    "name": "default_deny_egress",
+                    "outcome": "PASS",
+                    "badge_scope": "fully-bulletproof-trust-me",
+                    "n": 12,
+                }
+            ],
+        }
+    )
+    assert "Default-deny egress | PASS (n=12)" in out
+    assert "fully-bulletproof-trust-me" not in out
+
+
+def test_badge_scope_enforced_value_renders():
+    # The enum's second member: a cell that DID exercise data-plane enforcement can move
+    # to "enforced" by emitting the new value — no label edit, the render follows the data.
+    out = _render(
+        {
+            "product": "sandbox",
+            "scenarios": [
+                {
+                    "name": "cross_tenant_network_isolation",
+                    "outcome": "PASS",
+                    "badge_scope": "enforced",
+                    "n": 12,
+                }
+            ],
+        }
+    )
+    assert "PASS (enforced) (n=12)" in out
+
+
 def test_unknown_product_raises():
     try:
         _render({"product": "internal-prod", "scenarios": []})

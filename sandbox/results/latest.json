@@ -47,10 +47,12 @@
       "outcome": "PASS"
     },
     {
+      "badge_scope": "control-plane",
       "name": "cross_tenant_network_isolation",
       "outcome": "PASS"
     },
     {
+      "badge_scope": "control-plane",
       "name": "default_deny_egress",
       "outcome": "PASS"
     }

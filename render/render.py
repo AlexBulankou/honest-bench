@@ -14,6 +14,7 @@ import json
 import sys
 
 from schema import (
+    BADGE_SCOPES,
     GOAL_COLUMNS,
     METRIC_LABELS,
     NON_PUBLIC,
@@ -74,6 +75,9 @@ def _clean_scenarios(scenarios):
         reason = s.get("pending_reason")
         if reason is not None and reason not in PENDING_REASONS:
             reason = None  # drop unknown free-text reason, keep the row
+        scope = s.get("badge_scope")
+        if scope is not None and scope not in BADGE_SCOPES:
+            scope = None  # drop unknown scope, keep the row (never render free-text)
         n = s.get("n")
         n = n if isinstance(n, int) and not isinstance(n, bool) and n >= 0 else 0
         rows.append(
@@ -81,6 +85,7 @@ def _clean_scenarios(scenarios):
                 "label": SCENARIO_LABELS[name],
                 "outcome": outcome,
                 "pending_reason": reason,
+                "badge_scope": scope,
                 "n": n,
                 "metrics": _clean_metrics(s.get("sla_metrics")),
             }
@@ -106,6 +111,12 @@ def _measured_cell(row, cold_start_mode=None):
     if row["outcome"] == "FAIL":
         reason = row["pending_reason"] or "not-yet-measured"
         return f"FAIL ({reason})"
+    # badge_scope (#3905) qualifies what a security-isolation PASS asserts (control-plane
+    # admission vs data-plane enforcement); suffix it on the PASS token so the badge cannot
+    # over-claim. Absent ⇒ no suffix (graceful degradation). Applies to both the metric and
+    # bare PASS forms.
+    scope = row.get("badge_scope")
+    pass_token = f"PASS ({scope})" if scope else "PASS"
     if row["metrics"]:
         parts = []
         for k in sorted(row["metrics"]):
@@ -117,8 +128,8 @@ def _measured_cell(row, cold_start_mode=None):
             if k == "cold_start_ms" and cold_start_mode:
                 part += f" ({cold_start_mode})"
             parts.append(part)
-        return "PASS · " + ", ".join(parts)
-    return "PASS"
+        return pass_token + " · " + ", ".join(parts)
+    return pass_token
 
 
 def render_product(results):

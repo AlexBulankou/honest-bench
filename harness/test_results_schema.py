@@ -216,6 +216,32 @@ def test_product_enum_only():
         raise AssertionError("non-enum product must raise (fail-closed)")
 
 
+def test_badge_scope_enum_only():
+    # #3905: badge_scope is a per-SCENARIO CLOSED enum. A valid value is kept; an
+    # out-of-set value fails closed (a mislabeled isolation badge must never publish);
+    # absent is simply dropped (optional, so non-isolation cells stay clean).
+    for scope in rs.BADGE_SCOPE_ENUM:
+        r = rs.build_results(
+            [{"name": "cross_tenant_network_isolation", "outcome": "pass",
+              "badge_scope": scope}],
+            _prov(), GEN_AT,
+        )
+        _check(r["scenarios"][0]["badge_scope"] == scope, f"{scope} kept")
+    try:
+        rs.build_results(
+            [{"name": "default_deny_egress", "outcome": "pass",
+              "badge_scope": "fully-bulletproof-trust-me"}],
+            _prov(), GEN_AT,
+        )
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("non-enum badge_scope must raise (fail-closed)")
+    # absent -> dropped, not an error
+    r = rs.build_results([{"name": "a", "outcome": "pass"}], _prov(), GEN_AT)
+    _check("badge_scope" not in r["scenarios"][0], "absent badge_scope dropped")
+
+
 def test_n_coercion():
     r = rs.build_results(
         [{"name": "a", "outcome": "pass", "n": 30.0},
