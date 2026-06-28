@@ -143,21 +143,34 @@ def test_parse_cpu_unparseable_is_zero():
 # ---- _build_template_manifest: runtimeClassName knob ----
 
 def test_template_omits_runtime_class_by_default():
+    # default (kind/runc): no runtimeClassName AND no gVisor toleration — the
+    # toleration is gated on the same knob, so a vanilla-kind run is unaffected.
     saved = cell._RUNTIME_CLASS
     try:
         cell._RUNTIME_CLASS = ""
-        m = cell._build_template_manifest("tmpl-x")
-        assert "runtimeClassName" not in m["spec"]["podTemplate"]["spec"]
+        spec = cell._build_template_manifest("tmpl-x")["spec"]["podTemplate"]["spec"]
+        assert "runtimeClassName" not in spec
+        assert "tolerations" not in spec
     finally:
         cell._RUNTIME_CLASS = saved
 
 
 def test_template_pins_runtime_class_when_set():
+    # gVisor: runtimeClassName pinned AND the GKE-Sandbox taint toleration added so
+    # the pod can land on the tainted gVisor node pool (else it stays Pending and
+    # the warm pool never fills). operator=Exists keys on the taint key only.
     saved = cell._RUNTIME_CLASS
     try:
         cell._RUNTIME_CLASS = "gvisor"
-        m = cell._build_template_manifest("tmpl-x")
-        assert m["spec"]["podTemplate"]["spec"]["runtimeClassName"] == "gvisor"
+        spec = cell._build_template_manifest("tmpl-x")["spec"]["podTemplate"]["spec"]
+        assert spec["runtimeClassName"] == "gvisor"
+        tol = spec["tolerations"]
+        assert any(
+            t["key"] == "sandbox.gke.io/runtime"
+            and t["operator"] == "Exists"
+            and t["effect"] == "NoSchedule"
+            for t in tol
+        )
     finally:
         cell._RUNTIME_CLASS = saved
 
