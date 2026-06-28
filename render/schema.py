@@ -89,6 +89,12 @@ SCENARIO_LABELS = {
     "cross_tenant_network_isolation": "Cross-tenant network isolation",
     "default_deny_egress": "Default-deny egress",
     "gvisor_canary": "gVisor isolation canary",
+    # sandbox sustained-churn axis (#3868). Companion to burst_create: burst_create measures
+    # cold-start throughput at a burst; session_turnover measures how fast a warm pool
+    # replenishes a consumed slot under sustained claim/release churn. INERT vocabulary until
+    # the scenario is registered in scenario_map + fired — a cell only renders when its name
+    # appears in results, so adding this label makes no public-page difference on its own.
+    "session_turnover": "Warm-pool refill (churn)",
     # substrate MVP
     "cold_reconcile": "Cold reconcile",
     "suspend_resume_carryover": "Suspend/resume carry-over",
@@ -107,6 +113,11 @@ METRIC_LABELS = {
     "cold_start_ms": "Cold start (ms)",
     "reconcile_ms": "Reconcile (ms)",
     "resume_ms": "Resume (ms)",
+    # session_turnover warm-pool refill axis (#3868): median replenishment latency + p90
+    # tail. The p90 column matches the floor-not-ceiling framing — a tail number a reader
+    # can reproduce and beat, not a best-case headline. Inert until the scenario fires.
+    "refill_latency_ms": "Refill latency (ms)",
+    "refill_p90_ms": "Refill p90 (ms)",
 }
 
 # The goal-column set. They render "(non-public)" by construction whenever the internal
