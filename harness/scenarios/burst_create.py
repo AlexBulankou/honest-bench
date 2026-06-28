@@ -59,14 +59,34 @@ Infrastructure failures (controller unhealthy, CRDs missing, RBAC denied) raise
 — the harness loop records a crash as a FAIL cell, never a fabricated PASS.
 Scenario-outcome FAILs (pool under-delivered the sub-1s burst) return
 ("FAIL", "<excerpt>", sla_metrics) with the real measured count surfaced.
+
+## Runtime-class guard (gke-sandbox headline honesty)
+
+`cluster_substrate` (the render banner) and the pool's `runtimeClassName` are
+INDEPENDENT env vars, so a `gke-sandbox` substrate with an unset/non-gVisor
+BURST_CREATE_RUNTIME_CLASS would publish runc pods under a gVisor banner — a
+green count that lies. Two guards close that, both crash-FAIL (never a fabricated
+PASS), gated to the gke-sandbox substrate so kind/gke are unaffected:
+
+  1. Pure (fail-fast, no cluster): a gke-sandbox-labeled run MUST pin
+     `runtimeClassName=gvisor` (`_assert_substrate_runtime_consistency`).
+  2. Live read-back (post-measurement): each counted (bound) sandbox's backing
+     Pod is resolved by owner-uid and asserted to carry the expected
+     `spec.runtimeClassName` (`_verify_bound_pods_runtime`) — the same
+     "Ready does not prove gVisor" assertion gvisor_canary makes, applied to the
+     throughput headline so a silent runc fallback can't publish as gVisor.
 """
 
 from __future__ import annotations
 
 try:  # package context (production: run.py loads harness.scenarios.burst_create)
-    from ._apiversion import claim_gvr, ext_api_version, template_gvr, warmpool_gvr
+    from ._apiversion import (
+        claim_gvr, ext_api_version, sandbox_gvr, template_gvr, warmpool_gvr,
+    )
 except ImportError:  # standalone (dependency-free test from the scenarios/ dir)
-    from _apiversion import claim_gvr, ext_api_version, template_gvr, warmpool_gvr
+    from _apiversion import (
+        claim_gvr, ext_api_version, sandbox_gvr, template_gvr, warmpool_gvr,
+    )
 
 import logging
 import math
@@ -88,6 +108,20 @@ _SANDBOX_IMAGE = os.environ.get("BURST_CREATE_SANDBOX_IMAGE", "busybox:1.36")
 # gVisor-isolated throughput number (build banner's cluster_substrate makes the
 # substrate explicit). Same probe, two substrates — no separate scenario.
 _RUNTIME_CLASS = os.environ.get("BURST_CREATE_RUNTIME_CLASS", "")
+
+# The substrate the run.py banner will label this result with (same env run.py
+# reads). burst_create is substrate-agnostic (perf matrix), so on a `gke-sandbox`
+# substrate its published sandboxes_ready_under_1s reads as a gVisor number — the
+# two env vars are otherwise INDEPENDENT, so a gke-sandbox substrate with an unset
+# BURST_CREATE_RUNTIME_CLASS would label runc pods as gVisor (the false-headline
+# gap the guard below closes). Read here only to enforce that consistency.
+_CLUSTER_SUBSTRATE = os.environ.get("BENCH_CLUSTER_SUBSTRATE", "kind")
+
+# The canonical gVisor RuntimeClass name (GKE Sandbox / upstream gVisor convention,
+# matching gvisor_canary's default). A `gke-sandbox`-labeled burst MUST pin this so
+# the headline count is a REAL gVisor-isolated number, not a runc number wearing a
+# gVisor label.
+_GVISOR_RUNTIME_CLASS = "gvisor"
 
 # Burst size. K warm slots, K claims fired — the whole pool is the warm tier
 # (unlike warmpool_cold_start, which deliberately fires more claims than slots to
@@ -128,8 +162,33 @@ _POLL_S = 0.05  # per-claim thread poll — must be << the sub-1s threshold
 _TPL_GVR = template_gvr()
 _CLM_GVR = claim_gvr()
 _SWP_GVR = warmpool_gvr()
+_SBX_GVR = sandbox_gvr()
 
 _SCENARIO_LABEL = {"honest-bench/scenario": "burst-create"}
+
+
+def _assert_substrate_runtime_consistency(
+    substrate: str, runtime_class: str,
+) -> None:
+    """Sub-gap 1: refuse a gVisor-labeled headline when the runtime isn't gVisor.
+
+    Pure logic (no cluster calls) — `cluster_substrate` and the pool's
+    `runtimeClassName` are independent env vars with no cross-check, so a
+    `gke-sandbox` substrate with an unset/non-gVisor BURST_CREATE_RUNTIME_CLASS
+    would publish runc pods under a gVisor banner. Crash-FAIL (consistent with the
+    cell's crash posture) before the cluster is touched, so the mistake is caught
+    fail-fast rather than after a full burst. Substrates other than `gke-sandbox`
+    impose no constraint (kind/gke do not claim gVisor isolation).
+    """
+    if substrate == "gke-sandbox" and runtime_class != _GVISOR_RUNTIME_CLASS:
+        raise RuntimeError(
+            f"burst_create refuses to publish a gke-sandbox-labeled result while "
+            f"BURST_CREATE_RUNTIME_CLASS={runtime_class!r} (expected "
+            f"{_GVISOR_RUNTIME_CLASS!r}): the cluster_substrate banner says gVisor "
+            f"but the warm pool would run under the node default runtime, so the "
+            f"published sandboxes_ready_under_1s would be a false gVisor headline. "
+            f"Set BURST_CREATE_RUNTIME_CLASS=gvisor on a gke-sandbox cluster."
+        )
 
 
 def _build_template_manifest(template_name: str) -> dict:
@@ -404,6 +463,85 @@ def _classify_burst(
     return passed, breakdown, sla_metrics
 
 
+def _bound_sandbox_name(custom, *, claim_name: str) -> str | None:
+    """Re-GET a bound claim; return its status.sandbox.name (the bound Sandbox)."""
+    group, version, plural = _CLM_GVR
+    obj = custom.get_namespaced_custom_object(
+        group=group, version=version, namespace=_NAMESPACE,
+        plural=plural, name=claim_name,
+    )
+    return ((obj or {}).get("status") or {}).get("sandbox", {}).get("name")
+
+
+def _verify_bound_pods_runtime(
+    custom, core, *, bound_claim_names: list[str], expected_runtime_class: str,
+) -> int:
+    """Sub-gap 2: assert every counted sandbox's backing Pod ran under runsc.
+
+    The published count is labeled gVisor on a gke-sandbox substrate; a Ready
+    sandbox alone does NOT prove gVisor (a controller that silently stripped
+    runtimeClassName would still reach Ready under runc — the "green cell that
+    lies" gvisor_canary guards against). This closes that hole for the throughput
+    headline: it resolves each bound claim -> its bound Sandbox -> the backing Pod
+    (owner-uid match, gvisor_canary's convention-independent path — pod-name shape
+    and label propagation are not assumed) and crash-FAILs if ANY backing Pod's
+    `spec.runtimeClassName` != expected (or is unlocatable). A partially-runc burst
+    therefore never publishes as a gVisor headline. Returns the count verified.
+
+    Live read (one claim-GET + one Sandbox-GET per bound claim + one namespace
+    Pod list); runs post-measurement so it never perturbs the measured TTFI, and
+    run() gates it to the gke-sandbox substrate only (kind/gke stay read-free).
+    """
+    sbx_group, sbx_version, sbx_plural = _SBX_GVR
+    uid_to_sandbox: dict[str, str] = {}
+    for claim_name in bound_claim_names:
+        sbx_name = _bound_sandbox_name(custom, claim_name=claim_name)
+        if not sbx_name:
+            raise RuntimeError(
+                f"bound claim {claim_name} has no status.sandbox.name on re-read — "
+                f"its backing Pod's runtime class cannot be verified, so the "
+                f"gVisor-labeled count cannot honestly publish."
+            )
+        sbx = custom.get_namespaced_custom_object(
+            group=sbx_group, version=sbx_version, namespace=_NAMESPACE,
+            plural=sbx_plural, name=sbx_name,
+        )
+        uid = ((sbx or {}).get("metadata") or {}).get("uid")
+        if uid:
+            uid_to_sandbox[uid] = sbx_name
+
+    pods = core.list_namespaced_pod(namespace=_NAMESPACE)
+    uid_to_pod: dict[str, object] = {}
+    for pod in pods.items:
+        for owner in (pod.metadata.owner_references or []):
+            if owner.uid in uid_to_sandbox:
+                uid_to_pod[owner.uid] = pod
+
+    violations: list[str] = []
+    verified = 0
+    for uid, sbx_name in uid_to_sandbox.items():
+        pod = uid_to_pod.get(uid)
+        if pod is None:
+            violations.append(f"{sbx_name}: backing Pod not found by owner uid")
+            continue
+        rtc = pod.spec.runtime_class_name
+        if rtc != expected_runtime_class:
+            violations.append(
+                f"{sbx_name}: Pod {pod.metadata.name} runtimeClassName={rtc!r}"
+            )
+        else:
+            verified += 1
+    if violations:
+        raise RuntimeError(
+            f"burst_create refuses to publish a gVisor-labeled count: "
+            f"{len(violations)}/{len(uid_to_sandbox)} bound sandboxes did not "
+            f"schedule under RuntimeClass {expected_runtime_class!r} "
+            f"[{'; '.join(violations)}]. A Ready sandbox running under runc is the "
+            f"silent isolation drop the runtime read-back exists to catch."
+        )
+    return verified
+
+
 def _cleanup(
     custom, *, claim_names: list[str], pool_name: str, template_name: str,
 ) -> None:
@@ -445,6 +583,11 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
     """
     from kubernetes import client as k8s_client
     from kubernetes import config as k8s_config
+
+    # Sub-gap 1 (pure, fail-fast): a gke-sandbox-labeled result MUST pin the gVisor
+    # RuntimeClass, else the published count is a runc number under a gVisor banner.
+    # Checked before the cluster is touched so the mistake crashes immediately.
+    _assert_substrate_runtime_consistency(_CLUSTER_SUBSTRATE, _RUNTIME_CLASS)
 
     # Portable kubeconfig load: in-cluster when running as a pod, otherwise
     # whatever the runner's KUBECONFIG / default kubeconfig points at.
@@ -532,6 +675,23 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
             else:
                 ttfis[name] = None
                 log.warning("claim %s timed out before Ready+bound", name)
+
+        # Sub-gap 2 (live read-back, gke-sandbox only): the counted sandboxes are
+        # the bound claims; on a gke-sandbox substrate verify each one's backing
+        # Pod actually scheduled under runsc before publishing the gVisor-labeled
+        # count. Crash-FAILs on a silent runc fallback. kind/gke skip this (no
+        # gVisor claim to verify, so the path stays read-free there).
+        if _CLUSTER_SUBSTRATE == "gke-sandbox":
+            bound_claim_names = [n for n in claim_names if n in bound_at]
+            verified = _verify_bound_pods_runtime(
+                custom, core_v1,
+                bound_claim_names=bound_claim_names,
+                expected_runtime_class=_RUNTIME_CLASS,
+            )
+            log.info(
+                "runtime read-back: %d/%d bound sandboxes verified under "
+                "RuntimeClass %r", verified, len(bound_claim_names), _RUNTIME_CLASS,
+            )
 
         passed, breakdown, sla_metrics = _classify_burst(
             ttfis,

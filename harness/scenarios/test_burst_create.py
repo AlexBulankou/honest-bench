@@ -193,6 +193,161 @@ def test_ready_and_bound_true_only_when_both():
     assert cell._is_claim_ready_and_bound(None) is False
 
 
+# ---- _assert_substrate_runtime_consistency (sub-gap 1: pure, no cluster) ----
+
+def test_gke_sandbox_requires_gvisor_runtime_class():
+    # gke-sandbox label + unset runtime class -> runc pods under a gVisor banner.
+    for bad in ("", "runc", "gvisor-typo"):
+        raised = False
+        try:
+            cell._assert_substrate_runtime_consistency("gke-sandbox", bad)
+        except RuntimeError:
+            raised = True
+        assert raised, f"gke-sandbox + runtime_class={bad!r} must crash-FAIL"
+
+
+def test_gke_sandbox_with_gvisor_is_consistent():
+    # the honest pairing: gke-sandbox banner + gvisor runtime class -> no raise.
+    cell._assert_substrate_runtime_consistency("gke-sandbox", "gvisor")
+
+
+def test_kind_and_gke_impose_no_runtime_constraint():
+    # kind/gke do not claim gVisor isolation, so any runtime class is fine
+    # (including the default ""): the guard only gates the gke-sandbox banner.
+    cell._assert_substrate_runtime_consistency("kind", "")
+    cell._assert_substrate_runtime_consistency("gke", "")
+    cell._assert_substrate_runtime_consistency("kind", "gvisor")
+
+
+# ---- _verify_bound_pods_runtime (sub-gap 2: live read-back, via fakes) ----
+#
+# Cluster-free: fake the two API surfaces the helper touches — CustomObjectsApi
+# (claim-GET -> bound Sandbox name; Sandbox-GET -> uid) and CoreV1Api
+# (list_namespaced_pod -> backing Pods by owner uid) — so the read-back logic is
+# asserted without the kubernetes client or a real cluster.
+
+class _FakeOwner:
+    def __init__(self, uid):
+        self.uid = uid
+
+
+class _FakeMeta:
+    def __init__(self, name=None, owner_uids=()):
+        self.name = name
+        self.owner_references = [_FakeOwner(u) for u in owner_uids]
+
+
+class _FakePodSpec:
+    def __init__(self, runtime_class_name):
+        self.runtime_class_name = runtime_class_name
+
+
+class _FakePod:
+    def __init__(self, name, owner_uid, runtime_class_name):
+        self.metadata = _FakeMeta(name=name, owner_uids=(owner_uid,))
+        self.spec = _FakePodSpec(runtime_class_name)
+
+
+class _FakePodList:
+    def __init__(self, pods):
+        self.items = pods
+
+
+class _FakeCore:
+    def __init__(self, pods):
+        self._pods = pods
+
+    def list_namespaced_pod(self, namespace):
+        return _FakePodList(self._pods)
+
+
+class _FakeCustom:
+    """Routes get_namespaced_custom_object by plural: claims vs sandboxes."""
+
+    def __init__(self, claim_to_sbx, sbx_to_uid):
+        self._claim_to_sbx = claim_to_sbx
+        self._sbx_to_uid = sbx_to_uid
+
+    def get_namespaced_custom_object(self, *, group, version, namespace, plural, name):
+        if plural == cell._CLM_GVR[2]:
+            sbx = self._claim_to_sbx.get(name)
+            return {"status": {"sandbox": {"name": sbx}} if sbx else {}}
+        if plural == cell._SBX_GVR[2]:
+            return {"metadata": {"uid": self._sbx_to_uid.get(name)}}
+        raise AssertionError(f"unexpected plural {plural!r}")
+
+
+def test_verify_passes_when_all_backing_pods_are_gvisor():
+    custom = _FakeCustom(
+        claim_to_sbx={"c0": "sbx0", "c1": "sbx1"},
+        sbx_to_uid={"sbx0": "u0", "sbx1": "u1"},
+    )
+    core = _FakeCore([
+        _FakePod("pod0", "u0", "gvisor"),
+        _FakePod("pod1", "u1", "gvisor"),
+    ])
+    verified = cell._verify_bound_pods_runtime(
+        custom, core, bound_claim_names=["c0", "c1"],
+        expected_runtime_class="gvisor",
+    )
+    assert verified == 2
+
+
+def test_verify_raises_on_silent_runc_fallback():
+    # a backing Pod with runtimeClassName None (node default = runc) -> crash-FAIL.
+    custom = _FakeCustom(
+        claim_to_sbx={"c0": "sbx0", "c1": "sbx1"},
+        sbx_to_uid={"sbx0": "u0", "sbx1": "u1"},
+    )
+    core = _FakeCore([
+        _FakePod("pod0", "u0", "gvisor"),
+        _FakePod("pod1", "u1", None),   # silently fell back to runc
+    ])
+    raised = False
+    try:
+        cell._verify_bound_pods_runtime(
+            custom, core, bound_claim_names=["c0", "c1"],
+            expected_runtime_class="gvisor",
+        )
+    except RuntimeError as e:
+        raised = True
+        assert "sbx1" in str(e)
+    assert raised
+
+
+def test_verify_raises_when_backing_pod_unlocatable():
+    # Sandbox has a uid but no Pod owns it -> isolation unverifiable -> crash-FAIL.
+    custom = _FakeCustom(
+        claim_to_sbx={"c0": "sbx0"},
+        sbx_to_uid={"sbx0": "u0"},
+    )
+    core = _FakeCore([])   # no pods
+    raised = False
+    try:
+        cell._verify_bound_pods_runtime(
+            custom, core, bound_claim_names=["c0"],
+            expected_runtime_class="gvisor",
+        )
+    except RuntimeError:
+        raised = True
+    assert raised
+
+
+def test_verify_raises_when_claim_has_no_bound_sandbox():
+    # a claim counted as bound but with no status.sandbox.name on re-read -> FAIL.
+    custom = _FakeCustom(claim_to_sbx={"c0": None}, sbx_to_uid={})
+    core = _FakeCore([])
+    raised = False
+    try:
+        cell._verify_bound_pods_runtime(
+            custom, core, bound_claim_names=["c0"],
+            expected_runtime_class="gvisor",
+        )
+    except RuntimeError:
+        raised = True
+    assert raised
+
+
 def _run_all():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:
