@@ -1,4 +1,4 @@
-# Auto-refresh the honest-benchmark table.
+# Auto-refresh the honest-benchmark table (MANUAL-ONLY — daily schedule disabled).
 #
 # Spins a vanilla kind cluster on the GitHub-hosted runner, installs the OSS
 # controller from upstream main per the recipe, runs the portable harness, runs
@@ -7,13 +7,22 @@
 # the runner has no runsc, so gVisor isolation cells render
 # `pending (requires gVisor runtime)` — the cluster_substrate=kind banner makes
 # that explicit, so a kind number is never mis-read as a GKE SLA result.
+#
+# SCHEDULE DISABLED (#16): the sandbox product now carries REAL gke-sandbox gVisor
+# results (burst-create headline measured under runtimeClassName=gvisor, #15). A
+# daily kind run writes `sandbox/results/latest.json`, so an unattended scheduled
+# refresh would open a PR that DOWNGRADES the live gVisor headline to a kind number
+# (gVisor cells -> pending, banner gke-sandbox -> kind). Re-pointing at substrate
+# is no better — substrate's honest substrate is substrate-demo-cluster, not kind,
+# and substrate measurement is paused. So the auto-PR is removed entirely; refresh
+# is `workflow_dispatch`-only until a real gke-sandbox CI refresh path exists. Run
+# it by hand (Actions -> refresh-benchmarks -> Run workflow) when a refresh is
+# wanted, and review the resulting PR before merge.
 
 name: refresh-benchmarks
 
 on:
-  schedule:
-    # 06:17 UTC daily — off the round hour to avoid the hosted-runner thundering herd.
-    - cron: "17 6 * * *"
+  # schedule: disabled (#16) — see header. Re-enable only with a gke-sandbox refresh path.
   workflow_dispatch: {}
 
 permissions:
