@@ -1,49 +1,58 @@
 {
+  "generated_at": "2026-06-28T14:42:40Z",
   "product": "sandbox",
-  "generated_at": "2026-06-28T03:00:00Z",
-  "provenance": {},
+  "provenance": {
+    "cluster_substrate": "gke-sandbox",
+    "cold_start_mode": "cold-provision",
+    "controller_digest": "sha256:6edaf7b6b22d9dfaf6ab077cd1c6517acf5fc6cf96b1ad58fe83bcfd477977ec",
+    "controller_image": "us-central1-docker.pkg.dev/k8s-staging-images/agent-sandbox/agent-sandbox-controller:latest-main",
+    "crd_version": "v1beta1",
+    "node_count": 3,
+    "run_id": "a0e4f0ffae12440a826ac40a277f21f3",
+    "suite_git_sha": "c88d857"
+  },
   "scenarios": [
     {
+      "n": 10,
       "name": "burst_create",
-      "outcome": "pending",
-      "pending_reason": "not-yet-measured",
-      "n": 0
+      "outcome": "PASS",
+      "sla_metrics": {
+        "density_per_vcpu": 0.45,
+        "sandboxes_ready_under_1s": 9.0
+      }
     },
     {
+      "n": 5,
       "name": "warmpool_cold_start",
-      "outcome": "pending",
-      "pending_reason": "not-yet-measured",
-      "n": 0
+      "outcome": "PASS",
+      "sla_metrics": {
+        "activation_ms": 553.2399389776401
+      }
     },
     {
+      "n": 1,
       "name": "native_digest_cold",
-      "outcome": "pending",
-      "pending_reason": "not-yet-measured",
-      "n": 0
+      "outcome": "PASS",
+      "sla_metrics": {
+        "cold_start_ms": 1670.586568012368
+      }
     },
     {
       "name": "suspend_resume",
       "outcome": "pending",
-      "pending_reason": "not-yet-measured",
-      "n": 0
-    },
-    {
-      "name": "cross_tenant_network_isolation",
-      "outcome": "pending",
-      "pending_reason": "requires-gke",
-      "n": 0
-    },
-    {
-      "name": "default_deny_egress",
-      "outcome": "pending",
-      "pending_reason": "requires-gke",
-      "n": 0
+      "pending_reason": "upstream-blocked"
     },
     {
       "name": "gvisor_canary",
-      "outcome": "pending",
-      "pending_reason": "requires-gvisor-runtime",
-      "n": 0
+      "outcome": "PASS"
+    },
+    {
+      "name": "cross_tenant_network_isolation",
+      "outcome": "PASS"
+    },
+    {
+      "name": "default_deny_egress",
+      "outcome": "PASS"
     }
   ]
 }
