@@ -328,6 +328,104 @@ def test_burst_throughput_headline_renders():
     assert "Density /vCPU 1.88" in out
 
 
+def _hrow(**over):
+    # A schema-valid history row; tests override individual fields.
+    row = {
+        "generated_at": "2026-06-28T14:42:40Z",
+        "controller_digest": "sha256:6edaf7b6b22d9dfaf6ab077cd1c6517acf5fc6cf96b1ad58fe83bcfd477977ec",
+        "suite_git_sha": "c88d857",
+        "run_id": "a0e4f0ffae12440a826ac40a277f21f3",
+        "cluster_substrate": "gke-sandbox",
+        "sandboxes_ready_under_1s": 9,
+        "density_per_vcpu": 0.45,
+        "n": 10,
+    }
+    row.update(over)
+    return row
+
+
+def test_trend_empty_renders_nothing():
+    # #3918: no history (empty seed) ⇒ no trend section (graceful degradation; the page
+    # never half-renders an empty table).
+    assert render.render_trend([]) == ""
+    assert render.render_trend(None) == ""
+
+
+def test_trend_single_build_is_baseline_no_delta():
+    out = render.render_trend([_hrow()])
+    assert "Throughput — build-over-build" in out
+    assert "`sha256:6edaf7b6b22d…`" in out
+    assert "2026-06-28" in out
+    # baseline row: COUNT present, delta is the em-dash placeholder (no prior build)
+    assert "| 9 | — | 0.45 | 10 |" in out
+
+
+def test_trend_two_builds_show_signed_delta():
+    # #3918 DoD: build-over-build deltas are REAL (computed from the two COUNTs), not asserted.
+    rows = [
+        _hrow(controller_digest="sha256:" + "a" * 64, generated_at="2026-06-27T10:00:00Z",
+              sandboxes_ready_under_1s=9),
+        _hrow(controller_digest="sha256:" + "b" * 64, generated_at="2026-06-28T10:00:00Z",
+              sandboxes_ready_under_1s=14),
+    ]
+    out = render.render_trend(rows)
+    # newer build shows +5 vs the prior build's 9
+    assert "| 14 | +5 | " in out
+    # baseline (older) build still has the em-dash
+    assert "| 9 | — | " in out
+
+
+def test_trend_negative_delta_signed():
+    rows = [
+        _hrow(controller_digest="sha256:" + "a" * 64, generated_at="2026-06-27T10:00:00Z",
+              sandboxes_ready_under_1s=14),
+        _hrow(controller_digest="sha256:" + "b" * 64, generated_at="2026-06-28T10:00:00Z",
+              sandboxes_ready_under_1s=11),
+    ]
+    out = render.render_trend(rows)
+    assert "| 11 | -3 | " in out
+
+
+def test_trend_orders_oldest_first_regardless_of_input_order():
+    rows = [
+        _hrow(controller_digest="sha256:" + "b" * 64, generated_at="2026-06-28T10:00:00Z",
+              sandboxes_ready_under_1s=14),
+        _hrow(controller_digest="sha256:" + "a" * 64, generated_at="2026-06-27T10:00:00Z",
+              sandboxes_ready_under_1s=9),
+    ]
+    out = render.render_trend(rows)
+    # the 2026-06-27 (count 9, baseline) row must precede the 2026-06-28 (count 14) row
+    assert out.index("2026-06-27") < out.index("2026-06-28")
+    assert "| 9 | — | " in out
+    assert "| 14 | +5 | " in out
+
+
+def test_trend_malformed_row_dropped():
+    # A row failing a closed-schema predicate (bad digest) is dropped entirely — same guard
+    # as the per-product render; a malformed history degrades to fewer rows, never a leak.
+    rows = [
+        _hrow(controller_digest="sha256:NOT-HEX-LEAK-MARKER"),
+        _hrow(controller_digest="sha256:" + "c" * 64),
+    ]
+    out = render.render_trend(rows)
+    assert "NOT-HEX-LEAK-MARKER" not in out
+    # exactly one data row survives (one digest cell rendered)
+    assert out.count("`sha256:") == 1
+
+
+def test_trend_missing_field_dropped():
+    bad = _hrow()
+    del bad["sandboxes_ready_under_1s"]
+    out = render.render_trend([bad, _hrow(controller_digest="sha256:" + "d" * 64)])
+    assert out.count("`sha256:") == 1
+
+
+def test_trend_unknown_field_not_rendered():
+    # An extra key beyond the closed schema does not reach the page (closed-schema project).
+    out = render.render_trend([_hrow(internal_note="SYNTHETIC-HISTORY-LEAK")])
+    assert "SYNTHETIC-HISTORY-LEAK" not in out
+
+
 def _run_all():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:

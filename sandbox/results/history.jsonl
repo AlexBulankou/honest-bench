@@ -1,0 +1,1 @@
+{"cluster_substrate": "gke-sandbox", "controller_digest": "sha256:6edaf7b6b22d9dfaf6ab077cd1c6517acf5fc6cf96b1ad58fe83bcfd477977ec", "density_per_vcpu": 0.45, "generated_at": "2026-06-28T14:42:40Z", "n": 10, "run_id": "a0e4f0ffae12440a826ac40a277f21f3", "sandboxes_ready_under_1s": 9.0, "suite_git_sha": "c88d857"}

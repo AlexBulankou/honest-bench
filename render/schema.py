@@ -124,3 +124,28 @@ METRIC_LABELS = {
 # targets file is absent (it never ships to the public repo).
 GOAL_COLUMNS = ("committed", "target", "north-star")
 NON_PUBLIC = "(non-public)"
+
+# Build-over-build throughput history (#3918). One row per distinct controller build
+# (keyed by controller_digest), carrying the headline COUNT so the page can show the
+# build-over-build trajectory alex's #1 directive asks for — not just the latest snapshot.
+# Same closed-schema discipline as the per-product render: a history row renders ONLY these
+# field-names, each validated by its predicate; anything else is dropped on read, so an
+# accrual writer cannot smuggle free-text onto the public page. Every field here is already
+# public-safe (digest/git-sha/run-id/date/generic-substrate/measured-numbers) — no PII,
+# no internal cadence. A row missing any required field, or whose value fails its predicate,
+# is dropped entirely (graceful: a malformed history file degrades to fewer trend rows,
+# never to a leak).
+HISTORY_FIELDS = {
+    "generated_at": lambda v: isinstance(v, str) and bool(_ISO.match(v)),
+    "controller_digest": lambda v: isinstance(v, str) and bool(_SHA256.match(v)),
+    "suite_git_sha": lambda v: isinstance(v, str) and bool(_GITSHA.match(v)),
+    "run_id": lambda v: isinstance(v, str) and bool(_RUNID.match(v)),
+    "cluster_substrate": lambda v: v in CLUSTER_SUBSTRATES,
+    "sandboxes_ready_under_1s": lambda v: isinstance(v, (int, float))
+    and not isinstance(v, bool)
+    and v >= 0,
+    "density_per_vcpu": lambda v: isinstance(v, (int, float))
+    and not isinstance(v, bool)
+    and v >= 0,
+    "n": lambda v: isinstance(v, int) and not isinstance(v, bool) and v >= 0,
+}
