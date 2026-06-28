@@ -116,7 +116,7 @@ def test_live_emitter_when_available():
     # isn't present, so this test file stays runnable in the render-only staging slice.
     import importlib.util
 
-    emitter_path = os.path.join(_ROOT, "sandbox", "harness", "results_schema.py")
+    emitter_path = os.path.join(_ROOT, "harness", "results_schema.py")
     if not os.path.exists(emitter_path):
         print("  (skip: harness emitter not in-tree yet — #3869)")
         return

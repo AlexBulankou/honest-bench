@@ -63,12 +63,25 @@ SANDBOX_CELLS = (
     ),
 )
 
-# Per-product cell suites. Only a registered product is runnable; the substrate
-# axis registers its suite (agent_identity_podcert, ...) here when its modules
-# land at harness/scenarios/ (#3868). Registering an empty/absent product is
-# deliberately NOT done — see cells_for_product.
+# Substrate Phase-1: the agent-identity control-plane presence badge. Needs a real
+# GKE node — the beta Pod-Certificate API surface is not served on vanilla kind —
+# so on a kind run it renders pending(requires-gke) instead of a false FAIL; it
+# goes live on a gke / gke-sandbox substrate (the substrate operator's cluster).
+# The module basename is exactly render/schema.py's SCENARIO_LABELS key, so emitter
+# and renderer share one vocabulary (no closed-schema drop).
+SUBSTRATE_CELLS = (
+    Cell(
+        "agent_identity_podcert",
+        requires_substrate="gke",
+        pending_reason="requires-gke",
+    ),
+)
+
+# Per-product cell suites. Only a registered product is runnable; an empty/absent
+# product is deliberately NOT registered — see cells_for_product.
 CELLS_BY_PRODUCT = {
     "sandbox": SANDBOX_CELLS,
+    "substrate": SUBSTRATE_CELLS,
 }
 
 
@@ -89,10 +102,13 @@ def cells_for_product(product: str) -> tuple[Cell, ...]:
         )
 
 
-# Substrates that satisfy a gVisor-isolation requirement. kind does NOT — its
-# nodes have no runsc — so an isolation cell on kind renders pending.
+# Which substrates satisfy each requirement level. kind has no runsc and does not
+# serve the GKE security API surfaces, so isolation/identity cells render pending
+# on kind. `"gke"` = needs a real GKE node (satisfied by gke AND gke-sandbox);
+# `"gke-sandbox"` = needs gVisor specifically (gke-sandbox only).
 _SUBSTRATE_SATISFIES = {
     None: ("kind", "gke", "gke-sandbox"),
+    "gke": ("gke", "gke-sandbox"),
     "gke-sandbox": ("gke-sandbox",),
 }
 
