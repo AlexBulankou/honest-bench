@@ -76,6 +76,8 @@ BURST_CREATE_POOL_REPLICAS=10      # warm slots == claims fired (raise on a big 
 BURST_CREATE_TTFI_CEILING_S=1.0    # the sub-1s bar
 BURST_CREATE_MIN_QUALIFIED_RATIO=0.8  # PASS iff count >= ceil(K * ratio)
 BURST_CREATE_RUNTIME_CLASS=gvisor  # pin the burst to a RuntimeClass (see below)
+BURST_CREATE_WARMUP_TIMEOUT_S=240  # pool-fill budget; raise for a large gVisor burst
+BURST_CREATE_BIND_TIMEOUT_S=180    # per-claim bind ceiling (cold tail measured, not cut)
 ```
 
 To reproduce a **gVisor-isolated** throughput number, point `kubectl` at a cluster
