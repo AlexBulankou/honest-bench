@@ -74,8 +74,8 @@ def test_inline_emitter_shape_renders_all_six_rows():
             "Warm-pool activation (hit)",
             "Unique-image cold start",
             "Resume from suspend",
-            "Cross-tenant network isolation",
-            "Default-deny egress",
+            "Cross-tenant network isolation (control-plane)",
+            "Default-deny egress (control-plane)",
             "gVisor isolation canary",
         ],
     )

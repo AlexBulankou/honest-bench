@@ -56,11 +56,13 @@ substrate named in each build banner — a `kind` run is labelled `kind`, so a l
 is never presented as a production SLA.
 
 A cell we have not yet measured renders `pending (<reason>)` — never a guess and never a
-false PASS/FAIL. **This is the seed state: every cell currently reads `pending
-(not-yet-measured)` (or a structural reason such as `requires-gvisor-runtime`), and no
-build banner renders because nothing has been measured yet.** The auto-refresh Action
-replaces each pending cell with a real measurement on its first run against a live
-substrate; until then the page honestly shows that the suite has been wired but not run.
+false PASS/FAIL. The **sandbox** table below is measured against a live GKE cluster — the
+`cluster_substrate=gke-sandbox` build banner names the substrate, and the burst-create
+headline was measured with the gVisor (runsc) runtime. The two NetworkPolicy cells are
+qualified `(control-plane)` because a PASS there asserts the policy was admitted and
+correctly targeted, not that data-plane traffic was enforced. The **substrate** table is
+still seed state — every cell reads `pending (not-yet-measured)` until its first measured
+run.
 
 - **Measured (N)** is the value we observed, with the sample size.
 - **Committed / Target / North-Star** render `(non-public)` here by construction — internal

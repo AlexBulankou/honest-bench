@@ -7,11 +7,13 @@ substrate named in each build banner — a `kind` run is labelled `kind`, so a l
 is never presented as a production SLA.
 
 A cell we have not yet measured renders `pending (<reason>)` — never a guess and never a
-false PASS/FAIL. **This is the seed state: every cell currently reads `pending
-(not-yet-measured)` (or a structural reason such as `requires-gvisor-runtime`), and no
-build banner renders because nothing has been measured yet.** The auto-refresh Action
-replaces each pending cell with a real measurement on its first run against a live
-substrate; until then the page honestly shows that the suite has been wired but not run.
+false PASS/FAIL. The **sandbox** table below is measured against a live GKE cluster — the
+`cluster_substrate=gke-sandbox` build banner names the substrate, and the burst-create
+headline was measured with the gVisor (runsc) runtime. The two NetworkPolicy cells are
+qualified `(control-plane)` because a PASS there asserts the policy was admitted and
+correctly targeted, not that data-plane traffic was enforced. The **substrate** table is
+still seed state — every cell reads `pending (not-yet-measured)` until its first measured
+run.
 
 - **Measured (N)** is the value we observed, with the sample size.
 - **Committed / Target / North-Star** render `(non-public)` here by construction — internal
@@ -30,14 +32,16 @@ bash scripts/check-public-safety.sh           # fail-closed public-safety scan
 
 | Scenario | Measured (N) | Committed | Target | North-Star |
 |---|---|---|---|---|
-| Warm-pool activation (hit) | pending (not-yet-measured) (n=0) | (non-public) | (non-public) | (non-public) |
-| Unique-image cold start | pending (not-yet-measured) (n=0) | (non-public) | (non-public) | (non-public) |
-| Resume from suspend | pending (not-yet-measured) (n=0) | (non-public) | (non-public) | (non-public) |
-| Cross-tenant network isolation | pending (requires-gke) (n=0) | (non-public) | (non-public) | (non-public) |
-| Default-deny egress | pending (requires-gke) (n=0) | (non-public) | (non-public) | (non-public) |
-| gVisor isolation canary | pending (requires-gvisor-runtime) (n=0) | (non-public) | (non-public) | (non-public) |
+| Burst create throughput | PASS · Density /vCPU 0.45, Sandboxes ready <1s 9 (n=10) | (non-public) | (non-public) | (non-public) |
+| Warm-pool activation (hit) | PASS · Activation (ms) 553.24 (n=5) | (non-public) | (non-public) | (non-public) |
+| Unique-image cold start | PASS · Cold start (ms) 1670.59 (cold-provision) (n=1) | (non-public) | (non-public) | (non-public) |
+| Resume from suspend | pending (upstream-blocked) (n=0) | (non-public) | (non-public) | (non-public) |
+| gVisor isolation canary | PASS (n=0) | (non-public) | (non-public) | (non-public) |
+| Cross-tenant network isolation (control-plane) | PASS (n=0) | (non-public) | (non-public) | (non-public) |
+| Default-deny egress (control-plane) | PASS (n=0) | (non-public) | (non-public) | (non-public) |
 
-_generated-at: 2026-06-28T03:00:00Z_
+_build: cluster_substrate=gke-sandbox · controller_image=us-central1-docker.pkg.dev/k8s-staging-images/agent-sandbox/agent-sandbox-controller:latest-main · controller_digest=sha256:6edaf7b6b22d9dfaf6ab077cd1c6517acf5fc6cf96b1ad58fe83bcfd477977ec · crd_version=v1beta1 · suite_git_sha=c88d857 · run_id=a0e4f0ffae12440a826ac40a277f21f3 · node_count=3_
+_generated-at: 2026-06-28T14:42:40Z_
 
 ## substrate
 

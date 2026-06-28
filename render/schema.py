@@ -67,8 +67,14 @@ SCENARIO_LABELS = {
     "warmpool_cold_start": "Warm-pool activation (hit)",
     "native_digest_cold": "Unique-image cold start",
     "suspend_resume": "Resume from suspend",
-    "cross_tenant_network_isolation": "Cross-tenant network isolation",
-    "default_deny_egress": "Default-deny egress",
+    # The two NetworkPolicy cells assert CONTROL-PLANE admission only (policy admitted +
+    # correctly targeted), NOT data-plane enforcement — so a PASS here means "the policy was
+    # accepted", not "traffic was actually blocked". The (control-plane) qualifier keeps the
+    # public badge from over-claiming enforcement; the data-plane scope-qualifier is #3905.
+    # gvisor_canary is NOT qualified — it is a genuine runtime-class enforcement check
+    # (asserts pod.spec.runtimeClassName == gvisor, phase Running).
+    "cross_tenant_network_isolation": "Cross-tenant network isolation (control-plane)",
+    "default_deny_egress": "Default-deny egress (control-plane)",
     "gvisor_canary": "gVisor isolation canary",
     # substrate MVP
     "cold_reconcile": "Cold reconcile",
