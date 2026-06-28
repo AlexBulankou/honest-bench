@@ -29,14 +29,22 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _HERE)
 
 
-def _load_render_product():
+def _load_render():
     spec = importlib.util.spec_from_file_location("_bench_render", os.path.join(_HERE, "render.py"))
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
-    return mod.render_product
+    return mod.render_product, mod.render_trend
 
 
-render_product = _load_render_product()
+render_product, render_trend = _load_render()
+
+# Build-over-build throughput history (#3918), relative to the repo root. The page renders
+# only the per-product latest.json snapshot, so it can show today's COUNT but not the
+# trajectory alex's #1 directive asks for. This file (sole-writer: render.accrue_history,
+# one upsert-by-digest row per distinct controller build) carries that trajectory; the trend
+# table is appended after the sandbox table. Absent ⇒ no trend section (graceful degradation
+# on the empty-history seed), so the page never half-renders.
+_HISTORY_REL = "sandbox/results/history.jsonl"
 
 # Product -> results path, relative to the repo root (parent of render/).
 # The PUBLIC customer page is SANDBOX-ONLY (alex 2026-06-28): substrate demotes from a
@@ -92,8 +100,34 @@ def _repo_root():
     return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
+def _load_history(root):
+    """Read history.jsonl into a list of dicts (malformed lines dropped); [] if absent.
+
+    render.render_trend re-validates every row through the closed schema, so a malformed line
+    that survives JSON parsing here is still dropped at render — this is parse-only.
+    """
+    path = os.path.join(root, _HISTORY_REL)
+    rows = []
+    if not os.path.exists(path):
+        return rows
+    with open(path) as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rows.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    return rows
+
+
 def build_readme(root=None):
-    """Return the full README text: preamble + each present product's rendered table."""
+    """Return the full README text: preamble + each present product's rendered table.
+
+    The build-over-build throughput trend (#3918) is appended after the sandbox table when a
+    non-empty history is present; absent/empty history renders no trend section.
+    """
     root = root or _repo_root()
     sections = [_PREAMBLE.rstrip()]
     for product, rel in _PRODUCTS:
@@ -103,6 +137,9 @@ def build_readme(root=None):
         with open(path) as fh:
             results = json.load(fh)
         sections.append(render_product(results).rstrip())
+    trend = render_trend(_load_history(root))
+    if trend.strip():
+        sections.append(trend.rstrip())
     return "\n\n".join(sections) + "\n"
 
 

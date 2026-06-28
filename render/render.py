@@ -16,6 +16,7 @@ import sys
 from schema import (
     BADGE_SCOPES,
     GOAL_COLUMNS,
+    HISTORY_FIELDS,
     METRIC_LABELS,
     NON_PUBLIC,
     OUTCOMES,
@@ -179,6 +180,84 @@ def render_product(results):
         lines.append(f"_generated-at: {gen}_")
     if dropped:
         lines.append(f"_rows dropped by closed-schema guard: {dropped}_")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _clean_history(rows):
+    """Closed-schema-validate history rows, drop any that fail, sort by generated_at.
+
+    Same discipline as the per-product render: a row renders ONLY HISTORY_FIELDS keys, each
+    passing its predicate; a row missing a field or failing a predicate is dropped entirely
+    (a malformed history file degrades to fewer trend rows, never to a leak).
+    """
+    clean = []
+    if not isinstance(rows, list):
+        return clean
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        ok_all = True
+        out = {}
+        for key, ok in HISTORY_FIELDS.items():
+            if key not in r:
+                ok_all = False
+                break
+            try:
+                if not ok(r[key]):
+                    ok_all = False
+                    break
+            except (TypeError, ValueError):
+                ok_all = False
+                break
+            out[key] = r[key]
+        if ok_all:
+            clean.append(out)
+    clean.sort(key=lambda r: r["generated_at"])
+    return clean
+
+
+def render_trend(history_rows):
+    """Render the build-over-build THROUGHPUT-COUNT trend table (#3918), or "" if empty.
+
+    One row per distinct controller build (the accrual store is upsert-by-digest), oldest →
+    newest. The headline COUNT (sandboxes ready <1s in one 1.0s burst against one warm pool)
+    carries a delta-vs-prior-build column — the build-over-build trajectory alex's #1 directive
+    asks for, which a single latest.json snapshot cannot show. First build is the baseline
+    (delta "—"); every later build shows the signed change in COUNT vs the build before it.
+    """
+    rows = _clean_history(history_rows)
+    if not rows:
+        return ""
+    lines = [
+        "## Throughput — build-over-build",
+        "",
+        "The headline COUNT — sandboxes ready in <1s in a single 1.0s burst against one warm",
+        "pool — tracked across distinct controller builds (oldest first). **Δ** is the change in",
+        "COUNT vs the prior build; the first build is the baseline. Drive this COUNT up.",
+        "",
+    ]
+    header = ["Build (controller digest)", "Date", "Sandboxes ready <1s", "Δ", "Density /vCPU", "n"]
+    lines.append("| " + " | ".join(header) + " |")
+    lines.append("|" + "|".join(["---"] * len(header)) + "|")
+    prev = None
+    for r in rows:
+        count = r["sandboxes_ready_under_1s"]
+        if prev is None:
+            delta = "—"
+        else:
+            d = count - prev
+            delta = f"+{d:g}" if d >= 0 else f"{d:g}"
+        prev = count
+        cells = [
+            f"`{r['controller_digest'][:19]}…`",
+            r["generated_at"][:10],
+            f"{count:g}",
+            delta,
+            f"{r['density_per_vcpu']:g}",
+            f"{r['n']:g}",
+        ]
+        lines.append("| " + " | ".join(cells) + " |")
     lines.append("")
     return "\n".join(lines)
 

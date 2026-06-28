@@ -47,3 +47,13 @@ bash scripts/check-public-safety.sh           # fail-closed public-safety scan
 
 _build: cluster_substrate=gke-sandbox · controller_image=us-central1-docker.pkg.dev/k8s-staging-images/agent-sandbox/agent-sandbox-controller:latest-main · controller_digest=sha256:6edaf7b6b22d9dfaf6ab077cd1c6517acf5fc6cf96b1ad58fe83bcfd477977ec · crd_version=v1beta1 · suite_git_sha=c88d857 · run_id=a0e4f0ffae12440a826ac40a277f21f3 · node_count=3_
 _generated-at: 2026-06-28T14:42:40Z_
+
+## Throughput — build-over-build
+
+The headline COUNT — sandboxes ready in <1s in a single 1.0s burst against one warm
+pool — tracked across distinct controller builds (oldest first). **Δ** is the change in
+COUNT vs the prior build; the first build is the baseline. Drive this COUNT up.
+
+| Build (controller digest) | Date | Sandboxes ready <1s | Δ | Density /vCPU | n |
+|---|---|---|---|---|---|
+| `sha256:6edaf7b6b22d…` | 2026-06-28 | 9 | — | 0.45 | 10 |
