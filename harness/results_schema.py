@@ -49,6 +49,14 @@ PENDING_REASON_ENUM = (
 # proven. Optional in provenance — dropped when absent, fail-closed when present.
 COLD_START_MODE_ENUM = ("cold-provision", "cold-pull")
 
+# badge_scope (#3905) — a per-SCENARIO closed enum qualifying what a security-isolation
+# PASS asserts: "control-plane" = the policy/runtime-class was admitted and correctly
+# targeted (NOT data-plane traffic enforcement); "enforced" = data-plane enforcement was
+# actually exercised. It renders as a suffix on the scenario's PASS cell so the public
+# badge cannot over-claim enforcement. Optional per-scenario — dropped when absent,
+# fail-closed when present (a non-enum value is a misconfiguration, not a leak).
+BADGE_SCOPE_ENUM = ("control-plane", "enforced")
+
 PROVENANCE_FIELDS = (
     "cluster_substrate",
     "controller_image",
@@ -59,7 +67,7 @@ PROVENANCE_FIELDS = (
     "node_count",
     "cold_start_mode",
 )
-SCENARIO_FIELDS = ("name", "outcome", "pending_reason", "n", "sla_metrics")
+SCENARIO_FIELDS = ("name", "outcome", "pending_reason", "badge_scope", "n", "sla_metrics")
 
 # sla_metric keys must be machine-readable metric names: lowercase alphanumerics
 # separated by underscore or hyphen. No spaces, colons, slashes, or dots — a
@@ -120,6 +128,17 @@ def _coerce_scenario(raw: dict) -> dict:
                 f"{PENDING_REASON_ENUM}, got {reason!r}"
             )
         out["pending_reason"] = reason
+
+    # badge_scope is optional and per-scenario; when present it MUST be in the closed
+    # enum (fail-closed — a non-enum value is a misconfiguration, not a leak, mirroring
+    # cold_start_mode). Dropped silently when absent so non-isolation cells stay clean.
+    scope = raw.get("badge_scope")
+    if scope is not None:
+        if scope not in BADGE_SCOPE_ENUM:
+            raise ValueError(
+                f"scenario {name!r}: badge_scope {scope!r} not in {BADGE_SCOPE_ENUM}"
+            )
+        out["badge_scope"] = scope
 
     n = raw.get("n")
     if isinstance(n, bool):

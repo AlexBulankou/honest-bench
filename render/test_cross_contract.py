@@ -49,8 +49,8 @@ _EMITTER_SHAPE_SANDBOX = {
         {"name": "warmpool_cold_start", "outcome": "PASS", "n": 20, "sla_metrics": {"activation_ms": 180}},
         {"name": "native_digest_cold", "outcome": "PASS", "n": 20, "sla_metrics": {"cold_start_ms": 4200}},
         {"name": "suspend_resume", "outcome": "PASS", "n": 20, "sla_metrics": {"resume_ms": 950}},
-        {"name": "cross_tenant_network_isolation", "outcome": "PASS", "n": 12},
-        {"name": "default_deny_egress", "outcome": "PASS", "n": 12},
+        {"name": "cross_tenant_network_isolation", "outcome": "PASS", "badge_scope": "control-plane", "n": 12},
+        {"name": "default_deny_egress", "outcome": "PASS", "badge_scope": "control-plane", "n": 12},
         {"name": "gvisor_canary", "outcome": "pending", "pending_reason": "requires-gvisor-runtime", "n": 0},
     ],
 }
@@ -74,13 +74,16 @@ def test_inline_emitter_shape_renders_all_six_rows():
             "Warm-pool activation (hit)",
             "Unique-image cold start",
             "Resume from suspend",
-            "Cross-tenant network isolation (control-plane)",
-            "Default-deny egress (control-plane)",
+            "Cross-tenant network isolation",
+            "Default-deny egress",
             "gVisor isolation canary",
         ],
     )
     # the pending canary renders its enum reason, never a guess or a false FAIL
     assert "pending (requires-gvisor-runtime)" in out
+    # #3905: the isolation badge_scope rides the cell, data-driven, not the label
+    assert "PASS (control-plane)" in out
+    assert "Cross-tenant network isolation (control-plane)" not in out
     # goal columns are (non-public) for every one of the six rows
     assert out.count("(non-public)") == 6 * 3
     # #3894: the emitter's cold_start_mode carries through to the cold-start cell label —
