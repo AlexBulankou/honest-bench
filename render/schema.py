@@ -79,8 +79,10 @@ SCENARIO_LABELS = {
 # sla metric-name -> display label. Unknown metric keys are dropped; values must be numeric.
 METRIC_LABELS = {
     # HB headline (alex 2026-06-28): the count metric, not single-sandbox latency.
-    # "X sandboxes ready in <1s" measured per-node; density is the portable per-vCPU scale.
-    "sandboxes_ready_under_1s": "Sandboxes ready <1s (per node)",
+    # "X sandboxes ready in <1s" = the whole-burst count of claims against ONE warm
+    # pool that cleared the sub-1s bar (NOT divided by node count); density is the
+    # portable per-vCPU scale (count / total cluster vCPU).
+    "sandboxes_ready_under_1s": "Sandboxes ready <1s",
     "density_per_vcpu": "Density /vCPU",
     "activation_ms": "Activation (ms)",
     "cold_start_ms": "Cold start (ms)",
