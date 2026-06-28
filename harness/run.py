@@ -102,6 +102,57 @@ def _run_one(cell, substrate: str) -> dict:
     return raw
 
 
+def merge_seed_placeholders(raw: list[dict], prior_scenarios) -> list[dict]:
+    """Carry forward hand-seeded `pending` placeholder rows for cells the current
+    suite does not register, so a partial run does not silently drop them (#3909).
+
+    The runner writes `<product>/results/latest.json` wholesale, emitting only the
+    cells the registered suite produced. When that suite is a SUBSET of the
+    hand-seeded file (e.g. `--product substrate` registers 1 of 3 seeded cells), the
+    unregistered placeholders would vanish from the public render — both names are in
+    render's vocabulary, so it is a real lost row, not just a JSON-file diff. This
+    appends each seeded row whose name is NOT in the freshly-run set, but ONLY when
+    its outcome is `pending`: a stale measured (PASS/FAIL) row is never resurrected,
+    and a registered cell always wins via its fresh run. The carried rows still pass
+    through the closed-schema emitter (`build_results`), so honest-by-construction is
+    preserved — a carried row that is not a valid pending cell raises there, it is
+    never silently published.
+
+    Fresh rows keep their suite order; carried placeholders are appended in seed
+    order. This is a NO-OP whenever the seed names all equal the registered cells
+    (the sandbox case today), and becomes a no-op for substrate too once its two
+    perf cells register — so it never conflicts with building the real cells.
+    """
+    fresh_names = {r["name"] for r in raw if isinstance(r.get("name"), str)}
+    carried: list[dict] = []
+    if isinstance(prior_scenarios, list):
+        for s in prior_scenarios:
+            if not isinstance(s, dict):
+                continue
+            name = s.get("name")
+            outcome = s.get("outcome")
+            if not isinstance(name, str) or name in fresh_names:
+                continue
+            if not isinstance(outcome, str) or outcome.lower() != "pending":
+                continue
+            carried.append(s)
+    return raw + carried
+
+
+def _read_prior_scenarios(out_path: pathlib.Path) -> list:
+    """Read the existing results file's scenarios list (for the seed-merge above).
+
+    Best-effort: a missing or malformed file means there is nothing to preserve, so
+    return [] rather than failing the run.
+    """
+    try:
+        prior = json.loads(out_path.read_text())
+    except (FileNotFoundError, ValueError):
+        return []
+    scen = prior.get("scenarios") if isinstance(prior, dict) else None
+    return scen if isinstance(scen, list) else []
+
+
 def run_suite(cells, substrate: str) -> list[dict]:
     raw = []
     for cell in cells:
@@ -158,17 +209,20 @@ def main(argv=None) -> int:
     # --product can never overwrite a hand-seeded <product>/results/latest.json.
     cells = cells_for_product(args.product)
     substrate = detect_substrate()
-    log.info("running %s suite on substrate=%s", args.product, substrate)
-    raw = run_suite(cells, substrate)
-    results = results_schema.build_results(
-        raw, build_provenance(substrate), generated_at=_now_iso(), product=args.product
-    )
-
     out = (
         pathlib.Path(args.out)
         if args.out
         else pathlib.Path(__file__).resolve().parent.parent / args.product / "results" / "latest.json"
     )
+    log.info("running %s suite on substrate=%s", args.product, substrate)
+    raw = run_suite(cells, substrate)
+    # Preserve hand-seeded pending placeholders for cells this suite does not yet
+    # register (#3909) — read BEFORE the wholesale write below, which would drop them.
+    raw = merge_seed_placeholders(raw, _read_prior_scenarios(out))
+    results = results_schema.build_results(
+        raw, build_provenance(substrate), generated_at=_now_iso(), product=args.product
+    )
+
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(results, indent=2, sort_keys=True) + "\n")
     log.info("wrote %d scenario cells to %s", len(results["scenarios"]), out)
