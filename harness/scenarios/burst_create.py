@@ -157,6 +157,21 @@ def _build_template_manifest(template_name: str) -> dict:
     }
     if _RUNTIME_CLASS:
         pod_spec["runtimeClassName"] = _RUNTIME_CLASS
+        # GKE Sandbox taints its gVisor node pool sandbox.gke.io/runtime=<rc>:NoSchedule
+        # so non-sandboxed Pods can't land there. A Pod pinned to the gVisor runtime
+        # must tolerate that taint or it stays Pending — the warm pool would never
+        # fill and the burst would crash-FAIL. We add the toleration ourselves rather
+        # than rely on GKE's admission webhook auto-injecting it: a belt-and-suspenders
+        # no-op if GKE also injects it, necessary if it doesn't. Gated on _RUNTIME_CLASS
+        # so a vanilla-kind run (no such taint) is unaffected, and operator=Exists keys
+        # only on the taint key so any value (gvisor / gvisor-experimental) is covered.
+        pod_spec["tolerations"] = [
+            {
+                "key": "sandbox.gke.io/runtime",
+                "operator": "Exists",
+                "effect": "NoSchedule",
+            },
+        ]
     return {
         "apiVersion": ext_api_version(),
         "kind": "SandboxTemplate",
