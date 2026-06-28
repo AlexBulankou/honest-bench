@@ -54,6 +54,42 @@ UPSTREAM_REF=<git-sha-from-banner> IMAGE_TAG=<vYYYYMMDD-...-main-from-banner> \
   bash recipe/install-controller-from-main.sh
 ```
 
+## The headline cell: burst-create throughput
+
+`burst_create` answers the headline question — **how many sandboxes go Ready in
+under one second, in a burst, against a warm pool**. It provisions a
+`SandboxWarmPool` of K slots, waits for it to fill, fires K `SandboxClaim`s, and
+measures each claim's time-to-first-instruction (Ready+bound) from its own create
+time. It publishes two numbers:
+
+- **`sandboxes_ready_under_1s`** — the count of claims that cleared the sub-1s bar
+  (a count, not a rate: each TTFI is per-claim, so a serial create loop never eats
+  a later claim's budget).
+- **`density_per_vcpu`** — that count divided by the cluster's total capacity vCPU,
+  so the magnitude is comparable across runner hardware.
+
+It runs on any substrate (`requires_substrate=None`), so the portable `kind` path
+above measures it for real. Tunables (all env, all optional):
+
+```bash
+BURST_CREATE_POOL_REPLICAS=10      # warm slots == claims fired (raise on a big cluster)
+BURST_CREATE_TTFI_CEILING_S=1.0    # the sub-1s bar
+BURST_CREATE_MIN_QUALIFIED_RATIO=0.8  # PASS iff count >= ceil(K * ratio)
+BURST_CREATE_RUNTIME_CLASS=gvisor  # pin the burst to a RuntimeClass (see below)
+```
+
+To reproduce a **gVisor-isolated** throughput number, point `kubectl` at a cluster
+whose nodes have the gVisor runtime (e.g. a GKE node pool created with
+`--enable-sandbox=type=gvisor`, which installs a `gvisor` RuntimeClass), then:
+
+```bash
+BURST_CREATE_RUNTIME_CLASS=gvisor python3 -m harness.run
+```
+
+Every pod in the pool is then pinned to that RuntimeClass, so the published count
+is real gVisor throughput; the build banner's `cluster_substrate` records the
+substrate so a `kind` (runc) number is never mistaken for a `gke-sandbox` one.
+
 ## Reading the output
 
 - **Measured cells** are real latencies / outcomes from your run.

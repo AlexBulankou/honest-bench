@@ -4,6 +4,12 @@
   "provenance": {},
   "scenarios": [
     {
+      "name": "burst_create",
+      "outcome": "pending",
+      "pending_reason": "not-yet-measured",
+      "n": 0
+    },
+    {
       "name": "warmpool_cold_start",
       "outcome": "pending",
       "pending_reason": "not-yet-measured",
