@@ -82,4 +82,3 @@ jobs:
           add-paths: |
             sandbox/results/latest.json
             README.md
-            sandbox/README.md
