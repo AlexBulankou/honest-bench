@@ -63,6 +63,7 @@ PROVENANCE_FIELDS = {
 # vocabulary is DROPPED (and counted), so an unexpected harness name can never render.
 SCENARIO_LABELS = {
     # sandbox MVP
+    "burst_create": "Burst create throughput",
     "warmpool_cold_start": "Warm-pool activation (hit)",
     "native_digest_cold": "Unique-image cold start",
     "suspend_resume": "Resume from suspend",
@@ -77,6 +78,10 @@ SCENARIO_LABELS = {
 
 # sla metric-name -> display label. Unknown metric keys are dropped; values must be numeric.
 METRIC_LABELS = {
+    # HB headline (alex 2026-06-28): the count metric, not single-sandbox latency.
+    # "X sandboxes ready in <1s" measured per-node; density is the portable per-vCPU scale.
+    "sandboxes_ready_under_1s": "Sandboxes ready <1s (per node)",
+    "density_per_vcpu": "Density /vCPU",
     "activation_ms": "Activation (ms)",
     "cold_start_ms": "Cold start (ms)",
     "reconcile_ms": "Reconcile (ms)",

@@ -230,6 +230,26 @@ def test_bad_generated_at_dropped():
     assert "ask alex" not in out
 
 
+def test_burst_throughput_headline_renders():
+    # alex 2026-06-28 HB headline: per-node burst count + per-vCPU density (count, not latency).
+    out = _render(
+        {
+            "product": "sandbox",
+            "scenarios": [
+                {
+                    "name": "burst_create",
+                    "outcome": "PASS",
+                    "n": 200,
+                    "sla_metrics": {"sandboxes_ready_under_1s": 4, "density_per_vcpu": 1.88},
+                }
+            ],
+        }
+    )
+    assert "Burst create throughput" in out
+    assert "Sandboxes ready <1s (per node) 4" in out
+    assert "Density /vCPU 1.88" in out
+
+
 def _run_all():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:
