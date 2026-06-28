@@ -21,9 +21,11 @@ PATTERNS=(
   '\bcl/[0-9]{4,}|internal cl/ changelist'
   '[A-Za-z0-9.-]*\.googleplex\.com|internal *.googleplex.com host'
   'paste\.googleplex|internal paste link'
-  'substrate-demo-cluster|internal cluster name'
-  'sandbox-scenarios-cluster|internal cluster name'
-  'postgres-obs-0|internal obs-Postgres host'
+  # NOTE: SPECIFIC internal resource names (individual cluster names, obs-host pod names,
+  # project ids) are intentionally NOT enumerated here. Per the header, this 2a file holds
+  # only GENERIC structural patterns; specific names are the our-side pre-publish gate's
+  # job. Listing the literal names in this PUBLIC file would ship the very strings it
+  # guards — and the scanner cannot scan itself, so it could never catch that self-leak.
   'postgres(ql)?://|database DSN'
   'ya29\.[A-Za-z0-9_-]+|OAuth access token'
   'BEGIN [A-Z ]*PRIVATE KEY|private key block'
