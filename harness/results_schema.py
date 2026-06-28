@@ -15,7 +15,11 @@ from __future__ import annotations
 
 from numbers import Real
 
-PRODUCT = "sandbox"
+# Closed product vocabulary — render/schema.py's PRODUCTS shares this set. A product
+# outside it is a real bug (fail-closed), not a drop. DEFAULT_PRODUCT keeps the
+# sandbox suite the zero-arg default so existing callers are unchanged.
+PRODUCT_ENUM = ("sandbox", "substrate")
+DEFAULT_PRODUCT = "sandbox"
 
 # Closed value-sets. A value outside the set is a real bug, not a leak, so the
 # emitter fails closed (raises) rather than silently dropping the field.
@@ -169,19 +173,24 @@ def _coerce_provenance(raw: dict) -> dict:
     return out
 
 
-def build_results(scenario_outcomes, provenance, generated_at: str) -> dict:
+def build_results(scenario_outcomes, provenance, generated_at: str,
+                  product: str = DEFAULT_PRODUCT) -> dict:
     """Assemble the closed-schema results dict.
 
     `scenario_outcomes` is the loop's per-scenario dicts (any extra keys dropped);
     `provenance` carries the substrate-aware run context; `generated_at` is an
     ISO-8601 UTC string supplied by the caller (kept out of here so this stays
-    pure/clockless and unit-testable).
+    pure/clockless and unit-testable); `product` selects the closed product label
+    (defaults to sandbox so existing callers are unchanged) and is validated against
+    PRODUCT_ENUM fail-closed — a non-enum product is a misconfiguration, not a leak.
     """
     if not isinstance(generated_at, str) or not generated_at:
         raise ValueError("generated_at must be a non-empty ISO-8601 UTC string")
+    if product not in PRODUCT_ENUM:
+        raise ValueError(f"product {product!r} not in {PRODUCT_ENUM}")
 
     return {
-        "product": PRODUCT,
+        "product": product,
         "generated_at": generated_at,
         "provenance": _coerce_provenance(provenance),
         "scenarios": [_coerce_scenario(s) for s in scenario_outcomes],

@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """Portable benchmark harness — single in-process scenario loop.
 
-A stranger can `git clone && python3 -m sandbox.harness.run` against whatever
-cluster their KUBECONFIG points at (kind default, or their own GKE / GKE-Sandbox)
-and reproduce every cell of the sandbox page. Honest by construction: the README
-cells are machine-rendered from the `results/latest.json` this writes; no hand
-numbers.
+A stranger can `git clone && python3 -m harness.run` against whatever cluster their
+KUBECONFIG points at (kind default, or their own GKE / GKE-Sandbox) and reproduce
+every cell of a product's page. `--product` selects the suite (default: sandbox);
+its results are written to `<product>/results/latest.json`. Honest by construction:
+the README cells are machine-rendered from that file; no hand numbers.
 
 This replaces the four internal bindings of the in-cluster runner with portable
 equivalents:
@@ -32,11 +32,11 @@ import pathlib
 import uuid
 
 from . import results_schema
-from .scenario_map import MVP_CELLS, substrate_satisfies
+from .scenario_map import cells_for_product, substrate_satisfies
 
-log = logging.getLogger("sandbox-harness")
+log = logging.getLogger("bench-harness")
 
-_SCENARIOS_PKG = "sandbox.harness.scenarios"
+_SCENARIOS_PKG = "harness.scenarios"
 
 
 def _now_iso() -> str:
@@ -102,9 +102,9 @@ def _run_one(cell, substrate: str) -> dict:
     return raw
 
 
-def run_suite(substrate: str) -> list[dict]:
+def run_suite(cells, substrate: str) -> list[dict]:
     raw = []
-    for cell in MVP_CELLS:
+    for cell in cells:
         try:
             raw.append(_run_one(cell, substrate))
         except Exception as exc:  # a scenario crash is a FAIL cell, not a suite abort
@@ -135,23 +135,40 @@ def build_provenance(substrate: str) -> dict:
 
 
 def main(argv=None) -> int:
-    ap = argparse.ArgumentParser(description="portable sandbox benchmark harness")
+    ap = argparse.ArgumentParser(description="portable benchmark harness")
+    ap.add_argument(
+        "--product",
+        default=results_schema.DEFAULT_PRODUCT,
+        choices=results_schema.PRODUCT_ENUM,
+        help="which product's scenario suite to run (default: sandbox)",
+    )
     ap.add_argument(
         "--out",
-        default=str(pathlib.Path(__file__).resolve().parent.parent / "results" / "latest.json"),
-        help="path to write results/latest.json",
+        default=None,
+        help=(
+            "path to write <product>/results/latest.json "
+            "(default: derived from --product)"
+        ),
     )
     args = ap.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
+    # Resolve the cell suite BEFORE touching the cluster — an unregistered product
+    # raises here (SystemExit) and never reaches the write path, so a typo'd
+    # --product can never overwrite a hand-seeded <product>/results/latest.json.
+    cells = cells_for_product(args.product)
     substrate = detect_substrate()
-    log.info("running MVP suite on substrate=%s", substrate)
-    raw = run_suite(substrate)
+    log.info("running %s suite on substrate=%s", args.product, substrate)
+    raw = run_suite(cells, substrate)
     results = results_schema.build_results(
-        raw, build_provenance(substrate), generated_at=_now_iso()
+        raw, build_provenance(substrate), generated_at=_now_iso(), product=args.product
     )
 
-    out = pathlib.Path(args.out)
+    out = (
+        pathlib.Path(args.out)
+        if args.out
+        else pathlib.Path(__file__).resolve().parent.parent / args.product / "results" / "latest.json"
+    )
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(json.dumps(results, indent=2, sort_keys=True) + "\n")
     log.info("wrote %d scenario cells to %s", len(results["scenarios"]), out)

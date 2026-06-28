@@ -1,9 +1,16 @@
-"""MVP scenario map — public benchmark cell -> portable scenario module.
+"""Scenario map — public benchmark cell -> portable scenario module, per product.
 
 The harness is subtraction, not rewrite: it reuses the existing scenario bodies
 (stripped of their four internal bindings — see harness README) and drives them
-through one in-process loop. This map is the single source of which cells the
-Phase-1 matrix renders and which module produces each.
+through one in-process loop. This map is the single source of which cells each
+product's matrix renders and which module produces each.
+
+Per-product: `CELLS_BY_PRODUCT` keys a closed cell-suite per product, and
+`cells_for_product()` is the only accessor. A product with no registered suite is
+NOT runnable — the accessor raises rather than returning an empty tuple — so
+`run --product X` can never overwrite a hand-seeded `X/results/latest.json` with an
+empty scenarios list. The substrate axis (agent_identity_podcert, ...) registers
+its suite here when its modules land (#3868).
 
 `requires_substrate` encodes the kind-vs-GKE portability fact: these isolation
 cells need a `gke-sandbox` node, which vanilla kind lacks, so on a `kind` run they
@@ -30,10 +37,10 @@ class Cell:
     pending_reason: str | None = None      # rendered when substrate unmet
 
 
-# Phase-1 MVP: the perf matrix + the isolation badges. The module basenames are
-# exactly render/schema.py's sandbox SCENARIO_LABELS keys — converging the emitter
+# Sandbox Phase-1 MVP: the perf matrix + the isolation badges. The module basenames
+# are exactly render/schema.py's sandbox SCENARIO_LABELS keys — converging the emitter
 # and renderer on one vocabulary so every measured row renders (no closed-schema drop).
-MVP_CELLS = (
+SANDBOX_CELLS = (
     # --- perf matrix (substrate-agnostic: run on kind, gke, or gke-sandbox) ---
     Cell("warmpool_cold_start"),
     Cell("native_digest_cold"),
@@ -55,6 +62,32 @@ MVP_CELLS = (
         pending_reason="requires-gke",
     ),
 )
+
+# Per-product cell suites. Only a registered product is runnable; the substrate
+# axis registers its suite (agent_identity_podcert, ...) here when its modules
+# land at harness/scenarios/ (#3868). Registering an empty/absent product is
+# deliberately NOT done — see cells_for_product.
+CELLS_BY_PRODUCT = {
+    "sandbox": SANDBOX_CELLS,
+}
+
+
+def cells_for_product(product: str) -> tuple[Cell, ...]:
+    """Return the cell suite for `product`; raise if none is registered.
+
+    Raising (rather than returning ()) is load-bearing: an empty suite would make
+    the runner emit a zero-scenario results.json and OVERWRITE a hand-seeded
+    `<product>/results/latest.json`. Failing closed protects that seed until a real
+    suite is registered above.
+    """
+    try:
+        return CELLS_BY_PRODUCT[product]
+    except KeyError:
+        raise SystemExit(
+            f"no harness cells registered for product {product!r}; "
+            f"registered products: {sorted(CELLS_BY_PRODUCT)}"
+        )
+
 
 # Substrates that satisfy a gVisor-isolation requirement. kind does NOT — its
 # nodes have no runsc — so an isolation cell on kind renders pending.

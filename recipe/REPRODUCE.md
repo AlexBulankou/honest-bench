@@ -31,7 +31,7 @@ kind create cluster
 bash recipe/install-controller-from-main.sh
 
 # 2. run the portable suite — writes sandbox/results/latest.json
-python3 -m sandbox.harness.run
+python3 -m harness.run
 
 # 3. regenerate the README table from the results you just produced
 python3 -m render.generate

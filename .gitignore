@@ -1,0 +1,3 @@
+# Python bytecode caches — never tracked
+__pycache__/
+*.py[cod]

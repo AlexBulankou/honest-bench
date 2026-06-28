@@ -21,7 +21,7 @@ Reproduce any row yourself — the suite is honest by construction:
 
 ```
 bash recipe/install-controller-from-main.sh   # OSS controller from upstream main
-python3 -m sandbox.harness.run                # run the portable suite (substrate=kind)
+python3 -m harness.run                        # run the portable suite (substrate=kind)
 python3 -m render.generate                    # regenerate these tables
 bash scripts/check-public-safety.sh           # fail-closed public-safety scan
 ```

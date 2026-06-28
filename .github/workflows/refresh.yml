@@ -37,7 +37,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install harness deps
-        run: pip install -r sandbox/harness/requirements.txt
+        run: pip install -r harness/requirements.txt
 
       - name: Create kind cluster
         uses: helm/kind-action@v1
@@ -59,7 +59,7 @@ jobs:
           # published cold_start_ms represents — honest-by-construction.
           NATIVE_DIGEST_COLD_SANDBOX_IMAGE: python:3.12-slim
           BENCH_NATIVE_DIGEST_COLD_MODE: cold-pull
-        run: python3 -m sandbox.harness.run
+        run: python3 -m harness.run --product sandbox
 
       - name: Render README tables from results
         run: python3 -m render.generate

@@ -2,7 +2,7 @@
 
 Run: `python3 test_cross_contract.py` (exit 0 = pass). Dependency-free.
 
-Why this exists: the harness emitter (sandbox/harness/, #3869) and the render closed schema
+Why this exists: the harness emitter (harness/, #3869) and the render closed schema
 (schema.py) are two INDEPENDENT closed vocabularies. If they drift, the public README renders
 an EMPTY table (every row silently dropped by the closed-schema guard) — the failure mode found
 when an unported emitter shape was first fed through render_product (2 rows dropped, blank table).

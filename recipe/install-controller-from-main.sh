@@ -124,4 +124,4 @@ case "$LIVE_ARGS" in
 esac
 
 log "installed agent-sandbox controller from upstream ${UPSTREAM_REF} (image tag ${IMAGE_TAG}, sha ${RESOLVED_SHA})"
-log "next: python3 -m sandbox.harness.run   # run the portable suite (substrate=kind)"
+log "next: python3 -m harness.run   # run the portable suite (substrate=kind)"
