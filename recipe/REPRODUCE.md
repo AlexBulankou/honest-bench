@@ -82,15 +82,33 @@ BURST_CREATE_BIND_TIMEOUT_S=180    # per-claim bind ceiling (cold tail measured,
 
 To reproduce a **gVisor-isolated** throughput number, point `kubectl` at a cluster
 whose nodes have the gVisor runtime (e.g. a GKE node pool created with
-`--enable-sandbox=type=gvisor`, which installs a `gvisor` RuntimeClass), then:
+`--enable-sandbox=type=gvisor`, which installs a `gvisor` RuntimeClass), then set
+**both** env vars:
 
 ```bash
-BURST_CREATE_RUNTIME_CLASS=gvisor python3 -m harness.run
+BENCH_CLUSTER_SUBSTRATE=gke-sandbox BURST_CREATE_RUNTIME_CLASS=gvisor \
+  python3 -m harness.run
 ```
 
-Every pod in the pool is then pinned to that RuntimeClass, so the published count
-is real gVisor throughput; the build banner's `cluster_substrate` records the
-substrate so a `kind` (runc) number is never mistaken for a `gke-sandbox` one.
+`BENCH_CLUSTER_SUBSTRATE` is load-bearing and not optional here. The harness does
+**not** auto-detect the substrate from your cluster yet (that is a planned
+integration seam); today the build banner's `cluster_substrate` is exactly what
+you set in this env var. So if you point `kubectl` at a gke-sandbox cluster but
+leave `BENCH_CLUSTER_SUBSTRATE` unset, it defaults to `kind` and a real gVisor
+run is published mislabelled `cluster_substrate=kind` — under-claiming, but still
+a wrong banner.
+
+Setting `BENCH_CLUSTER_SUBSTRATE=gke-sandbox` also arms a consistency guard: the
+burst-create cell refuses to publish a `gke-sandbox`-labelled result unless
+`BURST_CREATE_RUNTIME_CLASS=gvisor` is set (it crash-fails fast with that
+message), and it reads back the live backing pods to confirm each one actually
+landed on the `gvisor` RuntimeClass — so a `gvisor` RuntimeClass that silently
+fell back to runc is caught rather than shipped as a gVisor headline.
+
+With both set, every pod in the pool is pinned to that RuntimeClass, the read-back
+confirms it, and the build banner's `cluster_substrate=gke-sandbox` records the
+substrate — so a `kind` (runc) number is never mistaken for a `gke-sandbox` one,
+and a `gke-sandbox` number is provably gVisor, not just labelled.
 
 ## Reading the output
 
