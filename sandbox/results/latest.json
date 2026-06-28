@@ -1,0 +1,43 @@
+{
+  "product": "sandbox",
+  "generated_at": "2026-06-28T03:00:00Z",
+  "provenance": {},
+  "scenarios": [
+    {
+      "name": "warmpool_cold_start",
+      "outcome": "pending",
+      "pending_reason": "not-yet-measured",
+      "n": 0
+    },
+    {
+      "name": "native_digest_cold",
+      "outcome": "pending",
+      "pending_reason": "not-yet-measured",
+      "n": 0
+    },
+    {
+      "name": "suspend_resume",
+      "outcome": "pending",
+      "pending_reason": "not-yet-measured",
+      "n": 0
+    },
+    {
+      "name": "cross_tenant_network_isolation",
+      "outcome": "pending",
+      "pending_reason": "requires-gke",
+      "n": 0
+    },
+    {
+      "name": "default_deny_egress",
+      "outcome": "pending",
+      "pending_reason": "requires-gke",
+      "n": 0
+    },
+    {
+      "name": "gvisor_canary",
+      "outcome": "pending",
+      "pending_reason": "requires-gvisor-runtime",
+      "n": 0
+    }
+  ]
+}

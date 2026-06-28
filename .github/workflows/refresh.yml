@@ -1,0 +1,89 @@
+# Auto-refresh the honest-benchmark table (#3866).
+#
+# Spins a vanilla kind cluster on the GitHub-hosted runner, installs the OSS
+# controller from upstream main per the recipe, runs the portable harness, runs
+# the closed-schema render to regenerate the README tables, runs the public-safety
+# scanner fail-closed, and opens a PR if anything changed. Honest by construction:
+# the runner has no runsc, so gVisor isolation cells render
+# `pending (requires gVisor runtime)` — the cluster_substrate=kind banner makes
+# that explicit, so a kind number is never mis-read as a GKE SLA result.
+#
+# NOTE: while this file is staged under bench-repo/ in AlexBulankou/a it does NOT
+# run there (Actions only fire from .github/workflows/ at the repo root). It
+# activates once the #3863 seed step copies the tree into the public repo root.
+
+name: refresh-benchmarks
+
+on:
+  schedule:
+    # 06:17 UTC daily — off the round hour to avoid the hosted-runner thundering herd.
+    - cron: "17 6 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: refresh-benchmarks
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install harness deps
+        run: pip install -r sandbox/harness/requirements.txt
+
+      - name: Create kind cluster
+        uses: helm/kind-action@v1
+
+      - name: Install OSS controller from upstream main
+        run: bash recipe/install-controller-from-main.sh
+
+      - name: Run sandbox harness
+        env:
+          BENCH_CLUSTER_SUBSTRATE: kind
+          # native_digest_cold true-cold-pull (#3885). The kind cluster is created
+          # fresh on each run (step above), so its node containerd cache is empty —
+          # any image is provably never-pulled here, making the create→Ready
+          # wall-clock a genuine cold *pull* (controller reconcile + schedule +
+          # full layer download + container start), not just a cold provision on a
+          # warm-cached node. We point at a real ~tens-of-MB image so the pull time
+          # is meaningful (busybox's layers are too small to register), and label
+          # the mode cold-pull so the render page can say which cold start the
+          # published cold_start_ms represents — honest-by-construction.
+          NATIVE_DIGEST_COLD_SANDBOX_IMAGE: python:3.12-slim
+          BENCH_NATIVE_DIGEST_COLD_MODE: cold-pull
+        run: python3 -m sandbox.harness.run
+
+      - name: Render README tables from results
+        run: python3 -m render.generate
+
+      - name: Public-safety gate (fail-closed)
+        run: bash scripts/check-public-safety.sh
+
+      - name: Open refresh PR
+        uses: peter-evans/create-pull-request@v6
+        with:
+          branch: auto/refresh-benchmarks
+          title: "data: auto-refresh benchmark results"
+          commit-message: "data: auto-refresh benchmark results (substrate=kind)"
+          body: |
+            Automated benchmark refresh from the scheduled harness run.
+
+            - substrate: `kind` (gVisor isolation cells render `pending` — no runsc on the hosted runner)
+            - results regenerated from `sandbox/results/latest.json`
+            - public-safety scanner passed (fail-closed gate before this PR opened)
+          add-paths: |
+            sandbox/results/latest.json
+            README.md
+            sandbox/README.md

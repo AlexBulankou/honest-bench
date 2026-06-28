@@ -1,0 +1,5 @@
+# Portable harness runtime deps. Kept minimal — the harness itself is plain
+# stdlib python; only the scenario bodies talk to the cluster via the official
+# Kubernetes client. The pure seam (results_schema, scenario_map) needs nothing
+# here and its tests run on bare python3.
+kubernetes>=29.0.0
