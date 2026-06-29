@@ -221,6 +221,26 @@ MATRIX_METRIC_FIELDS = {
     "density_per_vcpu": _nonneg,
 }
 
+# --- #3954: Burst-create TTFE corroboration block ----------------------------------------
+# burst_create's headline "sandboxes ready <1s" is a POD-READY count — the weaker claim, since
+# a pod can report Ready before it can run code. #3954 adds the literal TTFE corroboration:
+# sandboxes_exec_under_1s = the count whose FIRST INSTRUCTION executed and returned a result in
+# <1s (the stronger claim), and exec_success_rate = the exec round-trip success fraction. The
+# corroboration SIGNAL is the gap (ready - exec): sandboxes that reported Ready but had not yet
+# run code. The render block is INERT by construction — it fires ONLY when BOTH the pod-Ready and
+# the executed-TTFE counts are present, so today's pre-#3954 data (ready-only) renders nothing and
+# the public page is byte-unchanged until a #3954 fire emits sandboxes_exec_under_1s. Same closed-
+# schema discipline: only these keys render, each validated; exec_success_n is the OPTIONAL
+# numerator for the honesty-check fraction (absent ⇒ derived as round(rate*N)).
+BURST_CORROBORATION_FIELDS = {
+    "sandboxes_ready_under_1s": _nonneg,
+    "sandboxes_exec_under_1s": _nonneg,
+    "exec_success_rate": lambda v: isinstance(v, (int, float))
+    and not isinstance(v, bool)
+    and 0.0 <= v <= 1.0,
+    "exec_success_n": lambda v: isinstance(v, int) and not isinstance(v, bool) and v >= 0,
+}
+
 # Scale-Proof (Linearity Check) second table. Proof that per-node throughput + density hold
 # flat as the cluster grows. scale_points is the per-node sweep — each point carries
 # node_count + density and (optional) per-node throughput; the two retention ratios are
