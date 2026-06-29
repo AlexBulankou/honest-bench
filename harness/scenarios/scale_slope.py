@@ -298,26 +298,37 @@ def _is_claim_ready_and_bound(status: dict) -> bool:
 def _allocatable_vcpu_per_node(core_v1) -> float:
     """Per-node allocatable vCPU = the LOCKED density denominator.
 
-    The minimum allocatable cpu across schedulable nodes (the honest per-node
-    sandbox-schedulable basis; a heterogeneous pool is bounded by its smallest
-    node). Falls back to the env override when no node reports allocatable cpu.
+    The minimum allocatable cpu across the nodes that can actually HOST this
+    sweep's sandboxes. When a runtimeClassName is pinned (_RUNTIME_CLASS set)
+    the denominator must be the smallest gVisor-CAPABLE node, NOT the smallest
+    node in the whole pool: a heterogeneous cluster with a 2-vCPU untainted
+    system node alongside 16-vCPU gVisor nodes would otherwise pin the
+    denominator to 1.93 and inflate published density ~8x, even though the
+    sandboxes only ever land on the gVisor nodes. Mirrors _count_capable_nodes
+    for the denominator dimension. [#3949] Falls back to the env override when
+    no capable node reports allocatable cpu.
     """
     nodes = core_v1.list_node()
-    per_node = []
+    node_specs = []
     for node in nodes.items:
         alloc = (node.status.allocatable or {}) if node.status else {}
         cpu = alloc.get("cpu")
         if cpu is None:
             continue
         if isinstance(cpu, str) and cpu.endswith("m"):
-            per_node.append(float(cpu[:-1]) / 1000.0)
+            vcpu = float(cpu[:-1]) / 1000.0
         else:
             try:
-                per_node.append(float(cpu))
+                vcpu = float(cpu)
             except (TypeError, ValueError):
                 continue
-    if per_node:
-        return min(per_node)
+        labels = (node.metadata.labels or {}) if node.metadata else {}
+        node_specs.append((labels, vcpu))
+    result = _min_capable_vcpu(
+        node_specs, runtime_class=_RUNTIME_CLASS, gvisor_label=_GVISOR_NODE_LABEL,
+    )
+    if result > 0:
+        return result
     return _ALLOCATABLE_VCPU_PER_NODE
 
 
@@ -366,6 +377,31 @@ def _count_capable_nodes(node_label_dicts, *, runtime_class: str, gvisor_label: 
         return len(nodes)
     key, value = _parse_label_selector(gvisor_label)
     return sum(1 for labels in nodes if _node_matches(labels, key, value))
+
+
+def _min_capable_vcpu(node_specs, *, runtime_class: str, gvisor_label: str) -> float:
+    """Pure: minimum allocatable vCPU across the nodes that can HOST this sweep.
+
+    node_specs is an iterable of (labels_dict, allocatable_vcpu_float). When a
+    runtimeClassName is pinned (runtime_class truthy) the density denominator
+    must be the smallest node in the gVisor-CAPABLE subset — the nodes the
+    sandboxes actually schedule onto — not the smallest node in the whole pool.
+    A heterogeneous pool (16-vCPU gVisor nodes + a 2-vCPU untainted system node)
+    would otherwise pin the denominator to 1.93 and inflate published density
+    ~8x. When no runtime class is pinned every node is capable, so the basis is
+    the smallest node overall (behavior unchanged from before the fix). This is
+    the denominator twin of _count_capable_nodes, which fixed the same min/total
+    bias on the node-COUNT dimension. [#3949] Returns 0.0 when no capable node
+    reports vCPU — the caller falls back to the env override, and a 0 denominator
+    honestly omits density rather than fabricating one.
+    """
+    specs = list(node_specs or [])
+    if runtime_class:
+        key, value = _parse_label_selector(gvisor_label)
+        capable = [v for labels, v in specs if _node_matches(labels, key, value)]
+    else:
+        capable = [v for _, v in specs]
+    return min(capable) if capable else 0.0
 
 
 def _node_is_ready(node) -> bool:
