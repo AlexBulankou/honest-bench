@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-06-28T14:42:40Z",
+  "generated_at": "2026-06-29T02:05:10Z",
   "product": "sandbox",
   "provenance": {
     "cluster_substrate": "gke-sandbox",
@@ -7,9 +7,9 @@
     "controller_digest": "sha256:6edaf7b6b22d9dfaf6ab077cd1c6517acf5fc6cf96b1ad58fe83bcfd477977ec",
     "controller_image": "us-central1-docker.pkg.dev/k8s-staging-images/agent-sandbox/agent-sandbox-controller:latest-main",
     "crd_version": "v1beta1",
-    "node_count": 3,
-    "run_id": "a0e4f0ffae12440a826ac40a277f21f3",
-    "suite_git_sha": "c88d857"
+    "node_count": 1,
+    "run_id": "5d00636a3f754842b1aff7157da52e82",
+    "suite_git_sha": "df6aa6b1c73a67b96cc8ebd5552f3b1f19bb4552"
   },
   "scenarios": [
     {
@@ -17,16 +17,20 @@
       "name": "burst_create",
       "outcome": "PASS",
       "sla_metrics": {
-        "density_per_vcpu": 0.45,
-        "sandboxes_ready_under_1s": 9.0
+        "density_per_vcpu": 0.5,
+        "sandboxes_ready_under_1s": 10.0
       }
     },
     {
-      "n": 5,
+      "n": 10,
       "name": "warmpool_cold_start",
       "outcome": "PASS",
       "sla_metrics": {
-        "activation_ms": 553.2399389776401
+        "exec_success_rate": 1.0,
+        "thpt_under_1s_per_node": 0.0,
+        "thpt_under_5s_per_node": 0.0,
+        "ttfe_p50_ms": 6811.1,
+        "ttfe_p95_ms": 7560.2
       }
     },
     {
@@ -34,25 +38,31 @@
       "name": "native_digest_cold",
       "outcome": "PASS",
       "sla_metrics": {
-        "cold_start_ms": 1670.586568012368
+        "exec_success_rate": 1.0,
+        "ttfe_p50_ms": 2296.3,
+        "ttfe_p95_ms": 2296.3
       }
     },
     {
+      "n": 1,
       "name": "suspend_resume",
       "outcome": "pending",
-      "pending_reason": "upstream-blocked"
+      "pending_reason": "upstream-blocked",
+      "sla_metrics": {
+        "exec_success_rate": 1.0,
+        "ttfe_p50_ms": 32491.2,
+        "ttfe_p95_ms": 32491.2
+      }
     },
     {
       "name": "gvisor_canary",
       "outcome": "PASS"
     },
     {
-      "badge_scope": "control-plane",
       "name": "cross_tenant_network_isolation",
       "outcome": "PASS"
     },
     {
-      "badge_scope": "control-plane",
       "name": "default_deny_egress",
       "outcome": "PASS"
     }

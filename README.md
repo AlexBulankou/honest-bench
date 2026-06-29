@@ -39,9 +39,9 @@ bash scripts/check-public-safety.sh           # fail-closed public-safety scan
 
 | Runtime | Activation Mode | Throughput @ <5s TTFE (sb/s/node) | Throughput @ <1s TTFE (sb/s/node) | TTFE p50 | TTFE p95 | Samples (N) | Max Density (sb/vCPU) | Execution Success (Honesty Check) |
 |---|---|---|---|---|---|---|---|---|
-| gVisor | Warm-pool hit (Base image) | pending | pending | pending | pending | 5 | pending | pending |
-| gVisor | Unique-image cold (RL reality) | pending | pending | pending | pending | 1 | pending | pending |
-| gVisor | Resume-from-suspend | pending | pending | pending | pending | pending | N/A | pending |
+| gVisor | Warm-pool hit (Base image) | 0 | 0 | 6.8111s | 7.5602s | 10 | pending | 100% |
+| gVisor | Unique-image cold (RL reality) | pending | pending | 2.2963s | 2.2963s | 1 | pending | 100% |
+| gVisor | Resume-from-suspend | pending | pending | 32.4912s | 32.4912s | 1 | N/A | 100% |
 | Kata + microVM | Warm-pool hit (Base image) | pending | pending | pending | pending | pending | pending | pending |
 | Kata + microVM | Unique-image cold (RL reality) | pending | pending | pending | pending | pending | pending | pending |
 | Kata + microVM | Resume-from-suspend | pending | pending | pending | pending | pending | N/A | pending |
@@ -53,5 +53,5 @@ _Execution Success is the Honesty Check: <100% prints the succeeded/total fracti
 _Kata + microVM rows are not-yet-measured (requires-kata-microvm)._
 _Cells render `pending` until the TTFE-instrumented run lands._
 
-_build: cluster_substrate=gke-sandbox · controller_image=us-central1-docker.pkg.dev/k8s-staging-images/agent-sandbox/agent-sandbox-controller:latest-main · controller_digest=sha256:6edaf7b6b22d9dfaf6ab077cd1c6517acf5fc6cf96b1ad58fe83bcfd477977ec · crd_version=v1beta1 · suite_git_sha=c88d857 · run_id=a0e4f0ffae12440a826ac40a277f21f3 · node_count=3_
-_generated-at: 2026-06-28T14:42:40Z_
+_build: cluster_substrate=gke-sandbox · controller_image=us-central1-docker.pkg.dev/k8s-staging-images/agent-sandbox/agent-sandbox-controller:latest-main · controller_digest=sha256:6edaf7b6b22d9dfaf6ab077cd1c6517acf5fc6cf96b1ad58fe83bcfd477977ec · crd_version=v1beta1 · suite_git_sha=df6aa6b1c73a67b96cc8ebd5552f3b1f19bb4552 · run_id=5d00636a3f754842b1aff7157da52e82 · node_count=1_
+_generated-at: 2026-06-29T02:05:10Z_
