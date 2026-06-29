@@ -166,6 +166,80 @@ def test_convergence_partial_measured_subset_only():
     _check(out["north_star_breach_rate"] == 100, "populated breach rate lifts to top level")
 
 
+# ----------------------------------------------------- cost enrichment (item-4 axis)
+
+def test_enrich_stamps_cost_on_every_measured_point():
+    # node_count=150, machine_type=e2-standard-16 ($0.5363/node-hr list price), so each
+    # point's cost = (150 * 0.5363) / (ready_per_s * 3600) * 1000, computed from the
+    # point's OWN measured ready_per_s -- the cost axis is per-throughput, not per-record.
+    flat = a.enrich_pareto_cost(a.stepup_nested_to_flat(_nested()))
+    for pt in flat["pareto_points"]:
+        want = (150 * 0.5363) / (pt["ready_per_s"] * 3600.0) * 1000.0
+        _check(abs(pt["cost_usd_per_1k_ready"] - want) < 1e-9,
+               f"per-point cost mismatch: {pt['cost_usd_per_1k_ready']} != {want}")
+    # The cheapest cost is at the HIGHEST throughput (more ready/hr amortizes the same
+    # cluster spend) -- a sanity check the per-point math is wired to the right rate.
+    costs = [pt["cost_usd_per_1k_ready"] for pt in flat["pareto_points"]]
+    _check(costs[0] > costs[-1], "cost should fall as measured throughput rises")
+
+
+def test_enrich_explicit_rate_overrides_list_price():
+    flat = a.enrich_pareto_cost(a.stepup_nested_to_flat(_nested()), usd_per_node_hour=0.30)
+    pt = flat["pareto_points"][0]
+    want = (150 * 0.30) / (pt["ready_per_s"] * 3600.0) * 1000.0
+    _check(abs(pt["cost_usd_per_1k_ready"] - want) < 1e-9,
+           f"explicit rate did not override list price: {pt['cost_usd_per_1k_ready']} != {want}")
+
+
+def test_enrich_shakeout_null_node_count_omits_cost():
+    # Shakeout fire: cluster_nodes None -> node_count None -> no honest cost to compute,
+    # so the key stays ABSENT (never a fabricated 0), exactly like the schema omits the
+    # scalar itself. The measured curve is otherwise unaffected.
+    rec = _nested()
+    rec["params"]["cluster_nodes"] = None
+    flat = a.enrich_pareto_cost(a.stepup_nested_to_flat(rec))
+    for pt in flat["pareto_points"]:
+        _check("cost_usd_per_1k_ready" not in pt,
+               "None node_count must omit cost, not fabricate one")
+
+
+def test_enrich_unknown_machine_no_rate_omits_cost():
+    rec = _nested()
+    rec["params"]["machine_type"] = "totally-unknown-x99"
+    flat = a.enrich_pareto_cost(a.stepup_nested_to_flat(rec))
+    for pt in flat["pareto_points"]:
+        _check("cost_usd_per_1k_ready" not in pt,
+               "unknown machine_type with no explicit rate must omit cost (no guess)")
+
+
+def test_enrich_nonpositive_ready_omits_that_point_only():
+    # A step that produced no ready sandboxes has no honest unit cost -- that point's
+    # cost is omitted while the genuinely-measured points still get one. Per-point honesty.
+    rec = _nested()
+    rec["pareto"][1]["ready_per_s"] = 0.0
+    flat = a.enrich_pareto_cost(a.stepup_nested_to_flat(rec))
+    _check("cost_usd_per_1k_ready" in flat["pareto_points"][0], "measured point keeps cost")
+    _check("cost_usd_per_1k_ready" not in flat["pareto_points"][1],
+           "zero-ready point omits cost (nothing to amortize over)")
+    _check("cost_usd_per_1k_ready" in flat["pareto_points"][2], "other measured point keeps cost")
+
+
+def test_enrich_non_list_pareto_is_noop():
+    _check(a.enrich_pareto_cost({"pareto_points": None}) == {"pareto_points": None},
+           "non-list pareto_points -> no-op (nothing-measured path)")
+    _check(a.enrich_pareto_cost({}) == {}, "absent pareto_points -> no-op")
+
+
+def test_enrich_then_schema_round_trips_cost():
+    # End-to-end: nested -> flat -> enrich -> _coerce_stepup carries the cost through the
+    # closed schema, so the public cost axis renders a real number, not pending.
+    out = rs._coerce_stepup(a.enrich_pareto_cost(a.stepup_nested_to_flat(_nested())))
+    _check(out is not None, "enriched record still coerces")
+    for pt in out["pareto_points"]:
+        _check(pt.get("cost_usd_per_1k_ready") is not None and pt["cost_usd_per_1k_ready"] > 0,
+               "cost survives the closed-schema round trip as a positive number")
+
+
 def _run_all():
     tests = [v for k, v in sorted(globals().items())
              if k.startswith("test_") and callable(v)]
