@@ -42,6 +42,9 @@ PENDING_REASONS = {
     "requires-gke",
     "not-yet-measured",
     "upstream-blocked",
+    # Goal-2.1 matrix: the Kata+microVM runtime rows are uniformly not-yet-measured
+    # (tracked internally — the public page carries NO internal issue ref by PII fence).
+    "requires-kata-microvm",
 }
 
 # provenance: only these keys render, each validated by the predicate below.
@@ -68,6 +71,10 @@ PROVENANCE_FIELDS = {
     "run_id": lambda v: isinstance(v, str) and bool(_RUNID.match(v)),
     "node_count": lambda v: isinstance(v, int) and 0 < v < 10000,
     "cold_start_mode": lambda v: v in COLD_START_MODES,
+    # Goal-2.1 matrix: which isolation runtime this run measured (runtimeClassName). Drives
+    # the matrix's Runtime column; absent ⇒ the renderer defaults to gvisor (today's only
+    # live runtime — the gke-sandbox/runsc path).
+    "runtime": lambda v: v in RUNTIME_LABELS,
 }
 
 # scenario internal-name -> public display label. A scenario whose name is not in this
@@ -148,4 +155,75 @@ HISTORY_FIELDS = {
     and not isinstance(v, bool)
     and v >= 0,
     "n": lambda v: isinstance(v, int) and not isinstance(v, bool) and v >= 0,
+}
+
+# --- Goal 2.1: Core Benchmark Matrix (alex "Agent Sandbox Core Metrics Table") -----------
+# The customer page is reframed from a per-scenario scorecard to the doc's exact 9-column
+# matrix: rows are (runtime × activation-mode), columns are the throughput/TTFE/density/
+# exec-success metrics. The honesty spine is TTFE (Time-To-First-Instruction = the sandbox
+# actually executed the first instruction and returned a result) — NOT pod-Ready. Cells we
+# have not yet measured render `pending`; throughput under a TTFE threshold the p95 misses
+# renders an honest `0` (emitted by the harness, not decided here).
+#
+# Same closed-schema discipline as the per-scenario render: only the keys below render, each
+# validated by its predicate; anything else is dropped before it can reach the public page.
+
+# runtime label (rides in provenance as `runtime`): internal enum -> public display.
+RUNTIME_LABELS = {
+    "gvisor": "gVisor",
+    "kata-microvm": "Kata + microVM",
+}
+# Ordered runtime rows for the matrix (doc order: gVisor first, Kata second).
+MATRIX_RUNTIMES = ("gvisor", "kata-microvm")
+
+# Ordered activation-mode rows: (scenario internal-name, public display label). The display
+# labels are the doc's exact mode names. A mode with no measured scenario renders `pending`.
+ACTIVATION_MODE_ROWS = (
+    ("warmpool_cold_start", "Warm-pool hit (Base image)"),
+    ("native_digest_cold", "Unique-image cold (RL reality)"),
+    ("suspend_resume", "Resume-from-suspend"),
+)
+
+# Density is a per-RUNTIME property (holds across activation modes), not per-mode. The
+# renderer sources it from whichever of these scenarios carries density_per_vcpu, applies it
+# to the warm-pool + cold rows, and renders N/A on the resume row (matching the doc).
+DENSITY_SOURCE_SCENARIOS = ("gvisor_density", "burst_create")
+
+# Matrix metric keys (per-scenario sla_metrics) -> closed-schema predicate. exec_success_n
+# is OPTIONAL (the numerator for the doc's "(1277/1376)" fraction); absent ⇒ render the bare
+# percentage. All are non-negative numerics; exec_success_rate is a 0..1 fraction.
+_nonneg = lambda v: isinstance(v, (int, float)) and not isinstance(v, bool) and v >= 0
+MATRIX_METRIC_FIELDS = {
+    "ttfe_p50_ms": _nonneg,
+    "ttfe_p95_ms": _nonneg,
+    "thpt_under_5s_per_node": _nonneg,
+    "thpt_under_1s_per_node": _nonneg,
+    "exec_success_rate": lambda v: isinstance(v, (int, float))
+    and not isinstance(v, bool)
+    and 0.0 <= v <= 1.0,
+    "exec_success_n": lambda v: isinstance(v, int) and not isinstance(v, bool) and v >= 0,
+    "density_per_vcpu": _nonneg,
+}
+
+# Scale-Proof (Linearity Check) second table. Proof that per-node throughput + density hold
+# flat as the cluster grows. scale_points is the (node_count, density) sweep; the two
+# retention ratios are density_at_maxN/density_at_minN and thpt_at_maxN/thpt_at_minN.
+def _scale_points_ok(v):
+    if not isinstance(v, list) or not v:
+        return False
+    for p in v:
+        if not isinstance(p, dict):
+            return False
+        nc, dn = p.get("node_count"), p.get("density")
+        if not (isinstance(nc, int) and not isinstance(nc, bool) and 0 < nc < 10000):
+            return False
+        if not (isinstance(dn, (int, float)) and not isinstance(dn, bool) and dn >= 0):
+            return False
+    return True
+
+
+SCALE_PROOF_FIELDS = {
+    "scale_points": _scale_points_ok,
+    "density_retention": _nonneg,
+    "thpt_retention": _nonneg,
 }

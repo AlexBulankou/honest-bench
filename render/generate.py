@@ -33,18 +33,10 @@ def _load_render():
     spec = importlib.util.spec_from_file_location("_bench_render", os.path.join(_HERE, "render.py"))
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
-    return mod.render_product, mod.render_trend
+    return mod.render_matrix, mod.render_scale_proof
 
 
-render_product, render_trend = _load_render()
-
-# Build-over-build throughput history (#3918), relative to the repo root. The page renders
-# only the per-product latest.json snapshot, so it can show today's COUNT but not the
-# trajectory alex's #1 directive asks for. This file (sole-writer: render.accrue_history,
-# one upsert-by-digest row per distinct controller build) carries that trajectory; the trend
-# table is appended after the sandbox table. Absent ⇒ no trend section (graceful degradation
-# on the empty-history seed), so the page never half-renders.
-_HISTORY_REL = "sandbox/results/history.jsonl"
+render_matrix, render_scale_proof = _load_render()
 
 # Product -> results path, relative to the repo root (parent of render/).
 # The PUBLIC customer page is SANDBOX-ONLY (alex 2026-06-28): substrate demotes from a
@@ -61,18 +53,24 @@ _PRODUCTS = (
 _PREAMBLE = """\
 # Honest benchmarks — GKE agent sandbox
 
-This table is **machine-rendered, never hand-entered**. A measured cell traces to a
+This page is **machine-rendered, never hand-entered**. Every cell traces to a
 schema-validated field of a real harness run; anything the schema does not declare is
 dropped before it can reach this page. We publish only what we actually measured on the
-cluster named in each build banner — a `kind` run is labelled `kind`, so a local number
-is never presented as a production SLA.
+cluster named in the build banner — a `kind` run is labelled `kind`, so a local number is
+never presented as a production SLA.
 
-A cell we have not yet measured renders `pending (<reason>)` — never a guess and never a
-false PASS/FAIL. The **sandbox** table below is measured against a live GKE cluster — the
-`cluster_substrate=gke-sandbox` build banner names the cluster, and the burst-create
-headline was measured with the gVisor (runsc) runtime. The two NetworkPolicy cells are
-qualified `(control-plane)` because a PASS there asserts the policy was admitted and
-correctly targeted, not that data-plane traffic was enforced.
+The Core Metrics table is keyed on **TTFE — Time-To-First-Instruction**: the wall-clock
+from the create request to the moment the sandbox *executed its first instruction and
+returned a result*. TTFE is not pod-Ready — a pod can report Ready before it can run your
+code, so we measure the thing a user actually waits for. Throughput is reported per node at
+two TTFE bars (`<5s` and `<1s`); the **Execution Success (Honesty Check)** column is the
+fraction of first-instructions that actually succeeded.
+
+This page prints the truth even when it is unflattering:
+
+- A cell we have not yet measured renders `pending` — never a guess, never a false number.
+- A throughput whose p95 misses the bar prints an honest **`0`** — we do not round up.
+- An execution-success rate below 100% prints the succeeded/total fraction and a ⚠️ flag.
 
 Every measured number here is a **reproducible floor, not a ceiling.** It is what a
 *vanilla* OSS build — the upstream controller from `main`, default runtime, no tuning,
@@ -80,10 +78,6 @@ the cluster shape named in the build banner — delivers today. A bigger pool, d
 or a tuned runtime should *beat* it; the value on the page is the honest lower bound you can
 reproduce from the recipe below and then improve on. We publish the floor we can stand
 behind, not the best number we could cherry-pick.
-
-- **Measured (N)** is the value we observed, with the sample size.
-- **Committed / Target / North-Star** render `(non-public)` here by construction — internal
-  goal numbers never ship to this repo.
 
 Reproduce any row yourself — then beat it. The suite is honest by construction:
 
@@ -100,33 +94,11 @@ def _repo_root():
     return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
-def _load_history(root):
-    """Read history.jsonl into a list of dicts (malformed lines dropped); [] if absent.
-
-    render.render_trend re-validates every row through the closed schema, so a malformed line
-    that survives JSON parsing here is still dropped at render — this is parse-only.
-    """
-    path = os.path.join(root, _HISTORY_REL)
-    rows = []
-    if not os.path.exists(path):
-        return rows
-    with open(path) as fh:
-        for line in fh:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                rows.append(json.loads(line))
-            except json.JSONDecodeError:
-                continue
-    return rows
-
-
 def build_readme(root=None):
-    """Return the full README text: preamble + each present product's rendered table.
+    """Return the full README text: preamble + the 9-col Core Metrics matrix + Scale Proof.
 
-    The build-over-build throughput trend (#3918) is appended after the sandbox table when a
-    non-empty history is present; absent/empty history renders no trend section.
+    For each present product we render the closed-schema Core Metrics matrix (render_matrix) and,
+    when a scale_proof object is present, the Scale Proof (Linearity Check) table after it.
     """
     root = root or _repo_root()
     sections = [_PREAMBLE.rstrip()]
@@ -136,10 +108,10 @@ def build_readme(root=None):
             continue
         with open(path) as fh:
             results = json.load(fh)
-        sections.append(render_product(results).rstrip())
-    trend = render_trend(_load_history(root))
-    if trend.strip():
-        sections.append(trend.rstrip())
+        sections.append(render_matrix(results).rstrip())
+        scale = render_scale_proof(results)
+        if scale.strip():
+            sections.append(scale.rstrip())
     return "\n\n".join(sections) + "\n"
 
 
