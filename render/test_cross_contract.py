@@ -508,6 +508,91 @@ def test_emit_to_render_stepup_pareto_convergence():
     assert "stepup" not in empty_results, "all-empty sweep must drop the stepup key entirely"
 
 
+def test_emit_to_render_warm_vs_cold_convergence():
+    """Convergence guard for the warm-vs-cold object (#3954 sibling) — INERT-render edition.
+
+    The warm_vs_cold object is emitted by harness/results_schema.build_results(warm_vs_cold=...)
+    (via _coerce_warm_vs_cold) and allow-listed on the render side by schema.WARM_VS_COLD_FIELDS.
+    Like the step-up convergence test, this guards the contract while the render is inert (the
+    headline-page render_warm_vs_cold wiring is a4s1's fire lane, #3954): every field the EMITTER
+    keeps on a real warm-vs-cold object must pass the INDEPENDENT render-side WARM_VS_COLD_FIELDS
+    predicate. A drift between the two closed vocabularies (the harness mirror enums vs render's
+    RUNTIME_LABELS / semantic set) would make a future render silently drop the block -> a blank
+    headline. This fails loudly first, exactly as the scale_proof / stepup convergence tests do.
+    """
+    import importlib.util
+
+    import schema
+
+    emitter_path = os.path.join(_ROOT, "harness", "results_schema.py")
+    if not os.path.exists(emitter_path):
+        print("  (skip: harness emitter not in-tree yet)")
+        return
+    spec = importlib.util.spec_from_file_location("_bench_emitter_wvc", emitter_path)
+    mod = importlib.util.module_from_spec(spec)
+    try:
+        spec.loader.exec_module(mod)
+    except Exception as exc:  # pragma: no cover - harness has its own deps
+        print(f"  (skip: harness emitter not importable in isolation: {exc})")
+        return
+
+    # Both enum vocabularies must agree value-for-value across the two independent closed sets,
+    # or a future render drops a runtime/semantic the emitter happily emits.
+    assert set(mod.WARM_VS_COLD_RUNTIME_CLASS_ENUM) == set(schema.RUNTIME_LABELS), (
+        "emit/render DRIFT: harness WARM_VS_COLD_RUNTIME_CLASS_ENUM "
+        f"{set(mod.WARM_VS_COLD_RUNTIME_CLASS_ENUM)} != render RUNTIME_LABELS keys "
+        f"{set(schema.RUNTIME_LABELS)} — a runtime the emitter keeps would be dropped on render."
+    )
+
+    # A full warm-vs-cold object: every field populated (incl. the optional n_warm), exercised for
+    # BOTH runtime classes so the convergence covers the whole runtime vocabulary, not just gVisor.
+    for runtime_class in mod.WARM_VS_COLD_RUNTIME_CLASS_ENUM:
+        wvc_in = {
+            "warm_p50_ms": 420.0,
+            "cold_ms": 4200.0,
+            "speedup": 10.0,
+            "semantic": "ttfe",
+            "runtime_class": runtime_class,
+            "n_warm": 200,
+        }
+        results = mod.build_results(
+            [], {"cluster_substrate": "gke", "node_count": 1},
+            generated_at="2026-06-29T07:40:00Z", warm_vs_cold=wvc_in,
+        )
+        assert "warm_vs_cold" in results, (
+            "emitter dropped the whole warm_vs_cold object — _coerce_warm_vs_cold rejected a valid "
+            f"full object:\n{wvc_in}"
+        )
+        wvc = results["warm_vs_cold"]
+
+        # (a) every field the emitter KEPT passes the independent render allow-list predicate.
+        for key, val in wvc.items():
+            assert key in schema.WARM_VS_COLD_FIELDS, (
+                f"emit/render DRIFT: emitter kept key {key!r} absent from render WARM_VS_COLD_FIELDS "
+                "— render_warm_vs_cold would silently drop it."
+            )
+            assert schema.WARM_VS_COLD_FIELDS[key](val), (
+                f"emit/render DRIFT: render WARM_VS_COLD_FIELDS[{key!r}] rejects emitter value "
+                f"{val!r} — the headline would render nothing."
+            )
+
+        # (b) the required spine survives intact + full on a clean object.
+        assert wvc["runtime_class"] == runtime_class and wvc["semantic"] == "ttfe"
+        assert wvc["n_warm"] == 200  # optional sample count carried through
+
+    # (c) an out-of-enum runtime drops the block entirely (the emitter's fail-closed PII guard),
+    # so a free-text/internal runtime can never reach the render allow-list.
+    leak_results = mod.build_results(
+        [], {"cluster_substrate": "gke", "node_count": 1},
+        generated_at="2026-06-29T07:40:00Z",
+        warm_vs_cold={"warm_p50_ms": 420.0, "cold_ms": 4200.0, "speedup": 10.0,
+                      "semantic": "ttfe", "runtime_class": "internal-pool-name"},
+    )
+    assert "warm_vs_cold" not in leak_results, (
+        "out-of-enum runtime_class must drop the whole warm_vs_cold block — fail-closed PII guard"
+    )
+
+
 def _run_all():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:

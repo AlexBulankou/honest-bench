@@ -69,6 +69,16 @@ STEPUP_VERDICT_ENUM = (
     "no-measured-steps",
 )
 
+# #3954 sibling warm-vs-cold — the emitter's INDEPENDENT copies of render's WARM_VS_COLD_FIELDS
+# closed vocabularies (semantic = the two measured TTFx modes; runtime_class = the keys of render's
+# RUNTIME_LABELS). The classifier (warm_vs_cold.classify_warm_vs_cold) only PARITY-checks
+# runtime_class as a non-empty string — it does NOT enum-validate it — so this coercer is the
+# fail-closed PII guard that keeps an out-of-enum or free-text runtime off the public page. A drift
+# from render's set is caught by the cross-contract test, not papered over by a shared import. A
+# value outside either set invalidates the whole warm_vs_cold block (-> None).
+WARM_VS_COLD_SEMANTIC_ENUM = ("ttfi", "ttfe")
+WARM_VS_COLD_RUNTIME_CLASS_ENUM = ("gvisor", "kata-microvm")
+
 PROVENANCE_FIELDS = (
     "cluster_substrate",
     "controller_image",
@@ -395,6 +405,66 @@ def _coerce_stepup(raw):
     return out
 
 
+def _coerce_warm_vs_cold(raw):
+    """Keep the closed top-level warm-vs-cold speedup shape; return None to omit the key.
+
+    The #3954-sibling warm-vs-cold headline ("warm provisioning is N times faster than cold")
+    renders from a TOP-LEVEL `warm_vs_cold` object (mirrors scale_proof / stepup — a nested object
+    cannot ride per-scenario sla_metrics). The harness classifier
+    (warm_vs_cold.classify_warm_vs_cold) composes the warm leg (burst TTFx p50) and the true-cold
+    leg (native_digest_cold) into the inner object, or returns {} on any honesty gate. This coercer
+    is the closed-schema PII guard mirroring render/schema.py's WARM_VS_COLD_FIELDS exactly so
+    emitter and renderer share one contract — making the warm_vs_cold.py:38 `build_results(
+    warm_vs_cold=...)` contract real.
+
+    All five spine fields are REQUIRED. warm_p50_ms / cold_ms must be strictly > 0 (a 0-leg is a
+    degenerate ratio — render's _clean_warm_vs_cold drops the block on warm<=0 or cold<=0; mirror
+    that here). speedup is non-negative. semantic is one of the two measured modes. runtime_class is
+    enum-validated against the PUBLIC runtime set — the classifier only parity-checks it as a
+    non-empty string, so THIS is the fail-closed guard that keeps an out-of-enum or free-text
+    runtime off the public page. n_warm is OPTIONAL (sample count; dropped on a bad value -> render
+    the bare headline). Any missing/invalid required field returns None (the block renders nothing
+    rather than a partial lie).
+    """
+    if not isinstance(raw, dict):
+        return None
+
+    def _clean_nonneg(x):
+        if isinstance(x, bool) or not isinstance(x, Real):
+            return None
+        fx = float(x)
+        if fx != fx or fx in (float("inf"), float("-inf")) or fx < 0:
+            return None
+        return fx
+
+    warm = _clean_nonneg(raw.get("warm_p50_ms"))
+    cold = _clean_nonneg(raw.get("cold_ms"))
+    # Strictly positive: a 0 leg is a degenerate ratio (mirrors render's positivity gate).
+    if warm is None or warm <= 0 or cold is None or cold <= 0:
+        return None
+    speedup = _clean_nonneg(raw.get("speedup"))
+    if speedup is None:
+        return None
+    semantic = raw.get("semantic")
+    if semantic not in WARM_VS_COLD_SEMANTIC_ENUM:
+        return None
+    runtime_class = raw.get("runtime_class")
+    if runtime_class not in WARM_VS_COLD_RUNTIME_CLASS_ENUM:
+        return None
+
+    out = {
+        "warm_p50_ms": warm,
+        "cold_ms": cold,
+        "speedup": speedup,
+        "semantic": semantic,
+        "runtime_class": runtime_class,
+    }
+    n_warm = raw.get("n_warm")
+    if not isinstance(n_warm, bool) and isinstance(n_warm, int) and n_warm >= 0:
+        out["n_warm"] = n_warm
+    return out
+
+
 def _coerce_provenance(raw: dict) -> dict:
     if not isinstance(raw, dict):
         raise TypeError("provenance must be a dict")
@@ -434,7 +504,7 @@ def _coerce_provenance(raw: dict) -> dict:
 
 def build_results(scenario_outcomes, provenance, generated_at: str,
                   product: str = DEFAULT_PRODUCT, scale_proof=None,
-                  stepup=None) -> dict:
+                  stepup=None, warm_vs_cold=None) -> dict:
     """Assemble the closed-schema results dict.
 
     `scenario_outcomes` is the loop's per-scenario dicts (any extra keys dropped);
@@ -455,6 +525,14 @@ def build_results(scenario_outcomes, provenance, generated_at: str,
     `_coerce_stepup`; the key is emitted only when a valid non-empty pareto_points
     list + a known verdict survive — same partial-lie-omission contract as
     scale_proof.
+
+    `warm_vs_cold` is the OPTIONAL top-level warm-vs-cold speedup object (#3954
+    sibling; defaults None so existing callers are unchanged). When supplied it
+    passes through `_coerce_warm_vs_cold`; the key is emitted only when the five
+    required spine fields survive (strictly-positive legs, enum semantic +
+    runtime_class) — same partial-lie-omission contract as scale_proof/stepup. The
+    inner object is produced by warm_vs_cold.classify_warm_vs_cold; this makes the
+    `build_results(warm_vs_cold=...)` contract documented there real.
     """
     if not isinstance(generated_at, str) or not generated_at:
         raise ValueError("generated_at must be a non-empty ISO-8601 UTC string")
@@ -473,4 +551,7 @@ def build_results(scenario_outcomes, provenance, generated_at: str,
     cleaned_stepup = _coerce_stepup(stepup)
     if cleaned_stepup is not None:
         out["stepup"] = cleaned_stepup
+    cleaned_warm_vs_cold = _coerce_warm_vs_cold(warm_vs_cold)
+    if cleaned_warm_vs_cold is not None:
+        out["warm_vs_cold"] = cleaned_warm_vs_cold
     return out
