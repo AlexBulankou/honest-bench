@@ -17,14 +17,22 @@ yet, so that env var is what selects which cells run and stamps the build banner
 
 ## Prerequisites
 
-- `python3` (3.9+) — the harness and renderer are standard-library only, no
-  `pip install`.
+- `python3` (3.9+). The renderer (`render/`) is standard-library only, but the
+  harness scenario bodies talk to the cluster via the official Kubernetes client,
+  so install the one runtime dep first: `pip install -r harness/requirements.txt`
+  (declared minimal — `kubernetes` and nothing else; the `harness.run` loop and
+  the pure `results_schema`/`scenario_map` seam are themselves stdlib-only).
 - `kubectl`, and a cluster your context points at. For the portable path:
   [`kind`](https://kind.sigs.k8s.io/) + a container runtime (Docker/Podman).
 
 ## Steps
 
 ```bash
+# install the one harness runtime dep first (applies to every path below; the
+# renderer is stdlib-only but the scenario bodies need the Kubernetes client).
+# Skip this and `python3 -m harness.run` crashes with ModuleNotFoundError.
+pip install -r harness/requirements.txt
+
 # 0. (portable path) create a local cluster
 kind create cluster
 
