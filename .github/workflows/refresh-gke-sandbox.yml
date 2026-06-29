@@ -101,6 +101,7 @@ jobs:
             --region "$REGION" \
             --release-channel rapid \
             --machine-type "${{ github.event.inputs.machine_type || 'e2-standard-16' }}" \
+            --node-locations "$REGION-a" \
             --num-nodes 1 \
             --enable-autoscaling --min-nodes 1 --max-nodes 3 \
             --sandbox type=gvisor \
