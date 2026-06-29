@@ -31,6 +31,7 @@ from schema import (
     RUNTIME_LABELS,
     SCALE_PROOF_FIELDS,
     SCENARIO_LABELS,
+    WARM_VS_COLD_FIELDS,
     _ISO,
 )
 
@@ -708,6 +709,85 @@ def render_scale_proof(results):
             "(point-in-time; refreshed on the next multi-node sweep)._"
         )
         lines.append("")
+    return "\n".join(lines)
+
+
+# Public semantic labels for the warm-vs-cold legs. TTFE is the page's headline metric
+# (executed first-instruction, returned a result); TTFI is the weaker "accepted" claim.
+# Out-of-enum semantics never reach here — the closed-schema predicate drops the block.
+_SEMANTIC_LABELS = {
+    "ttfe": "TTFE (executed first-instruction)",
+    "ttfi": "TTFI (first-instruction accepted)",
+}
+
+
+def _clean_warm_vs_cold(results):
+    """Closed-schema-validate the TOP-LEVEL warm_vs_cold object (#3954 sibling).
+
+    Returns the cleaned dict ONLY when every REQUIRED field (warm_p50_ms, cold_ms, speedup,
+    semantic, runtime_class) is present and passes its predicate AND warm_p50_ms/cold_ms are
+    strictly positive (a zero leg makes the ratio undefined); None otherwise (⇒ INERT). n_warm
+    is optional. runtime_class is validated against the PUBLIC RUNTIME_LABELS enum, so a
+    free-text or out-of-enum runtime fails closed and drops the whole block.
+    """
+    wc = results.get("warm_vs_cold")
+    if not isinstance(wc, dict):
+        return None
+    clean = {}
+    for key, ok in WARM_VS_COLD_FIELDS.items():
+        if key in wc:
+            try:
+                if ok(wc[key]):
+                    clean[key] = wc[key]
+            except (TypeError, ValueError):
+                pass
+    for req in ("warm_p50_ms", "cold_ms", "speedup", "semantic", "runtime_class"):
+        if req not in clean:
+            return None
+    if clean["warm_p50_ms"] <= 0 or clean["cold_ms"] <= 0:
+        return None
+    return clean
+
+
+def render_warm_vs_cold(results):
+    """Render the warm-vs-cold speedup block (#3954 sibling), or "" when INERT.
+
+    Composes the warm leg (warm-pool TTFx p50) and the true-cold leg (unique-image cold) into
+    ONE honest headline a reader can quote: warm provisioning is N times faster than cold. INERT
+    (returns "") until the harness emits a complete, closed-schema-clean warm_vs_cold object —
+    the classifier itself fails closed if the two legs ever diverge in semantic or runtime class.
+    """
+    wc = _clean_warm_vs_cold(results)
+    if not wc:
+        return ""
+    rt_label = RUNTIME_LABELS[wc["runtime_class"]]
+    sem_label = _SEMANTIC_LABELS[wc["semantic"]]
+    # Recompute the displayed ratio from the two displayed legs rather than printing the
+    # emitter's `speedup` verbatim, so the headline/table/footnote can never contradict the
+    # legs shown beside them (the footnote literally claims "computed from the displayed
+    # values"). The legs are strictly-positive-gated in _clean_warm_vs_cold, so the ratio is
+    # always defined and positive — this also closes an emitter speedup<=0.
+    speedup = _fmt_num(wc["cold_ms"] / wc["warm_p50_ms"])
+    lines = ["## Warm-vs-Cold Speedup", ""]
+    lines.append(
+        f"A warm-pool provision is **{speedup}× faster** than a true-cold start "
+        f"({rt_label}). The warm pool keeps a ready slot so a claim skips the fresh-node "
+        "image-pull path a cold start pays in full. Both legs are measured the same way "
+        f"({sem_label}); the ratio is the portable headline you can reproduce on your own "
+        "cluster.")
+    lines.append("")
+    header = ["Leg", _SEMANTIC_LABELS[wc["semantic"]].split(" ")[0] + " (p50)"]
+    lines.append("| " + " | ".join(header) + " |")
+    lines.append("|" + "|".join(["---"] * len(header)) + "|")
+    lines.append(f"| Warm-pool hit ({rt_label}) | {_fmt_secs(wc['warm_p50_ms'])} |")
+    lines.append(f"| True-cold (unique-image) | {_fmt_secs(wc['cold_ms'])} |")
+    lines.append(f"| Speedup (warm is N× faster) | {speedup}× |")
+    lines.append("")
+    n_note = f" over n={wc['n_warm']} warm claims" if "n_warm" in wc else ""
+    lines.append(
+        f"_Speedup = cold ÷ warm, computed from the displayed values{n_note}; the warm leg "
+        "is the p50 so half of warm claims beat it._")
+    lines.append("")
     return "\n".join(lines)
 
 

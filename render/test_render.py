@@ -961,6 +961,87 @@ def test_scale_proof_per_step_compounding_decay_read():
     assert "holds flat step-to-step" not in out
 
 
+def test_warm_vs_cold_absent_renders_nothing():
+    # No warm_vs_cold object ⇒ INERT (the block ships byte-absent until the harness emits it).
+    assert render.render_warm_vs_cold(_matrix_results(_full_gvisor_scenarios())) == ""
+
+
+def _wc(**over):
+    base = {
+        "warm_p50_ms": 300, "cold_ms": 3000, "speedup": 10.0,
+        "semantic": "ttfe", "runtime_class": "gvisor", "n_warm": 200,
+    }
+    base.update(over)
+    return base
+
+
+def test_warm_vs_cold_complete_block_renders():
+    out = render.render_warm_vs_cold(_matrix_results(_full_gvisor_scenarios(), warm_vs_cold=_wc()))
+    assert "## Warm-vs-Cold Speedup" in out
+    assert "A warm-pool provision is **10× faster** than a true-cold start (gVisor)." in out
+    assert "| Leg | TTFE (p50) |" in out
+
+
+def test_warm_vs_cold_legs_and_speedup_math():
+    # the N× headline and both leg cells render from the displayed values (cold ÷ warm = 10×).
+    out = render.render_warm_vs_cold(_matrix_results(_full_gvisor_scenarios(), warm_vs_cold=_wc()))
+    assert "| Warm-pool hit (gVisor) | 0.3s |" in out
+    assert "| True-cold (unique-image) | 3s |" in out
+    assert "| Speedup (warm is N× faster) | 10× |" in out
+
+
+def test_warm_vs_cold_n_warm_subline_present():
+    out = render.render_warm_vs_cold(_matrix_results(_full_gvisor_scenarios(), warm_vs_cold=_wc()))
+    assert "over n=200 warm claims" in out
+
+
+def test_warm_vs_cold_n_warm_absent_no_subline():
+    # n_warm is optional ⇒ block still renders, but the "over n=…" qualifier is omitted.
+    wc = _wc()
+    del wc["n_warm"]
+    out = render.render_warm_vs_cold(_matrix_results(_full_gvisor_scenarios(), warm_vs_cold=wc))
+    assert "## Warm-vs-Cold Speedup" in out
+    assert "over n=" not in out
+
+
+def test_warm_vs_cold_out_of_enum_runtime_class_inert():
+    # a free-text / out-of-enum runtime_class fails the closed-schema predicate ⇒ whole block INERT.
+    results = _matrix_results(_full_gvisor_scenarios(), warm_vs_cold=_wc(runtime_class="trust-me-vm"))
+    assert render.render_warm_vs_cold(results) == ""
+
+
+def test_warm_vs_cold_missing_required_field_inert():
+    # drop a required field (speedup) ⇒ the whole block is INERT (no partial render).
+    wc = _wc()
+    del wc["speedup"]
+    results = _matrix_results(_full_gvisor_scenarios(), warm_vs_cold=wc)
+    assert render.render_warm_vs_cold(results) == ""
+
+
+def test_warm_vs_cold_zero_leg_inert():
+    # a zero warm leg makes the ratio undefined ⇒ INERT, never a divide-by-zero render.
+    results = _matrix_results(_full_gvisor_scenarios(), warm_vs_cold=_wc(warm_p50_ms=0))
+    assert render.render_warm_vs_cold(results) == ""
+
+
+def test_warm_vs_cold_malformed_object_inert():
+    # a non-dict warm_vs_cold (e.g. a stray string) ⇒ "" (never a leak).
+    results = _matrix_results(_full_gvisor_scenarios(), warm_vs_cold="SYNTHETIC-WARMCOLD-LEAK")
+    assert render.render_warm_vs_cold(results) == ""
+
+
+def test_warm_vs_cold_ttfi_semantic_label():
+    # the TTFI semantic flips both the table header and the inline measurement-method label.
+    out = render.render_warm_vs_cold(_matrix_results(_full_gvisor_scenarios(), warm_vs_cold=_wc(semantic="ttfi")))
+    assert "| Leg | TTFI (p50) |" in out
+    assert "TTFI (first-instruction accepted)" in out
+
+
+def test_warm_vs_cold_kata_runtime_label():
+    out = render.render_warm_vs_cold(_matrix_results(_full_gvisor_scenarios(), warm_vs_cold=_wc(runtime_class="kata-microvm")))
+    assert "Kata + microVM" in out
+
+
 def _run_all():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:
