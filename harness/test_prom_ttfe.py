@@ -172,6 +172,91 @@ def test_partial_triple_never_ships():
         _check(len(m) == 3, f"{lt} ships the full triple or nothing")
 
 
+# ---------------------------------------------------------------- per-step delta convergence
+
+# Two consecutive CUMULATIVE warm scrapes from one controller lifetime. The per-step
+# INCREMENT (END - START) has a DIFFERENT quantile than either scrape's union -- that
+# divergence is the whole reason the delta path exists (a multi-step end-scrape union
+# matches no single per-step pareto point).
+def _warm_scrape(buckets, count):
+    lines = [
+        f'agent_sandbox_claim_startup_latency_ms_bucket{{launch_type="warm",le="{le}"}} {c}'
+        for le, c in buckets
+    ]
+    lines.append(f'agent_sandbox_claim_startup_latency_ms_count{{launch_type="warm"}} {count}')
+    return "\n".join(lines) + "\n"
+
+
+_DELTA_START = _warm_scrape(
+    [("100", 0), ("250", 5), ("500", 20), ("1000", 40), ("2500", 49), ("+Inf", 50)], 50)
+_DELTA_END = _warm_scrape(
+    [("100", 0), ("250", 10), ("500", 50), ("1000", 90), ("2500", 99), ("+Inf", 100)], 100)
+
+
+def test_delta_window_quantile_differs_from_union():
+    # increment cum: (100,0)(250,5)(500,30)(1000,50)(2500,50)(inf,50), total 50.
+    # p50 rank=25 -> bucket (250,500]: 250 + 250*((25-5)/(30-5)) = 250 + 250*(20/25) = 450.0
+    step = p.ttfe_by_launch_type_delta(_DELTA_START, _DELTA_END)
+    union = p.ttfe_by_launch_type(_DELTA_END)
+    _check(_close(step["warm"]["ttfe_p50_ms"], 450.0), "per-step p50 == 450.0 (windowed)")
+    _check(_close(union["warm"]["ttfe_p50_ms"], 500.0), "union p50 == 500.0 (cumulative)")
+    _check(step["warm"]["ttfe_p50_ms"] != union["warm"]["ttfe_p50_ms"],
+           "per-step quantile DIFFERS from the cumulative-union quantile")
+
+
+def test_delta_empty_start_equals_single_end_scrape():
+    # Fresh-restarted controller (empty histogram before the step): the increment IS the
+    # end scrape, so the delta path collapses to exactly ttfe_by_launch_type(end) -- the
+    # Phase-1 single-step bonus (no diffing needed).
+    _check(p.ttfe_by_launch_type_delta("", _DELTA_END) == p.ttfe_by_launch_type(_DELTA_END),
+           "empty start -> delta == single end-scrape quantile")
+    _check(p.ttfe_by_launch_type_delta("# nothing\n", _DELTA_END)
+           == p.ttfe_by_launch_type(_DELTA_END), "comment-only start -> same as empty")
+
+
+def test_delta_counter_reset_yields_measured_false():
+    # END < START (controller restarted between scrapes) -> the launch_type is OMITTED,
+    # never a meaningless cross-reset delta.
+    reset_end = _warm_scrape(
+        [("100", 0), ("250", 1), ("500", 2), ("1000", 3), ("2500", 4), ("+Inf", 5)], 5)
+    _check(p.ttfe_by_launch_type_delta(_DELTA_END, reset_end) == {},
+           "reset (end<start) -> {} (measured=False, not a fabricated delta)")
+
+
+def test_delta_zero_increment_omitted_not_zeroed():
+    # No new claims this step (END == START) -> increment total 0 -> launch_type omitted,
+    # never a fabricated 0ms.
+    _check(p.ttfe_by_launch_type_delta(_DELTA_END, _DELTA_END) == {},
+           "zero increment -> omitted, never a fabricated 0ms")
+
+
+def test_delta_new_launch_type_carries_full_end_histogram():
+    # cold first appears DURING this step (absent from start) -> its whole end histogram is
+    # the increment, so cold is measured even though start had no cold series.
+    start = _DELTA_START  # warm only
+    end = _DELTA_END + (
+        'agent_sandbox_claim_startup_latency_ms_bucket{launch_type="cold",le="1000"} 0\n'
+        'agent_sandbox_claim_startup_latency_ms_bucket{launch_type="cold",le="2500"} 5\n'
+        'agent_sandbox_claim_startup_latency_ms_bucket{launch_type="cold",le="5000"} 8\n'
+        'agent_sandbox_claim_startup_latency_ms_bucket{launch_type="cold",le="+Inf"} 10\n'
+        'agent_sandbox_claim_startup_latency_ms_count{launch_type="cold"} 10\n'
+    )
+    step = p.ttfe_by_launch_type_delta(start, end)
+    _check(set(step) == {"warm", "cold"}, "cold (new since start) is measured via full-end increment")
+    _check(_close(step["cold"]["ttfe_p50_ms"], 2500.0), "cold p50 from its full end histogram")
+
+
+def test_histogram_delta_subtracts_and_detects_reset():
+    s = p.parse_metric_histograms(_DELTA_START)[0]
+    e = p.parse_metric_histograms(_DELTA_END)[0]
+    d = p.histogram_delta(s, e)
+    by_le = dict(d.buckets)
+    _check(by_le[500.0] == 30.0, "le=500 increment == 50-20 == 30")
+    _check(by_le[float("inf")] == 50.0, "+Inf increment == 100-50 == 50")
+    _check(d.count == 50.0, "_count increment == 100-50 == 50")
+    _check(p.histogram_delta(e, s) is None, "reset (end<start) -> None at the Histogram level")
+
+
 def _run_all():
     tests = [v for k, v in sorted(globals().items())
              if k.startswith("test_") and callable(v)]
