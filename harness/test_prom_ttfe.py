@@ -120,6 +120,24 @@ def test_controller_variant_excluded():
             _check(le100 == 0.0, "warm le=100 is headline (0), not controller (100)")
 
 
+def test_controller_only_scrape_yields_empty():
+    # The stale-controller-digest case (a Phase-0 abort, 2026-06-29): a deployed controller
+    # on an old image emits ONLY the _controller_ sibling, NOT the headline metric. The
+    # headline parser must then measure NOTHING -- it must never fall back to the
+    # controller-observed series, which excludes the claim-create->observe queueing lag and
+    # so under-reports TTFE under load. This is the honest-abort property the live
+    # metric-present fire-gate relies on (sibling present, headline absent -> measured=False).
+    controller_only = (
+        'agent_sandbox_claim_controller_startup_latency_ms_bucket{launch_type="warm",le="100"} 50\n'
+        'agent_sandbox_claim_controller_startup_latency_ms_bucket{launch_type="warm",le="+Inf"} 100\n'
+        'agent_sandbox_claim_controller_startup_latency_ms_count{launch_type="warm"} 100\n'
+    )
+    _check(p.parse_metric_histograms(controller_only) == [],
+           "controller-only scrape -> zero HEADLINE histograms (sibling never folded in)")
+    _check(p.ttfe_by_launch_type(controller_only) == {},
+           "controller-only scrape -> {} (measured=False, never substitute the sibling)")
+
+
 def test_label_escapes_parsed():
     lbls = p._parse_labels(r'launch_type="wa\"rm",le="100"')
     _check(lbls["launch_type"] == 'wa"rm', "escaped quote in label value")
