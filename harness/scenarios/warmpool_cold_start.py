@@ -59,11 +59,17 @@ loop catches a raised exception as a crash-fail cell.
 from __future__ import annotations
 
 try:  # package context (production: run.py loads harness.scenarios.warmpool_cold_start)
-    from ._apiversion import claim_gvr, ext_api_version, template_gvr, warmpool_gvr
+    from . import runtime_class as rc
+    from ._apiversion import (
+        claim_gvr, ext_api_version, sandbox_gvr, template_gvr, warmpool_gvr,
+    )
     from ._kube import load_cluster_config
     from .. import metrics, ttfe_probe
 except ImportError:  # standalone (dependency-free test from the scenarios/ dir)
-    from _apiversion import claim_gvr, ext_api_version, template_gvr, warmpool_gvr
+    import runtime_class as rc
+    from _apiversion import (
+        claim_gvr, ext_api_version, sandbox_gvr, template_gvr, warmpool_gvr,
+    )
     from _kube import load_cluster_config
     import sys as _sys
     import pathlib as _pathlib
@@ -164,12 +170,54 @@ _POLL_S = 0.05  # per-claim thread poll — must be << the warm threshold
 _TPL_GVR = template_gvr()
 _CLM_GVR = claim_gvr()
 _SWP_GVR = warmpool_gvr()
+_SBX_GVR = sandbox_gvr()
 
 _SCENARIO_LABEL = {"honest-bench/scenario": "warmpool-cold-start"}
 
+# Runtime-class pin + bound-pod verification (DEFAULT-OFF; mirrors burst_create).
+#
+# Unset (the default) -> the template is built byte-identical to its pre-#3942 shape
+# and the verification path is gated off, so a vanilla-kind run is unchanged. Set
+# WARMPOOL_COLD_START_RUNTIME_CLASS=gvisor on a gke-sandbox cluster (or =kata on the
+# nested-virt pool, #3989) and the warm-pool row becomes a REAL runtime-isolated
+# number: the pool's Pods are pinned to that runtime (runtimeClassName + the runtime's
+# toleration/nodeSelector) AND each counted sandbox's backing Pod is verified to have
+# actually run under it before the row is published. The shared runtime_class helper
+# (gVisor + Kata profiles) owns the pin + verify so this scenario, native_digest_cold,
+# and burst_create all pin-and-verify identically. See runtime_class.py.
+_RUNTIME_CLASS = os.environ.get("WARMPOOL_COLD_START_RUNTIME_CLASS", "")
+
+# The cluster's substrate banner (run.py provenance). A gke-sandbox banner asserts
+# gVisor isolation, so the consistency guard refuses an unset/non-gVisor runtime on it
+# before any cluster call — preventing a runc count from publishing under a gVisor
+# label. kind/gke make no isolation claim and impose no constraint.
+_CLUSTER_SUBSTRATE = os.environ.get("BENCH_CLUSTER_SUBSTRATE", "kind")
+
 
 def _build_template_manifest(template_name: str) -> dict:
-    """Minimal busybox SandboxTemplate."""
+    """Minimal busybox SandboxTemplate.
+
+    When WARMPOOL_COLD_START_RUNTIME_CLASS is set, the pod_spec is pinned to that
+    runtime (runtimeClassName + the runtime's toleration/nodeSelector) via the shared
+    runtime_class helper. Default-off: with the knob unset apply_runtime_class is a
+    byte-identical no-op, so the template is exactly its pre-#3942 shape.
+    """
+    pod_spec = {
+        "containers": [
+            {
+                "name": "sandbox",
+                "image": _SANDBOX_IMAGE,
+                "imagePullPolicy": "IfNotPresent",
+                "command": ["sh", "-c", "sleep 600"],
+                "resources": {
+                    "requests": {"cpu": "10m", "memory": "16Mi"},
+                    "limits": {"cpu": "100m", "memory": "64Mi"},
+                },
+            },
+        ],
+        "restartPolicy": "Never",
+    }
+    rc.apply_runtime_class(pod_spec, _RUNTIME_CLASS)
     return {
         "apiVersion": ext_api_version(),
         "kind": "SandboxTemplate",
@@ -180,21 +228,7 @@ def _build_template_manifest(template_name: str) -> dict:
         },
         "spec": {
             "podTemplate": {
-                "spec": {
-                    "containers": [
-                        {
-                            "name": "sandbox",
-                            "image": _SANDBOX_IMAGE,
-                            "imagePullPolicy": "IfNotPresent",
-                            "command": ["sh", "-c", "sleep 600"],
-                            "resources": {
-                                "requests": {"cpu": "10m", "memory": "16Mi"},
-                                "limits": {"cpu": "100m", "memory": "64Mi"},
-                            },
-                        },
-                    ],
-                    "restartPolicy": "Never",
-                },
+                "spec": pod_spec,
             },
         },
     }
@@ -595,6 +629,11 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
     """
     from kubernetes import client as k8s_client
 
+    # Sub-gap 1 (pure, fail-fast): a gke-sandbox-labeled result MUST pin the gVisor
+    # RuntimeClass, else the published warm-pool row is a runc number under a gVisor
+    # banner. Checked before the cluster is touched so the mistake crashes immediately.
+    rc.assert_substrate_runtime_consistency(_CLUSTER_SUBSTRATE, _RUNTIME_CLASS)
+
     # Portable kubeconfig load (see _kube.load_cluster_config): an explicit
     # KUBECONFIG wins, else in-cluster when running as a pod, else the default
     # kubeconfig. The explicit-KUBECONFIG precedence is what lets a pod on one
@@ -613,6 +652,7 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
     k8s_client.Configuration.set_default(_cfg)
 
     custom = k8s_client.CustomObjectsApi()
+    core_v1 = k8s_client.CoreV1Api()
 
     suffix = uuid.uuid4().hex[:8]
     template_name = f"tmpl-{suffix}"
@@ -678,6 +718,28 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
             else:
                 latencies[name] = None
                 log.warning("claim %s timed out before Ready+bound", name)
+
+        # Sub-gap 2 (live read-back, gke-sandbox only): the counted sandboxes are the
+        # bound claims; on a gke-sandbox substrate verify each one's backing Pod
+        # actually scheduled under the pinned runtime before publishing the
+        # runtime-labeled row. Crash-FAILs on a silent runc fallback. kind/gke skip
+        # this (no runtime claim to verify, so the path stays read-free there). Runs
+        # post-measurement so it never perturbs the measured bind latency.
+        if _CLUSTER_SUBSTRATE == "gke-sandbox":
+            bound_sandbox_names = [
+                sandbox_names[n] for n in claim_names if n in sandbox_names
+            ]
+            verified = rc.verify_bound_pod_runtimes(
+                custom, core_v1,
+                namespace=_NAMESPACE,
+                sandbox_names=bound_sandbox_names,
+                sandbox_gvr=_SBX_GVR,
+                expected_runtime_class=_RUNTIME_CLASS,
+            )
+            log.info(
+                "runtime read-back: %d/%d bound sandboxes verified under "
+                "RuntimeClass %r", verified, len(bound_sandbox_names), _RUNTIME_CLASS,
+            )
 
         passed, breakdown = _classify_latencies(
             latencies, pool_replicas=_POOL_REPLICAS,
