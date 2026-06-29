@@ -276,6 +276,30 @@ SCALE_PROOF_FIELDS = {
     "measured_at": lambda v: isinstance(v, str) and bool(v),
 }
 
+# --- #3954 sibling: warm-vs-cold speedup block (TOP-LEVEL warm_vs_cold object) -----------
+# The harness warm_vs_cold classifier (harness/warm_vs_cold.py) composes the warm leg
+# (burst TTFx p50) and the true-cold leg (native_digest_cold) into ONE honest headline a
+# reader can quote: "warm provisioning is N times faster than cold." It emits an inner
+# object under a TOP-LEVEL `warm_vs_cold` key (mirrors scale_proof), or omits it entirely
+# when any honesty gate fails (semantic/runtime-class mismatch, corrupt leg, degenerate
+# ratio). The render side is INERT until that object appears.
+#
+# Closed-schema discipline (Layer-1 PII guard): the block renders ONLY these field-names,
+# each validated by its predicate; anything else is dropped on read. runtime_class is
+# validated against the PUBLIC RUNTIME_LABELS enum (NOT a bare non-empty string) so an
+# out-of-enum or free-text runtime can never reach the public page — it fails closed and
+# drops the block. semantic is one of the two measured modes. All latencies/ratios are
+# non-negative numerics; n_warm is the sample count (optional — render the bare headline
+# when absent).
+WARM_VS_COLD_FIELDS = {
+    "warm_p50_ms": _nonneg,
+    "cold_ms": _nonneg,
+    "speedup": _nonneg,
+    "semantic": lambda v: v in ("ttfi", "ttfe"),
+    "runtime_class": lambda v: v in RUNTIME_LABELS,
+    "n_warm": lambda v: isinstance(v, int) and not isinstance(v, bool) and v >= 0,
+}
+
 # --- a#3960: Step-up backfill saturation Pareto ------------------------------------------
 # The proven "300 sandboxes in <1s" story is a THROUGHPUT-SATURATION study, not single-
 # sandbox latency: a SandboxWarmPool sustaining a creation RATE, swept step-by-step
