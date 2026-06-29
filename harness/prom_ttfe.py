@@ -48,14 +48,33 @@ import math
 from typing import Optional
 
 # The controller's headline TTFE histogram: claim-create -> ready, labeled launch_type.
-# Distinct from agent_sandbox_claim_controller_startup_latency_ms (controller-observed ->
-# ready), which EXCLUDES the claim-create->controller-observe queueing lag -- exactly the
-# latency that grows under step-up backfill -- so it under-reports headline TTFE under
-# load. We match the headline name EXACTLY (below) so the controller variant is ignored.
+# Distinct from agent_sandbox_claim_controller_startup_latency_ms (the PROXY_METRIC below),
+# which EXCLUDES the claim-create->controller-observe queueing lag -- exactly the latency
+# that grows under step-up backfill -- so it under-reports headline TTFE under load. We
+# match the headline name EXACTLY (below) so the controller variant is never folded in.
 HEADLINE_METRIC = "agent_sandbox_claim_startup_latency_ms"
+
+# The controller-observed PROXY histogram: controller-first-observed -> ready (the controller
+# stamps agents.x-k8s.io/controller-first-observed-at itself, so this populates on the
+# DEPLOYED controller NOW, whereas HEADLINE_METRIC is .Observe()d only on claims carrying the
+# upstream webhook annotation -- not yet deployed -- so it is dead-by-construction until then).
+# Because it excludes the claim-create->controller-observe queueing lag, a percentile derived
+# from it is a LOWER BOUND on the true end-to-end TTFE, never the headline number. It is
+# surfaced as a DISTINCT caveated field, never aliased onto the headline (the exact-name match
+# in parse_metric_histograms keeps the two from ever bleeding together).
+PROXY_METRIC = "agent_sandbox_claim_controller_startup_latency_ms"
 
 # The locked percentile triple (q in [0,1]) -> emit key.
 _PCTILES = (("ttfe_p50_ms", 0.50), ("ttfe_p95_ms", 0.95), ("ttfe_p99_ms", 0.99))
+
+# The proxy's distinct percentile triple -- separate emit keys so the lower-bound proxy is
+# never confused with the headline TTFE downstream (the render/schema controller_startup
+# field, #3954's lane, keys on exactly these names).
+_PROXY_PCTILES = (
+    ("controller_startup_p50_ms", 0.50),
+    ("controller_startup_p95_ms", 0.95),
+    ("controller_startup_p99_ms", 0.99),
+)
 
 
 class Histogram:
@@ -212,6 +231,55 @@ def parse_metric_histograms(text: str, metric_name: str = HEADLINE_METRIC) -> li
     return out
 
 
+def aggregate_by_launch_type(hists: list[Histogram]) -> dict[str, Histogram]:
+    """Collapse the ``sandbox_template`` dimension: sum buckets by ``le`` per ``launch_type``.
+
+    The controller emits one histogram series per (launch_type, sandbox_template) pair, but
+    the PUBLIC page surfaces latency ONLY by launch_type (warm/cold) -- the sandbox_template
+    label VALUES are internal scenario names that must never reach the page. So before any
+    percentile is taken, this collapses the template dimension: for each launch_type, sum the
+    cumulative bucket count at each ``le`` across every template series (cumulative histograms
+    are additive bucket-wise -- the union over templates is the bucket-wise sum), and likewise
+    sum ``_count``/``_sum``. This mirrors CL2's ``sum(...) by (le)`` aggregation, so the
+    offline parser and CL2 converge on the SAME per-launch_type percentile.
+
+    Honesty + safety properties:
+      - A histogram with no ``launch_type`` label is skipped (we never invent a bucket).
+      - The returned Histograms carry ONLY the ``launch_type`` label -- the template dimension
+        is gone by construction, so a downstream caller cannot leak a template name.
+      - ``_count``/``_sum`` stay None for a launch_type only if NO contributing series carried
+        them (an absent count is honest measured=False, not a fabricated 0).
+      - Single-template input is identity: the sum over one series is that series, so this is
+        backward-compatible with the headline metric's single-``launch_type`` scrapes.
+
+    Because ``Histogram`` uses ``__slots__`` (no ad-hoc attributes), accumulation runs in a
+    local ``le -> count`` dict and is materialized into the result Histogram's bucket list.
+    """
+    bucket_acc: dict[str, dict[float, float]] = {}
+    count_acc: dict[str, Optional[float]] = {}
+    sum_acc: dict[str, Optional[float]] = {}
+    for h in hists:
+        lt = h.launch_type
+        if lt is None:
+            continue
+        acc = bucket_acc.setdefault(lt, {})
+        for le, c in h.buckets:
+            acc[le] = acc.get(le, 0.0) + c
+        if h.count is not None:
+            count_acc[lt] = (count_acc.get(lt) or 0.0) + h.count
+        if h.sum is not None:
+            sum_acc[lt] = (sum_acc.get(lt) or 0.0) + h.sum
+
+    out: dict[str, Histogram] = {}
+    for lt, acc in bucket_acc.items():
+        agg = Histogram({"launch_type": lt})
+        agg.buckets = sorted(acc.items(), key=lambda b: b[0])
+        agg.count = count_acc.get(lt)
+        agg.sum = sum_acc.get(lt)
+        out[lt] = agg
+    return out
+
+
 def histogram_quantile(q: float, buckets: list[tuple[float, float]]) -> Optional[float]:
     """Classic Prometheus ``histogram_quantile`` over cumulative ``(le, count)`` buckets.
 
@@ -287,17 +355,19 @@ def _total_observations(h: Histogram) -> Optional[float]:
     return h.count
 
 
-def ttfe_percentiles(h: Histogram) -> dict[str, float]:
-    """{ttfe_p50_ms, ttfe_p95_ms, ttfe_p99_ms} for one histogram, or {} if unmeasurable.
+def _percentiles(h: Histogram, pctiles: tuple[tuple[str, float], ...]) -> dict[str, float]:
+    """The percentile triple for one histogram under ``pctiles``, or {} if unmeasurable.
 
     Returns {} (never a fabricated 0) when the histogram has zero observations or is
-    malformed (no +Inf bucket). All-or-nothing: a partial triple never ships.
+    malformed (no +Inf bucket). All-or-nothing: a partial triple never ships. The ``pctiles``
+    tuple selects both the quantiles and their emit-key names, so the same engine drives the
+    headline (``_PCTILES``) and the controller-startup proxy (``_PROXY_PCTILES``).
     """
     total = _total_observations(h)
     if not total or total <= 0:
         return {}
     out: dict[str, float] = {}
-    for key, q in _PCTILES:
+    for key, q in pctiles:
         v = histogram_quantile(q, h.buckets)
         if v is None:
             return {}  # malformed -> emit nothing rather than a partial triple
@@ -305,27 +375,61 @@ def ttfe_percentiles(h: Histogram) -> dict[str, float]:
     return out
 
 
-def ttfe_by_launch_type(text: str, metric_name: str = HEADLINE_METRIC) -> dict[str, dict[str, float]]:
-    """Assemble {launch_type: {ttfe_p50_ms, ttfe_p95_ms, ttfe_p99_ms}} from a scrape.
+def ttfe_percentiles(h: Histogram) -> dict[str, float]:
+    """{ttfe_p50_ms, ttfe_p95_ms, ttfe_p99_ms} for one histogram, or {} if unmeasurable."""
+    return _percentiles(h, _PCTILES)
 
-    The top-level result is the honest measured set: a launch_type appears IFF its
-    histogram had >0 observations AND produced a full percentile triple. An empty dict
-    means nothing was measured (the caller reads that as measured=False and excludes the
-    point from the verdict -- the INFRA-vs-test split -- rather than recording a collapse).
 
-    A histogram with no ``launch_type`` label is skipped (the headline metric always
-    carries it). If two histograms map to the same launch_type (unexpected extra labels),
-    the duplicate is skipped rather than guessed -- honest about the ambiguity.
+def _assemble_by_launch_type(
+    text: str, metric_name: str, pctiles: tuple[tuple[str, float], ...]
+) -> dict[str, dict[str, float]]:
+    """Aggregate over sandbox_template, then emit the percentile triple per launch_type.
+
+    The shared spine behind ``ttfe_by_launch_type`` (headline) and
+    ``controller_startup_by_launch_type`` (proxy): parse every (launch_type, sandbox_template)
+    series, collapse the template dimension via ``aggregate_by_launch_type`` (so the public
+    page never sees a template name and the percentile is over the union of all templates),
+    then take the ``pctiles`` triple of each aggregated histogram.
     """
     result: dict[str, dict[str, float]] = {}
-    for h in parse_metric_histograms(text, metric_name):
-        lt = h.launch_type
-        if lt is None or lt in result:
-            continue
-        pct = ttfe_percentiles(h)
+    for lt, h in aggregate_by_launch_type(parse_metric_histograms(text, metric_name)).items():
+        pct = _percentiles(h, pctiles)
         if pct:
             result[lt] = pct
     return result
+
+
+def ttfe_by_launch_type(text: str, metric_name: str = HEADLINE_METRIC) -> dict[str, dict[str, float]]:
+    """Assemble {launch_type: {ttfe_p50_ms, ttfe_p95_ms, ttfe_p99_ms}} from a scrape.
+
+    The top-level result is the honest measured set: a launch_type appears IFF its AGGREGATED
+    histogram (summed over all sandbox_template series) had >0 observations AND produced a
+    full percentile triple. An empty dict means nothing was measured (the caller reads that as
+    measured=False and excludes the point from the verdict -- the INFRA-vs-test split --
+    rather than recording a collapse).
+
+    Aggregation over sandbox_template (see ``aggregate_by_launch_type``) is load-bearing for
+    two reasons: the controller emits one series per template, so the public page must sum them
+    to get the real per-launch_type percentile; and the template label VALUES are internal
+    scenario names that must never reach the page. A histogram with no ``launch_type`` label is
+    skipped (the metric always carries it).
+    """
+    return _assemble_by_launch_type(text, metric_name, _PCTILES)
+
+
+def controller_startup_by_launch_type(text: str) -> dict[str, dict[str, float]]:
+    """Proxy lower-bound TTFE: {launch_type: {controller_startup_p50_ms, _p95_ms, _p99_ms}}.
+
+    Same engine as ``ttfe_by_launch_type`` but over the PROXY_METRIC (controller-observed ->
+    ready) with the proxy emit keys. Every number here is a LOWER BOUND on the true
+    claim-create -> ready TTFE -- it excludes the claim-create -> controller-observe queueing
+    lag -- so the caller MUST surface it as a distinct caveated field, never as the headline.
+    A ``saturated`` fire makes even this lower bound a HARD FLOOR (a large tail spills past the
+    top finite bucket once the warm pool drains), not a typical latency. Honesty spine is
+    identical: a launch_type appears IFF its aggregated proxy histogram measured >0 and
+    produced a full triple; otherwise it is omitted (measured=False), never a fabricated 0.
+    """
+    return _assemble_by_launch_type(text, PROXY_METRIC, _PROXY_PCTILES)
 
 
 # --------------------------------------------------------------- per-step delta convergence
@@ -386,15 +490,47 @@ def histogram_delta(start: Histogram, end: Histogram) -> Optional[Histogram]:
     return delta
 
 
+def _assemble_by_launch_type_delta(
+    start_text: str, end_text: str, metric_name: str, pctiles: tuple[tuple[str, float], ...]
+) -> dict[str, dict[str, float]]:
+    """Aggregate BOTH scrapes over sandbox_template, then take the per-step increment.
+
+    The shared spine behind ``ttfe_by_launch_type_delta`` (headline) and
+    ``controller_startup_by_launch_type_delta`` (proxy). Both consecutive cumulative scrapes
+    are first collapsed over the template dimension (``aggregate_by_launch_type``), so the
+    increment is taken on the per-launch_type union -- the template-collapse must precede the
+    subtraction (summing then diffing equals diffing then summing for cumulative counts, but
+    collapsing first is what keeps a template name from ever surfacing). Then ``histogram_delta``
+    subtracts ``end - start`` per launch_type and ``pctiles`` are taken of the increment.
+    """
+    start_by_lt = aggregate_by_launch_type(parse_metric_histograms(start_text, metric_name))
+    result: dict[str, dict[str, float]] = {}
+    for lt, end_hist in aggregate_by_launch_type(
+        parse_metric_histograms(end_text, metric_name)
+    ).items():
+        start_hist = start_by_lt.get(lt)
+        if start_hist is None:
+            delta = end_hist  # new launch_type since start: increment == end (start all-0)
+        else:
+            delta = histogram_delta(start_hist, end_hist)
+            if delta is None:
+                continue  # counter reset -> measured=False for this launch_type
+        pct = _percentiles(delta, pctiles)
+        if pct:
+            result[lt] = pct
+    return result
+
+
 def ttfe_by_launch_type_delta(
     start_text: str, end_text: str, metric_name: str = HEADLINE_METRIC
 ) -> dict[str, dict[str, float]]:
     """Per-step ``{launch_type: {ttfe_p50_ms, ttfe_p95_ms, ttfe_p99_ms}}`` from the INCREMENT.
 
-    Parse both consecutive cumulative scrapes, subtract ``end - start`` per launch_type via
-    ``histogram_delta``, and emit the percentile triple of each increment. This is the
-    per-step analogue of ``ttfe_by_launch_type`` and converges against the matching CL2
-    pareto point (rate-windowed per step). The same honesty spine holds end-to-end:
+    Aggregate both consecutive cumulative scrapes over sandbox_template, subtract
+    ``end - start`` per launch_type via ``histogram_delta``, and emit the percentile triple of
+    each increment. This is the per-step analogue of ``ttfe_by_launch_type`` and converges
+    against the matching CL2 pareto point (rate-windowed per step). The same honesty spine
+    holds end-to-end:
 
       - a launch_type appears IFF its increment had >0 observations AND produced a full
         triple -- a step that took no new claims of a launch_type omits it (never a fake 0);
@@ -405,24 +541,17 @@ def ttfe_by_launch_type_delta(
       - an empty/absent ``start`` scrape (fresh-restarted controller) makes every increment
         equal its end histogram, so the result equals ``ttfe_by_launch_type(end_text)``.
     """
-    start_by_lt = {
-        h.launch_type: h
-        for h in parse_metric_histograms(start_text, metric_name)
-        if h.launch_type is not None
-    }
-    result: dict[str, dict[str, float]] = {}
-    for end_hist in parse_metric_histograms(end_text, metric_name):
-        lt = end_hist.launch_type
-        if lt is None or lt in result:
-            continue
-        start_hist = start_by_lt.get(lt)
-        if start_hist is None:
-            delta = end_hist  # new launch_type since start: increment == end (start all-0)
-        else:
-            delta = histogram_delta(start_hist, end_hist)
-            if delta is None:
-                continue  # counter reset -> measured=False for this launch_type
-        pct = ttfe_percentiles(delta)
-        if pct:
-            result[lt] = pct
-    return result
+    return _assemble_by_launch_type_delta(start_text, end_text, metric_name, _PCTILES)
+
+
+def controller_startup_by_launch_type_delta(
+    start_text: str, end_text: str
+) -> dict[str, dict[str, float]]:
+    """Per-step proxy lower-bound: {launch_type: {controller_startup_p50_ms, _p95_ms, _p99_ms}}.
+
+    The per-step analogue of ``controller_startup_by_launch_type`` -- same PROXY_METRIC, same
+    proxy emit keys, same lower-bound + saturation caveats (every number is a floor on the
+    true TTFE). Converges against the matching CL2 per-step pareto point for the controller
+    metric. Honesty spine identical to the headline delta path.
+    """
+    return _assemble_by_launch_type_delta(start_text, end_text, PROXY_METRIC, _PROXY_PCTILES)
