@@ -184,7 +184,11 @@ _SCENARIO_LABEL = {"honest-bench/scenario": "warmpool-cold-start"}
 # toleration/nodeSelector) AND each counted sandbox's backing Pod is verified to have
 # actually run under it before the row is published. The shared runtime_class helper
 # (gVisor + Kata profiles) owns the pin + verify so this scenario, native_digest_cold,
-# and burst_create all pin-and-verify identically. See runtime_class.py.
+# and suspend_resume all pin-and-verify identically. (burst_create pins-and-verifies
+# with the same INTENT but via its own inline impl, NOT this helper: its
+# WarmPool->Claim object model needs a claim-based verify over bound_claim_names,
+# not the helper's direct sandbox_names. Editing runtime_class.py does NOT change
+# burst_create — keep the two in step by hand.) See runtime_class.py.
 _RUNTIME_CLASS = os.environ.get("WARMPOOL_COLD_START_RUNTIME_CLASS", "")
 
 # The cluster's substrate banner (run.py provenance). A gke-sandbox banner asserts
