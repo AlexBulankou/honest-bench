@@ -119,10 +119,27 @@ def test_resolve_helpers():
     _check(c.resolve_usd_per_node_hour(None, None) is None, "no inputs -> None")
 
 
+def _load_render_schema():
+    # render/ has no __init__.py on purpose (a `render` package would shadow render.py),
+    # so `from render.schema import ...` only resolves as a namespace package. In a full
+    # pytest run a render-dir test does `import render` first, binding `render` to the
+    # render.py MODULE in sys.modules -> the namespace path is gone and the dotted import
+    # raises "'render' is not a package". Load schema.py by file path to be robust to that
+    # ordering (schema.py imports only stdlib, so by-path load is side-effect-free).
+    import importlib.util
+    import os
+    schema_path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "render", "schema.py")
+    spec = importlib.util.spec_from_file_location("_render_schema_for_cost_test", schema_path)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
 def test_cost_passes_schema_predicate():
     # The producer and the closed-schema allow-list must agree: a computed cost is a
     # valid optional Pareto-point value, and the honest None (absent field) is fine too.
-    from render.schema import _stepup_points_ok
+    _stepup_points_ok = _load_render_schema()._stepup_points_ok
     cost = c.cost_usd_per_1k_ready(300.0, node_count=150, machine_type="e2-standard-16")
     point_with_cost = {"offered_rate_per_s": 300, "ttfe_p95_ms": 420.0,
                        "ready_per_s": 300.0, "cost_usd_per_1k_ready": cost}
