@@ -56,6 +56,20 @@ _Cells render `pending` until the TTFE-instrumented run lands._
 _build: cluster_substrate=gke-sandbox · controller_image=us-central1-docker.pkg.dev/k8s-staging-images/agent-sandbox/agent-sandbox-controller:latest-main · controller_digest=sha256:6edaf7b6b22d9dfaf6ab077cd1c6517acf5fc6cf96b1ad58fe83bcfd477977ec · crd_version=v1beta1 · suite_git_sha=fbc1a5d362f8a7befa3c3c2cb33703013cfb49b0 · run_id=247326d41d0749319d823948bc5fbaf0 · node_count=1_
 _generated-at: 2026-06-29T05:24:43Z_
 
+## Warm-vs-Cold Speedup
+
+A warm-pool provision is **12.6989× faster** than a true-cold start (gVisor). The warm pool keeps a ready slot so a claim skips the fresh-node image-pull path a cold start pays in full. Both legs are measured the same way (TTFE (executed first-instruction)); the ratio is the portable headline you can reproduce on your own cluster.
+
+| Leg | TTFE (p50) |
+|---|---|
+| Warm-pool hit (gVisor) | 0.4836s |
+| True-cold (unique-image) | 6.1412s |
+| Speedup (warm is N× faster) | 12.6989× |
+
+_Speedup = cold ÷ warm, computed from the displayed values over n=10 warm claims; the warm leg is the p50 so half of warm claims beat it._
+
+_Measured 2026-06-29 — warm-vs-cold speedup (point-in-time; refreshed on the next TTFE fire)._
+
 ## Scale Proof (Linearity Check)
 
 | Nodes Tested | Density Holds Flat? | Throughput Holds Flat? |
