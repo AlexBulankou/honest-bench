@@ -6,7 +6,14 @@ ate-native signers anchored) classify correctly off fixtures, so the load-bearin
 PASS/FAIL logic is verified without a cluster or the kubernetes client installed.
 """
 
-import agent_identity_podcert as cell
+try:  # cwd == scenarios/ (dependency-free `python3 test_agent_identity_podcert.py`)
+    import agent_identity_podcert as cell
+except ModuleNotFoundError:  # repo-root pytest: scenarios/ is a package, not on sys.path
+    import pathlib
+    import sys
+
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+    import agent_identity_podcert as cell
 
 A_SIGNER, B_SIGNER = cell.ATE_SIGNERS
 PREFIX = cell.CONTROLLER_NAME_PREFIX

@@ -8,7 +8,14 @@ so the headline metric is verified without a cluster or the kubernetes client.
 
 import math
 
-import burst_create as cell
+try:  # cwd == scenarios/ (dependency-free `python3 test_burst_create.py`)
+    import burst_create as cell
+except ModuleNotFoundError:  # repo-root pytest: scenarios/ is a package, not on sys.path
+    import pathlib
+    import sys
+
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+    import burst_create as cell
 
 _KC = cell._KEY_COUNT       # "sandboxes_ready_under_1s"
 _KD = cell._KEY_DENSITY     # "density_per_vcpu"

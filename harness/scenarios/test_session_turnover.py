@@ -9,7 +9,14 @@ a cluster or the kubernetes client.
 
 import statistics
 
-import session_turnover as cell
+try:  # cwd == scenarios/ (dependency-free `python3 test_session_turnover.py`)
+    import session_turnover as cell
+except ModuleNotFoundError:  # repo-root pytest: scenarios/ is a package, not on sys.path
+    import pathlib
+    import sys
+
+    sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+    import session_turnover as cell
 
 _KR = cell._KEY_REFILL          # "refill_latency_ms"
 _KP90 = cell._KEY_REFILL_P90    # "refill_p90_ms"
