@@ -59,8 +59,68 @@ def test_resolve_kata_taint_toleration_and_node_selector():
 
 
 def test_resolve_unknown_is_noop():
-    # An unknown non-empty class invents no scheduling — runtimeClassName only.
-    assert rc.resolve_scheduling("kata-clh-future") == ([], {})
+    # An unknown non-empty class (no known family prefix) invents no scheduling —
+    # runtimeClassName only. NB: "kata-*"/"gvisor-*" are NOT unknown (they normalize to a
+    # family, covered below), so the unknown probe must be a genuinely-foreign runtime.
+    assert rc.resolve_scheduling("firecracker") == ([], {})
+
+
+# ---- runtime_family: concrete hypervisor variant -> scheduling/profile family ----
+
+def test_family_bare_names_map_to_self():
+    assert rc.runtime_family(rc.KATA) == "kata"
+    assert rc.runtime_family(rc.GVISOR) == "gvisor"
+
+
+def test_family_kata_hypervisor_variants_normalize_to_kata():
+    # kata-deploy installs per-hypervisor RuntimeClasses; all share the nested-virt pool.
+    assert rc.runtime_family("kata-clh") == "kata"
+    assert rc.runtime_family("kata-qemu") == "kata"
+
+
+def test_family_gvisor_variants_normalize_to_gvisor():
+    assert rc.runtime_family("gvisor-experimental") == "gvisor"
+
+
+def test_family_empty_is_empty():
+    assert rc.runtime_family("") == ""
+
+
+def test_family_unknown_is_itself():
+    # A runtime with no known family prefix is its own family (no profile, no rule).
+    assert rc.runtime_family("firecracker") == "firecracker"
+    assert rc.runtime_family("runc") == "runc"
+
+
+def test_resolve_kata_clh_resolves_kata_profile():
+    # The load-bearing fix: a4s1 installs kata-clh, so resolve_scheduling("kata-clh")
+    # MUST return the kata profile (toleration + nested-virt nodeSelector), not ([], {}).
+    tols, sel = rc.resolve_scheduling("kata-clh")
+    assert sel == {"nested-virtualization": "enabled"}
+    assert len(tols) == 1 and tols[0]["key"] == "sandbox.gke.io/kata"
+
+
+def test_resolve_kata_qemu_resolves_kata_profile():
+    tols, sel = rc.resolve_scheduling("kata-qemu")
+    assert sel == {"nested-virtualization": "enabled"}
+    assert tols[0]["key"] == "sandbox.gke.io/kata"
+
+
+def test_resolve_gvisor_experimental_resolves_gvisor_profile():
+    tols, sel = rc.resolve_scheduling("gvisor-experimental")
+    assert sel == {}
+    assert len(tols) == 1 and tols[0]["key"] == "sandbox.gke.io/runtime"
+
+
+def test_apply_kata_clh_pins_concrete_class_with_family_scheduling():
+    # runtimeClassName is the CONCRETE hypervisor (kata-clh), but scheduling is the
+    # kata family's — so the pod lands on the nested-virt pool AND the headline names
+    # the exact hypervisor measured.
+    out = rc.apply_runtime_class(_base_spec(), "kata-clh")
+    assert out["runtimeClassName"] == "kata-clh"  # concrete, not normalized
+    keys = {t["key"] for t in out["tolerations"]}
+    assert "sandbox.gke.io/kata" in keys
+    assert out["nodeSelector"] == {"nested-virtualization": "enabled"}
 
 
 def test_resolve_returns_copies_not_shared_registry():
@@ -173,6 +233,24 @@ def test_consistency_gke_kata_gvisor_raises():
     _assert_raises(lambda: rc.assert_substrate_runtime_consistency("gke-kata", rc.GVISOR))
 
 
+def test_consistency_gke_kata_kata_clh_ok():
+    # The isolation claim is the FAMILY: a gke-kata banner is satisfied by ANY kata
+    # hypervisor pin (kata-clh / kata-qemu) — this is the a4s1-install case.
+    rc.assert_substrate_runtime_consistency("gke-kata", "kata-clh")  # no raise
+    rc.assert_substrate_runtime_consistency("gke-kata", "kata-qemu")  # no raise
+
+
+def test_consistency_gke_sandbox_gvisor_experimental_ok():
+    rc.assert_substrate_runtime_consistency("gke-sandbox", "gvisor-experimental")  # no raise
+
+
+def test_consistency_gke_kata_gvisor_variant_raises():
+    # A gvisor-family pin under a gke-kata banner is still a false headline.
+    _assert_raises(
+        lambda: rc.assert_substrate_runtime_consistency("gke-kata", "gvisor-experimental")
+    )
+
+
 # ---- required_runtime_for_substrate: the shared substrate->runtime source of truth ----
 
 def test_required_runtime_gke_sandbox_is_gvisor():
@@ -229,6 +307,16 @@ def test_classify_kata_expected():
     observed = [("a", "kata"), ("b", "runc")]
     v = rc.classify_runtime_violations(observed, "kata")
     assert len(v) == 1 and "runc" in v[0]
+
+
+def test_classify_verification_stays_exact_across_hypervisors():
+    # THE honesty property: scheduling + the substrate claim normalize to the family, but
+    # the bound-Pod read-back is EXACT. A Pod pinned kata-clh that fell back to kata-qemu
+    # is the SAME family yet a DIFFERENT hypervisor — it MUST be a violation, because the
+    # published headline names kata-clh and we measured kata-qemu.
+    observed = [("a", "kata-clh"), ("b", "kata-qemu")]
+    v = rc.classify_runtime_violations(observed, "kata-clh")
+    assert len(v) == 1 and "kata-qemu" in v[0]  # b violates; a (exact match) clean
 
 
 # ---- assert_no_runtime_violations: clean -> count; dirty -> raise ----

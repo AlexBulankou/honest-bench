@@ -8,11 +8,11 @@ belt-and-suspenders backstop, not the primary defense.
 
 import re
 
-PRODUCTS = {"sandbox", "substrate"}
+PRODUCTS = {"sandbox", "sandbox-kata", "substrate"}
 
 # cluster-substrate VALUE is allowed (generic GKE feature names); the internal
 # scenario/demo cluster NAMES are never a value here (Layer-2 denies those by pattern).
-CLUSTER_SUBSTRATES = {"kind", "gke", "gke-sandbox"}
+CLUSTER_SUBSTRATES = {"kind", "gke", "gke-sandbox", "gke-kata"}
 
 OUTCOMES = {"PASS", "FAIL", "pending"}
 
@@ -39,11 +39,18 @@ BADGE_SCOPES = {"control-plane", "enforced"}
 # pending/FAIL cells render an ENUM reason only — never harness free-text.
 PENDING_REASONS = {
     "requires-gvisor-runtime",
+    # symmetric with requires-gvisor-runtime: a kata-family EMIT cell pends here when the
+    # live substrate is not gke-kata (no kata runtime on the node). Emitted by the harness
+    # (PENDING_REASON_ENUM in harness/results_schema.py); the cross-contract subset test
+    # in harness/test_scenario_portability.py guards this set ⊇ the harness enum.
+    "requires-kata-runtime",
     "requires-gke",
     "not-yet-measured",
     "upstream-blocked",
     # Goal-2.1 matrix: the Kata+microVM runtime rows are uniformly not-yet-measured
     # (tracked internally — the public page carries NO internal issue ref by PII fence).
+    # Render-only seed footnote token (no harness emit path), distinct from the
+    # requires-kata-runtime EMIT-cell pend above.
     "requires-kata-microvm",
 }
 

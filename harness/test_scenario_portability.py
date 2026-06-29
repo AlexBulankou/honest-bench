@@ -62,6 +62,7 @@ _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)
 
 import ast
 import importlib
+import importlib.util
 import inspect
 import pathlib
 
@@ -250,17 +251,26 @@ def test_substrate_gate_semantics():
     gvisor_cell = Cell(
         "z", requires_substrate="gke-sandbox", pending_reason="requires-gvisor-runtime"
     )
-    # requires=None: runs everywhere (the kind perf-matrix path).
-    for sub in ("kind", "gke", "gke-sandbox"):
+    kata_cell = Cell(
+        "k", requires_substrate="gke-kata", pending_reason="requires-kata-runtime"
+    )
+    # requires=None: runs everywhere (the kind perf-matrix path) — incl. gke-kata,
+    # so the Kata EMIT measures the matrix rows for real rather than pending.
+    for sub in ("kind", "gke", "gke-sandbox", "gke-kata"):
         _check(substrate_satisfies(any_cell, sub), f"None-cell must run on {sub}")
-    # requires=gke: pends on kind, runs on gke + gke-sandbox.
+    # requires=gke: pends on kind, runs on every real GKE node (gke, gke-sandbox,
+    # gke-kata).
     _check(not substrate_satisfies(gke_cell, "kind"), "gke-cell must pend on kind")
     _check(substrate_satisfies(gke_cell, "gke"), "gke-cell must run on gke")
     _check(
         substrate_satisfies(gke_cell, "gke-sandbox"),
         "gke-cell must run on gke-sandbox (superset)",
     )
-    # requires=gke-sandbox: only gke-sandbox satisfies.
+    _check(
+        substrate_satisfies(gke_cell, "gke-kata"),
+        "gke-cell must run on gke-kata (real GKE node)",
+    )
+    # requires=gke-sandbox: only gke-sandbox satisfies (gke-kata has Kata, not gVisor).
     _check(
         not substrate_satisfies(gvisor_cell, "kind"), "gvisor-cell must pend on kind"
     )
@@ -271,6 +281,68 @@ def test_substrate_gate_semantics():
     _check(
         substrate_satisfies(gvisor_cell, "gke-sandbox"),
         "gvisor-cell must run on gke-sandbox",
+    )
+    _check(
+        not substrate_satisfies(gvisor_cell, "gke-kata"),
+        "gvisor-cell must pend on gke-kata (Kata, not gVisor)",
+    )
+    # requires=gke-kata: only gke-kata satisfies (gke-sandbox has gVisor, not Kata).
+    _check(not substrate_satisfies(kata_cell, "kind"), "kata-cell must pend on kind")
+    _check(
+        not substrate_satisfies(kata_cell, "gke"),
+        "kata-cell must pend on plain gke (no Kata)",
+    )
+    _check(
+        not substrate_satisfies(kata_cell, "gke-sandbox"),
+        "kata-cell must pend on gke-sandbox (gVisor, not Kata)",
+    )
+    _check(
+        substrate_satisfies(kata_cell, "gke-kata"),
+        "kata-cell must run on gke-kata",
+    )
+
+
+# --- cross-contract: harness emit enums ⊆ render allow-lists ------------------
+
+
+def test_harness_enums_subset_of_render_allowlists():
+    """The harness EMITS these enum values; the render closed-schema allow-list
+    DROPS anything not in its set (render.py maps an unknown pending_reason to
+    None, and a substrate value absent from CLUSTER_SUBSTRATES is stripped). So a
+    value the harness can emit but render does not accept silently loses its
+    reason/substrate on the public page — breaking the exact-match invariant
+    (results_schema.py). This is the offline guard that catches that drift at
+    commit time (caught the requires-kata-runtime vs requires-kata-microvm drift
+    in #3942). Direction is one-way by design: render MAY carry extra render-only
+    seed tokens (e.g. requires-kata-microvm) the harness never emits.
+
+    Loads render/schema.py BY PATH (not `from render import schema`): render/ has
+    no __init__.py, so render/render.py is importable as the top-level name
+    `render`, and test_render.py's `import render` binds that module into
+    sys.modules — shadowing a package-style import here in a full-suite run. The
+    path-load is order-independent regardless of what sits in sys.modules."""
+    _spec = importlib.util.spec_from_file_location(
+        "_render_schema_for_subset_check", _RENDER_DIR / "schema.py"
+    )
+    render_schema = importlib.util.module_from_spec(_spec)
+    _spec.loader.exec_module(render_schema)
+
+    missing_reasons = set(results_schema.PENDING_REASON_ENUM) - render_schema.PENDING_REASONS
+    _check(
+        not missing_reasons,
+        f"harness PENDING_REASON_ENUM values not in render PENDING_REASONS "
+        f"(would render no reason → break exact-match): {sorted(missing_reasons)}",
+    )
+    missing_subs = set(results_schema.CLUSTER_SUBSTRATE_ENUM) - render_schema.CLUSTER_SUBSTRATES
+    _check(
+        not missing_subs,
+        f"harness CLUSTER_SUBSTRATE_ENUM values not in render CLUSTER_SUBSTRATES "
+        f"(would be stripped at render): {sorted(missing_subs)}",
+    )
+    missing_products = set(results_schema.PRODUCT_ENUM) - render_schema.PRODUCTS
+    _check(
+        not missing_products,
+        f"harness PRODUCT_ENUM values not in render PRODUCTS: {sorted(missing_products)}",
     )
 
 
