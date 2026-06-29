@@ -231,6 +231,53 @@ def _coerce_scale_proof(raw):
     return out
 
 
+def _coerce_controller_startup(raw, clean_nonneg):
+    """Coerce the controller-startup LOWER-BOUND proxy block (#3975); None to omit it.
+
+    True TTFE has no upstream production stamp on current main, so the true-TTFE pareto is
+    honestly empty while the gap is open. This SEPARATE block carries the controller-stamped
+    startup latency (controller-first-observed -> Ready) as an explicit LOWER BOUND — it
+    EXCLUDES the claim-admission->first-reconcile queueing lag, so it under-reports true TTFE.
+
+    `lower_bound` MUST be exactly True (load-bearing: render keys the fixed lower-bound caveat
+    boilerplate off it; an absent/false flag drops the whole block so the proxy can never render
+    unmarked). The internal producer's free-text caveat is render-owned and NEVER carried here.
+    pareto_points must be a non-empty list; per point offered_rate_per_s + controller_startup_p95_ms
+    are required (x-axis + proxy honesty spine), the p50/p99 + controller_ready_per_s optional
+    (dropped on a bad value -> honest partial point). Optional proxy verdict from the same closed
+    set. Any malformed point returns None (the proxy table degrades to nothing, never a fake curve).
+    """
+    if not isinstance(raw, dict):
+        return None
+    if raw.get("lower_bound") is not True:
+        return None
+    pts = raw.get("pareto_points")
+    if not isinstance(pts, list) or not pts:
+        return None
+    clean = []
+    for p in pts:
+        if not isinstance(p, dict):
+            return None
+        rate = p.get("offered_rate_per_s")
+        if isinstance(rate, bool) or not isinstance(rate, int) or not (0 < rate < 100000):
+            return None
+        p95 = clean_nonneg(p.get("controller_startup_p95_ms"))
+        if p95 is None:
+            return None
+        cp = {"offered_rate_per_s": rate, "controller_startup_p95_ms": p95}
+        for opt in ("controller_startup_p50_ms", "controller_startup_p99_ms", "controller_ready_per_s"):
+            if opt in p:
+                ov = clean_nonneg(p[opt])
+                if ov is not None:
+                    cp[opt] = ov
+        clean.append(cp)
+    out = {"lower_bound": True, "pareto_points": clean}
+    verdict = raw.get("verdict")
+    if verdict in STEPUP_VERDICT_ENUM:
+        out["verdict"] = verdict
+    return out
+
+
 def _coerce_stepup(raw):
     """Keep the closed top-level step-up Pareto shape; return None to omit the key.
 
@@ -240,13 +287,15 @@ def _coerce_stepup(raw):
     share one contract. PUBLIC-safe by construction: only measured numbers + a bounded GCP
     machine shape survive — never an internal cluster/namespace/project name.
 
-    pareto_points + verdict are REQUIRED — an absent/malformed points list or an unknown
-    verdict returns None (no stepup key emitted: the table renders nothing rather than a
-    partial lie). Per-point: offered_rate_per_s (int 0<r<100000) + ttfe_p95_ms (nonneg, the
-    honesty spine) required; ready_per_s / ttfe_p50_ms / ttfe_p99_ms / cost_usd_per_1k_ready
-    optional (dropped on a bad value, so a partial Prometheus scrape yields a partial point
-    honestly, never a fabricated 0). The characteristic rates + Little's-law params are
-    optional sweep-level scalars.
+    verdict is REQUIRED (unknown -> None). The two Pareto tables are BLOCK-LEVEL relaxed: the
+    true-TTFE `pareto_points` is OMITTED (not emitted empty) when no step measured a true TTFE
+    warm p95 — the #3975 gap — and the controller_startup LOWER-BOUND proxy block stands in. At
+    least ONE of {pareto_points, controller_startup} must be present and valid; an all-empty
+    sweep returns None (the table renders nothing rather than a partial lie). True-TTFE per-point:
+    offered_rate_per_s (int 0<r<100000) + ttfe_p95_ms (nonneg, the honesty spine) required;
+    ready_per_s / ttfe_p50_ms / ttfe_p99_ms / cost_usd_per_1k_ready optional (dropped on a bad
+    value, so a partial Prometheus scrape yields a partial point honestly, never a fabricated 0).
+    The characteristic rates + Little's-law params are optional sweep-level scalars.
     """
     if not isinstance(raw, dict):
         return None
@@ -259,32 +308,45 @@ def _coerce_stepup(raw):
             return None
         return fx
 
+    # True-TTFE Pareto — block-level optional (#3975). A malformed point still hard-fails the
+    # whole sweep, but an absent/empty list is tolerated when the controller_startup proxy carries
+    # the table. clean_points stays [] in that case and the key is omitted from the output below.
     points = raw.get("pareto_points")
-    if not isinstance(points, list) or not points:
-        return None
     clean_points = []
-    for p in points:
-        if not isinstance(p, dict):
-            return None
-        rate = p.get("offered_rate_per_s")
-        if isinstance(rate, bool) or not isinstance(rate, int) or not (0 < rate < 100000):
-            return None
-        p95 = _clean_nonneg(p.get("ttfe_p95_ms"))
-        if p95 is None:
-            return None
-        cp = {"offered_rate_per_s": rate, "ttfe_p95_ms": p95}
-        for opt in ("ready_per_s", "ttfe_p50_ms", "ttfe_p99_ms", "cost_usd_per_1k_ready"):
-            if opt in p:
-                ov = _clean_nonneg(p[opt])
-                if ov is not None:
-                    cp[opt] = ov
-        clean_points.append(cp)
+    if isinstance(points, list):
+        for p in points:
+            if not isinstance(p, dict):
+                return None
+            rate = p.get("offered_rate_per_s")
+            if isinstance(rate, bool) or not isinstance(rate, int) or not (0 < rate < 100000):
+                return None
+            p95 = _clean_nonneg(p.get("ttfe_p95_ms"))
+            if p95 is None:
+                return None
+            cp = {"offered_rate_per_s": rate, "ttfe_p95_ms": p95}
+            for opt in ("ready_per_s", "ttfe_p50_ms", "ttfe_p99_ms", "cost_usd_per_1k_ready"):
+                if opt in p:
+                    ov = _clean_nonneg(p[opt])
+                    if ov is not None:
+                        cp[opt] = ov
+            clean_points.append(cp)
+
+    controller = _coerce_controller_startup(raw.get("controller_startup"), _clean_nonneg)
+
+    # Block-level relaxation: emit only when at least one of the two Pareto tables is populated.
+    # An all-empty sweep (no true-TTFE points AND no valid proxy block) is honest "nothing", -> None.
+    if not clean_points and controller is None:
+        return None
 
     verdict = raw.get("verdict")
     if verdict not in STEPUP_VERDICT_ENUM:
         return None
 
-    out = {"pareto_points": clean_points, "verdict": verdict}
+    out = {"verdict": verdict}
+    if clean_points:
+        out["pareto_points"] = clean_points
+    if controller is not None:
+        out["controller_startup"] = controller
 
     # Optional positive-int characteristic rates (None in the source when no breach).
     for key in ("north_star_breach_rate", "saturation_rate", "max_flat_rate"):

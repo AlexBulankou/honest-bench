@@ -431,6 +431,18 @@ def test_emit_to_render_stepup_pareto_convergence():
         "node_count": 510,
         "machine_type": "e2-standard-16",
         "measured_at": "2026-06-29T07:40:00Z",
+        # The controller-startup LOWER-BOUND proxy block (#3975) — exercised alongside a populated
+        # true-TTFE pareto so the convergence check covers BOTH tables' vocabularies at once.
+        "controller_startup": {
+            "lower_bound": True,
+            "pareto_points": [
+                {"offered_rate_per_s": 10, "controller_startup_p95_ms": 180.0,
+                 "controller_startup_p50_ms": 90.0, "controller_startup_p99_ms": 360.0,
+                 "controller_ready_per_s": 9.8},
+                {"offered_rate_per_s": 100, "controller_startup_p95_ms": 1900.0},
+            ],
+            "verdict": "saturated",
+        },
     }
     results = mod.build_results(
         [], {"cluster_substrate": "gke", "node_count": 510},
@@ -457,6 +469,43 @@ def test_emit_to_render_stepup_pareto_convergence():
     # (b) the required spine survives intact and full (no honest-partial drop on a clean sweep).
     assert len(su["pareto_points"]) == 3 and su["verdict"] == "saturated"
     assert su["pareto_points"][0]["ttfe_p99_ms"] == 480.0  # optional percentile carried through
+
+    # (c) the controller_startup proxy block survives + its required lower_bound flag is True. The
+    # render allow-list predicate already passed in loop (a); assert the shape the renderer reads.
+    cs = su["controller_startup"]
+    assert cs["lower_bound"] is True and len(cs["pareto_points"]) == 2
+    assert cs["pareto_points"][0]["controller_startup_p95_ms"] == 180.0
+    assert cs["pareto_points"][0]["controller_startup_p99_ms"] == 360.0  # optional carried through
+
+    # (d) the #3975 gap shape: an EMPTY true-TTFE pareto + a valid proxy block still emits a stepup
+    # object — pareto_points OMITTED (never empty []), proxy carries the only table, verdict honest.
+    gap_in = {
+        "pareto_points": [],
+        "verdict": "no-measured-steps",
+        "controller_startup": {
+            "lower_bound": True,
+            "pareto_points": [{"offered_rate_per_s": 10, "controller_startup_p95_ms": 180.0}],
+        },
+    }
+    gap_results = mod.build_results(
+        [], {"cluster_substrate": "gke", "node_count": 510},
+        generated_at="2026-06-29T07:40:00Z", stepup=gap_in,
+    )
+    assert "stepup" in gap_results, "emitter dropped a valid #3975 gap sweep (empty TTFE + proxy)"
+    gsu = gap_results["stepup"]
+    assert "pareto_points" not in gsu, "empty true-TTFE pareto must be OMITTED, not emitted as []"
+    assert gsu["verdict"] == "no-measured-steps"
+    assert gsu["controller_startup"]["lower_bound"] is True
+    for key, val in gsu.items():  # gap shape also passes the render allow-list
+        assert key in schema.STEPUP_PARETO_FIELDS and schema.STEPUP_PARETO_FIELDS[key](val)
+
+    # (e) an all-empty sweep (no TTFE points, no valid proxy) is honest "nothing" -> no stepup key.
+    empty_results = mod.build_results(
+        [], {"cluster_substrate": "gke", "node_count": 510},
+        generated_at="2026-06-29T07:40:00Z",
+        stepup={"pareto_points": [], "verdict": "no-measured-steps"},
+    )
+    assert "stepup" not in empty_results, "all-empty sweep must drop the stepup key entirely"
 
 
 def _run_all():

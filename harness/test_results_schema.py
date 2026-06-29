@@ -463,6 +463,94 @@ def test_stepup_measured_at_passthrough_and_dropped():
         _check("measured_at" not in r["stepup"], f"bad measured_at dropped: {bad!r}")
 
 
+def test_stepup_controller_startup_proxy_passthrough():
+    # The #3975 LOWER-BOUND proxy: a valid controller_startup block survives alongside a populated
+    # true-TTFE pareto, carrying lower_bound + the proxy percentiles + an optional proxy verdict.
+    su = {
+        "pareto_points": [{"offered_rate_per_s": 10, "ttfe_p95_ms": 240.0}],
+        "verdict": "saturated",
+        "controller_startup": {
+            "lower_bound": True,
+            "pareto_points": [
+                {"offered_rate_per_s": 10, "controller_startup_p95_ms": 180.0,
+                 "controller_startup_p50_ms": 90.0, "controller_startup_p99_ms": 360.0,
+                 "controller_ready_per_s": 9.8},
+                {"offered_rate_per_s": 100, "controller_startup_p95_ms": 1900.0},
+            ],
+            "verdict": "saturated",
+        },
+    }
+    cs = rs.build_results([], _prov(), GEN_AT, stepup=su)["stepup"]["controller_startup"]
+    _check(cs["lower_bound"] is True, "lower_bound True carried")
+    _check(len(cs["pareto_points"]) == 2, "both proxy points carried")
+    _check(cs["pareto_points"][0]["controller_startup_p99_ms"] == 360.0, "optional p99 carried")
+    _check(cs["pareto_points"][0]["controller_ready_per_s"] == 9.8, "optional ready_per_s carried")
+    _check(cs["pareto_points"][1] == {"offered_rate_per_s": 100, "controller_startup_p95_ms": 1900.0},
+           "spine-only proxy point keeps just the required keys")
+    _check(cs["verdict"] == "saturated", "optional proxy verdict carried")
+
+
+def test_stepup_3975_gap_empty_ttfe_with_proxy_emits():
+    # The #3975 gap shape: empty true-TTFE pareto + a valid proxy -> stepup emitted, pareto_points
+    # OMITTED (never []), proxy carries the only table, verdict honestly no-measured-steps.
+    su = {
+        "pareto_points": [],
+        "verdict": "no-measured-steps",
+        "controller_startup": {
+            "lower_bound": True,
+            "pareto_points": [{"offered_rate_per_s": 10, "controller_startup_p95_ms": 180.0}],
+        },
+    }
+    out = rs.build_results([], _prov(), GEN_AT, stepup=su)["stepup"]
+    _check("pareto_points" not in out, "empty true-TTFE pareto omitted, not emitted as []")
+    _check(out["verdict"] == "no-measured-steps", "honest no-measured-steps verdict")
+    _check(out["controller_startup"]["lower_bound"] is True, "proxy block carried")
+
+
+def test_stepup_controller_startup_caveat_never_carried():
+    # PUBLIC-safety: the internal producer's free-text caveat is render-owned and must NEVER ride
+    # the public schema even if it reaches the coercer — only lower_bound + measured numbers survive.
+    leak = "INTERNAL-cluster-name caveat with project-id"
+    su = {
+        "pareto_points": [],
+        "verdict": "no-measured-steps",
+        "controller_startup": {
+            "lower_bound": True,
+            "caveat": leak,
+            "pareto_points": [{"offered_rate_per_s": 10, "controller_startup_p95_ms": 180.0}],
+        },
+    }
+    out = rs.build_results([], _prov(), GEN_AT, stepup=su)["stepup"]
+    _check("caveat" not in out["controller_startup"], "free-text caveat dropped from proxy block")
+    _check(leak not in repr(out), "no leaked caveat string anywhere in emitted stepup")
+
+
+def test_stepup_controller_startup_malformed_dropped():
+    # A malformed proxy block is dropped; combined with an empty true-TTFE pareto that drops the
+    # whole stepup key (no valid table at all -> honest nothing).
+    bad_blocks = [
+        {"lower_bound": False, "pareto_points": [{"offered_rate_per_s": 10, "controller_startup_p95_ms": 1.0}]},
+        {"pareto_points": [{"offered_rate_per_s": 10, "controller_startup_p95_ms": 1.0}]},  # no lower_bound
+        {"lower_bound": True, "pareto_points": []},                                          # empty proxy points
+        {"lower_bound": True, "pareto_points": [{"offered_rate_per_s": 10}]},                # no p95 spine
+        {"lower_bound": True, "pareto_points": [{"offered_rate_per_s": 0, "controller_startup_p95_ms": 1.0}]},
+        {"lower_bound": True, "pareto_points": [{"offered_rate_per_s": 10, "controller_startup_p95_ms": -1.0}]},
+        {"lower_bound": 1, "pareto_points": [{"offered_rate_per_s": 10, "controller_startup_p95_ms": 1.0}]},  # truthy-not-True
+    ]
+    for blk in bad_blocks:
+        su = {"pareto_points": [], "verdict": "no-measured-steps", "controller_startup": blk}
+        r = rs.build_results([], _prov(), GEN_AT, stepup=su)
+        _check("stepup" not in r, f"malformed proxy + empty TTFE drops stepup: {blk!r}")
+    # But a malformed proxy alongside a VALID true-TTFE pareto keeps the true-TTFE table and just
+    # omits the proxy (the true table is honest on its own).
+    su = {"pareto_points": [{"offered_rate_per_s": 10, "ttfe_p95_ms": 240.0}],
+          "verdict": "saturated",
+          "controller_startup": {"lower_bound": True, "pareto_points": []}}
+    out = rs.build_results([], _prov(), GEN_AT, stepup=su)["stepup"]
+    _check("controller_startup" not in out, "malformed proxy omitted, true-TTFE table kept")
+    _check(len(out["pareto_points"]) == 1, "valid true-TTFE pareto survives a bad proxy sibling")
+
+
 def _all_tests():
     return [v for k, v in sorted(globals().items())
             if k.startswith("test_") and callable(v)]

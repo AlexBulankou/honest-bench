@@ -73,6 +73,25 @@ def stepup_nested_to_flat(rec):
     if measured_at:
         flat["measured_at"] = measured_at
 
+    # Lift the controller-startup LOWER-BOUND proxy block (#3975). The producer keeps it nested
+    # alongside an EMPTY true-TTFE `pareto` while the true-TTFE gap is open; this is the bridge to
+    # the flat shape `_coerce_controller_startup` reads. Pure relabel, same honesty spine as the
+    # outer flatten: rename `pareto` -> `pareto_points`, lift `saturation.verdict` -> `verdict`,
+    # carry `lower_bound` verbatim. The producer's free-text `caveat` is RENDER-OWNED and is
+    # DELIBERATELY NOT copied — the public schema carries only the `lower_bound` boolean, off which
+    # render emits its fixed lower-bound boilerplate. A non-dict block is omitted (the coercer then
+    # sees no proxy and, with an empty true-TTFE pareto, drops the whole stepup — honest "nothing").
+    cs = rec.get("controller_startup")
+    if isinstance(cs, dict):
+        cs_flat = {
+            "lower_bound": cs.get("lower_bound"),
+            "pareto_points": cs.get("pareto"),
+        }
+        cs_sat = cs.get("saturation")
+        if isinstance(cs_sat, dict):
+            cs_flat["verdict"] = cs_sat.get("verdict")
+        flat["controller_startup"] = cs_flat
+
     return flat
 
 
