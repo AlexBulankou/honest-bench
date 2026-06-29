@@ -12,7 +12,7 @@ PRODUCTS = {"sandbox", "substrate"}
 
 # cluster-substrate VALUE is allowed (generic GKE feature names); the internal
 # scenario/demo cluster NAMES are never a value here (Layer-2 denies those by pattern).
-CLUSTER_SUBSTRATES = {"kind", "gke", "gke-sandbox"}
+CLUSTER_SUBSTRATES = {"kind", "gke", "gke-sandbox", "gke-kata"}
 
 OUTCOMES = {"PASS", "FAIL", "pending"}
 

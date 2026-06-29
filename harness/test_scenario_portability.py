@@ -250,17 +250,26 @@ def test_substrate_gate_semantics():
     gvisor_cell = Cell(
         "z", requires_substrate="gke-sandbox", pending_reason="requires-gvisor-runtime"
     )
-    # requires=None: runs everywhere (the kind perf-matrix path).
-    for sub in ("kind", "gke", "gke-sandbox"):
+    kata_cell = Cell(
+        "k", requires_substrate="gke-kata", pending_reason="requires-kata-runtime"
+    )
+    # requires=None: runs everywhere (the kind perf-matrix path) — incl. gke-kata,
+    # so the Kata EMIT measures the matrix rows for real rather than pending.
+    for sub in ("kind", "gke", "gke-sandbox", "gke-kata"):
         _check(substrate_satisfies(any_cell, sub), f"None-cell must run on {sub}")
-    # requires=gke: pends on kind, runs on gke + gke-sandbox.
+    # requires=gke: pends on kind, runs on every real GKE node (gke, gke-sandbox,
+    # gke-kata).
     _check(not substrate_satisfies(gke_cell, "kind"), "gke-cell must pend on kind")
     _check(substrate_satisfies(gke_cell, "gke"), "gke-cell must run on gke")
     _check(
         substrate_satisfies(gke_cell, "gke-sandbox"),
         "gke-cell must run on gke-sandbox (superset)",
     )
-    # requires=gke-sandbox: only gke-sandbox satisfies.
+    _check(
+        substrate_satisfies(gke_cell, "gke-kata"),
+        "gke-cell must run on gke-kata (real GKE node)",
+    )
+    # requires=gke-sandbox: only gke-sandbox satisfies (gke-kata has Kata, not gVisor).
     _check(
         not substrate_satisfies(gvisor_cell, "kind"), "gvisor-cell must pend on kind"
     )
@@ -271,6 +280,24 @@ def test_substrate_gate_semantics():
     _check(
         substrate_satisfies(gvisor_cell, "gke-sandbox"),
         "gvisor-cell must run on gke-sandbox",
+    )
+    _check(
+        not substrate_satisfies(gvisor_cell, "gke-kata"),
+        "gvisor-cell must pend on gke-kata (Kata, not gVisor)",
+    )
+    # requires=gke-kata: only gke-kata satisfies (gke-sandbox has gVisor, not Kata).
+    _check(not substrate_satisfies(kata_cell, "kind"), "kata-cell must pend on kind")
+    _check(
+        not substrate_satisfies(kata_cell, "gke"),
+        "kata-cell must pend on plain gke (no Kata)",
+    )
+    _check(
+        not substrate_satisfies(kata_cell, "gke-sandbox"),
+        "kata-cell must pend on gke-sandbox (gVisor, not Kata)",
+    )
+    _check(
+        substrate_satisfies(kata_cell, "gke-kata"),
+        "kata-cell must run on gke-kata",
     )
 
 

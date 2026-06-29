@@ -121,12 +121,18 @@ def cells_for_product(product: str) -> tuple[Cell, ...]:
 
 # Which substrates satisfy each requirement level. kind has no runsc and does not
 # serve the GKE security API surfaces, so isolation/identity cells render pending
-# on kind. `"gke"` = needs a real GKE node (satisfied by gke AND gke-sandbox);
-# `"gke-sandbox"` = needs gVisor specifically (gke-sandbox only).
+# on kind. `"gke"` = needs a real GKE node (satisfied by gke, gke-sandbox, AND
+# gke-kata — all are real GKE nodes); `"gke-sandbox"` = needs gVisor specifically
+# (gke-sandbox only); `"gke-kata"` = needs the Kata+microVM nested-virt pool
+# specifically (gke-kata only). A requires=None matrix cell (warm-pool / cold rows)
+# runs on EVERY substrate including gke-kata, so the Kata EMIT measures it for real
+# rather than pending; a gke-kata cluster does NOT satisfy a gke-sandbox requirement
+# (it has Kata, not gVisor) and vice-versa.
 _SUBSTRATE_SATISFIES = {
-    None: ("kind", "gke", "gke-sandbox"),
-    "gke": ("gke", "gke-sandbox"),
+    None: ("kind", "gke", "gke-sandbox", "gke-kata"),
+    "gke": ("gke", "gke-sandbox", "gke-kata"),
     "gke-sandbox": ("gke-sandbox",),
+    "gke-kata": ("gke-kata",),
 }
 
 

@@ -28,12 +28,13 @@ DEFAULT_PRODUCT = "sandbox"
 # canonicalize on the way in via _OUTCOME_CANON.
 OUTCOME_ENUM = ("PASS", "FAIL", "pending")
 _OUTCOME_CANON = {"pass": "PASS", "fail": "FAIL", "pending": "pending"}
-CLUSTER_SUBSTRATE_ENUM = ("kind", "gke", "gke-sandbox")
+CLUSTER_SUBSTRATE_ENUM = ("kind", "gke", "gke-sandbox", "gke-kata")
 # pending_reason is a FIXED enum — never free text. A pending cell says exactly
 # why it is pending, drawn only from this set. Kebab-case to match render's
 # PENDING_REASONS exactly (a reason outside render's set renders nothing).
 PENDING_REASON_ENUM = (
     "requires-gvisor-runtime",
+    "requires-kata-runtime",
     "requires-gke",
     "not-yet-measured",
     "upstream-blocked",

@@ -57,9 +57,22 @@ the nested-virt pool) and the row becomes a REAL runtime-isolated number.
 
 These are generic Kubernetes scheduling primitives (taint keys, a node label) — no
 cluster/project/customer identifiers — so they live honestly in the public producer.
-An unknown non-empty runtime_class sets ``runtimeClassName`` only (no toleration /
-nodeSelector); if it needs special scheduling the caller supplies it — a Pending pool
-fails loud on the first fire rather than silently mis-publishing.
+
+## Family normalization (concrete hypervisor variant -> profile family)
+
+A concrete ``runtimeClassName`` is usually a per-hypervisor variant, not the bare
+family name: kata-deploy installs ``kata-clh`` (Cloud Hypervisor) and ``kata-qemu``
+(QEMU), and GKE Sandbox can expose ``gvisor`` / ``gvisor-experimental``. Every kata
+hypervisor lands on the SAME nested-virt pool with the SAME taint+label, and every
+gVisor variant tolerates the SAME GKE-Sandbox taint — so SCHEDULING and the
+substrate-isolation claim key on the FAMILY (``runtime_family()`` maps ``kata-clh`` /
+``kata-qemu`` -> ``kata`` and ``gvisor-experimental`` -> ``gvisor``). The bound-Pod
+runtime read-back stays EXACT: a Pod pinned ``kata-clh`` that silently fell back to
+``kata-qemu`` is still a violation (same family, wrong hypervisor — the honest headline
+names the hypervisor it measured). An unknown non-empty runtime_class is its own family
+(no profile): it sets ``runtimeClassName`` only (no toleration / nodeSelector); if it
+needs special scheduling the caller supplies it — a Pending pool fails loud on the
+first fire rather than silently mis-publishing.
 """
 
 from __future__ import annotations
@@ -69,12 +82,39 @@ from typing import Optional, Sequence
 
 log = logging.getLogger("sandbox-scenario.runtime-class")
 
-# Canonical runtime-class names.
+# Canonical runtime-class FAMILY names. Concrete runtimeClassNames are per-hypervisor
+# variants (kata-clh / kata-qemu; gvisor / gvisor-experimental) that normalize to one of
+# these families via runtime_family() for scheduling + the substrate-isolation claim.
 GVISOR = "gvisor"
 KATA = "kata"
 
-# Per-runtime scheduling requirements. Keyed on the runtimeClassName string. Each
-# entry is the (tolerations, node_selector) a Pod must carry to land on that runtime's
+# Recognised families, longest-first is irrelevant (no family is a prefix of another),
+# but order is fixed for determinism. A concrete class belongs to family F iff it equals
+# F or starts with "F-" (the variant suffix). Used by runtime_family().
+_RUNTIME_FAMILIES: tuple[str, ...] = (KATA, GVISOR)
+
+
+def runtime_family(runtime_class: str) -> str:
+    """Normalize a concrete runtimeClassName to its scheduling/profile FAMILY.
+
+    ``kata-clh`` / ``kata-qemu`` -> ``kata``; ``gvisor-experimental`` -> ``gvisor``;
+    the bare family name maps to itself. Empty -> empty. An unrecognised non-empty class
+    is returned unchanged (it is its own family — no profile, no isolation rule). This is
+    the single seam that lets a per-hypervisor pin (what kata-deploy actually installs)
+    resolve the family scheduling profile + satisfy the family isolation claim, while the
+    bound-Pod read-back stays EXACT (it compares the concrete class, not the family).
+    """
+    if not runtime_class:
+        return ""
+    for fam in _RUNTIME_FAMILIES:
+        if runtime_class == fam or runtime_class.startswith(fam + "-"):
+            return fam
+    return runtime_class
+
+
+# Per-runtime-FAMILY scheduling requirements. Keyed on the family name (resolve via
+# runtime_family() so a kata-clh / kata-qemu / gvisor-experimental pin finds its profile).
+# Each entry is the (tolerations, node_selector) a Pod must carry to land on that family's
 # (tainted) node pool. operator=Exists keys on the taint KEY only so any taint value
 # is tolerated (e.g. gvisor / gvisor-experimental share the sandbox.gke.io/runtime key).
 _RUNTIME_SCHEDULING: dict[str, dict] = {
@@ -129,14 +169,15 @@ def resolve_scheduling(runtime_class: str) -> tuple[list[dict], dict]:
     """Return ``(tolerations, node_selector)`` a Pod needs for ``runtime_class``.
 
     Empty class -> ``([], {})`` (node default runtime, no scheduling additions). A
-    known class returns COPIES of its profile (so a caller mutating the result never
-    corrupts the shared registry). An unknown non-empty class returns ``([], {})`` —
-    ``runtimeClassName`` will still be set by ``apply_runtime_class`` but no scheduling
+    known class (resolved by FAMILY, so kata-clh / kata-qemu / gvisor-experimental all
+    find their profile) returns COPIES of its profile (so a caller mutating the result
+    never corrupts the shared registry). An unknown non-empty class returns ``([], {})``
+    — ``runtimeClassName`` will still be set by ``apply_runtime_class`` but no scheduling
     is invented; the caller owns any extra scheduling that class needs.
     """
     if not runtime_class:
         return ([], {})
-    profile = _RUNTIME_SCHEDULING.get(runtime_class)
+    profile = _RUNTIME_SCHEDULING.get(runtime_family(runtime_class))
     if profile is None:
         log.warning(
             "runtime_class %r has no known scheduling profile — pinning "
@@ -194,17 +235,21 @@ def assert_substrate_runtime_consistency(
     gke-sandbox substrate with an unset/non-gVisor runtime_class would publish runc
     Pods under a gVisor banner. Crash-FAIL (consistent with the scenarios' crash
     posture) before the cluster is touched, so the mismatch is caught fail-fast. A
-    substrate with no seeded rule (kind/gke) imposes no constraint.
+    substrate with no seeded rule (kind/gke) imposes no constraint. The claim is checked
+    by FAMILY (``runtime_family()``), so a gke-kata banner is satisfied by ANY kata
+    hypervisor pin (``kata-clh`` / ``kata-qemu``) and a gke-sandbox banner by any gVisor
+    variant — the isolation claim is the family, not the hypervisor; which hypervisor
+    actually ran is enforced exactly by the bound-Pod read-back, not here.
     """
     required = required_runtime_for_substrate(substrate)
-    if required is not None and runtime_class != required:
+    if required is not None and runtime_family(runtime_class) != required:
         raise RuntimeError(
             f"runtime_class refuses a {substrate!r}-labeled result while "
-            f"runtime_class={runtime_class!r} (expected {required!r}): the "
+            f"runtime_class={runtime_class!r} (expected the {required!r} family): the "
             f"cluster_substrate banner claims {required!r} isolation but the Pods "
             f"would run under runtime_class={runtime_class!r}, so the published row "
-            f"would be a false {required!r} headline. Pin runtime_class={required!r} "
-            f"on a {substrate!r} cluster."
+            f"would be a false {required!r} headline. Pin a {required!r}-family "
+            f"runtime_class on a {substrate!r} cluster."
         )
 
 
