@@ -384,6 +384,81 @@ def test_emit_to_render_scale_proof_convergence_doc_linearity():
     )
 
 
+def test_emit_to_render_stepup_pareto_convergence():
+    """Convergence guard for the Step-Up Pareto object (a#3960 item 4) — INERT-render edition.
+
+    The step-up sweep object is emitted by harness/results_schema.build_results(stepup=...) (via
+    _coerce_stepup) and allow-listed on the render side by schema.STEPUP_PARETO_FIELDS. Unlike the
+    matrix/scale-proof tables there is NO render consumer yet (render_stepup is the headline-page
+    lane, #3954) — so this guards the contract the only way meaningful while the render is inert:
+    every field the EMITTER keeps on a real step-up object must pass the INDEPENDENT render-side
+    STEPUP_PARETO_FIELDS predicate. If the two closed vocabularies drift (emitter keeps a key/shape
+    the render allow-list would reject, or vice versa), the future render_stepup wiring would
+    silently drop it -> a blank Pareto table. This fails loudly first, exactly as the scale_proof
+    convergence test does for the live table.
+    """
+    import importlib.util
+
+    import schema
+
+    emitter_path = os.path.join(_ROOT, "harness", "results_schema.py")
+    if not os.path.exists(emitter_path):
+        print("  (skip: harness emitter not in-tree yet)")
+        return
+    spec = importlib.util.spec_from_file_location("_bench_emitter_stepup", emitter_path)
+    mod = importlib.util.module_from_spec(spec)
+    try:
+        spec.loader.exec_module(mod)
+    except Exception as exc:  # pragma: no cover - harness has its own deps
+        print(f"  (skip: harness emitter not importable in isolation: {exc})")
+        return
+
+    # A full step-up sweep: every optional per-point + sweep-level field populated, so the
+    # convergence check exercises the whole vocabulary, not just the required spine.
+    stepup_in = {
+        "pareto_points": [
+            {"offered_rate_per_s": 10, "ttfe_p95_ms": 240.0, "ttfe_p50_ms": 120.0,
+             "ttfe_p99_ms": 480.0, "ready_per_s": 9.6, "cost_usd_per_1k_ready": 0.42},
+            {"offered_rate_per_s": 30, "ttfe_p95_ms": 380.0},
+            {"offered_rate_per_s": 100, "ttfe_p95_ms": 2400.0},
+        ],
+        "verdict": "saturated",
+        "north_star_breach_rate": 30,
+        "saturation_rate": 100,
+        "max_flat_rate": 10,
+        "sld_s": 20.0,
+        "wpr": 0.75,
+        "node_count": 510,
+        "machine_type": "e2-standard-16",
+        "measured_at": "2026-06-29T07:40:00Z",
+    }
+    results = mod.build_results(
+        [], {"cluster_substrate": "gke", "node_count": 510},
+        generated_at="2026-06-29T07:40:00Z", stepup=stepup_in,
+    )
+    assert "stepup" in results, (
+        "emitter dropped the whole stepup object — _coerce_stepup rejected a valid full sweep:\n"
+        f"{stepup_in}"
+    )
+    su = results["stepup"]
+
+    # (a) every field the emitter KEPT passes the independent render allow-list predicate. A key
+    # the render side doesn't know, or a value its predicate rejects, is the drift this catches.
+    for key, val in su.items():
+        assert key in schema.STEPUP_PARETO_FIELDS, (
+            f"emit/render DRIFT: emitter kept key {key!r} absent from render STEPUP_PARETO_FIELDS "
+            "— render_stepup would silently drop it."
+        )
+        assert schema.STEPUP_PARETO_FIELDS[key](val), (
+            f"emit/render DRIFT: render STEPUP_PARETO_FIELDS[{key!r}] rejects emitter value "
+            f"{val!r} — the cell/table would render nothing."
+        )
+
+    # (b) the required spine survives intact and full (no honest-partial drop on a clean sweep).
+    assert len(su["pareto_points"]) == 3 and su["verdict"] == "saturated"
+    assert su["pareto_points"][0]["ttfe_p99_ms"] == 480.0  # optional percentile carried through
+
+
 def _run_all():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:

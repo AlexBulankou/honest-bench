@@ -57,6 +57,18 @@ COLD_START_MODE_ENUM = ("cold-provision", "cold-pull")
 # fail-closed when present (a non-enum value is a misconfiguration, not a leak).
 BADGE_SCOPE_ENUM = ("control-plane", "enforced")
 
+# a#3960 step-up saturation verdicts — the emitter's INDEPENDENT copy of render's
+# STEPUP_VERDICTS (the two modules deliberately keep separate vocabularies; a drift is
+# caught by the cross-contract test, not papered over by a shared import). A verdict outside
+# this set invalidates the whole stepup block (-> None) so an unknown label never reaches
+# the page.
+STEPUP_VERDICT_ENUM = (
+    "flat-through-sweep",
+    "degrading",
+    "saturated",
+    "no-measured-steps",
+)
+
 PROVENANCE_FIELDS = (
     "cluster_substrate",
     "controller_image",
@@ -77,6 +89,14 @@ SCENARIO_FIELDS = ("name", "outcome", "pending_reason", "badge_scope", "n", "sla
 import re
 
 _METRIC_KEY_RE = re.compile(r"^[a-z0-9]+(?:[_-][a-z0-9]+)*$")
+
+# GCP machine-type shape — emitter-side bound (independent mirror of render/schema.py's
+# _MACHINE_TYPE). The family/class tokens are PUBLIC GCP identifiers; we bound the shape so a
+# free-text value can never ride the stepup machine_type field. A value that is not a
+# recognizable GCP machine shape is dropped.
+_MACHINE_TYPE_RE = re.compile(
+    r"^[a-z][a-z0-9]*-(standard|highmem|highcpu|micro|small|medium)(-[0-9]+)?$"
+)
 
 
 def _coerce_sla_metrics(raw) -> dict:
@@ -211,6 +231,89 @@ def _coerce_scale_proof(raw):
     return out
 
 
+def _coerce_stepup(raw):
+    """Keep the closed top-level step-up Pareto shape; return None to omit the key.
+
+    The a#3960 throughput-saturation study renders from a TOP-LEVEL `stepup` object
+    (a list-bearing value cannot ride per-scenario sla_metrics, which _coerce_sla_metrics
+    drops). Mirrors render/schema.py's STEPUP_PARETO_FIELDS exactly so emitter and renderer
+    share one contract. PUBLIC-safe by construction: only measured numbers + a bounded GCP
+    machine shape survive — never an internal cluster/namespace/project name.
+
+    pareto_points + verdict are REQUIRED — an absent/malformed points list or an unknown
+    verdict returns None (no stepup key emitted: the table renders nothing rather than a
+    partial lie). Per-point: offered_rate_per_s (int 0<r<100000) + ttfe_p95_ms (nonneg, the
+    honesty spine) required; ready_per_s / ttfe_p50_ms / ttfe_p99_ms / cost_usd_per_1k_ready
+    optional (dropped on a bad value, so a partial Prometheus scrape yields a partial point
+    honestly, never a fabricated 0). The characteristic rates + Little's-law params are
+    optional sweep-level scalars.
+    """
+    if not isinstance(raw, dict):
+        return None
+
+    def _clean_nonneg(x):
+        if isinstance(x, bool) or not isinstance(x, Real):
+            return None
+        fx = float(x)
+        if fx != fx or fx in (float("inf"), float("-inf")) or fx < 0:
+            return None
+        return fx
+
+    points = raw.get("pareto_points")
+    if not isinstance(points, list) or not points:
+        return None
+    clean_points = []
+    for p in points:
+        if not isinstance(p, dict):
+            return None
+        rate = p.get("offered_rate_per_s")
+        if isinstance(rate, bool) or not isinstance(rate, int) or not (0 < rate < 100000):
+            return None
+        p95 = _clean_nonneg(p.get("ttfe_p95_ms"))
+        if p95 is None:
+            return None
+        cp = {"offered_rate_per_s": rate, "ttfe_p95_ms": p95}
+        for opt in ("ready_per_s", "ttfe_p50_ms", "ttfe_p99_ms", "cost_usd_per_1k_ready"):
+            if opt in p:
+                ov = _clean_nonneg(p[opt])
+                if ov is not None:
+                    cp[opt] = ov
+        clean_points.append(cp)
+
+    verdict = raw.get("verdict")
+    if verdict not in STEPUP_VERDICT_ENUM:
+        return None
+
+    out = {"pareto_points": clean_points, "verdict": verdict}
+
+    # Optional positive-int characteristic rates (None in the source when no breach).
+    for key in ("north_star_breach_rate", "saturation_rate", "max_flat_rate"):
+        v = raw.get(key)
+        if isinstance(v, bool) or not isinstance(v, int) or not (0 < v < 100000):
+            continue
+        out[key] = v
+
+    # Optional Little's-law params (public-safe scalars).
+    sld = _clean_nonneg(raw.get("sld_s"))
+    if sld is not None:
+        out["sld_s"] = sld
+    wpr = raw.get("wpr")
+    if not isinstance(wpr, bool) and isinstance(wpr, Real):
+        fwpr = float(wpr)
+        if fwpr == fwpr and 0.0 <= fwpr <= 1.0:
+            out["wpr"] = fwpr
+    nc = raw.get("node_count")
+    if not isinstance(nc, bool) and isinstance(nc, int) and 0 < nc < 10000:
+        out["node_count"] = nc
+    mt = raw.get("machine_type")
+    if isinstance(mt, str) and _MACHINE_TYPE_RE.match(mt):
+        out["machine_type"] = mt
+    ma = raw.get("measured_at")
+    if isinstance(ma, str) and ma:
+        out["measured_at"] = ma
+    return out
+
+
 def _coerce_provenance(raw: dict) -> dict:
     if not isinstance(raw, dict):
         raise TypeError("provenance must be a dict")
@@ -249,7 +352,8 @@ def _coerce_provenance(raw: dict) -> dict:
 
 
 def build_results(scenario_outcomes, provenance, generated_at: str,
-                  product: str = DEFAULT_PRODUCT, scale_proof=None) -> dict:
+                  product: str = DEFAULT_PRODUCT, scale_proof=None,
+                  stepup=None) -> dict:
     """Assemble the closed-schema results dict.
 
     `scenario_outcomes` is the loop's per-scenario dicts (any extra keys dropped);
@@ -264,6 +368,12 @@ def build_results(scenario_outcomes, provenance, generated_at: str,
     through `_coerce_scale_proof`; the key is emitted only when a valid non-empty
     scale_points list survives — a malformed/empty object omits the key entirely
     (the table renders nothing rather than a partial lie).
+
+    `stepup` is the OPTIONAL top-level Step-Up Pareto object (defaults None so
+    existing callers are unchanged; a#3960 item 4). When supplied it passes through
+    `_coerce_stepup`; the key is emitted only when a valid non-empty pareto_points
+    list + a known verdict survive — same partial-lie-omission contract as
+    scale_proof.
     """
     if not isinstance(generated_at, str) or not generated_at:
         raise ValueError("generated_at must be a non-empty ISO-8601 UTC string")
@@ -279,4 +389,7 @@ def build_results(scenario_outcomes, provenance, generated_at: str,
     cleaned_scale_proof = _coerce_scale_proof(scale_proof)
     if cleaned_scale_proof is not None:
         out["scale_proof"] = cleaned_scale_proof
+    cleaned_stepup = _coerce_stepup(stepup)
+    if cleaned_stepup is not None:
+        out["stepup"] = cleaned_stepup
     return out

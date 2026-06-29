@@ -56,6 +56,13 @@ _ISO = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 # image: registry/path:tag — no credentials, no internal AR project paths get through the
 # 2a scanner anyway; here we just bound the shape.
 _IMAGE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]*:[A-Za-z0-9][A-Za-z0-9._-]*$")
+# GCP machine type shape (a#3960 step-up): <family>-<class>[-<size>], e.g. e2-standard-16,
+# n2d-standard-8, c3-highmem-4, e2-medium. The family/class names are PUBLIC GCP identifiers
+# (not infra-secret), but we bound the shape tightly so free-text can never ride this field.
+# A value that is not a recognizable GCP machine shape (e.g. a custom type) is dropped.
+_MACHINE_TYPE = re.compile(
+    r"^[a-z][a-z0-9]*-(standard|highmem|highcpu|micro|small|medium)(-[0-9]+)?$"
+)
 
 # DELIBERATELY NOT allow-listed: any GCP project / infra identifier (e.g. a `project`
 # field). It is infra-noise irrelevant to a customer-facing benchmark page, so it stays
@@ -200,6 +207,11 @@ _nonneg = lambda v: isinstance(v, (int, float)) and not isinstance(v, bool) and 
 MATRIX_METRIC_FIELDS = {
     "ttfe_p50_ms": _nonneg,
     "ttfe_p95_ms": _nonneg,
+    # p99 completes the percentile spine (a#3960 item 4). INERT in the fixed 9-column matrix
+    # render today (no p99 column) — carried so a per-step Pareto row can show the tail a
+    # reader can reproduce and beat. The producer emits only p50/p95 on matrix cells, so
+    # allow-listing p99 here does not change matrix output.
+    "ttfe_p99_ms": _nonneg,
     "thpt_under_5s_per_node": _nonneg,
     "thpt_under_1s_per_node": _nonneg,
     "exec_success_rate": lambda v: isinstance(v, (int, float))
@@ -233,5 +245,82 @@ SCALE_PROOF_FIELDS = {
     # measured_at (#3952): ISO-8601 instant the sweep ran. Optional, carried forward
     # across the daily refresh so a point-in-time block is honestly dated apart from
     # the daily-refreshed top-level generated_at. Non-empty string only.
+    "measured_at": lambda v: isinstance(v, str) and bool(v),
+}
+
+# --- a#3960: Step-up backfill saturation Pareto ------------------------------------------
+# The proven "300 sandboxes in <1s" story is a THROUGHPUT-SATURATION study, not single-
+# sandbox latency: a SandboxWarmPool sustaining a creation RATE, swept step-by-step
+# (10 -> 30 -> 100 -> ... sb/sec), each step held against a warm pool pre-sized by Little's
+# law (warm = ceil(WPR * rate * SLD)). Per step we read TTFE p50/p95/p99 straight off the
+# controller metric agent_sandbox_claim_startup_latency_ms (warm/cold labeled) + the ready
+# rate, and classify the curve against the North Star (p95 < 500ms) / collapse (2000ms)
+# bands. This block is the PUBLIC-safe, scrubbed mirror of the internal classifier shape
+# (kb/sandbox/loadtest/stepup.py): only measured numbers + public GCP shape identifiers,
+# never an internal cluster/namespace/project name.
+#
+# INERT until a step-up sweep result is emitted (no render_stepup wiring yet — the public
+# page framing is tracked separately and needs real measured data first). Same closed-schema
+# discipline: a Pareto block renders ONLY these field-names, each validated by its predicate;
+# anything else is dropped on read, so an accrual writer cannot smuggle free-text onto the
+# public page.
+
+# Saturation verdicts (mirror of the internal classifier's closed set). A verdict not in
+# this set drops the whole block (fail-closed) rather than render an unknown label.
+STEPUP_VERDICTS = {
+    "flat-through-sweep",  # every measured step stayed under the North Star
+    "degrading",  # at least one step breached the North Star, none collapsed
+    "saturated",  # at least one step crossed the collapse band
+    "no-measured-steps",  # every step was unmeasured (infra/scrape failure, honest)
+}
+
+
+# One Pareto point per swept rate. offered_rate_per_s + ttfe_p95_ms are REQUIRED (the x-axis
+# and the honesty spine); the rest are OPTIONAL (a partial Prometheus scrape yields a partial
+# point honestly, never a fabricated 0). A point missing a required field, or whose value
+# fails its predicate, drops the whole block — a malformed sweep degrades to no Pareto table,
+# never to a leak or a fake curve.
+def _stepup_points_ok(v):
+    if not isinstance(v, list) or not v:
+        return False
+    for p in v:
+        if not isinstance(p, dict):
+            return False
+        rate = p.get("offered_rate_per_s")
+        if not (isinstance(rate, int) and not isinstance(rate, bool) and 0 < rate < 100000):
+            return False
+        p95 = p.get("ttfe_p95_ms")
+        if not (isinstance(p95, (int, float)) and not isinstance(p95, bool) and p95 >= 0):
+            return False
+        # Optional numeric axes — if present they must be non-negative numbers; a bad value
+        # invalidates the point (and thus the block) rather than rendering garbage.
+        for opt in ("ready_per_s", "ttfe_p50_ms", "ttfe_p99_ms", "cost_usd_per_1k_ready"):
+            if opt in p:
+                ov = p[opt]
+                if not (isinstance(ov, (int, float)) and not isinstance(ov, bool) and ov >= 0):
+                    return False
+    return True
+
+
+# Optional positive-int rate field (a breach/saturation/flat rate). The internal classifier
+# carries None when there is no breach; the emitter drops None, so the predicate only has to
+# validate the present-and-positive case.
+_pos_int = lambda v: isinstance(v, int) and not isinstance(v, bool) and 0 < v < 100000
+
+STEPUP_PARETO_FIELDS = {
+    "pareto_points": _stepup_points_ok,
+    "verdict": lambda v: v in STEPUP_VERDICTS,
+    # The three characteristic rates (all optional — absent when the curve never crossed that
+    # band). north_star_breach_rate = first rate with p95 >= 500ms; saturation_rate = first
+    # rate with p95 >= 2000ms; max_flat_rate = highest rate still under the North Star.
+    "north_star_breach_rate": _pos_int,
+    "saturation_rate": _pos_int,
+    "max_flat_rate": _pos_int,
+    # Sweep parameters (Little's-law inputs) — public-safe scalars.
+    "sld_s": _nonneg,  # sandbox life duration (s)
+    "wpr": lambda v: isinstance(v, (int, float)) and not isinstance(v, bool) and 0.0 <= v <= 1.0,
+    "node_count": lambda v: isinstance(v, int) and not isinstance(v, bool) and 0 < v < 10000,
+    "machine_type": lambda v: isinstance(v, str) and bool(_MACHINE_TYPE.match(v)),
+    # measured_at: ISO-8601-ish instant the sweep ran (non-empty string), same as scale_proof.
     "measured_at": lambda v: isinstance(v, str) and bool(v),
 }

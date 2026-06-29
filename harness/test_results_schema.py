@@ -339,6 +339,130 @@ def test_scale_proof_measured_at_passthrough_and_dropped():
                f"bad measured_at dropped: {bad!r}")
 
 
+def test_stepup_passthrough_valid():
+    # A well-formed top-level stepup object survives _coerce_stepup and is emitted
+    # at the top level (the Step-Up Pareto table source, a#3960 item 4).
+    su = {
+        "pareto_points": [
+            {"offered_rate_per_s": 10, "ttfe_p95_ms": 240.0, "ttfe_p50_ms": 120.0,
+             "ttfe_p99_ms": 480.0, "ready_per_s": 9.6, "cost_usd_per_1k_ready": 0.42},
+            {"offered_rate_per_s": 100, "ttfe_p95_ms": 2400.0},
+        ],
+        "verdict": "saturated",
+        "north_star_breach_rate": 30,
+        "saturation_rate": 100,
+        "max_flat_rate": 10,
+        "sld_s": 20.0,
+        "wpr": 0.75,
+        "node_count": 510,
+        "machine_type": "e2-standard-16",
+        "measured_at": "2026-06-29T07:40:00Z",
+    }
+    r = rs.build_results([], _prov(), GEN_AT, stepup=su)
+    out = r["stepup"]
+    _check(out["pareto_points"][0]["ttfe_p99_ms"] == 480.0, "optional percentile carried")
+    _check(out["pareto_points"][1] == {"offered_rate_per_s": 100, "ttfe_p95_ms": 2400.0},
+           "minimal point keeps only required spine")
+    _check(out["verdict"] == "saturated", "verdict kept")
+    _check(out["north_star_breach_rate"] == 30 and out["saturation_rate"] == 100,
+           "characteristic rates kept")
+    _check(out["sld_s"] == 20.0 and out["wpr"] == 0.75, "Little's-law params kept")
+    _check(out["node_count"] == 510 and out["machine_type"] == "e2-standard-16",
+           "public GCP shape kept")
+    _check(out["measured_at"] == "2026-06-29T07:40:00Z", "measured_at kept")
+
+
+def test_stepup_absent_emits_no_key():
+    # Default callers pass no stepup — the top-level key must be omitted, not emitted
+    # empty (the table renders nothing rather than a partial lie).
+    r = rs.build_results([], _prov(), GEN_AT)
+    _check("stepup" not in r, "no stepup key when none supplied")
+
+
+def test_stepup_malformed_points_dropped():
+    # A points list with any bad point fails closed -> the whole key omitted. Also a
+    # missing/empty points list or a missing verdict fails closed.
+    for bad in (
+        {"pareto_points": [], "verdict": "saturated"},                         # empty points
+        {"pareto_points": "x", "verdict": "saturated"},                        # non-list
+        {"pareto_points": [{"offered_rate_per_s": 0, "ttfe_p95_ms": 1.0}],     # rate not > 0
+         "verdict": "flat-through-sweep"},
+        {"pareto_points": [{"offered_rate_per_s": True, "ttfe_p95_ms": 1.0}],  # bool rate
+         "verdict": "flat-through-sweep"},
+        {"pareto_points": [{"offered_rate_per_s": 10, "ttfe_p95_ms": -1.0}],   # neg p95
+         "verdict": "flat-through-sweep"},
+        {"pareto_points": [{"offered_rate_per_s": 10}],                        # no p95 spine
+         "verdict": "flat-through-sweep"},
+        {"pareto_points": [{"offered_rate_per_s": 10, "ttfe_p95_ms": 1.0}]},   # no verdict
+        {"pareto_points": [{"offered_rate_per_s": 10, "ttfe_p95_ms": 1.0}],    # unknown verdict
+         "verdict": "exploded"},
+    ):
+        r = rs.build_results([], _prov(), GEN_AT, stepup=bad)
+        _check("stepup" not in r, f"malformed stepup omits key: {bad!r}")
+
+
+def test_stepup_optional_point_fields_dropped_on_bad_value():
+    # An optional per-point field with a non-finite/negative value is dropped, but the
+    # point (and the object) still emits on its required spine — honest-partial, never
+    # a fabricated 0.
+    su = {"pareto_points": [{"offered_rate_per_s": 10, "ttfe_p95_ms": 240.0,
+                             "ttfe_p50_ms": float("nan"), "ready_per_s": -1.0,
+                             "cost_usd_per_1k_ready": float("inf")}],
+          "verdict": "flat-through-sweep"}
+    r = rs.build_results([], _prov(), GEN_AT, stepup=su)
+    pt = r["stepup"]["pareto_points"][0]
+    _check(pt == {"offered_rate_per_s": 10, "ttfe_p95_ms": 240.0},
+           "bad optional point fields dropped, spine intact")
+
+
+def test_stepup_unsafe_sweep_scalars_dropped():
+    # Sweep-level scalars are independently validated: a bad characteristic rate / wpr /
+    # node_count / machine_type is dropped while the rest of the object emits.
+    base = {"pareto_points": [{"offered_rate_per_s": 10, "ttfe_p95_ms": 240.0}],
+            "verdict": "flat-through-sweep"}
+    r = rs.build_results([], _prov(), GEN_AT, stepup={
+        **base,
+        "north_star_breach_rate": 0,          # not > 0
+        "saturation_rate": True,              # bool
+        "max_flat_rate": "10",               # non-int
+        "wpr": 1.5,                           # out of (0,1)
+        "node_count": 0,                      # not > 0
+        "machine_type": "sandbox-scenarios-cluster",  # not a GCP machine shape
+    })
+    out = r["stepup"]
+    for k in ("north_star_breach_rate", "saturation_rate", "max_flat_rate",
+              "wpr", "node_count", "machine_type"):
+        _check(k not in out, f"unsafe sweep scalar dropped: {k}")
+    _check(out["verdict"] == "flat-through-sweep", "object still emits on its spine")
+
+
+def test_stepup_machine_type_internal_name_rejected():
+    # PUBLIC hygiene: only a bounded GCP machine shape passes machine_type; an internal
+    # cluster/namespace/project string is rejected (dropped), never carried to render.
+    base = {"pareto_points": [{"offered_rate_per_s": 10, "ttfe_p95_ms": 240.0}],
+            "verdict": "flat-through-sweep"}
+    _check(rs.build_results([], _prov(), GEN_AT,
+                            stepup={**base, "machine_type": "e2-standard-16"}
+                            )["stepup"]["machine_type"] == "e2-standard-16",
+           "valid GCP shape kept")
+    for leak in ("alexbu-gke-dev-d", "sandbox-scenarios", "postgres-obs-0", "E2-STANDARD-16"):
+        r = rs.build_results([], _prov(), GEN_AT, stepup={**base, "machine_type": leak})
+        _check("machine_type" not in r["stepup"], f"internal-ish machine_type dropped: {leak!r}")
+        _check(leak not in repr(r["stepup"]), f"no leaked string in emitted stepup: {leak!r}")
+
+
+def test_stepup_measured_at_passthrough_and_dropped():
+    # measured_at: a non-empty string survives; anything else is dropped (mirrors scale_proof).
+    base = {"pareto_points": [{"offered_rate_per_s": 10, "ttfe_p95_ms": 240.0}],
+            "verdict": "flat-through-sweep"}
+    r = rs.build_results([], _prov(), GEN_AT,
+                         stepup={**base, "measured_at": "2026-06-29T07:40:00Z"})
+    _check(r["stepup"]["measured_at"] == "2026-06-29T07:40:00Z", "non-empty measured_at kept")
+    for bad in ("", 1, True, None, ["x"]):
+        r = rs.build_results([], _prov(), GEN_AT, stepup={**base, "measured_at": bad})
+        _check("measured_at" not in r["stepup"], f"bad measured_at dropped: {bad!r}")
+
+
 def _all_tests():
     return [v for k, v in sorted(globals().items())
             if k.startswith("test_") and callable(v)]
