@@ -506,10 +506,16 @@ def _clean_scale_proof(results):
     dens_ret = _ratio("density_retention")
     if dens_ret is None and points and points[0]["density"]:
         dens_ret = points[-1]["density"] / points[0]["density"]
+    ma = sp.get("measured_at")
+    try:
+        measured_at = ma if SCALE_PROOF_FIELDS["measured_at"](ma) else None
+    except (TypeError, ValueError):
+        measured_at = None
     return {
         "points": points,
         "density_retention": dens_ret,
         "thpt_retention": _ratio("thpt_retention"),
+        "measured_at": measured_at,
     }
 
 
@@ -536,6 +542,15 @@ def render_scale_proof(results):
     lines.append("|" + "|".join(["---"] * len(header)) + "|")
     lines.append("| " + " | ".join([nodes, dens_verdict, thpt_verdict]) + " |")
     lines.append("")
+    # Dated subline (#3952): the Scale Proof is a point-in-time multi-node sweep,
+    # carried forward across the daily single-node refresh — so it carries its own
+    # measured date, honestly distinct from the page's daily-refreshed timestamp.
+    if sp.get("measured_at"):
+        lines.append(
+            f"_Measured {sp['measured_at'][:10]} — node-count linearity sweep "
+            "(point-in-time; refreshed on the next multi-node sweep)._"
+        )
+        lines.append("")
     return "\n".join(lines)
 
 

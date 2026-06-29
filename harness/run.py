@@ -174,6 +174,46 @@ def _read_prior_scenarios(out_path: pathlib.Path) -> list:
     return scen if isinstance(scen, list) else []
 
 
+def _read_prior_scale_proof(out_path: pathlib.Path):
+    """Read the existing results file's top-level scale_proof object (#3952).
+
+    Best-effort, mirroring _read_prior_scenarios: a missing/malformed file or an
+    absent scale_proof key means there is nothing to carry forward, so return None
+    (the honest-absence signal the emitter understands).
+    """
+    try:
+        prior = json.loads(out_path.read_text())
+    except (FileNotFoundError, ValueError):
+        return None
+    sp = prior.get("scale_proof") if isinstance(prior, dict) else None
+    return sp if isinstance(sp, dict) else None
+
+
+def carry_prior_scale_proof(fresh, prior, *, generated_at: str):
+    """Persist the Scale Proof block across the daily single-node refresh (#3952).
+
+    The Scale Proof (Linearity Check) is produced only by the heavy, manual,
+    collision-acked multi-K sweep (`maybe_scale_proof`, gated BENCH_SCALE_SLOPE=1).
+    The daily single-node auto-refresh never arms that sweep, so without this
+    carry-forward the published block would vanish ~22h after a sweep (the
+    gated-too-long auto-decay #3952 fixes) — the sweep is not a standing job, so
+    "transient" means "gone until the next manual fire".
+
+    Fresh always wins: a real sweep this run stamps `measured_at = generated_at`
+    (the instant it was measured) and is returned as-is. Otherwise the prior
+    committed block is carried forward UNCHANGED — keeping its own original
+    `measured_at`, so a carried point-in-time block stays honestly dated against the
+    daily-refreshed top-level `generated_at`. Both paths flow through the closed
+    emitter (`_coerce_scale_proof`), so a carried block that is not a valid
+    scale_proof is dropped, never published as a partial lie.
+    """
+    if isinstance(fresh, dict) and fresh:
+        stamped = dict(fresh)
+        stamped.setdefault("measured_at", generated_at)
+        return stamped
+    return prior
+
+
 def run_suite(cells, substrate: str) -> list[dict]:
     raw = []
     for cell in cells:
@@ -271,10 +311,19 @@ def main(argv=None) -> int:
     raw = run_suite(cells, substrate)
     # Preserve hand-seeded pending placeholders for cells this suite does not yet
     # register (#3909) — read BEFORE the wholesale write below, which would drop them.
-    raw = merge_seed_placeholders(raw, _read_prior_scenarios(out))
+    prior_scenarios = _read_prior_scenarios(out)
+    prior_scale_proof = _read_prior_scale_proof(out)
+    raw = merge_seed_placeholders(raw, prior_scenarios)
+    generated_at = _now_iso()
+    # Carry the Scale Proof block across the daily refresh (#3952): a fresh sweep
+    # this run wins and is stamped measured_at=generated_at; otherwise the prior
+    # committed block is carried forward so the public table does not auto-decay.
+    scale_proof = carry_prior_scale_proof(
+        maybe_scale_proof(args.product), prior_scale_proof, generated_at=generated_at
+    )
     results = results_schema.build_results(
-        raw, build_provenance(substrate), generated_at=_now_iso(), product=args.product,
-        scale_proof=maybe_scale_proof(args.product),
+        raw, build_provenance(substrate), generated_at=generated_at, product=args.product,
+        scale_proof=scale_proof,
     )
 
     out.parent.mkdir(parents=True, exist_ok=True)

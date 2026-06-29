@@ -615,6 +615,44 @@ def test_scale_proof_renders_linearity_row():
     assert "| 1 → 2 → 4 | ✅ Yes (1.88 → 1.86 → 1.85) | ✅ Yes |" in out
 
 
+def test_scale_proof_measured_at_renders_dated_subline():
+    # #3952: a carried point-in-time block carries its own measured date, rendered as
+    # a subline distinct from the page's daily-refreshed top-level timestamp.
+    results = _matrix_results(
+        _full_gvisor_scenarios(),
+        scale_proof={
+            "scale_points": [
+                {"node_count": 1, "density": 1.88},
+                {"node_count": 4, "density": 1.85},
+            ],
+            "density_retention": 0.984,
+            "thpt_retention": 0.99,
+            "measured_at": "2026-06-29T03:46:01Z",
+        },
+    )
+    out = render.render_scale_proof(results)
+    assert "_Measured 2026-06-29 — node-count linearity sweep" in out
+    assert "point-in-time" in out
+
+
+def test_scale_proof_measured_at_absent_no_subline():
+    # No measured_at ⇒ no dated subline (back-compat with pre-#3952 blocks).
+    results = _matrix_results(
+        _full_gvisor_scenarios(),
+        scale_proof={
+            "scale_points": [
+                {"node_count": 1, "density": 1.88},
+                {"node_count": 4, "density": 1.85},
+            ],
+            "density_retention": 0.984,
+            "thpt_retention": 0.99,
+        },
+    )
+    out = render.render_scale_proof(results)
+    assert "## Scale Proof (Linearity Check)" in out
+    assert "_Measured" not in out
+
+
 def test_scale_proof_absent_renders_nothing():
     assert render.render_scale_proof(_matrix_results(_full_gvisor_scenarios())) == ""
 

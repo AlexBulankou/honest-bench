@@ -105,6 +105,49 @@ def test_truthy_flag_variants_arm():
         _check(result == _PROOF, f"flag={variant!r} -> proof, got {result!r}")
 
 
+# --- carry_prior_scale_proof (#3952): persist across the daily refresh ---
+
+_GEN_AT = "2026-06-29T12:00:00Z"
+_PRIOR = {"scale_points": [{"node_count": 1, "density": 5.18},
+                           {"node_count": 4, "density": 5.18}],
+          "density_retention": 1.0, "thpt_retention": 0.222,
+          "measured_at": "2026-06-29T03:46:01Z"}
+
+
+def test_carry_fresh_sweep_wins_and_is_stamped():
+    out = run.carry_prior_scale_proof(dict(_PROOF), _PRIOR, generated_at=_GEN_AT)
+    _check(out["scale_points"] == _PROOF["scale_points"], "fresh points must win")
+    _check(out["measured_at"] == _GEN_AT,
+           f"fresh sweep stamps measured_at=generated_at, got {out.get('measured_at')!r}")
+    # original fresh dict not mutated
+    _check("measured_at" not in _PROOF, "must not mutate the input fresh dict")
+
+
+def test_carry_fresh_preexisting_measured_at_respected():
+    fresh = dict(_PROOF)
+    fresh["measured_at"] = "2025-01-01T00:00:00Z"
+    out = run.carry_prior_scale_proof(fresh, _PRIOR, generated_at=_GEN_AT)
+    _check(out["measured_at"] == "2025-01-01T00:00:00Z",
+           "a fresh dict that already carries measured_at keeps it (setdefault)")
+
+
+def test_carry_no_fresh_carries_prior_unchanged():
+    out = run.carry_prior_scale_proof(None, _PRIOR, generated_at=_GEN_AT)
+    _check(out == _PRIOR, f"no fresh sweep -> carry prior verbatim, got {out!r}")
+    _check(out["measured_at"] == "2026-06-29T03:46:01Z",
+           "carried block keeps its ORIGINAL measured_at, not generated_at")
+
+
+def test_carry_empty_fresh_carries_prior():
+    out = run.carry_prior_scale_proof({}, _PRIOR, generated_at=_GEN_AT)
+    _check(out == _PRIOR, f"empty fresh ({{}}) -> carry prior, got {out!r}")
+
+
+def test_carry_no_fresh_no_prior_is_none():
+    out = run.carry_prior_scale_proof(None, None, generated_at=_GEN_AT)
+    _check(out is None, f"no fresh + no prior -> None (table absent), got {out!r}")
+
+
 def _all_tests():
     return [v for k, v in sorted(globals().items())
             if k.startswith("test_") and callable(v)]

@@ -200,6 +200,14 @@ def _coerce_scale_proof(raw):
         if fv != fv or fv in (float("inf"), float("-inf")) or fv < 0:
             continue
         out[key] = fv
+    # measured_at (#3952): the ISO-8601 instant the sweep ran. Optional + carried
+    # forward across the daily single-node refresh, so the published Scale Proof
+    # block does not auto-decay; the date makes a carried (point-in-time) block
+    # honestly distinct from the daily-refreshed top-level generated_at. Allow-list
+    # a non-empty string only — anything else is dropped (render shows no subline).
+    ma = raw.get("measured_at")
+    if isinstance(ma, str) and ma:
+        out["measured_at"] = ma
     return out
 
 

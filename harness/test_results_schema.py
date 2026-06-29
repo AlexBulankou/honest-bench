@@ -323,6 +323,22 @@ def test_scale_proof_unsafe_retention_dropped():
     _check(len(out["scale_points"]) == 2, "scale_points still emitted")
 
 
+def test_scale_proof_measured_at_passthrough_and_dropped():
+    # measured_at (#3952): a non-empty string survives; anything else is dropped
+    # (the carried-block date renders only when honestly present).
+    base = {"scale_points": [{"node_count": 1, "density": 4.0},
+                             {"node_count": 2, "density": 4.0}]}
+    r = rs.build_results([], _prov(), GEN_AT,
+                         scale_proof={**base, "measured_at": "2026-06-29T03:46:01Z"})
+    _check(r["scale_proof"]["measured_at"] == "2026-06-29T03:46:01Z",
+           "non-empty measured_at kept")
+    for bad in ("", 1, True, None, ["x"]):
+        r = rs.build_results([], _prov(), GEN_AT,
+                             scale_proof={**base, "measured_at": bad})
+        _check("measured_at" not in r["scale_proof"],
+               f"bad measured_at dropped: {bad!r}")
+
+
 def _all_tests():
     return [v for k, v in sorted(globals().items())
             if k.startswith("test_") and callable(v)]
