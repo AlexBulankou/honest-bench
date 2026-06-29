@@ -148,6 +148,24 @@ def test_convergence_empty_pareto_drops_block():
     _check(out is None, "empty pareto -> block dropped (measured=False, not a fabricated 0)")
 
 
+def test_convergence_partial_measured_subset_only():
+    # An UNMEASURED step (CL2/scrape gap) is already excluded from `pareto` by the
+    # producer's assemble_pareto, so the adapter round-trips the MEASURED SUBSET only --
+    # a partial shakeout yields a partial-but-honest curve, never a fabricated point for
+    # the gapped step. Here 2 of 3 steps measured -> 2 pareto points -> degrading verdict.
+    rec = _nested()
+    rec["pareto"] = rec["pareto"][:2]
+    rec["saturation"]["verdict"] = "degrading"
+    rec["saturation"]["north_star_breach_rate"] = 100
+    rec["saturation"]["measured_steps"] = 2
+    rec["saturation"]["unmeasured_steps"] = 1
+    out = rs._coerce_stepup(a.stepup_nested_to_flat(rec))
+    _check(out is not None, "partial-measured record still coerces (the measured curve is real)")
+    _check(len(out["pareto_points"]) == 2, "only the measured subset survives -- no gapped-step point")
+    _check(out["verdict"] == "degrading", "verdict reflects the measured subset")
+    _check(out["north_star_breach_rate"] == 100, "populated breach rate lifts to top level")
+
+
 def _run_all():
     tests = [v for k, v in sorted(globals().items())
              if k.startswith("test_") and callable(v)]
