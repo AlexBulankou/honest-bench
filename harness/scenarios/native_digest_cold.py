@@ -107,7 +107,11 @@ _SANDBOX_IMAGE = os.environ.get(
 # runtime (runtimeClassName + the runtime's toleration/nodeSelector) so the
 # published cold row is honestly attributed to the runtime it ran under. The
 # shared runtime_class helper owns the pin + post-measurement verify so this
-# scenario, warmpool_cold_start, and burst_create pin-and-verify identically.
+# scenario, warmpool_cold_start, and suspend_resume pin-and-verify identically.
+# (burst_create pins-and-verifies with the same INTENT but via its own inline
+# impl, NOT this helper: its WarmPool->Claim object model needs a claim-based
+# verify over bound_claim_names, not the helper's direct sandbox_names. Editing
+# runtime_class.py does NOT change burst_create — keep the two in step by hand.)
 _RUNTIME_CLASS = os.environ.get("NATIVE_DIGEST_COLD_RUNTIME_CLASS", "")
 
 # The cluster's substrate banner (run.py provenance). A gke-sandbox banner asserts
