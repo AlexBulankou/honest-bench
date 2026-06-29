@@ -601,6 +601,120 @@ def test_stepup_controller_startup_malformed_dropped():
     _check(len(out["pareto_points"]) == 1, "valid true-TTFE pareto survives a bad proxy sibling")
 
 
+# --- #3954 sibling: warm_vs_cold ingestion coercer --------------------------------------
+
+
+def _wvc(**over):
+    base = {
+        "warm_p50_ms": 420.0,
+        "cold_ms": 4200.0,
+        "speedup": 10.0,
+        "semantic": "ttfe",
+        "runtime_class": "gvisor",
+        "n_warm": 200,
+    }
+    base.update(over)
+    return base
+
+
+def test_warm_vs_cold_passthrough_valid():
+    # A well-formed inner object (the classify_warm_vs_cold shape) survives intact and is
+    # emitted at the top level (the warm-vs-cold headline source). Makes warm_vs_cold.py:38's
+    # build_results(warm_vs_cold=...) contract real.
+    r = rs.build_results([], _prov(), GEN_AT, warm_vs_cold=_wvc())
+    out = r["warm_vs_cold"]
+    _check(out["warm_p50_ms"] == 420.0, "warm_p50_ms kept")
+    _check(out["cold_ms"] == 4200.0, "cold_ms kept")
+    _check(out["speedup"] == 10.0, "speedup kept")
+    _check(out["semantic"] == "ttfe", "semantic kept")
+    _check(out["runtime_class"] == "gvisor", "runtime_class kept")
+    _check(out["n_warm"] == 200, "n_warm kept")
+
+
+def test_warm_vs_cold_absent_emits_no_key():
+    # Default callers pass no warm_vs_cold — the top-level key must be omitted, not emitted
+    # empty (the block renders nothing rather than a partial lie).
+    r = rs.build_results([], _prov(), GEN_AT)
+    _check("warm_vs_cold" not in r, "no warm_vs_cold key when none supplied")
+
+
+def test_warm_vs_cold_n_warm_optional():
+    # n_warm absent -> dropped (render the bare headline); the five spine fields still emit.
+    wvc = _wvc()
+    del wvc["n_warm"]
+    out = rs.build_results([], _prov(), GEN_AT, warm_vs_cold=wvc)["warm_vs_cold"]
+    _check("n_warm" not in out, "absent n_warm dropped, no fabrication")
+    _check(out["speedup"] == 10.0, "spine kept without n_warm")
+    # A bad n_warm value is dropped too, not propagated.
+    for bad in (-1, True, 3.5, "200"):
+        out2 = rs.build_results([], _prov(), GEN_AT, warm_vs_cold=_wvc(n_warm=bad))["warm_vs_cold"]
+        _check("n_warm" not in out2, f"bad n_warm dropped: {bad!r}")
+
+
+def test_warm_vs_cold_required_field_missing_omits_key():
+    # Any missing required spine field fails closed -> the whole key is omitted.
+    for drop in ("warm_p50_ms", "cold_ms", "speedup", "semantic", "runtime_class"):
+        wvc = _wvc()
+        del wvc[drop]
+        r = rs.build_results([], _prov(), GEN_AT, warm_vs_cold=wvc)
+        _check("warm_vs_cold" not in r, f"missing {drop} omits key")
+    # not-a-dict also omits.
+    _check("warm_vs_cold" not in rs.build_results([], _prov(), GEN_AT, warm_vs_cold="nope"),
+           "non-dict warm_vs_cold omits key")
+
+
+def test_warm_vs_cold_nonpositive_legs_dropped():
+    # warm_p50_ms / cold_ms must be strictly > 0 (a 0 leg is a degenerate ratio — mirrors
+    # render's _clean_warm_vs_cold positivity gate). 0, negative, inf, NaN, bool, non-numeric fail.
+    for bad in (0, 0.0, -1.0, float("inf"), float("nan"), True, "420"):
+        _check("warm_vs_cold" not in rs.build_results([], _prov(), GEN_AT, warm_vs_cold=_wvc(warm_p50_ms=bad)),
+               f"bad warm_p50_ms drops block: {bad!r}")
+        _check("warm_vs_cold" not in rs.build_results([], _prov(), GEN_AT, warm_vs_cold=_wvc(cold_ms=bad)),
+               f"bad cold_ms drops block: {bad!r}")
+
+
+def test_warm_vs_cold_speedup_nonneg_required():
+    # speedup is non-negative (0 allowed — degenerate but not a leak); negative/inf/NaN/bool fail.
+    for bad in (-0.1, float("inf"), float("nan"), True, "10"):
+        _check("warm_vs_cold" not in rs.build_results([], _prov(), GEN_AT, warm_vs_cold=_wvc(speedup=bad)),
+               f"bad speedup drops block: {bad!r}")
+    # 0.0 is accepted (nonneg).
+    out = rs.build_results([], _prov(), GEN_AT, warm_vs_cold=_wvc(speedup=0.0))["warm_vs_cold"]
+    _check(out["speedup"] == 0.0, "speedup 0.0 accepted (nonneg)")
+
+
+def test_warm_vs_cold_semantic_enum_only():
+    # semantic must be one of the two measured modes; anything else drops the block.
+    for bad in ("startup", "ttfx", "", None, 1):
+        _check("warm_vs_cold" not in rs.build_results([], _prov(), GEN_AT, warm_vs_cold=_wvc(semantic=bad)),
+               f"non-enum semantic drops block: {bad!r}")
+    for ok in ("ttfi", "ttfe"):
+        out = rs.build_results([], _prov(), GEN_AT, warm_vs_cold=_wvc(semantic=ok))["warm_vs_cold"]
+        _check(out["semantic"] == ok, f"enum semantic kept: {ok!r}")
+
+
+def test_warm_vs_cold_runtime_class_enum_fail_closed():
+    # runtime_class is the fail-closed PII guard: the classifier only parity-checks it as a
+    # non-empty string, so the coercer must enum-validate against the PUBLIC runtime set. An
+    # out-of-enum or free-text runtime (a potential leak surface) drops the whole block.
+    for bad in ("kata", "runsc", "internal-pool-name", "", None, "gVisor"):
+        _check("warm_vs_cold" not in rs.build_results([], _prov(), GEN_AT, warm_vs_cold=_wvc(runtime_class=bad)),
+               f"non-enum runtime_class drops block: {bad!r}")
+    for ok in ("gvisor", "kata-microvm"):
+        out = rs.build_results([], _prov(), GEN_AT, warm_vs_cold=_wvc(runtime_class=ok))["warm_vs_cold"]
+        _check(out["runtime_class"] == ok, f"enum runtime_class kept: {ok!r}")
+
+
+def test_warm_vs_cold_extra_keys_dropped():
+    # Closed-schema: only the contract field-names survive; an extra key (a leak surface) is
+    # dropped on read, never emitted.
+    out = rs.build_results([], _prov(), GEN_AT,
+                           warm_vs_cold=_wvc(failure_excerpt="secret", cluster="internal"))["warm_vs_cold"]
+    _check("failure_excerpt" not in out and "cluster" not in out, "extra keys dropped")
+    _check(set(out) == {"warm_p50_ms", "cold_ms", "speedup", "semantic", "runtime_class", "n_warm"},
+           f"only contract fields emitted, got {sorted(out)}")
+
+
 def _all_tests():
     return [v for k, v in sorted(globals().items())
             if k.startswith("test_") and callable(v)]
