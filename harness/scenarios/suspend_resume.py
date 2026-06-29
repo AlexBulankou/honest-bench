@@ -73,10 +73,12 @@ success returns ("PASS", <excerpt>, {}).
 from __future__ import annotations
 
 try:  # package context (production: run.py loads harness.scenarios.suspend_resume)
+    from . import runtime_class as rc
     from ._apiversion import sandbox_api_version, sandbox_gvr
     from ._kube import load_cluster_config
     from .. import metrics, ttfe_probe
 except ImportError:  # standalone (dependency-free test from the scenarios/ dir)
+    import runtime_class as rc
     from _apiversion import sandbox_api_version, sandbox_gvr
     from _kube import load_cluster_config
     import sys as _sys
@@ -97,6 +99,25 @@ _NAMESPACE = os.environ.get("BENCH_NAMESPACE", "default")
 _SANDBOX_IMAGE = os.environ.get(
     "SUSPEND_RESUME_SANDBOX_IMAGE", "busybox:1.36"
 )
+
+# Runtime-class pin for the #3942 Core Metrics matrix Kata row. DEFAULT-OFF: with
+# the knob unset, apply_runtime_class is a byte-identical no-op so the Sandbox
+# manifest is exactly its pre-#3942 shape and this scenario stays the plain
+# resume-from-suspend cell. Set to "gvisor"/"kata" to pin the resumed Sandbox to
+# that runtime (runtimeClassName + the runtime's toleration/nodeSelector) so the
+# published resume row is honestly attributed to the runtime it ran under. The
+# shared runtime_class helper owns the pin + post-measurement verify so this
+# scenario, native_digest_cold, and warmpool_cold_start pin-and-verify identically.
+# NOTE (#3942): resume x Kata is N/A-by-construction — CRIU checkpoint/restore does
+# not transfer to the Kata VM model — so this pin is exercised only for gvisor; the
+# render encodes the Kata resume cell as na-by-design rather than measuring it.
+_RUNTIME_CLASS = os.environ.get("SUSPEND_RESUME_RUNTIME_CLASS", "")
+
+# The cluster's substrate banner (run.py provenance). A gke-sandbox banner asserts
+# gVisor isolation, so the consistency guard refuses an unset/non-gVisor runtime on
+# it before any cluster call — preventing a runc resume number from publishing under
+# a gVisor label. kind/gke make no isolation claim and impose no constraint.
+_CLUSTER_SUBSTRATE = os.environ.get("BENCH_CLUSTER_SUBSTRATE", "kind")
 
 
 def _env_flag(name: str) -> bool:
@@ -184,7 +205,30 @@ def _build_sandbox_manifest(sandbox_name: str) -> dict:
 
     No Template/Claim/WarmPool — operatingMode is a Sandbox.spec field, so the
     bare-CR path is the minimal surface.
+
+    When SUSPEND_RESUME_RUNTIME_CLASS is set, the inner pod_spec is pinned to that
+    runtime (runtimeClassName + the runtime's toleration/nodeSelector) via the shared
+    runtime_class helper. Default-off: with the knob unset apply_runtime_class is a
+    byte-identical no-op, so the manifest is exactly its pre-#3942 shape. The pin
+    touches only podTemplate.spec; podTemplate.metadata.labels (the harness-stamped
+    pod label _read_pod falls back to on recreate) is preserved unchanged.
     """
+    pod_spec = {
+        "containers": [
+            {
+                "name": "sandbox",
+                "image": _SANDBOX_IMAGE,
+                "imagePullPolicy": "IfNotPresent",
+                "command": ["sh", "-c", "sleep 600"],
+                "resources": {
+                    "requests": {"cpu": "10m", "memory": "16Mi"},
+                    "limits": {"cpu": "100m", "memory": "64Mi"},
+                },
+            },
+        ],
+        "restartPolicy": "Never",
+    }
+    rc.apply_runtime_class(pod_spec, _RUNTIME_CLASS)
     return {
         "apiVersion": sandbox_api_version(),
         "kind": "Sandbox",
@@ -198,21 +242,7 @@ def _build_sandbox_manifest(sandbox_name: str) -> dict:
                 "metadata": {
                     "labels": {_POD_LABEL_KEY: sandbox_name},
                 },
-                "spec": {
-                    "containers": [
-                        {
-                            "name": "sandbox",
-                            "image": _SANDBOX_IMAGE,
-                            "imagePullPolicy": "IfNotPresent",
-                            "command": ["sh", "-c", "sleep 600"],
-                            "resources": {
-                                "requests": {"cpu": "10m", "memory": "16Mi"},
-                                "limits": {"cpu": "100m", "memory": "64Mi"},
-                            },
-                        },
-                    ],
-                    "restartPolicy": "Never",
-                },
+                "spec": pod_spec,
             },
         },
     }
@@ -606,6 +636,12 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
     """
     from kubernetes import client as k8s_client
 
+    # Pure, fail-fast (mirrors native_digest_cold): a gke-sandbox-labeled result
+    # MUST pin the gVisor RuntimeClass, else the published resume row is a runc number
+    # under a gVisor banner. Checked before the cluster is touched so the mistake
+    # crashes immediately. kind/gke impose no constraint.
+    rc.assert_substrate_runtime_consistency(_CLUSTER_SUBSTRATE, _RUNTIME_CLASS)
+
     # Portable kubeconfig load (see _kube.load_cluster_config): an explicit
     # KUBECONFIG wins, else in-cluster when running as a pod, else the default
     # kubeconfig.
@@ -663,6 +699,30 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
                 ttfe_samples.append(ttfe_ms)
                 exec_oks.append(exec_ok)
             pre_uid = new_uid  # next cycle suspends the just-resumed Pod
+
+        # Runtime read-back (post-loop, mirrors native_digest_cold): verify the just-
+        # resumed Sandbox's backing Pod actually scheduled under the pinned runtime
+        # before publishing the runtime-labeled resume row. Crash-FAILs on a silent
+        # runc fallback. kind/gke skip this (required_runtime_for_substrate -> None —
+        # no runtime claim to verify, so the path stays read-free there, preserving
+        # the default INERT shape). Runs AFTER all cycles so it never perturbs a
+        # measured resume-activation latency, and the resumed Pod is Ready in BOTH the
+        # PASS and the pending (Suspended-never-cleared) verdicts — the gap is about
+        # the Suspended condition not clearing, not the Pod being absent. The gate
+        # shares the single substrate->runtime source of truth with the consistency
+        # guard above, which already proved _RUNTIME_CLASS == the required runtime.
+        if rc.required_runtime_for_substrate(_CLUSTER_SUBSTRATE) is not None:
+            verified = rc.verify_bound_pod_runtimes(
+                custom, core_v1,
+                namespace=_NAMESPACE,
+                sandbox_names=[sandbox_name],
+                sandbox_gvr=_SANDBOX_GVR,
+                expected_runtime_class=_RUNTIME_CLASS,
+            )
+            log.info(
+                "runtime read-back: %d/1 resumed sandbox verified under RuntimeClass %r",
+                verified, _RUNTIME_CLASS,
+            )
 
         # Representative gap verdict: pending if ANY cycle's Suspended condition
         # never cleared (the tracked upstream gap), else the first (PASS) cycle.

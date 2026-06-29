@@ -88,6 +88,73 @@ def test_default_cycle_count_is_one():
     _check(cell._RESUME_CYCLE_COUNT >= 1, "default cycle count >= 1")
 
 
+# ---- runtime-class pinning: the scenario routes its pod_spec through the helper ----
+#
+# The pure pin logic lives in test_runtime_class.py; these lock that the SCENARIO
+# actually routes its bare-Sandbox pod_spec through the shared runtime_class helper,
+# gated on the module-level _RUNTIME_CLASS knob. _RUNTIME_CLASS is read at import;
+# monkeypatch the module attribute (not os.environ) to exercise each runtime
+# in-process, restoring it. The pin must touch only podTemplate.spec — the
+# podTemplate.metadata.labels (the _read_pod recreate-fallback selector) stays put.
+# The default-off case is load-bearing: with the knob unset the manifest must be its
+# pre-#3942 byte-identical shape so the resume cell renders nothing until a deliberate
+# runtime-pinned fire emits a closed-schema-clean object.
+
+def _pod_spec_with_runtime(value):
+    saved = cell._RUNTIME_CLASS
+    cell._RUNTIME_CLASS = value
+    try:
+        return cell._build_sandbox_manifest("rt-test")["spec"]["podTemplate"]["spec"]
+    finally:
+        cell._RUNTIME_CLASS = saved
+
+
+def _pod_template_with_runtime(value):
+    saved = cell._RUNTIME_CLASS
+    cell._RUNTIME_CLASS = value
+    try:
+        return cell._build_sandbox_manifest("rt-test")["spec"]["podTemplate"]
+    finally:
+        cell._RUNTIME_CLASS = saved
+
+
+def test_sandbox_default_off_is_byte_identical():
+    # Unset knob -> the manifest is its pre-#3942 shape: no runtime fields added.
+    spec = _pod_spec_with_runtime("")
+    _check("runtimeClassName" not in spec, "no runtimeClassName when knob unset")
+    _check("tolerations" not in spec, "no tolerations when knob unset")
+    _check("nodeSelector" not in spec, "no nodeSelector when knob unset")
+    _check(spec["restartPolicy"] == "Never", "restartPolicy preserved")
+    _check(spec["containers"][0]["name"] == "sandbox", "container preserved")
+
+
+def test_sandbox_gvisor_pins_class_and_toleration():
+    spec = _pod_spec_with_runtime("gvisor")
+    _check(spec["runtimeClassName"] == "gvisor", "gvisor runtimeClassName pinned")
+    keys = {t["key"] for t in spec["tolerations"]}
+    _check("sandbox.gke.io/runtime" in keys, "gvisor toleration pinned")
+    _check("nodeSelector" not in spec, "gVisor needs no node label")
+
+
+def test_sandbox_kata_pins_class_toleration_and_selector():
+    spec = _pod_spec_with_runtime("kata")
+    _check(spec["runtimeClassName"] == "kata", "kata runtimeClassName pinned")
+    keys = {t["key"] for t in spec["tolerations"]}
+    _check("sandbox.gke.io/kata" in keys, "kata toleration pinned")
+    _check(spec["nodeSelector"] == {"nested-virtualization": "enabled"},
+           "kata nodeSelector pinned")
+
+
+def test_pod_template_metadata_label_survives_pin():
+    # The runtime pin touches only podTemplate.spec; the harness-stamped pod label
+    # (the _read_pod recreate-fallback selector) must survive every runtime.
+    for value in ("", "gvisor", "kata"):
+        tmpl = _pod_template_with_runtime(value)
+        labels = tmpl["metadata"]["labels"]
+        _check(labels[cell._POD_LABEL_KEY] == "rt-test",
+               f"pod label preserved under runtime {value!r}")
+
+
 def _run_all():
     tests = [v for k, v in sorted(globals().items())
              if k.startswith("test_") and callable(v)]
