@@ -81,6 +81,33 @@ _NAMESPACE = os.environ.get("BENCH_NAMESPACE", "default")
 _SANDBOX_IMAGE = os.environ.get("SCALE_SLOPE_SANDBOX_IMAGE", "busybox:1.36")
 _RUNTIME_CLASS = os.environ.get("SCALE_SLOPE_RUNTIME_CLASS", "")
 
+# gVisor-capable node selector ("key=value"; a bare "key" matches on presence). When
+# the sweep pins runtimeClassName=gvisor (_RUNTIME_CLASS set) the sandboxes ONLY
+# schedule on nodes that advertise the gVisor runtime — a system-pool node cannot
+# host one. Both the skip-guard and the per-tier autoscale-wait count ONLY these
+# nodes, so a cluster with 1 gVisor node + 2 system nodes is treated as 1 capable
+# node (not 3), preventing K×slots gVisor pods from piling onto too few nodes and
+# fabricating the density denominator (per-node-vCPU × K). [#3949]
+_GVISOR_NODE_LABEL = os.environ.get(
+    "SCALE_SLOPE_GVISOR_NODE_LABEL", "sandbox.gke.io/runtime=gvisor"
+)
+
+# Autoscale ceiling for gVisor-capable nodes — the MAX the cluster can scale to
+# (the skip-guard upper bound). 0 = no autoscale assumed; the skip-guard then falls
+# back to the count of gVisor-capable nodes Ready right now. Set this to the gVisor
+# node-pool's max size so a tier ABOVE the current Ready count is ATTEMPTED (the
+# autoscaler brings nodes up once the tier's warm pool goes pending) instead of
+# skipped on the pre-scale count — the exact false-skip that counting total nodes
+# caused (k=4 skipped because total=3<4 before any pod was pending). [#3949]
+_MAX_GVISOR_NODES = int(os.environ.get("SCALE_SLOPE_MAX_GVISOR_NODES", "0") or "0")
+
+# Per-tier autoscale-wait: how long to wait for the cluster to reach K gVisor-capable
+# Ready nodes after the tier's warm pool goes pending, before DROPPING the tier. A
+# tier that cannot reach K capable nodes would pile K×slots gVisor pods onto too few
+# nodes and fabricate the per-node density denominator (per-node-vCPU × K), so a tier
+# whose nodes never arrive is dropped (no point) rather than measured dishonestly. [#3949]
+_NODE_SCALE_TIMEOUT_S = int(os.environ.get("SCALE_SLOPE_NODE_SCALE_TIMEOUT_S", "300"))
+
 # The node-count sweep. {1, 2, 4} by default — base=1, max-scale=4. Comma-separated
 # env override (e.g. "1,3,6") for a differently-sized cluster. The sweep is honest
 # only for node-counts the cluster can actually provide; run_sweep measures whatever
@@ -294,6 +321,95 @@ def _allocatable_vcpu_per_node(core_v1) -> float:
     return _ALLOCATABLE_VCPU_PER_NODE
 
 
+def _parse_label_selector(selector: str):
+    """Split a "key=value" (or bare "key") node-label selector into (key, value).
+
+    A bare "key" yields value=None, which _node_matches reads as a presence test
+    (the label key exists, any value). An empty/whitespace selector yields
+    (None, None) — _count_capable_nodes treats a selector-less call as "match none"
+    only when a runtime class is pinned, so this is never the no-runtime path.
+    """
+    sel = (selector or "").strip()
+    if not sel:
+        return None, None
+    if "=" in sel:
+        key, _, value = sel.partition("=")
+        return key.strip(), value.strip()
+    return sel, None
+
+
+def _node_matches(labels: dict, key, value) -> bool:
+    """True when a node's label dict satisfies the (key, value) selector.
+
+    value=None → presence test (key in labels); value set → exact-match.
+    """
+    if not key:
+        return False
+    if value is None:
+        return key in (labels or {})
+    return (labels or {}).get(key) == value
+
+
+def _count_capable_nodes(node_label_dicts, *, runtime_class: str, gvisor_label: str) -> int:
+    """Pure: how many nodes can actually HOST this sweep's sandboxes.
+
+    When the sweep pins a runtimeClassName (runtime_class truthy — e.g. gvisor), a
+    sandbox schedules ONLY onto nodes advertising that runtime, so the capable count
+    is the number of nodes matching gvisor_label. When no runtime class is pinned,
+    every node can host the sandbox, so the capable count is simply len(nodes). This
+    is the honest-by-construction denominator basis: counting total nodes (3) when
+    only 1 is gVisor-capable lets a tier pile K×slots gVisor pods onto 1 node and
+    fabricate per-node density. [#3949]
+    """
+    nodes = list(node_label_dicts or [])
+    if not runtime_class:
+        return len(nodes)
+    key, value = _parse_label_selector(gvisor_label)
+    return sum(1 for labels in nodes if _node_matches(labels, key, value))
+
+
+def _node_is_ready(node) -> bool:
+    conds = (node.status.conditions or []) if node.status else []
+    return any(
+        getattr(c, "type", None) == "Ready" and getattr(c, "status", None) == "True"
+        for c in conds
+    )
+
+
+def _node_label_dicts(core_v1, *, ready_only: bool = True) -> list:
+    """Live: each node's label dict (Ready nodes only by default).
+
+    Autoscale-wait counts only Ready nodes — a node that exists but is NotReady
+    cannot yet host a pod, so counting it would let the tier proceed before the
+    capacity is genuinely there.
+    """
+    out = []
+    for node in core_v1.list_node().items:
+        if ready_only and not _node_is_ready(node):
+            continue
+        out.append((node.metadata.labels or {}) if node.metadata else {})
+    return out
+
+
+def _wait_for_capable_nodes(
+    core_v1, *, target: int, timeout_s: int, runtime_class: str, gvisor_label: str
+) -> int:
+    """Poll until >= target gVisor-capable Ready nodes exist, or timeout. Returns
+    the final capable count (caller drops the tier when it is < target)."""
+    deadline = time.monotonic() + timeout_s
+    capable = _count_capable_nodes(
+        _node_label_dicts(core_v1, ready_only=True),
+        runtime_class=runtime_class, gvisor_label=gvisor_label,
+    )
+    while capable < target and time.monotonic() < deadline:
+        time.sleep(2.0)
+        capable = _count_capable_nodes(
+            _node_label_dicts(core_v1, ready_only=True),
+            runtime_class=runtime_class, gvisor_label=gvisor_label,
+        )
+    return capable
+
+
 def run_sweep(scenario_name: str = "scale_slope") -> dict:
     """Live multi-node sweep producer. Returns the scale_proof object (or {}).
 
@@ -320,22 +436,41 @@ def run_sweep(scenario_name: str = "scale_slope") -> dict:
     core_v1 = k8s_client.CoreV1Api()
     custom = k8s_client.CustomObjectsApi()
 
-    cluster_nodes = len(core_v1.list_node().items)
+    capable_now = _count_capable_nodes(
+        _node_label_dicts(core_v1, ready_only=True),
+        runtime_class=_RUNTIME_CLASS, gvisor_label=_GVISOR_NODE_LABEL,
+    )
+    # Skip-guard ceiling: the MAX gVisor-capable nodes the cluster can reach. With an
+    # autoscaling gVisor pool, set _MAX_GVISOR_NODES to the pool max so a tier above
+    # the currently-Ready count is attempted (the per-tier autoscale-wait brings the
+    # nodes up) rather than false-skipped on the pre-scale count. 0 → assume no
+    # autoscale and cap at what is Ready now. [#3949]
+    max_capable = _MAX_GVISOR_NODES or capable_now
     alloc_vcpu = _allocatable_vcpu_per_node(core_v1)
     log.info(
-        "scale-slope sweep: cluster has %d node(s); allocatable vCPU/node=%g; "
-        "sweep node-counts=%r", cluster_nodes, alloc_vcpu, _NODE_COUNTS,
+        "scale-slope sweep: %d gVisor-capable node(s) Ready now (ceiling=%d, "
+        "runtime_class=%r); allocatable vCPU/node=%g; sweep node-counts=%r",
+        capable_now, max_capable, _RUNTIME_CLASS, alloc_vcpu, _NODE_COUNTS,
     )
 
     points: list[dict] = []
     for k in sorted(set(_NODE_COUNTS)):
-        if k > cluster_nodes:
-            log.info("skipping node-count=%d (cluster has only %d nodes)", k, cluster_nodes)
+        if k > max_capable:
+            log.info(
+                "skipping node-count=%d (cluster can reach at most %d gVisor-capable "
+                "nodes)", k, max_capable,
+            )
             continue
         claim_count = k * _SLOTS_PER_NODE
         ttfis = _measure_point(
-            custom, node_count=k, claim_count=claim_count,
+            custom, core_v1, node_count=k, claim_count=claim_count,
         )
+        if ttfis is None:
+            log.info(
+                "dropping node-count=%d (autoscale-wait did not reach %d capable "
+                "nodes)", k, k,
+            )
+            continue
         max_concurrent = sum(1 for v in ttfis if v is not None)
         points.append(
             {
@@ -351,8 +486,13 @@ def run_sweep(scenario_name: str = "scale_slope") -> dict:
     )
 
 
-def _measure_point(custom, *, node_count: int, claim_count: int) -> list:
-    """Provision a K-node-sized burst, fire claims, return TTFI samples (ms|None)."""
+def _measure_point(custom, core_v1, *, node_count: int, claim_count: int):
+    """Provision a K-node-sized burst, fire claims, return TTFI samples (ms|None).
+
+    Returns None to DROP the tier when the cluster cannot reach `node_count`
+    gVisor-capable Ready nodes within the autoscale-wait — measuring it anyway would
+    pile claim_count gVisor pods onto too few nodes and fabricate per-node density.
+    """
     suffix = uuid.uuid4().hex[:8]
     template_name = f"sstmpl-{suffix}"
     pool_name = f"sspool-{suffix}"
@@ -368,6 +508,20 @@ def _measure_point(custom, *, node_count: int, claim_count: int) -> list:
         body=_build_warmpool_manifest(pool_name, template_name, claim_count),
     )
     try:
+        # Per-tier autoscale-wait: the warm pool above just made claim_count gVisor
+        # pods pending, which triggers the autoscaler. Wait for K gVisor-capable
+        # nodes before measuring; drop the tier if they never arrive. [#3949]
+        capable = _wait_for_capable_nodes(
+            core_v1, target=node_count, timeout_s=_NODE_SCALE_TIMEOUT_S,
+            runtime_class=_RUNTIME_CLASS, gvisor_label=_GVISOR_NODE_LABEL,
+        )
+        if capable < node_count:
+            log.info(
+                "node-count=%d: only %d gVisor-capable node(s) Ready after %ds "
+                "autoscale-wait — dropping tier", node_count, capable,
+                _NODE_SCALE_TIMEOUT_S,
+            )
+            return None
         _wait_for_pool_warm(
             custom, pool_name=pool_name, target_ready=claim_count,
             timeout_s=_WARMUP_TIMEOUT_S,
