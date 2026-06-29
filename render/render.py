@@ -283,6 +283,11 @@ def _fmt_num(v):
     return f"{v:g}"
 
 
+def _fmt_ratio(r):
+    """A retention ratio to 2 dp, no trailing zeros: 0.989474 -> 0.99, 1.06 -> 1.06."""
+    return f"{round(r, 2):g}"
+
+
 def _fmt_secs(ms):
     """Milliseconds -> the doc's seconds format: 600 -> 0.6s, 1560 -> 1.56s."""
     return f"{ms / 1000.0:g}s"
@@ -482,6 +487,44 @@ def _flat_verdict(retention):
     return "✅ Yes" if retention >= 0.9 else "⚠️ No"
 
 
+def _per_step_density_line(points):
+    """Per-step density retention (the delta) plus a one-word convergence read.
+
+    The Scale-Proof table's density column is the ENDPOINT ratio (density@maxN /
+    density@minN). That averages a single mid-sweep sag into the whole span, so a
+    1→2 hold followed by a 2→4 collapse reads the same as a uniform gentle decay.
+    This subline exposes each ADJACENT step (1→2, 2→4) so the shape of the decay is
+    visible, and reads ✅ holds-flat only when EVERY step holds — derived from the
+    same scale_points the table already uses, no new producer field.
+
+    Returns "" for a sweep with fewer than two steps (a single step IS the endpoint
+    ratio, so per-step would just restate the table) or when no step is measurable
+    (a zero base density everywhere). Same asymmetric ≥0.9 threshold as _flat_verdict:
+    a superlinear step is a beat (✅), only a sag below 0.9 reads ⚠️.
+    """
+    if len(points) < 3:
+        return ""
+    steps = []
+    all_flat = True
+    measurable = False
+    for prev, cur in zip(points, points[1:]):
+        base = prev["density"]
+        label = f"{prev['node_count']}→{cur['node_count']}"
+        if not base:
+            steps.append(f"{label} {_PENDING}")
+            continue
+        ratio = cur["density"] / base
+        measurable = True
+        mark = "✅" if ratio >= 0.9 else "⚠️"
+        if ratio < 0.9:
+            all_flat = False
+        steps.append(f"{label} {mark} {_fmt_ratio(ratio)}")
+    if not measurable:
+        return ""
+    read = "holds flat step-to-step" if all_flat else "sags mid-sweep"
+    return "_Per-step density retention: " + " · ".join(steps) + f" — {read}._"
+
+
 def _clean_scale_proof(results):
     """Closed-schema-validate the scale_proof object. Requires scale_points; retentions are
     optional (density_retention derives from the points if absent). None ⇒ no table."""
@@ -542,6 +585,10 @@ def render_scale_proof(results):
     lines.append("|" + "|".join(["---"] * len(header)) + "|")
     lines.append("| " + " | ".join([nodes, dens_verdict, thpt_verdict]) + " |")
     lines.append("")
+    step_line = _per_step_density_line(sp["points"])
+    if step_line:
+        lines.append(step_line)
+        lines.append("")
     # Dated subline (#3952): the Scale Proof is a point-in-time multi-node sweep,
     # carried forward across the daily single-node refresh — so it carries its own
     # measured date, honestly distinct from the page's daily-refreshed timestamp.
