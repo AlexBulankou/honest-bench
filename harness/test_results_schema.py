@@ -389,6 +389,33 @@ def test_scale_proof_measured_at_passthrough_and_dropped():
                f"bad measured_at dropped: {bad!r}")
 
 
+def test_scale_proof_extra_keys_dropped():
+    # Closed-schema, allow-list-by-construction: an extra/internal key (a leak surface) on the
+    # top-level scale_proof object AND inside a scale_points sub-point is dropped on read, never
+    # emitted. Ports the warm_vs_cold / scenario / provenance extra-key lock to scale_proof, so
+    # the fail-closed PII property is asserted, not merely held by the current coding style — a
+    # future refactor to dict-passthrough would fail HERE instead of silently leaking to the
+    # PUBLIC page. Synthetic marker as the VALUE so even a regression can never ship a real name.
+    leak = "SYNTHETIC-SCALE-PROOF-LEAK-MARKER"
+    sp = {
+        "scale_points": [
+            {"node_count": 1, "density": 1.88, "internal_pool_name": leak},
+            {"node_count": 2, "density": 1.88},
+        ],
+        "density_retention": 1.0,
+        "thpt_retention": 1.0,
+        "internal_cluster_name": leak,
+        "obs_dsn": leak,
+    }
+    out = rs.build_results([], _prov(), GEN_AT, scale_proof=sp)["scale_proof"]
+    _check(set(out) <= {"scale_points", "density_retention", "thpt_retention", "measured_at"},
+           f"only contract keys on the object, got {sorted(out)}")
+    for p in out["scale_points"]:
+        _check(set(p) <= {"node_count", "density", "throughput"},
+               f"only contract keys per point, got {sorted(p)}")
+    _check(leak not in repr(out), "no leaked string anywhere in emitted scale_proof")
+
+
 def test_stepup_passthrough_valid():
     # A well-formed top-level stepup object survives _coerce_stepup and is emitted
     # at the top level (the Step-Up Pareto table source, a#3960 item 4).
@@ -477,7 +504,7 @@ def test_stepup_unsafe_sweep_scalars_dropped():
         "max_flat_rate": "10",               # non-int
         "wpr": 1.5,                           # out of (0,1)
         "node_count": 0,                      # not > 0
-        "machine_type": "sandbox-scenarios-cluster",  # not a GCP machine shape
+        "machine_type": "SYNTHETIC-NOT-A-MACHINE-SHAPE",  # not a GCP machine shape
     })
     out = r["stepup"]
     for k in ("north_star_breach_rate", "saturation_rate", "max_flat_rate",
@@ -495,7 +522,11 @@ def test_stepup_machine_type_internal_name_rejected():
                             stepup={**base, "machine_type": "e2-standard-16"}
                             )["stepup"]["machine_type"] == "e2-standard-16",
            "valid GCP shape kept")
-    for leak in ("alexbu-gke-dev-d", "sandbox-scenarios", "postgres-obs-0", "E2-STANDARD-16"):
+    # Synthetic internal-shaped strings (uppercase-start fails ^[a-z]; the case-variant
+    # of a real GCP shape exercises the case-sensitivity reject). No real internal
+    # identifier appears in this PUBLIC repo — even a broken drop ships only a sentinel.
+    for leak in ("SYNTHETIC-GCP-PROJECT-ID", "SYNTHETIC-INTERNAL-NAMESPACE",
+                 "SYNTHETIC-INTERNAL-OBS-HOST", "E2-STANDARD-16"):
         r = rs.build_results([], _prov(), GEN_AT, stepup={**base, "machine_type": leak})
         _check("machine_type" not in r["stepup"], f"internal-ish machine_type dropped: {leak!r}")
         _check(leak not in repr(r["stepup"]), f"no leaked string in emitted stepup: {leak!r}")
@@ -573,6 +604,42 @@ def test_stepup_controller_startup_caveat_never_carried():
     out = rs.build_results([], _prov(), GEN_AT, stepup=su)["stepup"]
     _check("caveat" not in out["controller_startup"], "free-text caveat dropped from proxy block")
     _check(leak not in repr(out), "no leaked caveat string anywhere in emitted stepup")
+
+
+def test_stepup_extra_keys_dropped():
+    # Closed-schema, allow-list-by-construction: an extra/internal key (a leak surface) at EVERY
+    # nesting level of the stepup object — top-level, a true-TTFE pareto_point, AND a
+    # controller_startup proxy point — is dropped on read, never emitted. The caveat test above
+    # locks one specific proxy-block key; this is the GENERIC per-level lock that ports the
+    # warm_vs_cold / scenario / provenance extra-key discipline to stepup, so the fail-closed PII
+    # property is asserted across the nested shape, not merely held by the current coding style.
+    # Synthetic marker as the VALUE so even a regression can never ship a real name.
+    leak = "SYNTHETIC-STEPUP-LEAK-MARKER"
+    su = {
+        "pareto_points": [
+            {"offered_rate_per_s": 10, "ttfe_p95_ms": 240.0, "internal_namespace": leak},
+        ],
+        "verdict": "saturated",
+        "controller_startup": {
+            "lower_bound": True,
+            "pareto_points": [
+                {"offered_rate_per_s": 10, "controller_startup_p95_ms": 180.0, "obs_dsn": leak},
+            ],
+        },
+        "internal_cluster_name": leak,
+        "project_id": leak,
+    }
+    out = rs.build_results([], _prov(), GEN_AT, stepup=su)["stepup"]
+    _check("internal_cluster_name" not in out and "project_id" not in out,
+           "top-level extra keys dropped from stepup object")
+    _check(set(out["pareto_points"][0]) <= {"offered_rate_per_s", "ttfe_p95_ms", "ready_per_s",
+                                            "ttfe_p50_ms", "ttfe_p99_ms", "cost_usd_per_1k_ready"},
+           f"only contract keys per TTFE point, got {sorted(out['pareto_points'][0])}")
+    _check(set(out["controller_startup"]["pareto_points"][0]) <= {
+        "offered_rate_per_s", "controller_startup_p95_ms", "controller_startup_p50_ms",
+        "controller_startup_p99_ms", "controller_ready_per_s"},
+        f"only contract keys per proxy point, got {sorted(out['controller_startup']['pareto_points'][0])}")
+    _check(leak not in repr(out), "no leaked string anywhere in emitted stepup (any nesting level)")
 
 
 def test_stepup_controller_startup_malformed_dropped():
