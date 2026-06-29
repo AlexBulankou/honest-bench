@@ -68,5 +68,23 @@
       "outcome": "PASS",
       "badge_scope": "control-plane"
     }
-  ]
+  ],
+  "scale_proof": {
+    "density_retention": 1.0,
+    "scale_points": [
+      {
+        "density": 5.18,
+        "node_count": 1
+      },
+      {
+        "density": 5.18,
+        "node_count": 2
+      },
+      {
+        "density": 5.18,
+        "node_count": 4
+      }
+    ],
+    "thpt_retention": 0.222
+  }
 }
