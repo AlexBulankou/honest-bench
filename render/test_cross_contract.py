@@ -137,6 +137,93 @@ def test_live_emitter_when_available():
     print("  (live emitter import OK — full end-to-end wiring tracked for #3869 follow-up)")
 
 
+def _load_metrics():
+    """Import the harness metrics core (harness/metrics.py) in isolation, or None when the
+    harness package isn't in-tree (keeps this file runnable in the render-only staging slice)."""
+    import importlib.util
+
+    path = os.path.join(_ROOT, "harness", "metrics.py")
+    if not os.path.exists(path):
+        return None
+    spec = importlib.util.spec_from_file_location("_bench_metrics", path)
+    mod = importlib.util.module_from_spec(spec)
+    try:
+        spec.loader.exec_module(mod)
+    except Exception:  # pragma: no cover - harness has its own deps
+        return None
+    return mod
+
+
+def test_emit_to_render_matrix_convergence_gvisor_doc_rows():
+    """End-to-end convergence: REAL metrics.py producer -> render_matrix (the LIVE public path).
+
+    This is the matrix-era successor to the render_product cross-contract guard above. The public
+    page now renders via render_matrix (generate.build_readme switched to it in the 9-col migration,
+    PR #28), so the contract that must not drift is metrics.ttfe_sla_metrics -> _clean_matrix_metrics
+    (the closed MATRIX_METRIC_FIELDS guard) -> render_matrix. We feed synthetic raw samples through
+    the ACTUAL producer functions, engineered to land on the spec doc's gVisor target values, and
+    assert (a) every emitted key survives the closed guard with NO drop, and (b) the three gVisor
+    activation rows render EXACTLY the doc numbers while the Kata rows stay honest-pending.
+
+    Why a value-exact assertion (not just non-pending): a closed-schema key drop renders the cell
+    `pending`, and a unit/format regression renders a wrong value -- both are silent on a
+    non-pending check. Pinning the doc numbers catches either.
+    """
+    metrics = _load_metrics()
+    if metrics is None:
+        print("  (skip: harness metrics core not in-tree / not importable)")
+        return
+
+    # warm-pool: all TTFE <= 1s; p50=0.6s, p95=0.9s; 200/50s/1node = 4 sb/s/node at both bars.
+    warm = metrics.ttfe_sla_metrics(
+        [600.0] * 189 + [900.0] * 11, [True] * 200, window_s=50.0, node_count=1,
+        max_concurrent_sandboxes=188, allocatable_sandbox_vcpu_per_node=100.0,
+    )
+    # unique-image cold: p50=1.2s, p95=1.56s; all >1s (<5s) so thpt@1s=0, thpt@5s=4.
+    cold = metrics.ttfe_sla_metrics(
+        [1200.0] * 189 + [1560.0] * 11, [True] * 200, window_s=50.0, node_count=1,
+        max_concurrent_sandboxes=188, allocatable_sandbox_vcpu_per_node=100.0,
+    )
+    # resume-from-suspend: p50=3.5s, p95=5.0s; 1277/1376 exec-success (the doc's 92.8% honesty
+    # flag); density N/A (omit the inputs). 1376/344s/1node = 4 @ <5s, 0 @ <1s.
+    resume = metrics.ttfe_sla_metrics(
+        [3500.0] * 1000 + [5000.0] * 376, [True] * 1277 + [False] * 99,
+        window_s=344.0, node_count=1,
+    )
+
+    # (a) field-level convergence: the producer's keys all survive the closed render guard.
+    for label, sla in (("warm", warm), ("cold", cold), ("resume", resume)):
+        kept = render._clean_matrix_metrics(sla)
+        assert kept == sla, (
+            f"emit/render schema DRIFT on {label}: the closed MATRIX_METRIC_FIELDS guard dropped "
+            f"producer keys {set(sla) - set(kept)} -- the matrix cell would render pending.\n"
+            f"emitted={sla}\nkept={kept}"
+        )
+
+    results = {
+        "product": "sandbox",
+        "generated_at": "2026-06-29T03:00:00Z",
+        "provenance": {"runtime": "gvisor", "cluster_substrate": "gke", "node_count": 1},
+        "scenarios": [
+            {"name": "warmpool_cold_start", "outcome": "PASS", "n": 200, "sla_metrics": warm},
+            {"name": "native_digest_cold", "outcome": "PASS", "n": 200, "sla_metrics": cold},
+            {"name": "suspend_resume", "outcome": "PASS", "n": 1376, "sla_metrics": resume},
+        ],
+    }
+    out = render.render_matrix(results)
+
+    # (b) the three gVisor rows render EXACTLY the spec doc's target numbers.
+    assert "| gVisor | Warm-pool hit (Base image) | 4 | 4 | 0.6s | 0.9s | 200 | 1.88 | 100% |" in out
+    assert "| gVisor | Unique-image cold (RL reality) | 4 | 0 | 1.2s | 1.56s | 200 | 1.88 | 100% |" in out
+    assert (
+        "| gVisor | Resume-from-suspend | 4 | 0 | 3.5s | 5s | 1376 | N/A | 92.8% (1277/1376) ⚠️ |"
+        in out
+    )
+    # the unmeasured runtime stays honest-pending (never a guess), resume density always N/A.
+    assert "| Kata + microVM | Warm-pool hit (Base image) | pending | pending | pending | pending | pending | pending | pending |" in out
+    assert "| Kata + microVM | Resume-from-suspend | pending | pending | pending | pending | pending | N/A | pending |" in out
+
+
 def _run_all():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:
