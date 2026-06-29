@@ -148,6 +148,72 @@ def test_convergence_empty_pareto_drops_block():
     _check(out is None, "empty pareto -> block dropped (measured=False, not a fabricated 0)")
 
 
+# ----------------------------------- controller-startup LOWER-BOUND proxy (#3975)
+
+def _nested_controller(over=None):
+    # The #3975 producer shape: an EMPTY true-TTFE pareto (no upstream true-TTFE stamp) + a
+    # SEPARATE nested controller_startup block carrying the controller-stamped lower-bound proxy.
+    cs = {
+        "lower_bound": True,
+        "caveat": "LOWER BOUND -- excludes claim-admission->first-reconcile queueing lag (#3975)",
+        "saturation": {"verdict": "flat-through-sweep", "max_flat_rate": 100},
+        "pareto": [
+            {"offered_rate_per_s": 10, "controller_ready_per_s": 10.0,
+             "controller_startup_p95_ms": 180.0, "controller_startup_p50_ms": 90.0,
+             "controller_startup_p99_ms": 360.0},
+            {"offered_rate_per_s": 100, "controller_ready_per_s": 98.0,
+             "controller_startup_p95_ms": 240.0, "controller_startup_p50_ms": 120.0,
+             "controller_startup_p99_ms": 470.0},
+        ],
+    }
+    rec = _nested()
+    rec["pareto"] = []  # true-TTFE honestly empty while #3975 is open
+    rec["saturation"]["verdict"] = "no-measured-steps"
+    rec["controller_startup"] = cs
+    if over:
+        rec["controller_startup"].update(over)
+    return rec
+
+
+def test_flatten_lifts_controller_startup_block():
+    flat = a.stepup_nested_to_flat(_nested_controller())
+    cs = flat["controller_startup"]
+    _check(cs["lower_bound"] is True, "lower_bound carried verbatim")
+    _check(len(cs["pareto_points"]) == 2, "controller pareto -> pareto_points (2 points)")
+    _check(cs["pareto_points"][1]["controller_startup_p95_ms"] == 240.0, "per-point proxy p95 lifted")
+    _check(cs["verdict"] == "no-measured-steps" or cs["verdict"] == "flat-through-sweep",
+           "saturation.verdict lifted to controller_startup.verdict")
+    _check("caveat" not in cs, "free-text caveat DELIBERATELY NOT lifted (render-owned, public-safe)")
+
+
+def test_convergence_controller_startup_round_trips():
+    out = rs._coerce_stepup(a.stepup_nested_to_flat(_nested_controller()))
+    _check(out is not None, "#3975 gap record (empty TTFE + proxy) coerces, not dropped")
+    _check("pareto_points" not in out, "empty true-TTFE pareto omitted, not emitted as []")
+    _check(out["verdict"] == "no-measured-steps", "honest no-measured-steps top-level verdict")
+    cs = out["controller_startup"]
+    _check(cs["lower_bound"] is True, "proxy lower_bound survives the round trip")
+    _check(len(cs["pareto_points"]) == 2, "both proxy points survive")
+    _check(cs["pareto_points"][0]["controller_startup_p99_ms"] == 360.0, "optional p99 carried")
+
+
+def test_convergence_controller_startup_caveat_never_round_trips():
+    # End-to-end public-safety: even with the producer's free-text caveat present in the nested
+    # record, it never reaches the coerced public output (adapter drops it before the coercer).
+    rec = _nested_controller()
+    leak = rec["controller_startup"]["caveat"]
+    out = rs._coerce_stepup(a.stepup_nested_to_flat(rec))
+    _check("caveat" not in out["controller_startup"], "caveat absent from coerced proxy block")
+    _check(leak not in repr(out), "no caveat free-text anywhere in coerced output")
+
+
+def test_flatten_non_dict_controller_startup_omitted():
+    rec = _nested_controller()
+    rec["controller_startup"] = "not-a-dict"
+    flat = a.stepup_nested_to_flat(rec)
+    _check("controller_startup" not in flat, "non-dict controller_startup omitted from flat record")
+
+
 def test_convergence_partial_measured_subset_only():
     # An UNMEASURED step (CL2/scrape gap) is already excluded from `pareto` by the
     # producer's assemble_pareto, so the adapter round-trips the MEASURED SUBSET only --

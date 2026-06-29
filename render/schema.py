@@ -302,14 +302,59 @@ def _stepup_points_ok(v):
     return True
 
 
+# The controller-startup LOWER-BOUND proxy block (#3975). True TTFE (claim-admission ->
+# first-reconcile -> Ready) has no upstream production stamp on current main, so the true-TTFE
+# `pareto_points` table is honestly EMPTY while the gap is open. This SEPARATE block surfaces
+# the controller-stamped startup latency (controller-first-observed -> Ready) as an explicit
+# LOWER BOUND: it EXCLUDES the claim-admission->first-reconcile queueing lag, so it under-reports
+# true TTFE. `lower_bound: true` is REQUIRED and load-bearing — render keys the fixed lower-bound
+# caveat boilerplate off it, so the public page can never present this proxy as a true TTFE
+# measurement. The free-text caveat the internal producer carries is render-owned and NEVER rides
+# the public schema. Per point: offered_rate_per_s + controller_startup_p95_ms REQUIRED (the
+# x-axis + proxy honesty spine); the p50/p99 percentiles + controller_ready_per_s OPTIONAL
+# (partial scrape -> partial point honestly). A malformed point drops the whole block.
+def _stepup_controller_ok(v):
+    if not isinstance(v, dict):
+        return False
+    if v.get("lower_bound") is not True:
+        return False
+    pts = v.get("pareto_points")
+    if not isinstance(pts, list) or not pts:
+        return False
+    for p in pts:
+        if not isinstance(p, dict):
+            return False
+        rate = p.get("offered_rate_per_s")
+        if not (isinstance(rate, int) and not isinstance(rate, bool) and 0 < rate < 100000):
+            return False
+        p95 = p.get("controller_startup_p95_ms")
+        if not (isinstance(p95, (int, float)) and not isinstance(p95, bool) and p95 >= 0):
+            return False
+        for opt in ("controller_startup_p50_ms", "controller_startup_p99_ms", "controller_ready_per_s"):
+            if opt in p:
+                ov = p[opt]
+                if not (isinstance(ov, (int, float)) and not isinstance(ov, bool) and ov >= 0):
+                    return False
+    # Optional proxy saturation verdict — same closed set as the true-TTFE verdict.
+    if "verdict" in v and v["verdict"] not in STEPUP_VERDICTS:
+        return False
+    return True
+
+
 # Optional positive-int rate field (a breach/saturation/flat rate). The internal classifier
 # carries None when there is no breach; the emitter drops None, so the predicate only has to
 # validate the present-and-positive case.
 _pos_int = lambda v: isinstance(v, int) and not isinstance(v, bool) and 0 < v < 100000
 
 STEPUP_PARETO_FIELDS = {
+    # The true-TTFE Pareto table. OMITTED (not emitted as []) when no step measured a true
+    # TTFE warm p95 — the #3975 gap — in which case the controller_startup proxy below carries
+    # the only table. When PRESENT it is non-empty by predicate; the emitter requires the union
+    # of {pareto_points, controller_startup} to be non-empty (no all-empty stepup block).
     "pareto_points": _stepup_points_ok,
     "verdict": lambda v: v in STEPUP_VERDICTS,
+    # The controller-startup LOWER-BOUND proxy block (#3975) — see _stepup_controller_ok.
+    "controller_startup": _stepup_controller_ok,
     # The three characteristic rates (all optional — absent when the curve never crossed that
     # band). north_star_breach_rate = first rate with p95 >= 500ms; saturation_rate = first
     # rate with p95 >= 2000ms; max_flat_rate = highest rate still under the North Star.
