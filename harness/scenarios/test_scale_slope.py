@@ -307,6 +307,71 @@ def test_count_capable_empty_and_none():
         None, runtime_class="", gvisor_label="x") == 0
 
 
+# ---- density denominator: gVisor-capable subset, not the whole pool [#3949] ----
+# The exact bug a4s1 caught in cluster prep: min() over ALL nodes picks the 2-vCPU
+# untainted system node, so density_per_vcpu = slots/(1.93*K) — ~8x inflated — even
+# though sandboxes only ever land on the 16-vCPU gVisor default-pool node.
+_GVISOR16_SYSTEM2 = [
+    ({"sandbox.gke.io/runtime": "gvisor", "cloud.google.com/gke-nodepool": "default-pool"}, 16.0),
+    ({"cloud.google.com/gke-nodepool": "system-pool"}, 2.0),
+]
+
+
+def test_min_capable_vcpu_picks_gvisor_node_when_runtime_pinned():
+    v = cell._min_capable_vcpu(
+        _GVISOR16_SYSTEM2, runtime_class="gvisor",
+        gvisor_label="sandbox.gke.io/runtime=gvisor",
+    )
+    assert v == 16.0  # NOT 2.0 — the system node never hosts a gVisor sandbox
+
+
+def test_min_capable_vcpu_min_over_all_when_no_runtime_class():
+    # No runtimeClassName pinned -> every node is capable, basis is the smallest.
+    v = cell._min_capable_vcpu(
+        _GVISOR16_SYSTEM2, runtime_class="",
+        gvisor_label="sandbox.gke.io/runtime=gvisor",
+    )
+    assert v == 2.0
+
+
+def test_min_capable_vcpu_min_over_capable_subset():
+    # Two gVisor nodes of differing size -> the smallest CAPABLE node bounds it.
+    specs = [
+        ({"sandbox.gke.io/runtime": "gvisor"}, 16.0),
+        ({"sandbox.gke.io/runtime": "gvisor"}, 8.0),
+        ({"cloud.google.com/gke-nodepool": "system-pool"}, 2.0),
+    ]
+    v = cell._min_capable_vcpu(
+        specs, runtime_class="gvisor", gvisor_label="sandbox.gke.io/runtime=gvisor")
+    assert v == 8.0
+
+
+def test_min_capable_vcpu_value_mismatch_excluded():
+    # A kata-labeled node must not bound a gvisor sweep's denominator.
+    specs = [
+        ({"sandbox.gke.io/runtime": "gvisor"}, 16.0),
+        ({"sandbox.gke.io/runtime": "kata"}, 4.0),
+    ]
+    v = cell._min_capable_vcpu(
+        specs, runtime_class="gvisor", gvisor_label="sandbox.gke.io/runtime=gvisor")
+    assert v == 16.0
+
+
+def test_min_capable_vcpu_zero_when_no_capable_node():
+    # runtime pinned but no gVisor node -> 0.0 sentinel (caller falls back / omits).
+    specs = [({"cloud.google.com/gke-nodepool": "system-pool"}, 2.0)]
+    v = cell._min_capable_vcpu(
+        specs, runtime_class="gvisor", gvisor_label="sandbox.gke.io/runtime=gvisor")
+    assert v == 0.0
+
+
+def test_min_capable_vcpu_zero_on_empty_and_none():
+    assert cell._min_capable_vcpu(
+        [], runtime_class="gvisor", gvisor_label="sandbox.gke.io/runtime=gvisor") == 0.0
+    assert cell._min_capable_vcpu(
+        None, runtime_class="", gvisor_label="x") == 0.0
+
+
 def _run_all():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:
