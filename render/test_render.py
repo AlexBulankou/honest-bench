@@ -426,6 +426,276 @@ def test_trend_unknown_field_not_rendered():
     assert "SYNTHETIC-HISTORY-LEAK" not in out
 
 
+# --- Goal 2.1: Core Metrics matrix + Scale Proof render tests --------------------------------
+
+
+def _matrix_results(scenarios, provenance=None, **top):
+    r = {"product": "sandbox", "scenarios": scenarios}
+    if provenance is not None:
+        r["provenance"] = provenance
+    r.update(top)
+    return r
+
+
+def _full_gvisor_scenarios():
+    # doc target row values for the three gVisor activation modes (TTFE in ms; thpt per node).
+    return [
+        {
+            "name": "warmpool_cold_start", "outcome": "PASS", "n": 200,
+            "sla_metrics": {
+                "thpt_under_5s_per_node": 4, "thpt_under_1s_per_node": 4,
+                "ttfe_p50_ms": 600, "ttfe_p95_ms": 900,
+                "exec_success_rate": 1.0, "density_per_vcpu": 1.88,
+            },
+        },
+        {
+            "name": "native_digest_cold", "outcome": "PASS", "n": 200,
+            "sla_metrics": {
+                "thpt_under_5s_per_node": 4, "thpt_under_1s_per_node": 0,
+                "ttfe_p50_ms": 1200, "ttfe_p95_ms": 1560, "exec_success_rate": 1.0,
+            },
+        },
+        {
+            "name": "suspend_resume", "outcome": "PASS", "n": 1376,
+            "sla_metrics": {
+                "thpt_under_5s_per_node": 4, "thpt_under_1s_per_node": 0,
+                "ttfe_p50_ms": 3500, "ttfe_p95_ms": 5000, "exec_success_rate": 0.9281,
+            },
+        },
+    ]
+
+
+def test_matrix_renders_doc_exact_gvisor_rows():
+    out = render.render_matrix(_matrix_results(_full_gvisor_scenarios()))
+    assert "| gVisor | Warm-pool hit (Base image) | 4 | 4 | 0.6s | 0.9s | 200 | 1.88 | 100% |" in out
+    assert "| gVisor | Unique-image cold (RL reality) | 4 | 0 | 1.2s | 1.56s | 200 | 1.88 | 100% |" in out
+    assert "| gVisor | Resume-from-suspend | 4 | 0 | 3.5s | 5s | 1376 | N/A | 92.8% (1277/1376) ⚠️ |" in out
+
+
+def test_matrix_honest_zero_throughput_not_rounded():
+    # the cold + resume rows print a literal 0 for throughput@<1s (p95 misses the bar).
+    out = render.render_matrix(_matrix_results(_full_gvisor_scenarios()))
+    # the <1s column on the cold row is exactly "0", never "pending" or a rounded-up value
+    cold_line = [l for l in out.splitlines() if "Unique-image cold" in l][0]
+    cells = [c.strip() for c in cold_line.strip("|").split("|")]
+    assert cells[3] == "0"  # Throughput @ <1s TTFE column
+
+
+def test_matrix_exec_success_n_emitted_preferred_over_derived():
+    # when the harness DOES emit exec_success_n, the fraction uses it verbatim (not rate*N).
+    scen = _full_gvisor_scenarios()
+    scen[2]["sla_metrics"]["exec_success_n"] = 1300  # deliberately != round(rate*N)=1277
+    out = render.render_matrix(_matrix_results(scen))
+    assert "92.8% (1300/1376) ⚠️" in out
+    assert "(1277/1376)" not in out
+
+
+def test_matrix_resume_density_is_na():
+    out = render.render_matrix(_matrix_results(_full_gvisor_scenarios()))
+    resume_line = [l for l in out.splitlines() if "Resume-from-suspend" in l and "gVisor" in l][0]
+    cells = [c.strip() for c in resume_line.strip("|").split("|")]
+    assert cells[7] == "N/A"  # Max Density column is N/A for resume (no steady-state pool)
+
+
+def test_matrix_density_sourced_from_warmpool_not_stale_burst_create():
+    # a4s2 Q3 lock (PR #28): DENSITY_SOURCE_SCENARIOS = (warmpool_cold_start,). A stale
+    # burst_create row carrying the OLD cluster-wide-capacity 0.45 must NOT shadow warmpool's
+    # corrected per-node-allocatable 1.88 — the warm + cold rows source 1.88, never 0.45.
+    scen = _full_gvisor_scenarios() + [
+        {
+            "name": "burst_create", "outcome": "PASS", "n": 10,
+            "sla_metrics": {"density_per_vcpu": 0.45},
+        }
+    ]
+    out = render.render_matrix(_matrix_results(scen))
+    assert "| gVisor | Warm-pool hit (Base image) | 4 | 4 | 0.6s | 0.9s | 200 | 1.88 | 100% |" in out
+    assert "| gVisor | Unique-image cold (RL reality) | 4 | 0 | 1.2s | 1.56s | 200 | 1.88 | 100% |" in out
+    assert "0.45" not in out
+
+
+def test_matrix_kata_rows_all_pending():
+    out = render.render_matrix(_matrix_results(_full_gvisor_scenarios()))
+    kata_lines = [l for l in out.splitlines() if l.startswith("| Kata + microVM |")]
+    assert len(kata_lines) == 3
+    for l in kata_lines:
+        cells = [c.strip() for c in l.strip("|").split("|")]
+        # every measured column on an unmeasured runtime is pending; density warm/cold pending,
+        # resume N/A
+        assert cells[2] == "pending" and cells[3] == "pending"
+        assert cells[4] == "pending" and cells[5] == "pending"
+        assert cells[6] == "pending"
+
+
+def test_matrix_unknown_metric_key_dropped():
+    scen = _full_gvisor_scenarios()
+    scen[0]["sla_metrics"]["internal_secret_ms"] = 7
+    scen[0]["sla_metrics"]["SYNTHETIC_LEAK"] = "exfil"
+    out = render.render_matrix(_matrix_results(scen))
+    assert "internal_secret_ms" not in out
+    assert "SYNTHETIC_LEAK" not in out
+    assert "exfil" not in out
+
+
+def test_matrix_unknown_scenario_does_not_pollute():
+    # an unknown activation scenario name is simply not addressed by any matrix row.
+    scen = _full_gvisor_scenarios() + [
+        {"name": "exfil_secret_dump", "outcome": "PASS", "n": 5,
+         "sla_metrics": {"ttfe_p50_ms": 1}},
+    ]
+    out = render.render_matrix(_matrix_results(scen))
+    assert "exfil_secret_dump" not in out
+
+
+def test_matrix_runtime_provenance_selects_measured_rows():
+    # measured runtime rides provenance.runtime; kata-measured run fills Kata rows, gVisor pends.
+    scen = [
+        {
+            "name": "warmpool_cold_start", "outcome": "PASS", "n": 50,
+            "sla_metrics": {"ttfe_p50_ms": 700, "ttfe_p95_ms": 950, "exec_success_rate": 1.0},
+        },
+    ]
+    out = render.render_matrix(_matrix_results(scen, provenance={"runtime": "kata-microvm"}))
+    kata_warm = [l for l in out.splitlines()
+                 if l.startswith("| Kata + microVM | Warm-pool hit")][0]
+    assert "0.7s" in kata_warm and "0.95s" in kata_warm
+    gvisor_warm = [l for l in out.splitlines()
+                   if l.startswith("| gVisor | Warm-pool hit")][0]
+    assert "0.7s" not in gvisor_warm  # gVisor un-measured this run
+
+
+def test_matrix_invalid_runtime_provenance_dropped_defaults_gvisor():
+    # an out-of-enum runtime fails the provenance predicate (dropped) ⇒ default gvisor measured.
+    scen = _full_gvisor_scenarios()
+    out = render.render_matrix(_matrix_results(scen, provenance={"runtime": "trust-me-vm"}))
+    assert "trust-me-vm" not in out
+    assert "| gVisor | Warm-pool hit (Base image) | 4 | 4 | 0.6s | 0.9s | 200 | 1.88 | 100% |" in out
+
+
+def test_matrix_empty_metrics_renders_pending_skeleton():
+    scen = [{"name": "warmpool_cold_start", "outcome": "PASS", "n": 5}]
+    out = render.render_matrix(_matrix_results(scen))
+    warm = [l for l in out.splitlines() if l.startswith("| gVisor | Warm-pool hit")][0]
+    cells = [c.strip() for c in warm.strip("|").split("|")]
+    assert cells[2] == "pending" and cells[4] == "pending" and cells[8] == "pending"
+    # N is still shown from the scenario count
+    assert cells[6] == "5"
+
+
+def test_matrix_unknown_product_raises():
+    try:
+        render.render_matrix({"product": "internal-prod", "scenarios": []})
+    except ValueError:
+        return
+    raise AssertionError("expected ValueError for unknown product")
+
+
+def test_matrix_bad_generated_at_dropped():
+    out = render.render_matrix(
+        _matrix_results(_full_gvisor_scenarios(), generated_at="yesterday-ish (ask alex)")
+    )
+    assert "generated-at" not in out
+    assert "ask alex" not in out
+
+
+def test_scale_proof_renders_linearity_row():
+    results = _matrix_results(
+        _full_gvisor_scenarios(),
+        scale_proof={
+            "scale_points": [
+                {"node_count": 1, "density": 1.88},
+                {"node_count": 2, "density": 1.86},
+                {"node_count": 4, "density": 1.85},
+            ],
+            "density_retention": 0.984,
+            "thpt_retention": 0.99,
+        },
+    )
+    out = render.render_scale_proof(results)
+    assert "## Scale Proof (Linearity Check)" in out
+    assert "| 1 → 2 → 4 | ✅ Yes (1.88 → 1.86 → 1.85) | ✅ Yes |" in out
+
+
+def test_scale_proof_absent_renders_nothing():
+    assert render.render_scale_proof(_matrix_results(_full_gvisor_scenarios())) == ""
+
+
+def test_scale_proof_out_of_band_retention_flags_no():
+    results = _matrix_results(
+        _full_gvisor_scenarios(),
+        scale_proof={
+            "scale_points": [
+                {"node_count": 1, "density": 1.88},
+                {"node_count": 4, "density": 1.0},
+            ],
+            "thpt_retention": 0.5,
+        },
+    )
+    out = render.render_scale_proof(results)
+    # density_retention derives from points (1.0/1.88 ≈ 0.53 < 0.9) ⇒ ⚠️ No; thpt 0.5 ⇒ ⚠️ No
+    assert "⚠️ No" in out
+    assert "✅ Yes" not in out
+
+
+def test_scale_proof_superlinear_retention_reads_beat_not_regression():
+    # a4s2 v2 lock (PR #28): asymmetric verdict. A superlinear result (retention > 1.1) is a
+    # BEAT under the floor-not-ceiling framing, NOT a regression — must read ✅, never ⚠️.
+    # (The prior symmetric 0.9–1.1 band wrongly flagged this legit beat as failure.)
+    results = _matrix_results(
+        _full_gvisor_scenarios(),
+        scale_proof={
+            "scale_points": [
+                {"node_count": 1, "density": 1.88},
+                {"node_count": 4, "density": 2.40},  # density GREW with scale ⇒ ratio 1.28
+            ],
+            "thpt_retention": 1.35,  # superlinear throughput beat
+        },
+    )
+    out = render.render_scale_proof(results)
+    assert "⚠️ No" not in out
+    # both columns read the flat/beat ✅
+    assert out.count("✅ Yes") == 2
+
+
+def test_scale_proof_density_retention_derived_when_absent():
+    results = _matrix_results(
+        _full_gvisor_scenarios(),
+        scale_proof={
+            "scale_points": [
+                {"node_count": 1, "density": 2.0},
+                {"node_count": 2, "density": 1.9},
+            ],
+        },
+    )
+    out = render.render_scale_proof(results)
+    # 1.9/2.0 = 0.95 within ±10% ⇒ ✅ Yes; thpt absent ⇒ pending
+    assert "✅ Yes (2 → 1.9)" in out
+    assert "pending" in out  # thpt_retention column
+
+
+def test_scale_proof_orders_points_by_node_count():
+    results = _matrix_results(
+        _full_gvisor_scenarios(),
+        scale_proof={
+            "scale_points": [
+                {"node_count": 4, "density": 1.85},
+                {"node_count": 1, "density": 1.88},
+                {"node_count": 2, "density": 1.86},
+            ],
+        },
+    )
+    out = render.render_scale_proof(results)
+    assert "1 → 2 → 4" in out
+
+
+def test_scale_proof_malformed_points_dropped():
+    # a scale_points value failing the closed-schema predicate ⇒ no table (never a leak).
+    results = _matrix_results(
+        _full_gvisor_scenarios(),
+        scale_proof={"scale_points": "SYNTHETIC-SCALE-LEAK"},
+    )
+    assert render.render_scale_proof(results) == ""
+
+
 def _run_all():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:

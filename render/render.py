@@ -14,15 +14,21 @@ import json
 import sys
 
 from schema import (
+    ACTIVATION_MODE_ROWS,
     BADGE_SCOPES,
+    DENSITY_SOURCE_SCENARIOS,
     GOAL_COLUMNS,
     HISTORY_FIELDS,
+    MATRIX_METRIC_FIELDS,
+    MATRIX_RUNTIMES,
     METRIC_LABELS,
     NON_PUBLIC,
     OUTCOMES,
     PENDING_REASONS,
     PRODUCTS,
     PROVENANCE_FIELDS,
+    RUNTIME_LABELS,
+    SCALE_PROOF_FIELDS,
     SCENARIO_LABELS,
     _ISO,
 )
@@ -258,6 +264,277 @@ def render_trend(history_rows):
             f"{r['n']:g}",
         ]
         lines.append("| " + " | ".join(cells) + " |")
+    lines.append("")
+    return "\n".join(lines)
+
+
+# --- Goal 2.1: Core Benchmark Matrix render -----------------------------------------------
+# The customer-facing page is the doc's exact 9-column "Agent Sandbox Core Metrics Table":
+# rows are (runtime × activation-mode), columns are throughput@TTFE-threshold / TTFE p50,p95 /
+# samples / density / exec-success. The honesty spine is TTFE (the sandbox executed its first
+# instruction and returned a result) — NOT pod-Ready. A cell we have not yet measured renders
+# `pending`; a sub-1s throughput the p95 misses renders the harness-emitted honest `0`.
+
+_PENDING = "pending"
+
+
+def _fmt_num(v):
+    """Compact numeric (no trailing zeros): 4.0 -> 4, 1.86 -> 1.86."""
+    return f"{v:g}"
+
+
+def _fmt_secs(ms):
+    """Milliseconds -> the doc's seconds format: 600 -> 0.6s, 1560 -> 1.56s."""
+    return f"{ms / 1000.0:g}s"
+
+
+def _exec_cell(rate, n_total, n_succ=None):
+    """Doc's exec-success ("Honesty Check") cell.
+
+    100% renders plain; <100% shows the succeeded/total fraction + a ⚠️ flag (the doc's
+    "92.8% (1277/1376) ⚠️"). The numerator is exec_success_n when the harness emits it,
+    else derived as round(rate * N) so the fraction always reconciles to the Samples column.
+    """
+    cell = f"{round(rate * 100, 1):g}%"
+    if rate < 1.0:
+        if n_succ is None and n_total:
+            n_succ = round(rate * n_total)
+        if n_succ is not None and n_total:
+            cell += f" ({n_succ}/{n_total})"
+        cell += " ⚠️"
+    return cell
+
+
+def _clean_matrix_metrics(metrics):
+    """Keep only MATRIX_METRIC_FIELDS keys whose values pass their predicate (closed schema)."""
+    out = {}
+    if not isinstance(metrics, dict):
+        return out
+    for key, ok in MATRIX_METRIC_FIELDS.items():
+        if key in metrics:
+            try:
+                if ok(metrics[key]):
+                    out[key] = metrics[key]
+            except (TypeError, ValueError):
+                pass
+    return out
+
+
+def _matrix_scenarios(scenarios):
+    """Map scenario internal-NAME -> {outcome, n, metrics} for matrix-row lookup.
+
+    Keyed by the harness name (not the display label) because matrix rows are addressed by
+    activation-mode scenario id. sla_metrics are closed-schema-cleaned to MATRIX_METRIC_FIELDS;
+    unknown metric keys are dropped before they can reach the public page.
+    """
+    out = {}
+    if not isinstance(scenarios, list):
+        return out
+    for s in scenarios:
+        if not isinstance(s, dict):
+            continue
+        name = s.get("name")
+        if not isinstance(name, str):
+            continue
+        n = s.get("n")
+        n = n if isinstance(n, int) and not isinstance(n, bool) and n >= 0 else 0
+        out[name] = {
+            "outcome": s.get("outcome"),
+            "n": n,
+            "metrics": _clean_matrix_metrics(s.get("sla_metrics")),
+        }
+    return out
+
+
+def _runtime_density(scen_by_name):
+    """Per-runtime Max-Density /vCPU: first of DENSITY_SOURCE_SCENARIOS carrying it, else any
+    activation-mode scenario that emitted its own density_per_vcpu. None ⇒ render pending."""
+    for name in DENSITY_SOURCE_SCENARIOS:
+        sc = scen_by_name.get(name)
+        if sc and "density_per_vcpu" in sc["metrics"]:
+            return sc["metrics"]["density_per_vcpu"]
+    for name, _label in ACTIVATION_MODE_ROWS:
+        sc = scen_by_name.get(name)
+        if sc and "density_per_vcpu" in sc["metrics"]:
+            return sc["metrics"]["density_per_vcpu"]
+    return None
+
+
+def render_matrix(results):
+    """Render the doc's 9-column Core Metrics Table for one results.json (one runtime measured).
+
+    A single run measures ONE runtime (provenance.runtime, default gvisor); that runtime's rows
+    fill from the measured scenarios, the other runtime's rows render `pending`. Per-metric cells
+    render `pending` until the TTFE-instrumented harness emits them, so the page degrades to an
+    honest skeleton rather than a blank or a guess.
+    """
+    product = results.get("product")
+    if product not in PRODUCTS:
+        raise ValueError(f"unknown product (not in closed schema): {product!r}")
+
+    prov = _clean_provenance(results.get("provenance"))
+    measured_runtime = prov.get("runtime") or "gvisor"
+    scen_by_name = _matrix_scenarios(results.get("scenarios"))
+
+    header = [
+        "Runtime",
+        "Activation Mode",
+        "Throughput @ <5s TTFE (sb/s/node)",
+        "Throughput @ <1s TTFE (sb/s/node)",
+        "TTFE p50",
+        "TTFE p95",
+        "Samples (N)",
+        "Max Density (sb/vCPU)",
+        "Execution Success (Honesty Check)",
+    ]
+    lines = ["## Agent Sandbox — Core Metrics", ""]
+    lines.append("| " + " | ".join(header) + " |")
+    lines.append("|" + "|".join(["---"] * len(header)) + "|")
+
+    for rt in MATRIX_RUNTIMES:
+        rt_label = RUNTIME_LABELS[rt]
+        measured = rt == measured_runtime
+        density = _runtime_density(scen_by_name) if measured else None
+        for scen_name, mode_label in ACTIVATION_MODE_ROWS:
+            is_resume = scen_name == "suspend_resume"
+            sc = scen_by_name.get(scen_name) if measured else None
+            m = sc["metrics"] if sc else {}
+
+            def cell(key, fmt):
+                return fmt(m[key]) if key in m else _PENDING
+
+            thpt5 = cell("thpt_under_5s_per_node", _fmt_num)
+            thpt1 = cell("thpt_under_1s_per_node", _fmt_num)
+            p50 = cell("ttfe_p50_ms", _fmt_secs)
+            p95 = cell("ttfe_p95_ms", _fmt_secs)
+            n_val = sc["n"] if (sc and sc["n"] > 0) else None
+            n_cell = str(n_val) if n_val else _PENDING
+            if "exec_success_rate" in m:
+                exec_cell = _exec_cell(m["exec_success_rate"], n_val, m.get("exec_success_n"))
+            else:
+                exec_cell = _PENDING
+            if is_resume:
+                dens_cell = "N/A"
+            elif density is not None:
+                dens_cell = _fmt_num(density)
+            else:
+                dens_cell = _PENDING
+
+            lines.append(
+                "| "
+                + " | ".join(
+                    [rt_label, mode_label, thpt5, thpt1, p50, p95, n_cell, dens_cell, exec_cell]
+                )
+                + " |"
+            )
+    lines.append("")
+
+    # honesty / provenance footnotes (no internal refs — public PII fence).
+    lines.append(
+        "_TTFE = Time-To-First-Instruction: the sandbox executed its first instruction and "
+        "returned a result — not merely pod-Ready._"
+    )
+    lines.append(
+        "_Throughput @ <1s renders the harness-emitted `0` when the p95 misses the 1s bar "
+        "(we print a zero rather than round up)._"
+    )
+    lines.append(
+        "_Max Density is sandboxes per node-allocatable sandbox-schedulable vCPU (the "
+        "per-node denominator), not per total-cluster vCPU._"
+    )
+    lines.append(
+        "_Execution Success is the Honesty Check: <100% prints the succeeded/total fraction "
+        "and a ⚠️ flag._"
+    )
+    lines.append("_Kata + microVM rows are not-yet-measured (requires-kata-microvm)._")
+    lines.append("_Cells render `pending` until the TTFE-instrumented run lands._")
+    lines.append("")
+
+    banner_order = [
+        "cluster_substrate",
+        "controller_image",
+        "controller_digest",
+        "crd_version",
+        "suite_git_sha",
+        "run_id",
+        "node_count",
+    ]
+    banner = [f"{k}={prov[k]}" for k in banner_order if k in prov]
+    if banner:
+        lines.append("_build: " + " · ".join(banner) + "_")
+    gen = results.get("generated_at")
+    if isinstance(gen, str) and _ISO.match(gen):
+        lines.append(f"_generated-at: {gen}_")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _flat_verdict(retention):
+    """✅/⚠️ flat verdict for a retention ratio; pending when absent.
+
+    ASYMMETRIC framing (a4s2 v2 lock, PR #28): retention >= ~0.9 reads flat/linear-or-better
+    — a superlinear result (>1.0) is a BEAT under the floor-not-ceiling framing, NOT a
+    regression, so it must read ✅, not ⚠️. Only retention < ~0.9 reads ⚠️ No: the per-node
+    number sagged as the cluster grew, i.e. the controller is the ceiling and the page says so.
+    """
+    if retention is None:
+        return _PENDING
+    return "✅ Yes" if retention >= 0.9 else "⚠️ No"
+
+
+def _clean_scale_proof(results):
+    """Closed-schema-validate the scale_proof object. Requires scale_points; retentions are
+    optional (density_retention derives from the points if absent). None ⇒ no table."""
+    sp = results.get("scale_proof")
+    if not isinstance(sp, dict):
+        return None
+    pts = sp.get("scale_points")
+    try:
+        if not SCALE_PROOF_FIELDS["scale_points"](pts):
+            return None
+    except (TypeError, ValueError):
+        return None
+    points = sorted(pts, key=lambda p: p["node_count"])
+
+    def _ratio(key):
+        v = sp.get(key)
+        try:
+            return v if SCALE_PROOF_FIELDS[key](v) else None
+        except (TypeError, ValueError):
+            return None
+
+    dens_ret = _ratio("density_retention")
+    if dens_ret is None and points and points[0]["density"]:
+        dens_ret = points[-1]["density"] / points[0]["density"]
+    return {
+        "points": points,
+        "density_retention": dens_ret,
+        "thpt_retention": _ratio("thpt_retention"),
+    }
+
+
+def render_scale_proof(results):
+    """Render the doc's Scale Proof (Linearity Check) table, or "" when no scale_proof present.
+
+    Proof that per-node throughput + density hold flat as the cluster grows — the linearity the
+    doc's second table asserts. Retention >= ~0.9 reads ✅ (flat or a superlinear beat); only a
+    sag below ~0.9 reads ⚠️ (controller-is-ceiling). See _flat_verdict for the asymmetric framing.
+    """
+    sp = _clean_scale_proof(results)
+    if not sp:
+        return ""
+    nodes = " → ".join(str(p["node_count"]) for p in sp["points"])
+    dens_seq = " → ".join(_fmt_num(p["density"]) for p in sp["points"])
+    dens_verdict = _flat_verdict(sp["density_retention"])
+    if sp["density_retention"] is not None:
+        dens_verdict += f" ({dens_seq})"
+    thpt_verdict = _flat_verdict(sp["thpt_retention"])
+
+    header = ["Nodes Tested", "Density Holds Flat?", "Throughput Holds Flat?"]
+    lines = ["## Scale Proof (Linearity Check)", ""]
+    lines.append("| " + " | ".join(header) + " |")
+    lines.append("|" + "|".join(["---"] * len(header)) + "|")
+    lines.append("| " + " | ".join([nodes, dens_verdict, thpt_verdict]) + " |")
     lines.append("")
     return "\n".join(lines)
 
