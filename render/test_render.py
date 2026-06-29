@@ -734,6 +734,92 @@ def test_scale_proof_malformed_points_dropped():
     assert render.render_scale_proof(results) == ""
 
 
+def test_scale_proof_per_step_density_flat_three_points():
+    # ≥3 points (2 steps) ⇒ per-step subline; every step ≥0.9 ⇒ holds-flat read.
+    results = _matrix_results(
+        _full_gvisor_scenarios(),
+        scale_proof={
+            "scale_points": [
+                {"node_count": 1, "density": 2.0},
+                {"node_count": 2, "density": 1.98},  # 0.99
+                {"node_count": 4, "density": 1.96},  # 0.99
+            ],
+        },
+    )
+    out = render.render_scale_proof(results)
+    assert "_Per-step density retention: 1→2 ✅ 0.99 · 2→4 ✅ 0.99 — holds flat step-to-step._" in out
+
+
+def test_scale_proof_per_step_density_sag_is_visible():
+    # The endpoint ratio averages a mid-sweep sag away; per-step exposes WHICH step sagged.
+    # 1→2 holds (1.95/2.0=0.975 ✅) but 2→4 collapses (1.0/1.95≈0.51 ⚠️) ⇒ sags-mid-sweep.
+    results = _matrix_results(
+        _full_gvisor_scenarios(),
+        scale_proof={
+            "scale_points": [
+                {"node_count": 1, "density": 2.0},
+                {"node_count": 2, "density": 1.95},
+                {"node_count": 4, "density": 1.0},
+            ],
+        },
+    )
+    out = render.render_scale_proof(results)
+    assert "1→2 ✅" in out
+    assert "2→4 ⚠️" in out
+    assert "sags mid-sweep" in out
+
+
+def test_scale_proof_per_step_superlinear_step_reads_beat():
+    # A step where density GREW (ratio >1.0) is a beat under floor-not-ceiling ⇒ ✅, never ⚠️.
+    results = _matrix_results(
+        _full_gvisor_scenarios(),
+        scale_proof={
+            "scale_points": [
+                {"node_count": 1, "density": 1.8},
+                {"node_count": 2, "density": 1.9},  # 1.06 beat
+                {"node_count": 4, "density": 1.88},  # 0.99
+            ],
+        },
+    )
+    out = render.render_scale_proof(results)
+    assert "⚠️" not in out
+    assert "holds flat step-to-step" in out
+
+
+def test_scale_proof_per_step_absent_for_two_points():
+    # A single step (2 points) IS the endpoint ratio ⇒ no per-step subline (no restating).
+    results = _matrix_results(
+        _full_gvisor_scenarios(),
+        scale_proof={
+            "scale_points": [
+                {"node_count": 1, "density": 2.0},
+                {"node_count": 4, "density": 1.9},
+            ],
+        },
+    )
+    out = render.render_scale_proof(results)
+    assert "Per-step density retention" not in out
+
+
+def test_scale_proof_per_step_zero_base_step_pending_not_crash():
+    # A zero base density on a step ⇒ that step renders pending (no divide-by-zero),
+    # the remaining measurable step still drives the read.
+    results = _matrix_results(
+        _full_gvisor_scenarios(),
+        scale_proof={
+            "scale_points": [
+                {"node_count": 1, "density": 0.0},
+                {"node_count": 2, "density": 1.9},
+                {"node_count": 4, "density": 1.88},  # 0.99
+            ],
+        },
+    )
+    out = render.render_scale_proof(results)
+    assert "1→2 pending" in out
+    assert "2→4 ✅ 0.99" in out
+    assert "holds flat step-to-step" in out
+
+
 def _run_all():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:
