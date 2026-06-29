@@ -32,6 +32,7 @@ import pathlib
 import uuid
 
 from . import results_schema
+from . import stepup_adapter
 from .scenario_map import cells_for_product, substrate_satisfies
 
 log = logging.getLogger("bench-harness")
@@ -189,6 +190,21 @@ def _read_prior_scale_proof(out_path: pathlib.Path):
     return sp if isinstance(sp, dict) else None
 
 
+def _read_prior_stepup(out_path: pathlib.Path):
+    """Read the existing results file's top-level stepup object (#3960).
+
+    Best-effort, mirroring _read_prior_scale_proof: a missing/malformed file or an
+    absent stepup key means there is nothing to carry forward, so return None (the
+    honest-absence signal the emitter understands).
+    """
+    try:
+        prior = json.loads(out_path.read_text())
+    except (FileNotFoundError, ValueError):
+        return None
+    su = prior.get("stepup") if isinstance(prior, dict) else None
+    return su if isinstance(su, dict) else None
+
+
 def carry_prior_scale_proof(fresh, prior, *, generated_at: str):
     """Persist the Scale Proof block across the daily single-node refresh (#3952).
 
@@ -206,6 +222,30 @@ def carry_prior_scale_proof(fresh, prior, *, generated_at: str):
     daily-refreshed top-level `generated_at`. Both paths flow through the closed
     emitter (`_coerce_scale_proof`), so a carried block that is not a valid
     scale_proof is dropped, never published as a partial lie.
+    """
+    if isinstance(fresh, dict) and fresh:
+        stamped = dict(fresh)
+        stamped.setdefault("measured_at", generated_at)
+        return stamped
+    return prior
+
+
+def carry_prior_stepup(fresh, prior, *, generated_at: str):
+    """Persist the step-up throughput-saturation block across the daily refresh (#3960).
+
+    Exact mirror of carry_prior_scale_proof, and for the same reason: the step-up
+    sweep is produced only by the heavy, manual, collision-acked CL2 step-up
+    backfill (out-of-process, read via maybe_stepup from BENCH_STEPUP_RESULT). The
+    daily single-node auto-refresh never produces one, so without this carry-forward
+    the published Pareto curve would vanish on the next refresh after a sweep.
+
+    Fresh always wins: a real sweep this run carries its own producer-stamped
+    `measured_at` (the true measure time) and only setdefaults `generated_at` if the
+    producer somehow omitted it. Otherwise the prior committed block is carried
+    forward UNCHANGED, keeping its original `measured_at` so a carried point-in-time
+    block stays honestly dated against the daily-refreshed top-level `generated_at`.
+    Both paths flow through the closed emitter (`_coerce_stepup`), so a carried block
+    that is not a valid stepup is dropped, never published as a partial lie.
     """
     if isinstance(fresh, dict) and fresh:
         stamped = dict(fresh)
@@ -256,6 +296,64 @@ def maybe_scale_proof(product: str):
     from .scenarios import scale_slope
     proof = scale_slope.run_sweep()
     return proof or None
+
+
+def _stepup_usd_per_node_hour():
+    """Optional explicit node-hour price override for the step-up cost axis (#3960).
+
+    Returns a positive float parsed from BENCH_STEPUP_USD_PER_NODE_HOUR, else None.
+    None hands cost enrichment back to the machine_type list-price fallback in
+    cost.py; a blank/unset/non-positive/non-numeric value is treated as "no
+    override" (None) rather than raising, so a fat-fingered fire-time knob degrades
+    to the list-price path instead of failing the whole run.
+    """
+    raw = os.environ.get("BENCH_STEPUP_USD_PER_NODE_HOUR", "").strip()
+    if not raw:
+        return None
+    try:
+        val = float(raw)
+    except ValueError:
+        return None
+    return val if val > 0 else None
+
+
+# Step-up throughput-saturation producer ingestion. DEFAULT-OFF.
+#
+# Unlike maybe_scale_proof (which runs its sweep IN-PROCESS via a kubernetes
+# client), the step-up sweep is driven by an out-of-process CL2 (ClusterLoader2)
+# orchestrator that cannot run inside this harness — it names clusters, kubeconfigs,
+# and namespaces and so lives in the INTERNAL repo. That orchestrator writes a
+# SCRUBBED nested result file; this function READS that file (path in
+# BENCH_STEPUP_RESULT), flattens it to the flat schema shape via stepup_adapter, and
+# enriches the cost axis. DEFAULT-OFF: with BENCH_STEPUP_RESULT unset the function
+# returns None (honest absence), so the daily single-node auto-refresh emits no
+# step-up block until a deliberate, collision-acked sweep produces the file.
+def maybe_stepup(product: str):
+    """Return the flat stepup object read from BENCH_STEPUP_RESULT, else None.
+
+    Dual-gated like maybe_scale_proof: the file path must be set AND the product must
+    be sandbox (the step-up Pareto table is a sandbox-page artifact; the substrate
+    suite has no stepup render contract). None is the honest absence signal — a missing
+    path, a missing/non-sandbox product, an unreadable/malformed file, or a flatten that
+    yields nothing all return None, and build_results omits the top-level stepup key for
+    None input, so the table simply does not render rather than showing a partial lie.
+    The flat record still flows through the closed emitter (`_coerce_stepup`), which is
+    the single schema gate — this function only locates, flattens, and cost-enriches.
+    """
+    if product != "sandbox":
+        return None
+    path = os.environ.get("BENCH_STEPUP_RESULT", "").strip()
+    if not path:
+        return None
+    try:
+        rec = json.loads(pathlib.Path(path).read_text())
+    except (OSError, ValueError):
+        return None
+    flat = stepup_adapter.stepup_nested_to_flat(rec)
+    flat = stepup_adapter.enrich_pareto_cost(
+        flat, usd_per_node_hour=_stepup_usd_per_node_hour()
+    )
+    return flat or None
 
 
 def build_provenance(substrate: str) -> dict:
@@ -313,6 +411,7 @@ def main(argv=None) -> int:
     # register (#3909) — read BEFORE the wholesale write below, which would drop them.
     prior_scenarios = _read_prior_scenarios(out)
     prior_scale_proof = _read_prior_scale_proof(out)
+    prior_stepup = _read_prior_stepup(out)
     raw = merge_seed_placeholders(raw, prior_scenarios)
     generated_at = _now_iso()
     # Carry the Scale Proof block across the daily refresh (#3952): a fresh sweep
@@ -321,9 +420,16 @@ def main(argv=None) -> int:
     scale_proof = carry_prior_scale_proof(
         maybe_scale_proof(args.product), prior_scale_proof, generated_at=generated_at
     )
+    # Carry the step-up throughput-saturation block across the daily refresh (#3960),
+    # same posture: a fresh out-of-process CL2 sweep (read via BENCH_STEPUP_RESULT)
+    # wins; otherwise the prior committed block is carried so the Pareto curve does
+    # not auto-decay between manual sweeps.
+    stepup = carry_prior_stepup(
+        maybe_stepup(args.product), prior_stepup, generated_at=generated_at
+    )
     results = results_schema.build_results(
         raw, build_provenance(substrate), generated_at=generated_at, product=args.product,
-        scale_proof=scale_proof,
+        scale_proof=scale_proof, stepup=stepup,
     )
 
     out.parent.mkdir(parents=True, exist_ok=True)
