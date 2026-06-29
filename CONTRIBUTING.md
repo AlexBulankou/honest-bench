@@ -53,10 +53,12 @@ python3 -m render.generate             # regenerate README.md from results/
 `generate.py` rewrites `README.md` in place; a clean run leaves it
 byte-identical when the inputs are unchanged.
 
-The harness has its own tests, run as a module from the repo root:
+The harness has its own tests, each run as a module from the repo root:
 
 ```
-python3 -m harness.test_results_schema
+python3 -m harness.test_results_schema   # closed emit-schema coercion guard
+python3 -m harness.test_run_merge        # additive seed/measured merge rules
+python3 -m harness.test_metrics          # pure TTFE metrics-derivation core
 ```
 
 To reproduce a full run, follow the recipe in the README: install the controller
