@@ -75,6 +75,24 @@ def test_declining_throughput_retention_below_one():
     out = cell._classify_scale_slope(pts, threshold_ms=_THR, window_s=_WIN)
     assert out["thpt_retention"] == cell.metrics.retention(8.0, 4.0)
     assert out["thpt_retention"] == 0.5
+    # per-point throughput is emitted (not just the endpoint retention) so the render
+    # side can draw a per-step throughput convergence subline.
+    assert out["scale_points"][0]["throughput"] == 8.0
+    assert out["scale_points"][-1]["throughput"] == 4.0
+
+
+def test_scale_points_carry_per_point_throughput():
+    # Each emitted point carries BOTH density and the per-node throughput it was measured
+    # at, so a per-step throughput delta is reconstructable from scale_points alone.
+    pts = [
+        _point(1, 4, 2.13, [200.0, 300.0, 400.0, 500.0]),
+        _point(2, 8, 2.13, [200.0] * 8),
+        _point(4, 16, 2.13, [200.0] * 16),
+    ]
+    out = cell._classify_scale_slope(pts, threshold_ms=_THR, window_s=_WIN)
+    for p in out["scale_points"]:
+        assert "throughput" in p
+        assert isinstance(p["throughput"], (int, float)) and p["throughput"] >= 0
 
 
 # ---- emit-only-when-complete ----

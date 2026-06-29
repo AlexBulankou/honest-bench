@@ -24,7 +24,7 @@ and 4 sandboxes/s/node on 1 node should still be ~4/s/node on 4 nodes.
 The render side (render/schema.py SCALE_PROOF_FIELDS + render/render.py
 render_scale_proof) reads a TOP-LEVEL `scale_proof` object:
 
-    {"scale_points": [{"node_count": K, "density": D}, ...],
+    {"scale_points": [{"node_count": K, "density": D, "throughput": T}, ...],
      "density_retention": float, "thpt_retention": float}
 
 A list value cannot ride sla_metrics (the emitter's _coerce_sla_metrics drops every
@@ -219,7 +219,7 @@ def _classify_scale_slope(points, *, threshold_ms: float, window_s: float) -> di
          "ttfi_samples_ms": [float|None, ...]} # for throughput_per_node
 
     Returns the TOP-LEVEL scale_proof object the render side consumes:
-        {"scale_points": [{"node_count": K, "density": D}, ...],
+        {"scale_points": [{"node_count": K, "density": D, "throughput": T}, ...],
          "density_retention": float,
          "thpt_retention": float}              # omitted when base throughput == 0
 
@@ -268,7 +268,7 @@ def _classify_scale_slope(points, *, threshold_ms: float, window_s: float) -> di
         return {}  # degenerate base — density retention undefined
 
     scale_points = [
-        {"node_count": p["node_count"], "density": densities[i]}
+        {"node_count": p["node_count"], "density": densities[i], "throughput": thpts[i]}
         for i, p in enumerate(ordered)
     ]
     out = {

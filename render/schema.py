@@ -222,8 +222,9 @@ MATRIX_METRIC_FIELDS = {
 }
 
 # Scale-Proof (Linearity Check) second table. Proof that per-node throughput + density hold
-# flat as the cluster grows. scale_points is the (node_count, density) sweep; the two
-# retention ratios are density_at_maxN/density_at_minN and thpt_at_maxN/thpt_at_minN.
+# flat as the cluster grows. scale_points is the per-node sweep — each point carries
+# node_count + density and (optional) per-node throughput; the two retention ratios are
+# density_at_maxN/density_at_minN and thpt_at_maxN/thpt_at_minN.
 def _scale_points_ok(v):
     if not isinstance(v, list) or not v:
         return False
@@ -235,6 +236,13 @@ def _scale_points_ok(v):
             return False
         if not (isinstance(dn, (int, float)) and not isinstance(dn, bool) and dn >= 0):
             return False
+        # throughput (per-node ready rate) is optional per point: the producer emits it so a
+        # per-step throughput convergence subline can render, but older blocks omit it. When
+        # present it must be a non-negative number (closed-schema: every field validated).
+        if "throughput" in p:
+            tp = p["throughput"]
+            if not (isinstance(tp, (int, float)) and not isinstance(tp, bool) and tp >= 0):
+                return False
     return True
 
 
