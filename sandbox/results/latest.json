@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-06-29T02:05:10Z",
+  "generated_at": "2026-06-29T05:24:43Z",
   "product": "sandbox",
   "provenance": {
     "cluster_substrate": "gke-sandbox",
@@ -8,8 +8,27 @@
     "controller_image": "us-central1-docker.pkg.dev/k8s-staging-images/agent-sandbox/agent-sandbox-controller:latest-main",
     "crd_version": "v1beta1",
     "node_count": 1,
-    "run_id": "5d00636a3f754842b1aff7157da52e82",
-    "suite_git_sha": "df6aa6b1c73a67b96cc8ebd5552f3b1f19bb4552"
+    "run_id": "247326d41d0749319d823948bc5fbaf0",
+    "suite_git_sha": "fbc1a5d362f8a7befa3c3c2cb33703013cfb49b0"
+  },
+  "scale_proof": {
+    "density_retention": 1.0,
+    "measured_at": "2026-06-29T05:24:43Z",
+    "scale_points": [
+      {
+        "density": 0.63,
+        "node_count": 1
+      },
+      {
+        "density": 0.63,
+        "node_count": 2
+      },
+      {
+        "density": 0.63,
+        "node_count": 4
+      }
+    ],
+    "thpt_retention": 0.286
   },
   "scenarios": [
     {
@@ -17,8 +36,8 @@
       "name": "burst_create",
       "outcome": "PASS",
       "sla_metrics": {
-        "density_per_vcpu": 0.5,
-        "sandboxes_ready_under_1s": 10.0
+        "density_per_vcpu": 0.1323529411764706,
+        "sandboxes_ready_under_1s": 9.0
       }
     },
     {
@@ -27,10 +46,10 @@
       "outcome": "PASS",
       "sla_metrics": {
         "exec_success_rate": 1.0,
-        "thpt_under_1s_per_node": 0.0,
-        "thpt_under_5s_per_node": 0.0,
-        "ttfe_p50_ms": 6811.1,
-        "ttfe_p95_ms": 7560.2
+        "thpt_under_1s_per_node": 0.627,
+        "thpt_under_5s_per_node": 2.09,
+        "ttfe_p50_ms": 2386.8,
+        "ttfe_p95_ms": 4906.2
       }
     },
     {
@@ -39,19 +58,19 @@
       "outcome": "PASS",
       "sla_metrics": {
         "exec_success_rate": 1.0,
-        "ttfe_p50_ms": 2296.3,
-        "ttfe_p95_ms": 2296.3
+        "ttfe_p50_ms": 2127.6,
+        "ttfe_p95_ms": 2127.6
       }
     },
     {
-      "n": 1,
+      "n": 3,
       "name": "suspend_resume",
       "outcome": "pending",
       "pending_reason": "upstream-blocked",
       "sla_metrics": {
         "exec_success_rate": 1.0,
-        "ttfe_p50_ms": 32491.2,
-        "ttfe_p95_ms": 32491.2
+        "ttfe_p50_ms": 32516.1,
+        "ttfe_p95_ms": 32710.4
       }
     },
     {
@@ -59,33 +78,14 @@
       "outcome": "PASS"
     },
     {
+      "badge_scope": "control-plane",
       "name": "cross_tenant_network_isolation",
-      "outcome": "PASS",
-      "badge_scope": "control-plane"
+      "outcome": "PASS"
     },
     {
+      "badge_scope": "control-plane",
       "name": "default_deny_egress",
-      "outcome": "PASS",
-      "badge_scope": "control-plane"
+      "outcome": "PASS"
     }
-  ],
-  "scale_proof": {
-    "density_retention": 1.0,
-    "measured_at": "2026-06-29T03:46:01Z",
-    "scale_points": [
-      {
-        "density": 5.18,
-        "node_count": 1
-      },
-      {
-        "density": 5.18,
-        "node_count": 2
-      },
-      {
-        "density": 5.18,
-        "node_count": 4
-      }
-    ],
-    "thpt_retention": 0.222
-  }
+  ]
 }
