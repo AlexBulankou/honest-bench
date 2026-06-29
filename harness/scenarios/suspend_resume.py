@@ -103,6 +103,23 @@ def _env_flag(name: str) -> bool:
     return os.environ.get(name, "").strip().lower() in ("1", "true", "yes", "on")
 
 
+def _env_int(name: str, default: int, *, minimum: int = 1) -> int:
+    """Parse a non-negative int env var, clamped to >= minimum; default on junk.
+
+    A malformed value falls back to the default rather than raising, so a fat-
+    fingered fire-time override degrades to the safe default instead of crashing
+    the cell. Sub-minimum values clamp up (cycle_count must be >= 1).
+    """
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        val = int(raw)
+    except ValueError:
+        return default
+    return val if val >= minimum else minimum
+
+
 # TTFE Layer-2 exec probe. DEFAULT-OFF.
 #
 # gated: default-off until the runner ServiceAccount carries pods/exec RBAC and
@@ -112,6 +129,18 @@ def _env_flag(name: str) -> bool:
 # an ungated default-on would publish a false 0% exec-success before the grant
 # lands. Flip-issue: #3944.
 _TTFE_EXEC = _env_flag("BENCH_TTFE_EXEC")
+
+# Resume-cycle-count knob. DEFAULT 1 = a single suspend->resume cycle (the legacy
+# behavior; emit byte-unchanged). When > 1 the cell loops N suspend->resume cycles
+# on the SAME Sandbox and aggregates the N resume-activation TTFE samples into a
+# real p50/p95 distribution (metrics.multi_sample_ttfe_point) instead of the noisy
+# n=1 single sample. Fire-time controllable so a4s1 can re-fire resume at higher N
+# without a code change. Only the TTFE distribution scales with N; the Suspended-
+# clear gap verdict is a deterministic controller property (pending if ANY cycle's
+# Suspended condition never clears, else PASS). N has effect only when
+# BENCH_TTFE_EXEC is also on — with the probe gated off there is no TTFE sample to
+# accumulate, so extra cycles would add wall-clock for no metric; guarded below.
+_RESUME_CYCLE_COUNT = _env_int("SUSPEND_RESUME_CYCLE_COUNT", 1)
 
 # Timeouts. 120 (ready) + 90 (suspend) + 90 (resume) + slack keeps a hung
 # transition bounded so the cell fails rather than hanging the suite.
@@ -435,6 +464,137 @@ def _cleanup(custom, *, sandbox_name: str) -> None:
             log.warning("cleanup: delete sandbox %s failed: %s", sandbox_name, e)
 
 
+def _run_suspend_resume_cycle(custom, core_v1, *, sandbox_name, pre_uid):
+    """One suspend->resume cycle on an already-Ready Sandbox.
+
+    Returns (kind, data):
+      ("fail", (outcome, excerpt, {}))  -- a real suspend/resume LIFECYCLE
+          regression; the caller returns it verbatim.
+      ("ok", (verdict, gap_excerpt, gap_sla, ttfe_ms, exec_ok, new_uid)) -- the
+          Suspended-clear gap verdict for THIS cycle plus the RAW resume-activation
+          TTFE sample (ttfe_ms/exec_ok are (None, False) when BENCH_TTFE_EXEC is
+          off). The caller accumulates samples across cycles and merges the TTFE
+          point itself, so this helper returns the gap excerpt WITHOUT a TTFE
+          appendix.
+
+    Does NOT create or delete the Sandbox -- the caller owns its lifecycle.
+    pre_uid is the backing Pod uid BEFORE this cycle's suspend; the resume leg
+    asserts a NEW uid (Pod recreate), so the caller passes the prior cycle's
+    new_uid as the next cycle's pre_uid.
+    """
+    group, version, plural = _SANDBOX_GVR
+
+    # --- SUSPEND LEG ---
+    log.info("suspending (operatingMode=Suspended)")
+    _patch_lifecycle(custom, sandbox_name=sandbox_name, suspend=True)
+
+    suspend_detail = "<no poll yet>"
+    deadline = time.monotonic() + _SUSPEND_TIMEOUT_S
+    while time.monotonic() < deadline:
+        exists, _ = _read_pod(core_v1, sandbox_name=sandbox_name)
+        conds = _get_sandbox_conditions(custom, sandbox_name=sandbox_name)
+        terminal, suspend_detail = _eval_suspend_state(exists, conds)
+        if terminal:
+            break
+        time.sleep(_POLL_S)
+    else:
+        return ("fail", (
+            "FAIL",
+            f"suspend leg: Sandbox {sandbox_name!r} did not reach terminal "
+            f"suspend state within {_SUSPEND_TIMEOUT_S}s — last gate: "
+            f"{suspend_detail}",
+            {},
+        ))
+    log.info("suspend leg OK: %s", suspend_detail)
+
+    # Sandbox CR itself must still exist (suspend preserves identity).
+    from kubernetes.client.exceptions import ApiException
+    try:
+        custom.get_namespaced_custom_object(
+            group=group, version=version, namespace=_NAMESPACE,
+            plural=plural, name=sandbox_name,
+        )
+    except ApiException as e:
+        if e.status == 404:
+            return ("fail", (
+                "FAIL",
+                f"suspend leg: Sandbox CR {sandbox_name!r} was DELETED on "
+                f"suspend — suspend must preserve the CR identity (only the "
+                f"Pod should be released)",
+                {},
+            ))
+        raise
+
+    # --- RESUME LEG (gap probe) ---
+    log.info("resuming (operatingMode=Running)")
+    _patch_lifecycle(custom, sandbox_name=sandbox_name, suspend=False)
+    # t0 for the resume-activation TTFE: resume-request return -> first
+    # instruction result on the resumed Pod (the doc's resume TTFE column).
+    resume_t0 = time.monotonic()
+
+    # Part 1: the resume LIFECYCLE must complete (new Pod uid + Ready=True/
+    # "Pod is Ready"). Timing out here is a REAL regression — the operatingMode
+    # lifecycle itself broke — so it returns a plain FAIL.
+    lifecycle_ok = False
+    resume_detail = "<no poll yet>"
+    new_uid = None
+    deadline = time.monotonic() + _RESUME_TIMEOUT_S
+    while time.monotonic() < deadline:
+        _, new_uid = _read_pod(core_v1, sandbox_name=sandbox_name)
+        conds = _get_sandbox_conditions(custom, sandbox_name=sandbox_name)
+        lifecycle_ok, resume_detail = _eval_resume_lifecycle(
+            new_uid, pre_uid, conds)
+        if lifecycle_ok:
+            break
+        time.sleep(_POLL_S)
+    if not lifecycle_ok:
+        return ("fail", (
+            "FAIL",
+            f"resume leg: Sandbox {sandbox_name!r} suspend/resume LIFECYCLE "
+            f"did not complete within {_RESUME_TIMEOUT_S}s — last gate: "
+            f"{resume_detail}. This is a REAL regression in the operatingMode "
+            f"lifecycle (Pod recreate + Ready), NOT the tracked "
+            f"Suspended-clear gap.",
+            {},
+        ))
+    log.info("resume lifecycle OK: %s", resume_detail)
+
+    # Part 2: the Suspended-clear gap check. Poll a clear-window so a FIXED
+    # controller reads as the gap-closed PASS; persists past the window →
+    # tracked pending(upstream-blocked).
+    cleared = False
+    susp_deadline = time.monotonic() + _RESUME_SUSPENDED_CLEAR_WINDOW_S
+    while time.monotonic() < susp_deadline:
+        conds = _get_sandbox_conditions(custom, sandbox_name=sandbox_name)
+        if not _suspended_persists(conds):
+            cleared = True
+            break
+        time.sleep(_POLL_S)
+    conds = _get_sandbox_conditions(custom, sandbox_name=sandbox_name)
+    susp = _condition(conds, _COND_SUSPENDED)
+    susp_reason = susp.get("reason") if susp else None
+    verdict, gap_excerpt, gap_sla = _eval_resume_gap(
+        suspended_cleared=cleared, susp_reason=susp_reason,
+        pod_uid=new_uid, old_uid=pre_uid,
+        clear_window_s=_RESUME_SUSPENDED_CLEAR_WINDOW_S,
+    )
+
+    # TTFE Layer-2 (gated): probe the resumed Pod's first instruction. Return the
+    # RAW (ttfe_ms, exec_ok) sample; the caller accumulates across cycles and
+    # merges the aggregated TTFE point. Reached only after lifecycle_ok, so the
+    # resumed Pod exists; its backing Pod is named for the CR (pod == sandbox).
+    ttfe_ms, exec_ok = None, False
+    if _TTFE_EXEC:
+        ttfe_ms, exec_ok = ttfe_probe.probe_first_instruction(
+            core_v1,
+            pod_name=sandbox_name,
+            namespace=_NAMESPACE,
+            create_monotonic=resume_t0,
+        )
+
+    return ("ok", (verdict, gap_excerpt, gap_sla, ttfe_ms, exec_ok, new_uid))
+
+
 def run(scenario_name: str) -> tuple[str, str, dict]:
     """Provision a bare Sandbox, suspend it, resume it; return the verdict.
 
@@ -477,127 +637,66 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
             )
         log.info("Sandbox ready; pre-suspend Pod uid=%s", pre_uid)
 
-        # --- SUSPEND LEG ---
-        log.info("suspending (operatingMode=Suspended)")
-        _patch_lifecycle(custom, sandbox_name=sandbox_name, suspend=True)
+        # Loop N suspend->resume cycles on the SAME Sandbox (default 1). Each
+        # cycle exercises the suspend/resume LIFECYCLE + the Suspended-clear gap
+        # probe and yields ONE resume-activation TTFE sample. Only the TTFE
+        # distribution scales with N — the gap verdict is a deterministic
+        # controller property — so when the probe is gated off we run a single
+        # cycle regardless of the knob (extra cycles would add wall-clock for no
+        # metric). FAILs return early (a real lifecycle regression crashes the
+        # cell); every completed cycle is PASS or pending(upstream-blocked).
+        cycle_count = _RESUME_CYCLE_COUNT if _TTFE_EXEC else 1
 
-        suspend_detail = "<no poll yet>"
-        deadline = time.monotonic() + _SUSPEND_TIMEOUT_S
-        while time.monotonic() < deadline:
-            exists, _ = _read_pod(core_v1, sandbox_name=sandbox_name)
-            conds = _get_sandbox_conditions(custom, sandbox_name=sandbox_name)
-            terminal, suspend_detail = _eval_suspend_state(exists, conds)
-            if terminal:
-                break
-            time.sleep(_POLL_S)
-        else:
-            return (
-                "FAIL",
-                f"suspend leg: Sandbox {sandbox_name!r} did not reach terminal "
-                f"suspend state within {_SUSPEND_TIMEOUT_S}s — last gate: "
-                f"{suspend_detail}",
-                {},
-            )
-        log.info("suspend leg OK: %s", suspend_detail)
+        gap_verdicts: list[tuple[str, str, dict]] = []
+        ttfe_samples: list = []
+        exec_oks: list[bool] = []
+        for i in range(cycle_count):
+            if cycle_count > 1:
+                log.info("suspend/resume cycle %d/%d", i + 1, cycle_count)
+            kind, data = _run_suspend_resume_cycle(
+                custom, core_v1, sandbox_name=sandbox_name, pre_uid=pre_uid)
+            if kind == "fail":
+                return data
+            verdict, gap_excerpt, gap_sla, ttfe_ms, exec_ok, new_uid = data
+            gap_verdicts.append((verdict, gap_excerpt, gap_sla))
+            if _TTFE_EXEC:
+                ttfe_samples.append(ttfe_ms)
+                exec_oks.append(exec_ok)
+            pre_uid = new_uid  # next cycle suspends the just-resumed Pod
 
-        # Sandbox CR itself must still exist (suspend preserves identity).
-        from kubernetes.client.exceptions import ApiException
-        try:
-            custom.get_namespaced_custom_object(
-                group=group, version=version, namespace=_NAMESPACE,
-                plural=plural, name=sandbox_name,
-            )
-        except ApiException as e:
-            if e.status == 404:
-                return (
-                    "FAIL",
-                    f"suspend leg: Sandbox CR {sandbox_name!r} was DELETED on "
-                    f"suspend — suspend must preserve the CR identity (only the "
-                    f"Pod should be released)",
-                    {},
-                )
-            raise
+        # Representative gap verdict: pending if ANY cycle's Suspended condition
+        # never cleared (the tracked upstream gap), else the first (PASS) cycle.
+        verdict, excerpt, sla_metrics = next(
+            (v for v in gap_verdicts if v[0] == "pending"), gap_verdicts[0])
 
-        # --- RESUME LEG (gap probe) ---
-        log.info("resuming (operatingMode=Running)")
-        _patch_lifecycle(custom, sandbox_name=sandbox_name, suspend=False)
-        # t0 for the resume-activation TTFE: resume-request return -> first
-        # instruction result on the resumed Pod (the doc's resume TTFE column).
-        resume_t0 = time.monotonic()
-
-        # Part 1: the resume LIFECYCLE must complete (new Pod uid + Ready=True/
-        # "Pod is Ready"). Timing out here is a REAL regression — the
-        # operatingMode lifecycle itself broke — so it returns a plain FAIL.
-        lifecycle_ok = False
-        resume_detail = "<no poll yet>"
-        new_uid = None
-        deadline = time.monotonic() + _RESUME_TIMEOUT_S
-        while time.monotonic() < deadline:
-            _, new_uid = _read_pod(core_v1, sandbox_name=sandbox_name)
-            conds = _get_sandbox_conditions(custom, sandbox_name=sandbox_name)
-            lifecycle_ok, resume_detail = _eval_resume_lifecycle(
-                new_uid, pre_uid, conds)
-            if lifecycle_ok:
-                break
-            time.sleep(_POLL_S)
-        if not lifecycle_ok:
-            return (
-                "FAIL",
-                f"resume leg: Sandbox {sandbox_name!r} suspend/resume LIFECYCLE "
-                f"did not complete within {_RESUME_TIMEOUT_S}s — last gate: "
-                f"{resume_detail}. This is a REAL regression in the operatingMode "
-                f"lifecycle (Pod recreate + Ready), NOT the tracked "
-                f"Suspended-clear gap.",
-                {},
-            )
-        log.info("resume lifecycle OK: %s", resume_detail)
-
-        # Part 2: the Suspended-clear gap check. Poll a clear-window so a FIXED
-        # controller reads as the gap-closed PASS; persists past the window →
-        # tracked pending(upstream-blocked).
-        cleared = False
-        susp_deadline = time.monotonic() + _RESUME_SUSPENDED_CLEAR_WINDOW_S
-        while time.monotonic() < susp_deadline:
-            conds = _get_sandbox_conditions(custom, sandbox_name=sandbox_name)
-            if not _suspended_persists(conds):
-                cleared = True
-                break
-            time.sleep(_POLL_S)
-        conds = _get_sandbox_conditions(custom, sandbox_name=sandbox_name)
-        susp = _condition(conds, _COND_SUSPENDED)
-        susp_reason = susp.get("reason") if susp else None
-        verdict, excerpt, sla_metrics = _eval_resume_gap(
-            suspended_cleared=cleared, susp_reason=susp_reason,
-            pod_uid=new_uid, old_uid=pre_uid,
-            clear_window_s=_RESUME_SUSPENDED_CLEAR_WINDOW_S,
-        )
-
-        # TTFE Layer-2 (gated): probe the resumed Pod's first instruction and
-        # merge the single-sample resume-activation TTFE point (ttfe_p50_ms/
-        # ttfe_p95_ms = the one sample, exec_success_rate, n=1) into the gap-probe
-        # verdict's sla_metrics. The verdict itself is UNCHANGED — the Suspended-
-        # clear gap (PASS vs pending) is orthogonal to whether the resumed pod can
-        # execute, so the TTFE metrics ride ALONGSIDE either verdict. The merge
-        # preserves any pending_reason key (run.py pops it from sla_metrics). NO
-        # throughput (one resume is not a sustained burst) and NO density (N/A on
-        # the resume row per the doc) — the same single-sample shape as the cold
-        # cell. Reached only after lifecycle_ok, so the resumed Pod exists; its
-        # backing Pod is named for the CR (pod name == sandbox_name).
+        # Merge the resume-activation TTFE distribution into the gap verdict's
+        # sla_metrics. The verdict itself is UNCHANGED — the Suspended-clear gap is
+        # orthogonal to whether the resumed pod can execute. For n=1 this is
+        # byte-identical to the legacy single-sample emit
+        # (multi_sample_ttfe_point == single_sample_ttfe_point at N=1); for n>1 it
+        # is a real p50/p95 over the N resume samples. The merge preserves any
+        # pending_reason key (run.py pops it from sla_metrics). NO throughput (a
+        # per-node rate over a handful of activations is meaningless) and NO
+        # density (N/A on the resume row per the doc) — same shape as the cold cell.
         if _TTFE_EXEC:
-            ttfe_ms, exec_ok = ttfe_probe.probe_first_instruction(
-                core_v1,
-                pod_name=sandbox_name,
-                namespace=_NAMESPACE,
-                create_monotonic=resume_t0,
-            )
             sla_metrics = {
                 **sla_metrics,
-                **metrics.single_sample_ttfe_point(ttfe_ms, exec_ok),
+                **metrics.multi_sample_ttfe_point(ttfe_samples, exec_oks),
             }
-            excerpt = (
-                f"{excerpt} TTFE probe: exec_ok={exec_ok}, ttfe_ms={ttfe_ms!r} "
-                f"(n=1; resume-request->first-instruction-result)."
-            )
+            n = len(exec_oks)
+            if n == 1:
+                excerpt = (
+                    f"{excerpt} TTFE probe: exec_ok={exec_oks[0]}, "
+                    f"ttfe_ms={ttfe_samples[0]!r} "
+                    f"(n=1; resume-request->first-instruction-result)."
+                )
+            else:
+                ok_count = sum(1 for x in exec_oks if x)
+                excerpt = (
+                    f"{excerpt} TTFE probe: {ok_count}/{n} cycles exec-ok, "
+                    f"samples_ms={ttfe_samples!r} "
+                    f"(n={n}; resume-request->first-instruction-result per cycle)."
+                )
 
         log.info("resume gap-probe verdict: %s — %s", verdict, excerpt)
         return verdict, excerpt, sla_metrics
