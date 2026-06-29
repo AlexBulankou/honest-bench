@@ -330,6 +330,49 @@ def test_scale_proof_unsafe_retention_dropped():
     _check(len(out["scale_points"]) == 2, "scale_points still emitted")
 
 
+def test_scale_proof_per_point_throughput_survives_ingestion():
+    # The producer (scale_slope._classify_scale_slope) emits per-point throughput so
+    # render's per-step throughput convergence subline can show. _coerce_scale_proof
+    # MUST carry it through — dropping it silently blanks that subline on every real
+    # fire (the canonical {1,2,4} sweep is exactly the >=3-point case render activates
+    # the subline on). Mirrors render/schema.py _scale_points_ok's optional throughput.
+    sp = {
+        "scale_points": [
+            {"node_count": 1, "density": 1.88, "throughput": 10.0},
+            {"node_count": 2, "density": 1.88, "throughput": 9.8},
+            {"node_count": 4, "density": 1.88, "throughput": 9.5},
+        ],
+        "density_retention": 1.0,
+        "thpt_retention": 0.95,
+    }
+    r = rs.build_results([], _prov(), GEN_AT, scale_proof=sp)
+    out = r["scale_proof"]
+    _check([p.get("throughput") for p in out["scale_points"]] == [10.0, 9.8, 9.5],
+           "per-point throughput carried through ingestion in order")
+
+
+def test_scale_proof_invalid_per_point_throughput_fails_closed():
+    # An invalid per-point throughput (bool / NaN / inf / negative / non-numeric) fails
+    # the whole block closed — never a partial point — matching the density discipline.
+    for bad in (True, float("nan"), float("inf"), -1.0, "9.5"):
+        sp = {"scale_points": [{"node_count": 1, "density": 1.88, "throughput": bad},
+                               {"node_count": 2, "density": 1.88, "throughput": 9.0}]}
+        r = rs.build_results([], _prov(), GEN_AT, scale_proof=sp)
+        _check("scale_proof" not in r, f"bad throughput omits key: {bad!r}")
+
+
+def test_scale_proof_throughput_absent_still_emits():
+    # throughput is OPTIONAL: a points list without it still emits (density column
+    # renders; the per-step throughput subline is honestly absent, not a fabrication).
+    sp = {"scale_points": [{"node_count": 1, "density": 1.88},
+                           {"node_count": 2, "density": 1.88}]}
+    r = rs.build_results([], _prov(), GEN_AT, scale_proof=sp)
+    out = r["scale_proof"]
+    _check(all("throughput" not in p for p in out["scale_points"]),
+           "absent throughput stays absent, no fabrication")
+    _check(len(out["scale_points"]) == 2, "scale_points emitted")
+
+
 def test_scale_proof_measured_at_passthrough_and_dropped():
     # measured_at (#3952): a non-empty string survives; anything else is dropped
     # (the carried-block date renders only when honestly present).

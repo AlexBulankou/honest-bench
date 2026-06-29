@@ -182,7 +182,9 @@ def _coerce_scale_proof(raw):
     `scale_proof` object (NOT a per-scenario sla_metrics — a list value cannot ride
     sla_metrics, which _coerce_sla_metrics drops). This mirrors render/schema.py's
     SCALE_PROOF_FIELDS exactly so emitter and renderer share one contract:
-      - scale_points: list of {node_count:int (0<nc<10000), density:float>=0}
+      - scale_points: list of {node_count:int (0<nc<10000), density:float>=0,
+        throughput:float>=0 (OPTIONAL — carried so render's per-step throughput
+        convergence subline can show; mirrors render/schema.py _scale_points_ok)}
       - density_retention / thpt_retention: optional nonneg floats
 
     Allow-list-by-construction like the scenario/provenance coercers: only the
@@ -210,7 +212,24 @@ def _coerce_scale_proof(raw):
         fdn = float(dn)
         if fdn != fdn or fdn in (float("inf"), float("-inf")) or fdn < 0:
             return None
-        clean_points.append({"node_count": nc, "density": fdn})
+        cp = {"node_count": nc, "density": fdn}
+        # throughput (per-node ready rate) is OPTIONAL per point and mirrors
+        # render/schema.py _scale_points_ok: the producer (scale_slope.py) emits it so
+        # render's per-step throughput convergence subline can show, but it must SURVIVE
+        # ingestion to reach the renderer. Dropping it here silently blanks that subline
+        # on every real fire (the canonical {1,2,4} sweep is exactly the >=3-point case
+        # render._per_step_retention_line activates on). When present it must be a
+        # non-negative real (bool/NaN/inf rejected, like density) — an invalid value
+        # fails the whole block closed, never a partial point.
+        if "throughput" in p:
+            tp = p["throughput"]
+            if isinstance(tp, bool) or not isinstance(tp, Real):
+                return None
+            ftp = float(tp)
+            if ftp != ftp or ftp in (float("inf"), float("-inf")) or ftp < 0:
+                return None
+            cp["throughput"] = ftp
+        clean_points.append(cp)
     out = {"scale_points": clean_points}
     for key in ("density_retention", "thpt_retention"):
         v = raw.get(key)
