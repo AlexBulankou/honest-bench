@@ -19,6 +19,8 @@ except ModuleNotFoundError:  # repo-root pytest: scenarios/ is a package, not on
 
 _KC = cell._KEY_COUNT       # "sandboxes_ready_under_1s"
 _KD = cell._KEY_DENSITY     # "density_per_vcpu"
+_KEC = cell._KEY_EXEC_COUNT  # "sandboxes_exec_under_1s" (#3954 corroboration)
+_KER = cell._KEY_EXEC_RATE   # "exec_success_rate" (#3954 corroboration)
 
 
 def _ttfis(*vals):
@@ -353,6 +355,91 @@ def test_verify_raises_when_claim_has_no_bound_sandbox():
     except RuntimeError:
         raised = True
     assert raised
+
+
+# ---- _assemble_probe_results (#3954: concurrent-probe flatten, pure) ----
+#
+# Walks the fired-claim list and flattens each claim's (ttfe_ms|None, exec_ok)
+# into the two parallel lists the corroboration classifier consumes. One exec_oks
+# entry PER CLAIM FIRED (attempt total). A latency sample is appended only when the
+# probe returned a non-None ttfe_ms.
+
+def test_assemble_absent_claim_counts_as_failed_attempt_no_sample():
+    # a claim that never bound (absent from ttfe_results) drags exec_success_rate
+    # as an attempted-never-executed False, and contributes NO latency sample.
+    samples, oks = cell._assemble_probe_results(
+        ["c0", "c1"], {"c0": (300.0, True)},
+    )
+    assert oks == [True, False]            # c1 absent -> False
+    assert samples == [300.0]             # only c0 contributed a sample
+
+
+def test_assemble_present_with_none_latency_is_failed_exec_no_sample():
+    # bound but exec failed/blocked: (None, False) -> exec_ok False, no sample.
+    samples, oks = cell._assemble_probe_results(
+        ["c0", "c1"], {"c0": (300.0, True), "c1": (None, False)},
+    )
+    assert oks == [True, False]
+    assert samples == [300.0]             # c1 has no honest latency
+
+
+def test_assemble_present_with_latency_is_success_plus_sample():
+    samples, oks = cell._assemble_probe_results(
+        ["c0", "c1"], {"c0": (300.0, True), "c1": (700.0, True)},
+    )
+    assert oks == [True, True]
+    assert sorted(samples) == [300.0, 700.0]
+
+
+def test_assemble_empty_claim_list_is_empty():
+    samples, oks = cell._assemble_probe_results([], {})
+    assert oks == []
+    assert samples == []
+
+
+# ---- _classify_exec_corroboration (#3954: literal-TTFE, pure) ----
+#
+# ADDITIVE corroboration to the Ready+bound headline. Strictly-< the SAME sub-1s
+# bar (create -> exec), plus exec_success_rate to disambiguate slow-vs-failed.
+
+def test_corroboration_empty_attempts_emits_nothing():
+    # no attempts -> nothing to corroborate -> {} (no fabricated number).
+    assert cell._classify_exec_corroboration([], [], ttfi_ceiling_s=1.0) == {}
+
+
+def test_corroboration_all_under_ceiling():
+    corr = cell._classify_exec_corroboration(
+        [300.0, 700.0], [True, True], ttfi_ceiling_s=1.0,
+    )
+    assert corr[_KEC] == 2.0
+    assert corr[_KER] == 1.0
+
+
+def test_corroboration_mixed_with_failed_exec():
+    # 3 attempts, one exec failed (no sample); of the 2 samples, one is over 1s.
+    corr = cell._classify_exec_corroboration(
+        [300.0, 1500.0], [True, True, False], ttfi_ceiling_s=1.0,
+    )
+    assert corr[_KEC] == 1.0                       # only 300ms < 1000ms
+    assert corr[_KER] == round(2 / 3, 4)          # 0.6667
+
+
+def test_corroboration_ready_but_none_usable_still_emits_zero():
+    # all samples over the bar: count 0 is a REAL "Ready but none usable" reading,
+    # NOT empty -> the dict is still returned (attempts > 0).
+    corr = cell._classify_exec_corroboration(
+        [1200.0, 1800.0], [True, True], ttfi_ceiling_s=1.0,
+    )
+    assert corr[_KEC] == 0.0
+    assert corr[_KER] == 1.0                       # both execs SUCCEEDED, just slow
+
+
+def test_corroboration_ceiling_is_strict_less_than():
+    # exactly 1000ms does NOT clear a 1.0s bar (mirrors the headline's strict <).
+    corr = cell._classify_exec_corroboration(
+        [1000.0, 999.0], [True, True], ttfi_ceiling_s=1.0,
+    )
+    assert corr[_KEC] == 1.0
 
 
 def _run_all():
