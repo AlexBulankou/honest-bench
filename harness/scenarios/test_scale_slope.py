@@ -224,6 +224,89 @@ def test_ready_and_bound_true_only_when_both():
     assert cell._is_claim_ready_and_bound(None) is False
 
 
+# ---- gVisor-capable node counting (#3949) ----
+
+def test_parse_label_selector_key_value_and_bare():
+    assert cell._parse_label_selector("sandbox.gke.io/runtime=gvisor") == (
+        "sandbox.gke.io/runtime", "gvisor")
+    assert cell._parse_label_selector("sandbox.gke.io/runtime") == (
+        "sandbox.gke.io/runtime", None)
+    assert cell._parse_label_selector("  k = v  ") == ("k", "v")
+    assert cell._parse_label_selector("") == (None, None)
+    assert cell._parse_label_selector("   ") == (None, None)
+
+
+def test_node_matches_presence_vs_exact():
+    # value=None -> presence test (any value)
+    assert cell._node_matches({"sandbox.gke.io/runtime": "gvisor"},
+                              "sandbox.gke.io/runtime", None) is True
+    assert cell._node_matches({"other": "x"}, "sandbox.gke.io/runtime", None) is False
+    # value set -> exact match
+    assert cell._node_matches({"sandbox.gke.io/runtime": "gvisor"},
+                              "sandbox.gke.io/runtime", "gvisor") is True
+    assert cell._node_matches({"sandbox.gke.io/runtime": "kata"},
+                              "sandbox.gke.io/runtime", "gvisor") is False
+    # missing key / empty key / None labels
+    assert cell._node_matches({}, "sandbox.gke.io/runtime", "gvisor") is False
+    assert cell._node_matches(None, "sandbox.gke.io/runtime", None) is False
+    assert cell._node_matches({"a": "b"}, None, None) is False
+
+
+# The exact sandbox-cluster shape the bug bit: 1 gVisor default-pool node + 2
+# system-pool nodes. Counting total (3) lets k=2 pile 20 gVisor pods onto 1 node.
+_ONE_GVISOR_TWO_SYSTEM = [
+    {"sandbox.gke.io/runtime": "gvisor", "cloud.google.com/gke-nodepool": "default-pool"},
+    {"cloud.google.com/gke-nodepool": "system-pool"},
+    {"cloud.google.com/gke-nodepool": "system-pool"},
+]
+
+
+def test_count_capable_counts_only_gvisor_when_runtime_pinned():
+    n = cell._count_capable_nodes(
+        _ONE_GVISOR_TWO_SYSTEM, runtime_class="gvisor",
+        gvisor_label="sandbox.gke.io/runtime=gvisor",
+    )
+    assert n == 1  # NOT 3 — only the default-pool node can host a gVisor sandbox
+
+
+def test_count_capable_counts_all_when_no_runtime_class():
+    # No runtimeClassName pinned -> every node can host the sandbox.
+    n = cell._count_capable_nodes(
+        _ONE_GVISOR_TWO_SYSTEM, runtime_class="",
+        gvisor_label="sandbox.gke.io/runtime=gvisor",
+    )
+    assert n == 3
+
+
+def test_count_capable_bare_key_presence_selector():
+    n = cell._count_capable_nodes(
+        _ONE_GVISOR_TWO_SYSTEM, runtime_class="gvisor",
+        gvisor_label="sandbox.gke.io/runtime",  # bare key -> presence
+    )
+    assert n == 1
+
+
+def test_count_capable_value_mismatch_excludes():
+    # A node labeled with a DIFFERENT runtime value must not count toward gvisor.
+    nodes = [
+        {"sandbox.gke.io/runtime": "gvisor"},
+        {"sandbox.gke.io/runtime": "kata"},
+        {"sandbox.gke.io/runtime": "gvisor"},
+    ]
+    n = cell._count_capable_nodes(
+        nodes, runtime_class="gvisor", gvisor_label="sandbox.gke.io/runtime=gvisor")
+    assert n == 2
+
+
+def test_count_capable_empty_and_none():
+    assert cell._count_capable_nodes(
+        [], runtime_class="gvisor", gvisor_label="sandbox.gke.io/runtime=gvisor") == 0
+    assert cell._count_capable_nodes(
+        None, runtime_class="gvisor", gvisor_label="sandbox.gke.io/runtime=gvisor") == 0
+    assert cell._count_capable_nodes(
+        None, runtime_class="", gvisor_label="x") == 0
+
+
 def _run_all():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:
