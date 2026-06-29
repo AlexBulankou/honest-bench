@@ -83,10 +83,12 @@ try:  # package context (production: run.py loads harness.scenarios.burst_create
     from ._apiversion import (
         claim_gvr, ext_api_version, sandbox_gvr, template_gvr, warmpool_gvr,
     )
+    from ._kube import load_cluster_config
 except ImportError:  # standalone (dependency-free test from the scenarios/ dir)
     from _apiversion import (
         claim_gvr, ext_api_version, sandbox_gvr, template_gvr, warmpool_gvr,
     )
+    from _kube import load_cluster_config
 
 import logging
 import math
@@ -582,19 +584,16 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
     count it achieved.
     """
     from kubernetes import client as k8s_client
-    from kubernetes import config as k8s_config
 
     # Sub-gap 1 (pure, fail-fast): a gke-sandbox-labeled result MUST pin the gVisor
     # RuntimeClass, else the published count is a runc number under a gVisor banner.
     # Checked before the cluster is touched so the mistake crashes immediately.
     _assert_substrate_runtime_consistency(_CLUSTER_SUBSTRATE, _RUNTIME_CLASS)
 
-    # Portable kubeconfig load: in-cluster when running as a pod, otherwise
-    # whatever the runner's KUBECONFIG / default kubeconfig points at.
-    try:
-        k8s_config.load_incluster_config()
-    except k8s_config.ConfigException:
-        k8s_config.load_kube_config()
+    # Portable kubeconfig load (see _kube.load_cluster_config): an explicit
+    # KUBECONFIG wins, else in-cluster when running as a pod, else the default
+    # kubeconfig.
+    load_cluster_config()
 
     # Per-claim watcher threads each build their own CustomObjectsApi(), sharing
     # the default ApiClient's urllib3 pool (default maxsize cpu_count()*5, which

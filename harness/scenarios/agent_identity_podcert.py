@@ -219,12 +219,16 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
     failure reaching the cluster (crash-fail — chain unverifiable, not absent).
     """
     from kubernetes import client as k8s_client
-    from kubernetes import config as k8s_config
 
-    try:
-        k8s_config.load_incluster_config()
-    except k8s_config.ConfigException:
-        k8s_config.load_kube_config()
+    try:  # package context
+        from ._kube import load_cluster_config
+    except ImportError:  # standalone (dependency-free test from the scenarios/ dir)
+        from _kube import load_cluster_config
+
+    # Portable kubeconfig load (see _kube.load_cluster_config): an explicit
+    # KUBECONFIG wins, else in-cluster when running as a pod, else the default
+    # kubeconfig.
+    load_cluster_config()
 
     api_client = k8s_client.ApiClient()
     core = k8s_client.CoreV1Api()

@@ -69,8 +69,10 @@ from __future__ import annotations
 
 try:  # package context (production: run.py loads harness.scenarios.session_turnover)
     from ._apiversion import claim_gvr, ext_api_version, template_gvr, warmpool_gvr
+    from ._kube import load_cluster_config
 except ImportError:  # standalone (dependency-free test from the scenarios/ dir)
     from _apiversion import claim_gvr, ext_api_version, template_gvr, warmpool_gvr
+    from _kube import load_cluster_config
 
 import logging
 import math
@@ -411,14 +413,11 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
     that refilled-but-too-slowly still publishes the real median it achieved.
     """
     from kubernetes import client as k8s_client
-    from kubernetes import config as k8s_config
 
-    # Portable kubeconfig load: in-cluster when running as a pod, otherwise
-    # whatever the runner's KUBECONFIG / default kubeconfig points at.
-    try:
-        k8s_config.load_incluster_config()
-    except k8s_config.ConfigException:
-        k8s_config.load_kube_config()
+    # Portable kubeconfig load (see _kube.load_cluster_config): an explicit
+    # KUBECONFIG wins, else in-cluster when running as a pod, else the default
+    # kubeconfig.
+    load_cluster_config()
 
     custom = k8s_client.CustomObjectsApi()
 

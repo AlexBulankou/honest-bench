@@ -60,9 +60,11 @@ from __future__ import annotations
 
 try:  # package context (production: run.py loads harness.scenarios.warmpool_cold_start)
     from ._apiversion import claim_gvr, ext_api_version, template_gvr, warmpool_gvr
+    from ._kube import load_cluster_config
     from .. import metrics, ttfe_probe
 except ImportError:  # standalone (dependency-free test from the scenarios/ dir)
     from _apiversion import claim_gvr, ext_api_version, template_gvr, warmpool_gvr
+    from _kube import load_cluster_config
     import sys as _sys
     import pathlib as _pathlib
 
@@ -559,14 +561,12 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
     breaches a stricter activation target still surfaces.
     """
     from kubernetes import client as k8s_client
-    from kubernetes import config as k8s_config
 
-    # Portable kubeconfig load: in-cluster when running as a pod, otherwise
-    # whatever the runner's KUBECONFIG / default kubeconfig points at.
-    try:
-        k8s_config.load_incluster_config()
-    except k8s_config.ConfigException:
-        k8s_config.load_kube_config()
+    # Portable kubeconfig load (see _kube.load_cluster_config): an explicit
+    # KUBECONFIG wins, else in-cluster when running as a pod, else the default
+    # kubeconfig. The explicit-KUBECONFIG precedence is what lets a pod on one
+    # cluster fire the suite against another.
+    load_cluster_config()
 
     # Per-claim watcher threads each build their own CustomObjectsApi(), sharing
     # the default ApiClient's urllib3 pool (default maxsize cpu_count()*5, which

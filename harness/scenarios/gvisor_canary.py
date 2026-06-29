@@ -80,6 +80,7 @@ than fabricating a PASS.
 from __future__ import annotations
 
 from ._apiversion import sandbox_api_version, sandbox_gvr
+from ._kube import load_cluster_config
 
 import logging
 import os
@@ -235,14 +236,11 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
     raise on a provisioning/infra failure (crash-fail cell).
     """
     from kubernetes import client as k8s_client
-    from kubernetes import config as k8s_config
 
-    # Portable kubeconfig load: in-cluster when running as a pod, otherwise
-    # whatever the runner's KUBECONFIG / default kubeconfig points at.
-    try:
-        k8s_config.load_incluster_config()
-    except k8s_config.ConfigException:
-        k8s_config.load_kube_config()
+    # Portable kubeconfig load (see _kube.load_cluster_config): an explicit
+    # KUBECONFIG wins, else in-cluster when running as a pod, else the default
+    # kubeconfig.
+    load_cluster_config()
 
     custom = k8s_client.CustomObjectsApi()
     core = k8s_client.CoreV1Api()
