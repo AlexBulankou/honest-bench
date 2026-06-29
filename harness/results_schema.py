@@ -462,6 +462,14 @@ def _coerce_warm_vs_cold(raw):
     n_warm = raw.get("n_warm")
     if not isinstance(n_warm, bool) and isinstance(n_warm, int) and n_warm >= 0:
         out["n_warm"] = n_warm
+    # measured_at: the ISO-8601 instant the two legs were measured. Optional + carried
+    # forward across the daily refresh (same as scale_proof / stepup), so a carried
+    # (point-in-time) block stays honestly dated against the daily-refreshed top-level
+    # generated_at instead of silently aliasing today. Allow-list a non-empty string
+    # only — anything else is dropped (render shows no dated subline).
+    ma = raw.get("measured_at")
+    if isinstance(ma, str) and ma:
+        out["measured_at"] = ma
     return out
 
 

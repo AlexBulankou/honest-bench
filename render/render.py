@@ -788,6 +788,15 @@ def render_warm_vs_cold(results):
         f"_Speedup = cold ÷ warm, computed from the displayed values{n_note}; the warm leg "
         "is the p50 so half of warm claims beat it._")
     lines.append("")
+    # Dated subline (mirrors scale_proof #3952): the warm-vs-cold pair is a point-in-time
+    # measurement carried forward across the daily refresh, so it carries its own measured
+    # date, honestly distinct from the page's daily-refreshed timestamp.
+    if wc.get("measured_at"):
+        lines.append(
+            f"_Measured {wc['measured_at'][:10]} — warm-vs-cold speedup "
+            "(point-in-time; refreshed on the next TTFE fire)._"
+        )
+        lines.append("")
     return "\n".join(lines)
 
 
