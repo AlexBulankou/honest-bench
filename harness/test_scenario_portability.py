@@ -62,6 +62,7 @@ _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)
 
 import ast
 import importlib
+import importlib.util
 import inspect
 import pathlib
 
@@ -313,8 +314,18 @@ def test_harness_enums_subset_of_render_allowlists():
     (results_schema.py). This is the offline guard that catches that drift at
     commit time (caught the requires-kata-runtime vs requires-kata-microvm drift
     in #3942). Direction is one-way by design: render MAY carry extra render-only
-    seed tokens (e.g. requires-kata-microvm) the harness never emits."""
-    from render import schema as render_schema
+    seed tokens (e.g. requires-kata-microvm) the harness never emits.
+
+    Loads render/schema.py BY PATH (not `from render import schema`): render/ has
+    no __init__.py, so render/render.py is importable as the top-level name
+    `render`, and test_render.py's `import render` binds that module into
+    sys.modules — shadowing a package-style import here in a full-suite run. The
+    path-load is order-independent regardless of what sits in sys.modules."""
+    _spec = importlib.util.spec_from_file_location(
+        "_render_schema_for_subset_check", _RENDER_DIR / "schema.py"
+    )
+    render_schema = importlib.util.module_from_spec(_spec)
+    _spec.loader.exec_module(render_schema)
 
     missing_reasons = set(results_schema.PENDING_REASON_ENUM) - render_schema.PENDING_REASONS
     _check(
