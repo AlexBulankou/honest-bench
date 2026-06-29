@@ -35,6 +35,13 @@ class Cell:
                         # share one vocabulary (no public-vs-internal name divergence).
     requires_substrate: str | None = None  # None = any; else min substrate needed
     pending_reason: str | None = None      # rendered when substrate unmet
+    badge_scope: str | None = None         # #3905: control-plane | enforced — a static
+                                           # per-scenario property qualifying what a PASS
+                                           # asserts. The run loop injects it onto the
+                                           # outcome so every fire carries it BY
+                                           # CONSTRUCTION (no per-fire manual patch).
+                                           # Validated against BADGE_SCOPE_ENUM in the
+                                           # emitter; renders as a "PASS (scope)" suffix.
 
 
 # Sandbox Phase-1 MVP: the perf matrix + the isolation badges. The module basenames
@@ -55,15 +62,21 @@ SANDBOX_CELLS = (
         requires_substrate="gke-sandbox",
         pending_reason="requires-gvisor-runtime",
     ),
+    # The two NetworkPolicy isolation badges assert CONTROL-PLANE admission (the
+    # policy was admitted + correctly targeted), NOT data-plane traffic enforcement
+    # — so a PASS must render "PASS (control-plane)" lest the badge over-claim
+    # (#2082/#3907). badge_scope rides the cell so every fire carries it.
     Cell(
         "cross_tenant_network_isolation",
         requires_substrate="gke-sandbox",
         pending_reason="requires-gke",
+        badge_scope="control-plane",
     ),
     Cell(
         "default_deny_egress",
         requires_substrate="gke-sandbox",
         pending_reason="requires-gke",
+        badge_scope="control-plane",
     ),
 )
 

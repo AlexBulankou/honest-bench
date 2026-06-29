@@ -99,6 +99,13 @@ def _run_one(cell, substrate: str) -> dict:
         if isinstance(reason, str):
             raw["pending_reason"] = reason
     raw["sla_metrics"] = sla_metrics
+    # badge_scope (#3905) is a static per-scenario property — inject the Cell's value
+    # onto the outcome so a PASS carries its scope qualifier BY CONSTRUCTION (#3948),
+    # not via a per-fire manual patch. The emitter validates it against
+    # BADGE_SCOPE_ENUM; render suffixes it on the PASS token. Only set when the Cell
+    # declares one (isolation badges) — perf cells stay clean.
+    if cell.badge_scope is not None:
+        raw["badge_scope"] = cell.badge_scope
     return raw
 
 
