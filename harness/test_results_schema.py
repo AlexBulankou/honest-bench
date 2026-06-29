@@ -630,8 +630,13 @@ def test_stepup_extra_keys_dropped():
         "project_id": leak,
     }
     out = rs.build_results([], _prov(), GEN_AT, stepup=su)["stepup"]
-    _check("internal_cluster_name" not in out and "project_id" not in out,
-           "top-level extra keys dropped from stepup object")
+    # Full-subset assert (mirrors scale_proof / warm_vs_cold): the emitted top-level key set must be
+    # a subset of the _coerce_stepup contract, so ANY future extra/internal key is caught — not just
+    # the two specific leak names below. This is the stronger lock a4s1 flagged on PR #80.
+    _check(set(out) <= {"verdict", "pareto_points", "controller_startup", "north_star_breach_rate",
+                        "saturation_rate", "max_flat_rate", "sld_s", "wpr", "node_count",
+                        "machine_type", "measured_at"},
+           f"only contract keys at stepup top-level, got {sorted(out)}")
     _check(set(out["pareto_points"][0]) <= {"offered_rate_per_s", "ttfe_p95_ms", "ready_per_s",
                                             "ttfe_p50_ms", "ttfe_p99_ms", "cost_usd_per_1k_ready"},
            f"only contract keys per TTFE point, got {sorted(out['pareto_points'][0])}")
