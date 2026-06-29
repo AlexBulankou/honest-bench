@@ -113,6 +113,41 @@ confirms it, and the build banner's `cluster_substrate=gke-sandbox` records the
 substrate — so a `kind` (runc) number is never mistaken for a `gke-sandbox` one,
 and a `gke-sandbox` number is provably gVisor, not just labelled.
 
+## Reproduce in CI (no laptop required)
+
+The same two paths above also run as **dispatch-only** GitHub Actions, so you can
+reproduce a headline from a fork without a local cluster — and read the run log to
+see every command:
+
+- **kind path** — [`.github/workflows/refresh.yml`](../.github/workflows/refresh.yml).
+  `workflow_dispatch` runs the whole portable suite (steps 1-3 above) on a
+  GitHub-hosted runner and opens a PR with the regenerated result. No secrets, no
+  cloud account — the kind cluster is created on the runner itself.
+- **gke-sandbox path** — [`.github/workflows/refresh-gke-sandbox.yml`](../.github/workflows/refresh-gke-sandbox.yml).
+  `workflow_dispatch` provisions a **fresh, ephemeral** GKE node pool with
+  `--sandbox type=gvisor`, installs the same upstream-main controller, fires the
+  burst-create headline under `runtimeClassName=gvisor` (the read-back guard
+  above confirms every backing pod landed on gVisor), opens a PR with the result,
+  and tears the cluster down in an `always()` step. A fresh node pool means an
+  empty containerd cache — a genuine cold pull, not a warmed-runner artifact.
+
+Both schedules are **disabled by design**: an unattended kind run must never
+downgrade the live gVisor headline, and a real GKE cluster must never spin on a
+cron (spend) or auto-merge a headline shift. Every refresh is manual and opens a
+PR for a human to review before merge.
+
+The gke-sandbox workflow is reproducible by **anyone with a GCP project** — point
+it at your own by adding three repo secrets, then dispatch it:
+
+| Secret | Value |
+|---|---|
+| `GCP_WIF_PROVIDER` | a Workload Identity Federation provider resource name (keyless OIDC auth — no long-lived key stored) |
+| `GCP_SERVICE_ACCOUNT` | the service account the provider impersonates (needs `container.admin` to create/delete the cluster) |
+| `GCP_PROJECT` | your GCP project id |
+
+Without those three secrets the workflow is **inert** — a dispatch fails fast at
+the auth step, so it can never spin a cluster (or incur spend) unattended.
+
 ## Reading the output
 
 - **Measured cells** are real latencies / outcomes from your run.
