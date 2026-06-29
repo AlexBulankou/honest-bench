@@ -84,11 +84,17 @@ try:  # package context (production: run.py loads harness.scenarios.burst_create
         claim_gvr, ext_api_version, sandbox_gvr, template_gvr, warmpool_gvr,
     )
     from ._kube import load_cluster_config
+    from .. import metrics, ttfe_probe
 except ImportError:  # standalone (dependency-free test from the scenarios/ dir)
     from _apiversion import (
         claim_gvr, ext_api_version, sandbox_gvr, template_gvr, warmpool_gvr,
     )
     from _kube import load_cluster_config
+    import sys as _sys
+    import pathlib as _pathlib
+
+    _sys.path.insert(0, str(_pathlib.Path(__file__).resolve().parent.parent))
+    import metrics, ttfe_probe
 
 import logging
 import math
@@ -148,6 +154,29 @@ _MIN_QUALIFIED_RATIO = float(
 # METRIC_LABELS registers their display labels (a4s1's render-side lane).
 _KEY_COUNT = "sandboxes_ready_under_1s"
 _KEY_DENSITY = "density_per_vcpu"
+
+# Additive literal-TTFE corroboration (#3954). Default-OFF: at the default the
+# page is byte-unchanged (only the Ready+bound headline emits). When
+# BENCH_TTFE_EXEC=1, each claim that binds runs ONE exec round-trip the instant
+# it binds (concurrent-watcher pattern, mirrors warmpool_cold_start), and we
+# emit two ADDITIVE fields alongside the UNCHANGED headline sla:
+#   sandboxes_exec_under_1s — literal first-instruction-result count under the
+#     same sub-1s bar (create -> exec result). Strictly <= the Ready+bound count
+#     by ~the per-claim websocket-setup overhead; the gap IS the corroboration
+#     value (the distance between "Ready" and "usable").
+#   exec_success_rate — fraction of claims whose exec round-trip succeeded;
+#     disambiguates a low exec count (slow-but-working vs failed/blocked exec).
+# The Ready+bound count stays the SOLE published headline; TTFE never supersedes.
+_KEY_EXEC_COUNT = "sandboxes_exec_under_1s"
+_KEY_EXEC_RATE = "exec_success_rate"
+
+
+def _env_flag(name: str) -> bool:
+    """True iff env var `name` is set to a truthy token (1/true/yes/on)."""
+    return os.environ.get(name, "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+_TTFE_EXEC = _env_flag("BENCH_TTFE_EXEC")
 
 # Timeouts. Pool warmup: 240s for up to ~10-20 replicas (pull + schedule +
 # start). Per-claim bind: 180s — a cold-tail claim can take 30-90s on a fresh
@@ -350,8 +379,13 @@ def _wait_for_pool_warm(
 
 
 def _watch_one_claim(*, claim_name: str, deadline: float,
-                     bound_at: dict[str, float]) -> None:
-    """Tight-poll a single claim until Ready+bound or deadline; record time.
+                     bound_at: dict[str, float],
+                     sandbox_names: dict[str, str] | None = None,
+                     ttfe_enabled: bool = False,
+                     create_monotonic: float | None = None,
+                     ttfe_results: dict[str, tuple] | None = None) -> None:
+    """Tight-poll a single claim until Ready+bound or deadline; record time,
+    then — when TTFE is enabled — run the first-instruction probe IN THIS THREAD.
 
     Runs in its own thread with its own CustomObjectsApi sharing the default
     ApiClient's urllib3 pool — `run()` pins connection_pool_maxsize >= claim
@@ -359,6 +393,22 @@ def _watch_one_claim(*, claim_name: str, deadline: float,
     (which would re-coarsen the sub-second granularity). On first observation of
     Ready+bound it writes `bound_at[claim_name] = time.monotonic()` (dict
     item-assignment is atomic under CPython) and returns.
+
+    ## Why the TTFE probe (#3954, additive corroboration) runs HERE
+
+    When TTFE is enabled, the probe runs inside each claim's own watcher thread
+    the instant that claim binds — exactly the concurrent-watcher pattern
+    warmpool_cold_start uses. This is load-bearing: a serial probe pass that runs
+    only after ALL claims bind would inflate every claim's create->first-exec
+    span (a fast warm claim would not be probed until the slowest claim binds, so
+    its t1 inherits the slowest bind as a shared floor; serial accumulation adds
+    each earlier probe's round-trip). Probing per-claim at its own bind makes
+    t1 = its-own-bind + one exec round-trip — the honest activation latency. The
+    `bound_at` timestamp is recorded BEFORE the probe so the Ready+bound headline
+    count + classification stay anchored on bind, never on exec (TTFE is purely
+    additive — it never moves the published headline). The probe never raises on
+    an exec/cluster/RBAC error — it collapses all of them to (None, False),
+    recorded as this claim's result — so one bad claim degrades only its own cell.
     """
     from kubernetes import client as k8s_client
 
@@ -374,35 +424,71 @@ def _watch_one_claim(*, claim_name: str, deadline: float,
             log.warning("poll: get claim %s failed: %s — retrying", claim_name, e)
             time.sleep(_POLL_S)
             continue
-        if _is_claim_ready_and_bound((obj or {}).get("status") or {}):
+        status = (obj or {}).get("status") or {}
+        if _is_claim_ready_and_bound(status):
+            pod_name = (status.get("sandbox") or {}).get("name")
+            if pod_name and sandbox_names is not None:
+                sandbox_names[claim_name] = pod_name
+            # bind timestamp recorded BEFORE the probe — the headline count +
+            # classification stay anchored on bind; TTFE is additive only.
             bound_at[claim_name] = time.monotonic()
+            if (ttfe_enabled and pod_name and create_monotonic is not None
+                    and ttfe_results is not None):
+                core_v1 = k8s_client.CoreV1Api()
+                ttfe_results[claim_name] = ttfe_probe.probe_first_instruction(
+                    core_v1,
+                    pod_name=pod_name,
+                    namespace=_NAMESPACE,
+                    create_monotonic=create_monotonic,
+                )
             return
         time.sleep(_POLL_S)
 
 
 def _measure_claim_latencies(
     claim_names: list[str], *, timeout_s: int,
-) -> dict[str, float]:
+    ttfe_enabled: bool = False,
+    create_times: dict[str, float] | None = None,
+) -> tuple[dict[str, float], dict[str, str], dict[str, tuple]]:
     """Measure each claim's Ready+bound observation time, one thread per claim.
 
-    Returns bound_at mapping each resolved claim to its monotonic bind time;
-    claims that never bound within `timeout_s` are absent. Thread-per-claim (not
-    single-threaded round-robin) is required because the metric gates on a sub-1s
-    threshold: a round-robin sweep of K claims with a poll-sleep has worst-case
-    observation granularity ~= K x per-GET + poll ~= ~1s, the same order as the
-    threshold, so a genuinely-warm 0.3s bind gets measured >1.0s and miscounted.
-    Independent per-claim threads give ~_POLL_S (50ms) granularity. K I/O-bound
-    GET loops are trivial apiserver load (the GIL releases during the round-trip).
+    Returns (bound_at, sandbox_names, ttfe_results) where bound_at maps each
+    resolved claim to its monotonic bind time (claims that never bound within
+    `timeout_s` are absent), sandbox_names maps each bound claim to its backing
+    pod name (the exec target for the TTFE probe), and ttfe_results maps each
+    probed claim to its (ttfe_ms_or_None, exec_ok) tuple. The last two are empty
+    unless `ttfe_enabled` (#3954, additive corroboration — default OFF).
+
+    When `ttfe_enabled`, each watcher thread runs the first-instruction TTFE probe
+    inline the instant its own claim binds (see `_watch_one_claim`), so the probe
+    is CONCURRENT per claim — t1 = the claim's own bind + one exec round-trip, not
+    contaminated by the slowest cold-claim bind or by serial probe accumulation.
+    `create_times` supplies each claim's t0; a claim absent from it (or a missing
+    pod name) is left unprobed and surfaces downstream as a failed exec.
+
+    Thread-per-claim (not single-threaded round-robin) is required because the
+    metric gates on a sub-1s threshold: a round-robin sweep of K claims with a
+    poll-sleep has worst-case observation granularity ~= K x per-GET + poll ~= ~1s,
+    the same order as the threshold, so a genuinely-warm 0.3s bind gets measured
+    >1.0s and miscounted. Independent per-claim threads give ~_POLL_S (50ms)
+    granularity. K I/O-bound GET loops are trivial apiserver load (the GIL
+    releases during the round-trip).
     """
     import threading
 
+    create_times = create_times or {}
     bound_at: dict[str, float] = {}
+    sandbox_names: dict[str, str] = {}
+    ttfe_results: dict[str, tuple] = {}
     deadline = time.monotonic() + timeout_s
     threads = [
         threading.Thread(
             target=_watch_one_claim,
             kwargs={"claim_name": name, "deadline": deadline,
-                    "bound_at": bound_at},
+                    "bound_at": bound_at, "sandbox_names": sandbox_names,
+                    "ttfe_enabled": ttfe_enabled,
+                    "create_monotonic": create_times.get(name),
+                    "ttfe_results": ttfe_results},
             daemon=True,
         )
         for name in claim_names
@@ -411,7 +497,7 @@ def _measure_claim_latencies(
         t.start()
     for t in threads:
         t.join(timeout=timeout_s + 5)
-    return bound_at
+    return bound_at, sandbox_names, ttfe_results
 
 
 def _classify_burst(
@@ -463,6 +549,76 @@ def _classify_burst(
         sla_metrics = {}
 
     return passed, breakdown, sla_metrics
+
+
+def _assemble_probe_results(
+    claim_names: list[str],
+    ttfe_results: dict[str, tuple],
+) -> tuple[list[float], list[bool]]:
+    """Collect the per-claim concurrent-probe results into the two parallel lists.
+
+    Pure assembly — no I/O. The probes already ran CONCURRENTLY inside each
+    claim's watcher thread (see `_watch_one_claim`), depositing each claim's
+    (ttfe_ms_or_None, exec_ok) into `ttfe_results` at that claim's own bind moment.
+    This walks the fired-claim list in order and flattens those into the two
+    parallel lists the corroboration classifier consumes.
+
+    One exec_oks entry per claim FIRED (attempt total == len(exec_oks) ==
+    len(claim_names)). A claim absent from `ttfe_results` never bound (or bound
+    with no pod name / TTFE disabled) — record exec_ok=False with no sample
+    (attempted-never-executed) so it drags exec_success_rate honestly. A present
+    claim contributes its exec_ok, plus its TTFE sample only when the probe
+    returned a latency (a failed exec contributes False to exec_success_rate but
+    NO sample — a sandbox that never ran an instruction has no honest latency).
+    """
+    ttfe_ms_samples: list[float] = []
+    exec_oks: list[bool] = []
+    for name in claim_names:
+        result = ttfe_results.get(name)
+        if result is None:
+            exec_oks.append(False)
+            continue
+        ttfe_ms_sample, exec_ok = result
+        exec_oks.append(exec_ok)
+        if ttfe_ms_sample is not None:
+            ttfe_ms_samples.append(ttfe_ms_sample)
+    return ttfe_ms_samples, exec_oks
+
+
+def _classify_exec_corroboration(
+    ttfe_ms_samples: list[float],
+    exec_oks: list[bool],
+    *,
+    ttfi_ceiling_s: float,
+) -> dict:
+    """Pure literal-TTFE corroboration (#3954). No cluster, no clock — testable.
+
+    ADDITIVE to the Ready+bound headline — never supersedes it. Given the
+    per-claim first-instruction latencies (`ttfe_ms_samples`, milliseconds, only
+    for claims whose exec returned a latency) and one `exec_oks` entry per claim
+    FIRED, returns the two corroboration fields:
+      - sandboxes_exec_under_1s = count of claims whose literal first-instruction
+        result landed under the SAME sub-1s bar (create -> exec, not create ->
+        Ready). Strictly <= the headline Ready+bound count by ~the per-claim
+        websocket-setup overhead; the gap is the "Ready vs usable" signal.
+      - exec_success_rate = fraction of attempted claims whose exec round-trip
+        succeeded (metrics.exec_success_rate) — disambiguates a low exec count
+        (slow-but-working vs failed/blocked exec).
+
+    Returns {} when there were no attempts (`exec_oks` empty) — nothing to
+    corroborate, so no fabricated number. When there WAS at least one attempt the
+    dict is always returned, even if the exec count is 0 (a real measurement:
+    "Ready but none usable under 1s"), so the caller emits it whenever the
+    headline emitted a non-empty sla.
+    """
+    if not exec_oks:
+        return {}
+    ceiling_ms = ttfi_ceiling_s * 1000.0
+    count_exec_under = sum(1 for t in ttfe_ms_samples if t < ceiling_ms)
+    return {
+        _KEY_EXEC_COUNT: float(count_exec_under),
+        _KEY_EXEC_RATE: metrics.exec_success_rate(exec_oks),
+    }
 
 
 def _bound_sandbox_name(custom, *, claim_name: str) -> str | None:
@@ -663,8 +819,9 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
             create_times[claim_names[-1]] - create_times[claim_names[0]],
         )
 
-        bound_at = _measure_claim_latencies(
+        bound_at, _sandbox_names, ttfe_results = _measure_claim_latencies(
             claim_names, timeout_s=_BIND_TIMEOUT_S,
+            ttfe_enabled=_TTFE_EXEC, create_times=create_times,
         )
 
         ttfis: dict[str, float | None] = {}
@@ -700,6 +857,24 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
             min_qualified_ratio=_MIN_QUALIFIED_RATIO,
         )
 
+        # ADDITIVE literal-TTFE corroboration (#3954). The Ready+bound count above
+        # stays the SOLE published headline — these fields ride ALONGSIDE it,
+        # never replace it. Emit only when (a) TTFE was enabled, AND (b) the
+        # headline emitted a non-empty sla (count_under > 0): an exec count of 0
+        # is then a REAL measurement ("Ready but none usable under 1s"), so it is
+        # honest to publish. When the headline is empty ({} — zero delivery) there
+        # is nothing to corroborate, so the page stays byte-unchanged.
+        if _TTFE_EXEC and sla_metrics:
+            ttfe_ms_samples, exec_oks = _assemble_probe_results(
+                claim_names, ttfe_results,
+            )
+            corroboration = _classify_exec_corroboration(
+                ttfe_ms_samples, exec_oks, ttfi_ceiling_s=_TTFI_CEILING_S,
+            )
+            sla_metrics.update(corroboration)
+            breakdown["exec_corroboration"] = corroboration
+            breakdown["all_ttfe_ms"] = sorted(ttfe_ms_samples)
+
         all_ttfi_str = ", ".join(f"{x:.3f}" for x in breakdown["all_ttfi_s"])
         density = breakdown["density_per_vcpu"]
         common = (
@@ -710,6 +885,14 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
             f"All TTFIs (s, sorted): [{all_ttfi_str}]. "
             f"Timeouts: {breakdown['timeouts']!r}."
         )
+        corr = breakdown.get("exec_corroboration")
+        if corr:
+            common += (
+                f" Literal-TTFE corroboration (#3954): "
+                f"{int(corr[_KEY_EXEC_COUNT])}/{_CLAIM_COUNT} usable "
+                f"(first-instruction result) in < {_TTFI_CEILING_S}s, "
+                f"exec_success_rate={corr[_KEY_EXEC_RATE]:.4f}."
+            )
         if passed:
             return ("PASS", f"Burst-create delivered the sub-1s tier: {common}",
                     sla_metrics)
