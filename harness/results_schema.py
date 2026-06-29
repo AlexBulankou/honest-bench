@@ -155,6 +155,54 @@ def _coerce_scenario(raw: dict) -> dict:
     return out
 
 
+def _coerce_scale_proof(raw):
+    """Keep the closed top-level scale_proof shape; return None to omit the key.
+
+    The Scale Proof (Linearity Check) table is rendered from a TOP-LEVEL
+    `scale_proof` object (NOT a per-scenario sla_metrics — a list value cannot ride
+    sla_metrics, which _coerce_sla_metrics drops). This mirrors render/schema.py's
+    SCALE_PROOF_FIELDS exactly so emitter and renderer share one contract:
+      - scale_points: list of {node_count:int (0<nc<10000), density:float>=0}
+      - density_retention / thpt_retention: optional nonneg floats
+
+    Allow-list-by-construction like the scenario/provenance coercers: only the
+    known fields+types survive, everything else is dropped. scale_points is
+    REQUIRED — an absent/empty/malformed points list returns None so no
+    scale_proof key is emitted (the table renders nothing rather than a partial
+    lie). The two retentions are optional: thpt_retention has NO per-point render
+    fallback, so dropping it renders the throughput column pending (honest), never
+    a fabricated ratio.
+    """
+    if not isinstance(raw, dict):
+        return None
+    points = raw.get("scale_points")
+    if not isinstance(points, list) or not points:
+        return None
+    clean_points = []
+    for p in points:
+        if not isinstance(p, dict):
+            return None
+        nc, dn = p.get("node_count"), p.get("density")
+        if isinstance(nc, bool) or not isinstance(nc, int) or not (0 < nc < 10000):
+            return None
+        if isinstance(dn, bool) or not isinstance(dn, Real):
+            return None
+        fdn = float(dn)
+        if fdn != fdn or fdn in (float("inf"), float("-inf")) or fdn < 0:
+            return None
+        clean_points.append({"node_count": nc, "density": fdn})
+    out = {"scale_points": clean_points}
+    for key in ("density_retention", "thpt_retention"):
+        v = raw.get(key)
+        if isinstance(v, bool) or not isinstance(v, Real):
+            continue
+        fv = float(v)
+        if fv != fv or fv in (float("inf"), float("-inf")) or fv < 0:
+            continue
+        out[key] = fv
+    return out
+
+
 def _coerce_provenance(raw: dict) -> dict:
     if not isinstance(raw, dict):
         raise TypeError("provenance must be a dict")
@@ -193,7 +241,7 @@ def _coerce_provenance(raw: dict) -> dict:
 
 
 def build_results(scenario_outcomes, provenance, generated_at: str,
-                  product: str = DEFAULT_PRODUCT) -> dict:
+                  product: str = DEFAULT_PRODUCT, scale_proof=None) -> dict:
     """Assemble the closed-schema results dict.
 
     `scenario_outcomes` is the loop's per-scenario dicts (any extra keys dropped);
@@ -202,15 +250,25 @@ def build_results(scenario_outcomes, provenance, generated_at: str,
     pure/clockless and unit-testable); `product` selects the closed product label
     (defaults to sandbox so existing callers are unchanged) and is validated against
     PRODUCT_ENUM fail-closed — a non-enum product is a misconfiguration, not a leak.
+
+    `scale_proof` is the OPTIONAL top-level Scale Proof (Linearity Check) object
+    (defaults None so existing callers are unchanged). When supplied it passes
+    through `_coerce_scale_proof`; the key is emitted only when a valid non-empty
+    scale_points list survives — a malformed/empty object omits the key entirely
+    (the table renders nothing rather than a partial lie).
     """
     if not isinstance(generated_at, str) or not generated_at:
         raise ValueError("generated_at must be a non-empty ISO-8601 UTC string")
     if product not in PRODUCT_ENUM:
         raise ValueError(f"product {product!r} not in {PRODUCT_ENUM}")
 
-    return {
+    out = {
         "product": product,
         "generated_at": generated_at,
         "provenance": _coerce_provenance(provenance),
         "scenarios": [_coerce_scenario(s) for s in scenario_outcomes],
     }
+    cleaned_scale_proof = _coerce_scale_proof(scale_proof)
+    if cleaned_scale_proof is not None:
+        out["scale_proof"] = cleaned_scale_proof
+    return out

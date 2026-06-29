@@ -254,6 +254,75 @@ def test_n_coercion():
     _check("n" not in r["scenarios"][2], "string n dropped")
 
 
+def test_scale_proof_passthrough_valid():
+    # A well-formed top-level scale_proof object survives _coerce_scale_proof and is
+    # emitted at the top level (the Scale Proof / Linearity Check table source).
+    sp = {
+        "scale_points": [
+            {"node_count": 1, "density": 1.88},
+            {"node_count": 2, "density": 1.88},
+            {"node_count": 4, "density": 1.88},
+        ],
+        "density_retention": 1.0,
+        "thpt_retention": 1.0,
+    }
+    r = rs.build_results([], _prov(), GEN_AT, scale_proof=sp)
+    out = r["scale_proof"]
+    _check(out["scale_points"] == sp["scale_points"], "scale_points kept verbatim")
+    _check(out["density_retention"] == 1.0, "density_retention kept")
+    _check(out["thpt_retention"] == 1.0, "thpt_retention kept")
+
+
+def test_scale_proof_absent_emits_no_key():
+    # Default callers pass no scale_proof — the top-level key must be omitted, not
+    # emitted empty (the table renders nothing rather than a partial lie).
+    r = rs.build_results([], _prov(), GEN_AT)
+    _check("scale_proof" not in r, "no scale_proof key when none supplied")
+
+
+def test_scale_proof_malformed_points_dropped():
+    # A points list with any bad point fails closed -> the whole key is omitted
+    # (no partial series). node_count out of (0,10000), bool, or non-int all fail.
+    for bad_points in (
+        [],                                                  # empty
+        [{"node_count": 0, "density": 1.0}],                 # nc not > 0
+        [{"node_count": True, "density": 1.0}],              # bool nc
+        [{"node_count": 1, "density": -1.0}],                # negative density
+        [{"node_count": 1, "density": float("inf")}],        # inf density
+        [{"node_count": 1, "density": "1.0"}],               # non-numeric density
+        "not-a-list",
+    ):
+        r = rs.build_results([], _prov(), GEN_AT, scale_proof={"scale_points": bad_points})
+        _check("scale_proof" not in r, f"malformed points omits key: {bad_points!r}")
+
+
+def test_scale_proof_thpt_retention_optional():
+    # thpt_retention dropped when absent (render shows throughput pending — honest);
+    # the rest of the object still emits. density_retention likewise optional.
+    sp = {"scale_points": [{"node_count": 1, "density": 4.0},
+                           {"node_count": 4, "density": 2.0}],
+          "density_retention": 0.5}
+    r = rs.build_results([], _prov(), GEN_AT, scale_proof=sp)
+    out = r["scale_proof"]
+    _check("thpt_retention" not in out, "absent thpt_retention dropped, no fabrication")
+    _check(out["density_retention"] == 0.5, "density_retention kept")
+    _check(len(out["scale_points"]) == 2, "scale_points kept")
+
+
+def test_scale_proof_unsafe_retention_dropped():
+    # A non-finite or negative retention is dropped (not emitted as a lie); the
+    # points still survive so the density column can render.
+    sp = {"scale_points": [{"node_count": 1, "density": 4.0},
+                           {"node_count": 2, "density": 4.0}],
+          "density_retention": float("nan"),
+          "thpt_retention": -0.5}
+    r = rs.build_results([], _prov(), GEN_AT, scale_proof=sp)
+    out = r["scale_proof"]
+    _check("density_retention" not in out, "NaN retention dropped")
+    _check("thpt_retention" not in out, "negative retention dropped")
+    _check(len(out["scale_points"]) == 2, "scale_points still emitted")
+
+
 def _all_tests():
     return [v for k, v in sorted(globals().items())
             if k.startswith("test_") and callable(v)]
