@@ -84,10 +84,20 @@ def _run_one(cell, substrate: str) -> dict:
     # emitter from coercing it into a pseudo-metric (it matches the metric-key
     # regex). A scenario that does not measure (pending / under-delivery FAIL)
     # emits no "n" and the row renders without a sample count.
+    runtime_scope = None
     if isinstance(sla_metrics, dict):
         n = sla_metrics.pop("n", None)
         if isinstance(n, (int, float)) and not isinstance(n, bool):
             raw["n"] = int(n)
+        # A scenario may UPGRADE its static badge_scope at fire time under the
+        # reserved "badge_scope" key inside sla_metrics — the data-plane probe
+        # path (#3907) returns "enforced" only when the in-Pod connectivity probe
+        # actually confirmed the policy blocks traffic, upgrading the static
+        # "control-plane" admission badge to "enforced" BY CONSTRUCTION. Pop it
+        # before coercion (a string would be dropped by _coerce_sla_metrics, and
+        # it matches the metric-key regex). The emitter validates it against
+        # BADGE_SCOPE_ENUM; a junk override raises there (fail-closed).
+        runtime_scope = sla_metrics.pop("badge_scope", None)
         # A scenario returning a pending outcome carries its reason under the
         # reserved "pending_reason" key inside sla_metrics (the substrate-gate
         # path sets pending_reason directly from cell.pending_reason and never
@@ -103,9 +113,13 @@ def _run_one(cell, substrate: str) -> dict:
     # onto the outcome so a PASS carries its scope qualifier BY CONSTRUCTION (#3948),
     # not via a per-fire manual patch. The emitter validates it against
     # BADGE_SCOPE_ENUM; render suffixes it on the PASS token. Only set when the Cell
-    # declares one (isolation badges) — perf cells stay clean.
-    if cell.badge_scope is not None:
-        raw["badge_scope"] = cell.badge_scope
+    # declares one (isolation badges) — perf cells stay clean. A scenario-returned
+    # runtime override (the data-plane probe's "enforced", #3907) takes precedence
+    # over the static Cell value, so an armed+passing probe upgrades the badge
+    # without a per-fire manual patch.
+    scope = runtime_scope if isinstance(runtime_scope, str) else cell.badge_scope
+    if scope is not None:
+        raw["badge_scope"] = scope
     return raw
 
 

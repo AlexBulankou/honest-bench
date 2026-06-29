@@ -80,6 +80,7 @@ runs only where a policy-enforcing CNI is genuinely available.
 
 from __future__ import annotations
 
+from . import netpol_probe
 from ._apiversion import sandbox_api_version, sandbox_gvr
 from ._kube import load_cluster_config
 
@@ -102,6 +103,10 @@ _READY_TIMEOUT_S = 240
 # healthy cluster; the short window only absorbs informer-cache lag.
 _POD_DISCOVERY_TIMEOUT_S = 30
 _POLL_S = 0.25
+
+# TCP port the armed data-plane probe (#3907) listens on in the tenant-A target Pod
+# and connects to from the tenant-B (deny) and second-tenant-A (allow) sources.
+_PROBE_PORT = 8080
 
 _SBX_GVR = sandbox_gvr()
 
@@ -322,6 +327,54 @@ def _create_sandbox(custom, *, sandbox_name: str, tenant: str) -> str:
     return uid
 
 
+def _run_ingress_dataplane_probe(custom, core, *, pod_a, pod_b, sandbox_a2):
+    """Armed-path only (#3907): prove tenant-B->tenant-A is blocked, same-tenant flows.
+
+    Creates a SECOND tenant-A peer as the allow-control source, opens a TCP listener
+    on the tenant-A target Pod, then probes from tenant-B (deny half — should be
+    blocked) and from the second tenant-A peer (allow half — should reach). Returns
+    ``(deny_blocked, control_allowed)`` Optionals for ``netpol_probe.classify_dataplane``.
+
+    Never raises: any setup miss (no target Pod IP, second peer not Ready/locatable)
+    yields a ``None`` half, which the classifier degrades to inconclusive ->
+    control-plane, never a false ``enforced``. The caller adds ``sandbox_a2`` to its
+    cleanup list, so the extra peer is torn down whether or not it came up.
+    """
+    target_ip = getattr(getattr(pod_a, "status", None), "pod_ip", None)
+    if not target_ip:
+        return (None, None)
+
+    uid_a2 = _create_sandbox(custom, sandbox_name=sandbox_a2, tenant=_TENANT_A)
+    try:
+        _wait_for_sandbox_ready(custom, sandbox_name=sandbox_a2)
+    except Exception as exc:  # second peer never came up — allow half is inconclusive
+        log.warning("dataplane probe: second tenant-A peer not Ready (%s)", exc)
+        pod_a2 = None
+    else:
+        pod_a2 = _find_backing_pod(core, sandbox_uid=uid_a2, tenant=_TENANT_A) if uid_a2 else None
+
+    handle = netpol_probe.start_listener(
+        core, namespace=_NAMESPACE, pod_name=pod_a.metadata.name, port=_PROBE_PORT,
+    )
+    try:
+        b_connected = netpol_probe.exec_connection(
+            core, namespace=_NAMESPACE, pod_name=pod_b.metadata.name,
+            host=target_ip, port=_PROBE_PORT,
+        )
+        deny_blocked = (not b_connected) if b_connected is not None else None
+
+        if pod_a2 is None:
+            control_allowed = None
+        else:
+            control_allowed = netpol_probe.exec_connection(
+                core, namespace=_NAMESPACE, pod_name=pod_a2.metadata.name,
+                host=target_ip, port=_PROBE_PORT,
+            )
+        return (deny_blocked, control_allowed)
+    finally:
+        netpol_probe.stop_listener(handle)
+
+
 def run(scenario_name: str) -> tuple[str, str, dict]:
     """Admit a same-tenant-only ingress policy; verify it binds tenant-A, excludes tenant-B.
 
@@ -346,6 +399,10 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
     suffix = uuid.uuid4().hex[:8]
     sandbox_a = f"xtenant-a-{suffix}"
     sandbox_b = f"xtenant-b-{suffix}"
+    # Second tenant-A peer is the armed-probe allow-control source (created only when
+    # BENCH_NETPOL_DATAPLANE_PROBE is set). Named upfront so it is always in the
+    # cleanup list (delete is 404-tolerant, so listing an uncreated name is harmless).
+    sandbox_a2 = f"xtenant-a2-{suffix}"
     policy_name = f"xtenant-{suffix}"
 
     log.info(
@@ -401,6 +458,44 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
         excludes_b = not _selector_matches(selector_labels, labels_b)
 
         if is_same_tenant_only and binds_a and excludes_b:
+            # Data-plane probe (#3907) — default-off. When armed, upgrade the
+            # control-plane badge to "enforced" only on a clean two-sided proof
+            # (tenant-B blocked AND same-tenant reachable); FAIL on a breach; an
+            # inconclusive probe falls through to the control-plane PASS below.
+            if netpol_probe.dataplane_probe_enabled():
+                deny_blocked, control_allowed = _run_ingress_dataplane_probe(
+                    custom, core, pod_a=pod_a, pod_b=pod_b, sandbox_a2=sandbox_a2,
+                )
+                verdict, scope = netpol_probe.classify_dataplane(
+                    deny_blocked, control_allowed
+                )
+                if verdict == "enforced":
+                    return (
+                        "PASS",
+                        f"NetworkPolicy {policy_name} ENFORCED: the in-Pod probe "
+                        f"confirmed tenant-B->tenant-A is blocked on the wire while "
+                        f"same-tenant traffic still reaches the tenant-A Pod "
+                        f"{pod_a.metadata.name} — data-plane isolation verified, not "
+                        f"just admitted.",
+                        {"badge_scope": "enforced"},
+                    )
+                if verdict in ("breach", "over-block"):
+                    return (
+                        "FAIL",
+                        f"NetworkPolicy {policy_name} admitted+bound (control-plane "
+                        f"OK) but the in-Pod data-plane probe read {verdict}: "
+                        f"deny_blocked={deny_blocked}, control_allowed={control_allowed}. "
+                        f"The policy is declared but does NOT enforce the boundary on "
+                        f"the wire — an admitted-but-inert policy is not isolation.",
+                        {},
+                    )
+                # inconclusive: probe could not run cleanly — degrade to the
+                # control-plane badge (the admission proof) below.
+                log.info(
+                    "dataplane probe inconclusive (deny_blocked=%s, control_allowed=%s)"
+                    " — keeping control-plane badge",
+                    deny_blocked, control_allowed,
+                )
             return (
                 "PASS",
                 f"NetworkPolicy {policy_name} admitted (policyTypes={policy_types}, "
@@ -429,6 +524,6 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
     finally:
         _cleanup(
             custom, networking,
-            sandbox_names=[sandbox_a, sandbox_b],
+            sandbox_names=[sandbox_a, sandbox_b, sandbox_a2],
             policy_name=policy_name,
         )
