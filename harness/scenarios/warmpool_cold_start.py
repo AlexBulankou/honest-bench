@@ -272,8 +272,12 @@ def _wait_for_pool_warm(
 
 def _watch_one_claim(*, claim_name: str, deadline: float,
                      bound_at: dict[str, float],
-                     sandbox_names: dict[str, str]) -> None:
-    """Tight-poll a single claim until Ready+bound or deadline; record time.
+                     sandbox_names: dict[str, str],
+                     ttfe_enabled: bool,
+                     create_monotonic: float | None,
+                     ttfe_results: dict[str, tuple]) -> None:
+    """Tight-poll a single claim until Ready+bound or deadline; record time,
+    then — when TTFE is enabled — run the first-instruction probe IN THIS THREAD.
 
     Runs in its own thread with its own CustomObjectsApi. The Api object is
     per-thread but its urllib3 pool is the default ApiClient's shared pool, so
@@ -282,8 +286,24 @@ def _watch_one_claim(*, claim_name: str, deadline: float,
     re-coarsen the sub-second granularity. On first observation of Ready+bound it
     writes `bound_at[claim_name] = time.monotonic()` and the backing pod name
     `sandbox_names[claim_name] = status.sandbox.name` (dict item-assignment is
-    atomic under CPython) — the pod name is the exec target the TTFE probe needs
-    — and returns.
+    atomic under CPython) — the pod name is the exec target the TTFE probe needs.
+
+    ## Why the TTFE probe runs HERE (per-claim, at this claim's own bind)
+
+    Running the probe inside each claim's own watcher thread, the instant that
+    claim binds, is load-bearing for an honest warm TTFE. A serial probe pass
+    that runs only AFTER all claims have bound inflates every claim's
+    create->first-exec span two ways: (a) probe-after-full-join — a fast warm
+    claim is not probed until the SLOWEST cold claim binds, so its t1 inherits
+    the slowest-bind as a shared floor; and (b) serial accumulation — each probe
+    waits for every earlier-probed claim's exec round-trip. Both push the whole
+    histogram toward the slowest-cold-bind floor, so p50/p95 bunch high (e.g.
+    6.8s/7.6s) while the bind gate still passes sub-ceiling and thpt_under_5s
+    reads 0. Probing per-claim at its own bind makes t1 = its-own-bind + one exec
+    round-trip — the real activation latency the warm pool actually delivers.
+    The probe (`ttfe_probe.probe_first_instruction`) never raises on an
+    exec/cluster/RBAC error — it collapses all of them to (None, False), recorded
+    here as this claim's result — so one bad claim degrades only its own cell.
     """
     from kubernetes import client as k8s_client
 
@@ -304,20 +324,41 @@ def _watch_one_claim(*, claim_name: str, deadline: float,
             pod_name = (status.get("sandbox") or {}).get("name")
             if pod_name:
                 sandbox_names[claim_name] = pod_name
+            # t1-anchoring bind timestamp recorded BEFORE the probe runs, so the
+            # warm-tier bind-latency classification is unchanged — only the TTFE
+            # histogram moves to the honest per-claim measurement.
             bound_at[claim_name] = time.monotonic()
+            if ttfe_enabled and pod_name and create_monotonic is not None:
+                core_v1 = k8s_client.CoreV1Api()
+                ttfe_results[claim_name] = ttfe_probe.probe_first_instruction(
+                    core_v1,
+                    pod_name=pod_name,
+                    namespace=_NAMESPACE,
+                    create_monotonic=create_monotonic,
+                )
             return
         time.sleep(_POLL_S)
 
 
 def _measure_claim_latencies(
     claim_names: list[str], *, timeout_s: int,
-) -> tuple[dict[str, float], set[str], dict[str, str]]:
+    ttfe_enabled: bool = False,
+    create_times: dict[str, float] | None = None,
+) -> tuple[dict[str, float], set[str], dict[str, str], dict[str, tuple]]:
     """Measure each claim's Ready+bound latency with one thread per claim.
 
-    Returns (bound_at, pending, sandbox_names) where bound_at maps each resolved
-    claim to its monotonic bind-observation time, pending is the set that never
-    bound within `timeout_s`, and sandbox_names maps each bound claim to its
-    backing pod name (the exec target for the TTFE probe).
+    Returns (bound_at, pending, sandbox_names, ttfe_results) where bound_at maps
+    each resolved claim to its monotonic bind-observation time, pending is the set
+    that never bound within `timeout_s`, sandbox_names maps each bound claim to its
+    backing pod name (the exec target for the TTFE probe), and ttfe_results maps
+    each probed claim to its (ttfe_ms_or_None, exec_ok) tuple.
+
+    When `ttfe_enabled`, each watcher thread runs the first-instruction TTFE probe
+    inline the instant its own claim binds (see `_watch_one_claim`), so the probe
+    is CONCURRENT per claim — t1 = the claim's own bind + one exec round-trip, not
+    contaminated by the slowest cold-claim bind or by serial probe accumulation.
+    `create_times` supplies each claim's t0; a claim absent from it (or a missing
+    pod name) is left unprobed and surfaces downstream as a failed exec.
 
     Thread-per-claim (not single-threaded round-robin) is required because the
     scenario gates on a sub-second threshold: a round-robin sweep of N claims
@@ -334,14 +375,19 @@ def _measure_claim_latencies(
     """
     import threading
 
+    create_times = create_times or {}
     bound_at: dict[str, float] = {}
     sandbox_names: dict[str, str] = {}
+    ttfe_results: dict[str, tuple] = {}
     deadline = time.monotonic() + timeout_s
     threads = [
         threading.Thread(
             target=_watch_one_claim,
             kwargs={"claim_name": name, "deadline": deadline,
-                    "bound_at": bound_at, "sandbox_names": sandbox_names},
+                    "bound_at": bound_at, "sandbox_names": sandbox_names,
+                    "ttfe_enabled": ttfe_enabled,
+                    "create_monotonic": create_times.get(name),
+                    "ttfe_results": ttfe_results},
             daemon=True,
         )
         for name in claim_names
@@ -351,7 +397,7 @@ def _measure_claim_latencies(
     for t in threads:
         t.join(timeout=timeout_s + 5)
     pending = {name for name in claim_names if name not in bound_at}
-    return bound_at, pending, sandbox_names
+    return bound_at, pending, sandbox_names, ttfe_results
 
 
 def _classify_latencies(
@@ -426,13 +472,11 @@ def _activation_window_s(
     """Wall-clock span of the activation BURST: first create -> last bind.
 
     The throughput denominator (sandboxes/sec/node) is "how long did the whole
-    burst take to land", NOT the serial-probe span. Probes run serially in a loop
-    AFTER all claims bound, so the probe span is a function of probe
-    serialization, not of provisioning — using it would inflate window_s and
-    understate throughput. The honest window is the activation burst: from the
-    EARLIEST create (among claims that actually bound) to the LATEST bind. That
-    matches the doc's "~50s window" semantics and is independent of how the probe
-    loop is scheduled.
+    burst take to land", NOT a probe span. The honest window is the activation
+    burst: from the EARLIEST create (among claims that actually bound) to the
+    LATEST bind. That matches the doc's "~50s window" semantics and is independent
+    of how the probes are scheduled — it stays bind-anchored even though the TTFE
+    probes now run concurrently per claim (see _watch_one_claim).
 
     Returns None when no claim bound (no burst happened); the caller then has no
     throughput to report. Floors at 0.001s so a degenerate single-claim
@@ -474,46 +518,35 @@ def _assemble_ttfe_metrics(
     return m
 
 
-def _probe_all_claims(
-    core_v1,
-    *,
+def _assemble_probe_results(
     claim_names: list[str],
-    sandbox_names: dict[str, str],
-    create_times: dict[str, float],
-    bound_at: dict[str, float],
+    ttfe_results: dict[str, tuple],
 ) -> tuple[list[float], list[bool]]:
-    """Run the first-instruction TTFE probe against every fired claim.
+    """Collect the per-claim concurrent-probe results into histogram inputs.
+
+    Pure assembly — no I/O. The probes already ran CONCURRENTLY inside each
+    claim's watcher thread (see `_watch_one_claim`), depositing each claim's
+    (ttfe_ms_or_None, exec_ok) into `ttfe_results` at that claim's own bind moment.
+    This walks the fired-claim list in order and flattens those into the two
+    parallel lists the metrics core consumes.
 
     One exec_oks entry per claim FIRED (the locked contract: attempt total ==
-    len(exec_oks) == n). For a claim that bound, run the probe in its backing pod
-    with t0 = the claim's create-time; append exec_ok, and append the TTFE sample
-    only when the probe returned a latency (a failed exec contributes False to
+    len(exec_oks) == n == len(claim_names)). A claim absent from `ttfe_results`
+    never bound (or bound with no pod name / TTFE disabled) — record exec_ok=False
+    with no sample (attempted-never-executed) so it drags exec_success_rate
+    honestly. A present claim contributes its exec_ok, plus its TTFE sample only
+    when the probe returned a latency (a failed exec contributes False to
     exec_success_rate but NO sample to the histogram — a sandbox that never ran an
-    instruction has no honest first-instruction latency). For a claim that never
-    bound, record exec_ok=False with no sample (attempted-never-executed) so it
-    drags exec_success_rate honestly.
-
-    The probe never raises on exec/cluster/RBAC error — it collapses all of them
-    to (None, False) — so a single bad claim degrades its own cell, never crashes
-    the burst.
+    instruction has no honest first-instruction latency).
     """
     ttfe_ms_samples: list[float] = []
     exec_oks: list[bool] = []
     for name in claim_names:
-        if name not in bound_at:
+        result = ttfe_results.get(name)
+        if result is None:
             exec_oks.append(False)
             continue
-        pod_name = sandbox_names.get(name)
-        if not pod_name:
-            # Bound but no pod name observed — cannot exec; failed execution.
-            exec_oks.append(False)
-            continue
-        ttfe_ms_sample, exec_ok = ttfe_probe.probe_first_instruction(
-            core_v1,
-            pod_name=pod_name,
-            namespace=_NAMESPACE,
-            create_monotonic=create_times[name],
-        )
+        ttfe_ms_sample, exec_ok = result
         exec_oks.append(exec_ok)
         if ttfe_ms_sample is not None:
             ttfe_ms_samples.append(ttfe_ms_sample)
@@ -631,8 +664,11 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
             create_times[claim_names[-1]] - create_times[claim_names[0]],
         )
 
-        bound_at, timed_out, sandbox_names = _measure_claim_latencies(
-            claim_names, timeout_s=_BIND_TIMEOUT_S,
+        bound_at, timed_out, sandbox_names, ttfe_results = (
+            _measure_claim_latencies(
+                claim_names, timeout_s=_BIND_TIMEOUT_S,
+                ttfe_enabled=_TTFE_EXEC, create_times=create_times,
+            )
         )
 
         latencies: dict[str, float | None] = {}
@@ -668,13 +704,11 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
         # The harness lifts "n" to the top-level schema field so it renders as
         # "(n=N)"; it is never coerced into a metric.
         if _TTFE_EXEC and bound_at:
-            core_v1 = k8s_client.CoreV1Api()
-            ttfe_ms_samples, exec_oks = _probe_all_claims(
-                core_v1,
-                claim_names=claim_names,
-                sandbox_names=sandbox_names,
-                create_times=create_times,
-                bound_at=bound_at,
+            # Probes already ran CONCURRENTLY per claim, each at its own bind
+            # moment inside its watcher thread (the honest-TTFE fix — see
+            # _watch_one_claim). Here we only flatten the collected results.
+            ttfe_ms_samples, exec_oks = _assemble_probe_results(
+                claim_names, ttfe_results,
             )
             window_s = _activation_window_s(create_times, bound_at)
             sla_metrics = _assemble_ttfe_metrics(
