@@ -597,6 +597,75 @@ def test_matrix_bad_generated_at_dropped():
     assert "ask alex" not in out
 
 
+def _burst_scenario(metrics, n=10):
+    return {"name": "burst_create", "outcome": "PASS", "n": n, "sla_metrics": metrics}
+
+
+def test_burst_corroboration_inert_when_exec_absent():
+    # #3954: burst_create carries only the pod-Ready count today (no exec field) ⇒ INERT.
+    scen = _full_gvisor_scenarios() + [_burst_scenario({"sandboxes_ready_under_1s": 9})]
+    out = render.render_burst_corroboration(_matrix_results(scen))
+    assert out == ""
+
+
+def test_burst_corroboration_inert_when_no_burst_scenario():
+    out = render.render_burst_corroboration(_matrix_results(_full_gvisor_scenarios()))
+    assert out == ""
+
+
+def test_burst_corroboration_renders_gap_when_both_present():
+    scen = _full_gvisor_scenarios() + [
+        _burst_scenario({"sandboxes_ready_under_1s": 9, "sandboxes_exec_under_1s": 6})
+    ]
+    out = render.render_burst_corroboration(_matrix_results(scen))
+    assert "## Burst Create — TTFE Corroboration" in out
+    assert "| Pod-Ready <1s (weaker claim) | 9 |" in out
+    assert "| Executed first-instruction <1s (TTFE, stronger claim) | 6 |" in out
+    assert "| Ready-but-not-yet-run (gap) | 3 |" in out
+
+
+def test_burst_corroboration_exec_success_under_100_flags_fraction():
+    scen = _full_gvisor_scenarios() + [
+        _burst_scenario(
+            {
+                "sandboxes_ready_under_1s": 10,
+                "sandboxes_exec_under_1s": 8,
+                "exec_success_rate": 0.9,
+            },
+            n=10,
+        )
+    ]
+    out = render.render_burst_corroboration(_matrix_results(scen))
+    assert "| Execution success (Honesty Check) | 90% (9/10) ⚠️ |" in out
+
+
+def test_burst_corroboration_exec_success_100_renders_plain():
+    scen = _full_gvisor_scenarios() + [
+        _burst_scenario(
+            {
+                "sandboxes_ready_under_1s": 10,
+                "sandboxes_exec_under_1s": 10,
+                "exec_success_rate": 1.0,
+            },
+            n=10,
+        )
+    ]
+    out = render.render_burst_corroboration(_matrix_results(scen))
+    assert "| Execution success (Honesty Check) | 100% |" in out
+    assert "⚠️" not in out
+
+
+def test_burst_corroboration_bad_exec_value_dropped_then_inert():
+    # a non-numeric exec value fails the predicate ⇒ dropped ⇒ ready-only ⇒ INERT.
+    scen = _full_gvisor_scenarios() + [
+        _burst_scenario(
+            {"sandboxes_ready_under_1s": 9, "sandboxes_exec_under_1s": "soon (ask alex)"}
+        )
+    ]
+    out = render.render_burst_corroboration(_matrix_results(scen))
+    assert out == ""
+
+
 def test_scale_proof_renders_linearity_row():
     results = _matrix_results(
         _full_gvisor_scenarios(),

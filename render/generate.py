@@ -33,10 +33,10 @@ def _load_render():
     spec = importlib.util.spec_from_file_location("_bench_render", os.path.join(_HERE, "render.py"))
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
-    return mod.render_matrix, mod.render_scale_proof
+    return mod.render_matrix, mod.render_burst_corroboration, mod.render_scale_proof
 
 
-render_matrix, render_scale_proof = _load_render()
+render_matrix, render_burst_corroboration, render_scale_proof = _load_render()
 
 # Product -> results path, relative to the repo root (parent of render/).
 # The PUBLIC customer page is SANDBOX-ONLY (alex 2026-06-28): substrate demotes from a
@@ -97,8 +97,10 @@ def _repo_root():
 def build_readme(root=None):
     """Return the full README text: preamble + the 9-col Core Metrics matrix + Scale Proof.
 
-    For each present product we render the closed-schema Core Metrics matrix (render_matrix) and,
-    when a scale_proof object is present, the Scale Proof (Linearity Check) table after it.
+    For each present product we render the closed-schema Core Metrics matrix (render_matrix),
+    then — when the #3954 burst-create exec fields are present — the TTFE Corroboration block
+    (render_burst_corroboration; INERT/omitted otherwise), and, when a scale_proof object is
+    present, the Scale Proof (Linearity Check) table.
     """
     root = root or _repo_root()
     sections = [_PREAMBLE.rstrip()]
@@ -109,6 +111,9 @@ def build_readme(root=None):
         with open(path) as fh:
             results = json.load(fh)
         sections.append(render_matrix(results).rstrip())
+        corr = render_burst_corroboration(results)
+        if corr.strip():
+            sections.append(corr.rstrip())
         scale = render_scale_proof(results)
         if scale.strip():
             sections.append(scale.rstrip())

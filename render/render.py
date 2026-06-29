@@ -16,6 +16,7 @@ import sys
 from schema import (
     ACTIVATION_MODE_ROWS,
     BADGE_SCOPES,
+    BURST_CORROBORATION_FIELDS,
     DENSITY_SOURCE_SCENARIOS,
     GOAL_COLUMNS,
     HISTORY_FIELDS,
@@ -470,6 +471,91 @@ def render_matrix(results):
     gen = results.get("generated_at")
     if isinstance(gen, str) and _ISO.match(gen):
         lines.append(f"_generated-at: {gen}_")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _clean_burst_corroboration(scenarios):
+    """Find burst_create and closed-schema-clean its corroboration metrics (#3954).
+
+    Returns {ready, exec, n, exec_success_rate, exec_success_n} ONLY when BOTH the pod-Ready
+    count (sandboxes_ready_under_1s) and the executed-TTFE count (sandboxes_exec_under_1s) are
+    present — that BOTH-required gate is what keeps the block INERT until the #3954 exec fields
+    land (today's ready-only data renders nothing). Returns None otherwise. Any sla_metrics key
+    not in BURST_CORROBORATION_FIELDS, or failing its predicate, is dropped (closed schema).
+    """
+    if not isinstance(scenarios, list):
+        return None
+    for s in scenarios:
+        if not isinstance(s, dict) or s.get("name") != "burst_create":
+            continue
+        metrics = s.get("sla_metrics")
+        if not isinstance(metrics, dict):
+            return None
+        clean = {}
+        for key, ok in BURST_CORROBORATION_FIELDS.items():
+            if key in metrics:
+                try:
+                    if ok(metrics[key]):
+                        clean[key] = metrics[key]
+                except (TypeError, ValueError):
+                    pass
+        if "sandboxes_ready_under_1s" not in clean or "sandboxes_exec_under_1s" not in clean:
+            return None
+        n = s.get("n")
+        n = n if isinstance(n, int) and not isinstance(n, bool) and n >= 0 else 0
+        return {
+            "ready": clean["sandboxes_ready_under_1s"],
+            "exec": clean["sandboxes_exec_under_1s"],
+            "n": n,
+            "exec_success_rate": clean.get("exec_success_rate"),
+            "exec_success_n": clean.get("exec_success_n"),
+        }
+    return None
+
+
+def render_burst_corroboration(results):
+    """Render the burst-create TTFE corroboration block (#3954), or "" when INERT.
+
+    The headline burst count is POD-READY (the weaker claim — a pod can report Ready before it
+    can run your code). This block surfaces the stronger TTFE claim (the sandbox executed its
+    first instruction and returned a result <1s) alongside it, and the GAP between them —
+    sandboxes that reported Ready but had not yet run code, i.e. the over-claim a pod-Ready-only
+    headline would hide. Rendered ONLY when both counts are present (see
+    _clean_burst_corroboration), so the public page is byte-unchanged until a #3954 fire lands.
+    """
+    corr = _clean_burst_corroboration(results.get("scenarios"))
+    if not corr:
+        return ""
+    gap = corr["ready"] - corr["exec"]
+    lines = ["## Burst Create — TTFE Corroboration", ""]
+    lines.append(
+        "The headline burst count is **pod-Ready** — but a pod can report Ready before it can "
+        "run your code. TTFE is the stronger claim: the sandbox *executed its first instruction "
+        "and returned a result*. This block corroborates the two; the **gap** is sandboxes that "
+        "reported Ready but had not yet run code."
+    )
+    lines.append("")
+    header = ["Signal", "Count"]
+    lines.append("| " + " | ".join(header) + " |")
+    lines.append("|" + "|".join(["---"] * len(header)) + "|")
+    lines.append(f"| Pod-Ready <1s (weaker claim) | {_fmt_num(corr['ready'])} |")
+    lines.append(
+        f"| Executed first-instruction <1s (TTFE, stronger claim) | {_fmt_num(corr['exec'])} |"
+    )
+    lines.append(f"| Ready-but-not-yet-run (gap) | {_fmt_num(gap)} |")
+    if corr["exec_success_rate"] is not None:
+        n_total = corr["n"] or None
+        lines.append(
+            "| Execution success (Honesty Check) | "
+            + _exec_cell(corr["exec_success_rate"], n_total, corr["exec_success_n"])
+            + " |"
+        )
+    lines.append("")
+    lines.append(
+        "_Pod-Ready ≥ executed-TTFE by construction; the gap is the over-claim a pod-Ready "
+        "headline would hide._"
+    )
     lines.append("")
     return "\n".join(lines)
 
