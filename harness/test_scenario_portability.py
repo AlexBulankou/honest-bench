@@ -31,9 +31,12 @@ WHAT IT LOCKS (all pure — import + AST static analysis, zero cluster calls):
     else, so the suite's ONLY third-party dependency must be the declared set
     (today: kubernetes). This walks EVERY import (top-level AND deferred-in-function
     — a deferred `import google.cloud.storage` would crash mid-run on kind exactly
-    as a top-level one would) across the whole non-test harness source surface and
-    asserts each import name is stdlib, a local harness module, or declared in
-    requirements.txt. A future scenario PR that adds an undeclared dep fails HERE.
+    as a top-level one would) across BOTH packages the refresh runs — harness/
+    (`python3 -m harness.run`, step 2) AND render/ (`python3 -m render.generate`,
+    step 3) — and asserts each import name is stdlib, a local module, or declared in
+    requirements.txt. An undeclared dep in a scenario renders one fake FAIL cell; in
+    render/ it aborts the WHOLE refresh (render.generate is not try/except-wrapped).
+    A future PR that adds an undeclared dep to either surface fails HERE.
 
   test_cell_field_invariants
     Each Cell's substrate-gate fields are well-formed so the run loop's pending /
@@ -72,6 +75,15 @@ from harness.scenario_map import (
 
 _HARNESS_DIR = pathlib.Path(__file__).resolve().parent
 _SCENARIOS_PKG = "harness.scenarios"
+_REPO_ROOT = _HARNESS_DIR.parent
+# The reproducible surface the kind GH-runner executes is BOTH packages: it runs
+# `python3 -m harness.run` (step 2) AND `python3 -m render.generate` (step 3),
+# with only `pip install -r harness/requirements.txt` and nothing else. So the
+# dep-lock must walk render/ too — an undeclared import there crashes the refresh
+# at render.generate, which (unlike a per-cell scenario crash) is NOT wrapped in
+# try/except, so it aborts the whole run rather than rendering one fake FAIL cell.
+_RENDER_DIR = _REPO_ROOT / "render"
+_REPRODUCIBLE_DIRS = [_HARNESS_DIR, _RENDER_DIR]
 
 
 def _check(cond, msg):
@@ -137,14 +149,15 @@ def _declared_thirdparty() -> set[str]:
 
 
 def _local_module_names() -> set[str]:
-    """Module basenames resolvable WITHIN the harness tree (so script-mode bare
-    imports like `import metrics` / `from _kube import ...` are recognised as
-    local, not third-party)."""
-    names = {"harness", "scenarios"}
-    for path in _HARNESS_DIR.rglob("*.py"):
-        names.add(path.stem)
-        if path.name == "__init__.py":
-            names.add(path.parent.name)
+    """Module basenames resolvable within the reproducible surface (harness/ +
+    render/), so script-mode bare imports like `import metrics` / `from _kube
+    import ...` are recognised as local, not third-party."""
+    names = {"harness", "scenarios", "render"}
+    for base in _REPRODUCIBLE_DIRS:
+        for path in base.rglob("*.py"):
+            names.add(path.stem)
+            if path.name == "__init__.py":
+                names.add(path.parent.name)
     return names
 
 
@@ -168,19 +181,24 @@ def test_no_undeclared_thirdparty_import_in_reproducible_surface():
     local = _local_module_names()
     allowed = stdlib | declared | local
     offenders: list[str] = []
-    for path in sorted(_HARNESS_DIR.rglob("*.py")):
-        if path.name.startswith("test_"):
-            continue
-        tree = ast.parse(path.read_text())
-        for name in sorted(_imported_top_names(tree)):
-            if name not in allowed:
-                rel = path.relative_to(_HARNESS_DIR.parent)
-                offenders.append(f"{rel}: imports {name!r}")
+    for base in _REPRODUCIBLE_DIRS:
+        for path in sorted(base.rglob("*.py")):
+            if path.name.startswith("test_"):
+                continue
+            tree = ast.parse(path.read_text())
+            for name in sorted(_imported_top_names(tree)):
+                if name not in allowed:
+                    rel = path.relative_to(_REPO_ROOT)
+                    offenders.append(f"{rel}: imports {name!r}")
     _check(
         not offenders,
-        "undeclared third-party import(s) in the kind-reproducible surface — add "
-        "to harness/requirements.txt or the kind GH-runner will crash this cell "
-        "into a fake FAIL:\n  " + "\n  ".join(offenders),
+        "undeclared third-party import(s) in the kind-reproducible surface "
+        "(harness/ + render/, both run by the GH-runner with only "
+        "`pip install -r harness/requirements.txt`) — add to "
+        "harness/requirements.txt, or the refresh crashes: an undeclared import "
+        "in a scenario renders one fake FAIL cell, but one in render/ aborts the "
+        "WHOLE refresh at render.generate (not try/except-wrapped):\n  "
+        + "\n  ".join(offenders),
     )
 
 
