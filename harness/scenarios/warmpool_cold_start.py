@@ -719,13 +719,17 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
                 latencies[name] = None
                 log.warning("claim %s timed out before Ready+bound", name)
 
-        # Sub-gap 2 (live read-back, gke-sandbox only): the counted sandboxes are the
-        # bound claims; on a gke-sandbox substrate verify each one's backing Pod
+        # Sub-gap 2 (live read-back, any isolation substrate): the counted sandboxes are
+        # the bound claims; on a substrate that makes a verifiable runtime claim
+        # (gke-sandbox -> gvisor, gke-kata -> kata) verify each one's backing Pod
         # actually scheduled under the pinned runtime before publishing the
-        # runtime-labeled row. Crash-FAILs on a silent runc fallback. kind/gke skip
-        # this (no runtime claim to verify, so the path stays read-free there). Runs
-        # post-measurement so it never perturbs the measured bind latency.
-        if _CLUSTER_SUBSTRATE == "gke-sandbox":
+        # runtime-labeled row. Crash-FAILs on a silent runc fallback. kind/gke skip this
+        # (required_runtime_for_substrate -> None, no runtime claim to verify, so the
+        # path stays read-free there). Runs post-measurement so it never perturbs the
+        # measured bind latency. The gate condition shares the single substrate->runtime
+        # source of truth with the sub-gap-1 consistency guard above, which already
+        # proved _RUNTIME_CLASS == the required runtime for any ruled substrate.
+        if rc.required_runtime_for_substrate(_CLUSTER_SUBSTRATE) is not None:
             bound_sandbox_names = [
                 sandbox_names[n] for n in claim_names if n in sandbox_names
             ]

@@ -151,9 +151,49 @@ def test_consistency_gke_sandbox_kata_raises():
 
 
 def test_consistency_unconstrained_substrates_never_raise():
-    for sub in ("kind", "gke", "gke-kata", "anything"):
+    for sub in ("kind", "gke", "anything"):
         for cls in ("", rc.GVISOR, rc.KATA):
             rc.assert_substrate_runtime_consistency(sub, cls)  # no rule => no raise
+
+
+def test_consistency_gke_kata_requires_kata_ok():
+    rc.assert_substrate_runtime_consistency("gke-kata", rc.KATA)  # no raise
+
+
+def test_consistency_gke_kata_unset_runtime_raises():
+    _assert_raises(lambda: rc.assert_substrate_runtime_consistency("gke-kata", ""))
+
+
+def test_consistency_gke_kata_gvisor_raises():
+    # gke-kata banner claims Kata; pinning gvisor under it is a false headline.
+    _assert_raises(lambda: rc.assert_substrate_runtime_consistency("gke-kata", rc.GVISOR))
+
+
+# ---- required_runtime_for_substrate: the shared substrate->runtime source of truth ----
+
+def test_required_runtime_gke_sandbox_is_gvisor():
+    assert rc.required_runtime_for_substrate("gke-sandbox") == rc.GVISOR
+
+
+def test_required_runtime_gke_kata_is_kata():
+    assert rc.required_runtime_for_substrate("gke-kata") == rc.KATA
+
+
+def test_required_runtime_unconstrained_is_none():
+    # kind/gke/unknown make no isolation claim -> None -> producer skips the read-back.
+    for sub in ("kind", "gke", "anything", ""):
+        assert rc.required_runtime_for_substrate(sub) is None
+
+
+def test_required_runtime_agrees_with_consistency_guard():
+    # The verify-gate and the consistency guard share one source: for every ruled
+    # substrate, pinning the required runtime is consistent and anything else raises.
+    for sub in ("gke-sandbox", "gke-kata"):
+        req = rc.required_runtime_for_substrate(sub)
+        assert req is not None
+        rc.assert_substrate_runtime_consistency(sub, req)  # required pin => no raise
+        other = rc.KATA if req == rc.GVISOR else rc.GVISOR
+        _assert_raises(lambda: rc.assert_substrate_runtime_consistency(sub, other))
 
 
 # ---- classify_runtime_violations: observed pairs -> violations ----

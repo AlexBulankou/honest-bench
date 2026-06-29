@@ -102,12 +102,27 @@ _RUNTIME_SCHEDULING: dict[str, dict] = {
 
 # substrate banner value -> the runtime_class that banner's isolation claim REQUIRES.
 # A gke-sandbox banner asserts gVisor isolation, so the pinned runtime MUST be gvisor;
-# otherwise the published row would be a runc number wearing a gVisor label. Only the
-# verifiable rule is seeded — other substrates (kind/gke) make no isolation claim, so
-# they impose no constraint and a missing key is a no-op (never a fabricated rule).
+# a gke-kata banner asserts Kata+microVM isolation, so the pin MUST be kata; otherwise
+# the published row would be a runc number wearing an isolation label. Only verifiable
+# rules are seeded — other substrates (kind/gke) make no isolation claim, so they impose
+# no constraint and a missing key is a no-op (never a fabricated rule).
 _SUBSTRATE_REQUIRED_RUNTIME: dict[str, str] = {
     "gke-sandbox": GVISOR,
+    "gke-kata": KATA,
 }
+
+
+def required_runtime_for_substrate(substrate: str) -> Optional[str]:
+    """The runtime_class a substrate banner's isolation claim REQUIRES, or None.
+
+    Single source of truth for both the pure consistency guard
+    (``assert_substrate_runtime_consistency``) and the live runtime read-back gate in
+    the producers: a substrate with a seeded rule (gke-sandbox -> gvisor, gke-kata ->
+    kata) makes a verifiable runtime claim, so the bound-Pod runtime MUST be checked
+    before its row publishes; a substrate with no rule (kind/gke) returns None and the
+    producer skips the read-back (no isolation claim to verify, path stays read-free).
+    """
+    return _SUBSTRATE_REQUIRED_RUNTIME.get(substrate)
 
 
 def resolve_scheduling(runtime_class: str) -> tuple[list[dict], dict]:
@@ -181,7 +196,7 @@ def assert_substrate_runtime_consistency(
     posture) before the cluster is touched, so the mismatch is caught fail-fast. A
     substrate with no seeded rule (kind/gke) imposes no constraint.
     """
-    required = _SUBSTRATE_REQUIRED_RUNTIME.get(substrate)
+    required = required_runtime_for_substrate(substrate)
     if required is not None and runtime_class != required:
         raise RuntimeError(
             f"runtime_class refuses a {substrate!r}-labeled result while "
