@@ -224,3 +224,37 @@ def single_sample_ttfe_point(
         metrics["ttfe_p50_ms"] = round(p, 1)
         metrics["ttfe_p95_ms"] = round(p, 1)
     return metrics
+
+
+def multi_sample_ttfe_point(
+    ttfe_ms_samples: Sequence[Optional[Real]], exec_oks: Sequence[bool]
+) -> dict[str, float]:
+    """N-sample TTFE metrics for a REPEATED one-shot activation scenario (resume).
+
+    Generalizes ``single_sample_ttfe_point`` from one activation to N: the
+    resume-from-suspend cell can loop N suspend->resume cycles (the cycle-count
+    knob) so a single noisy resume sample becomes a real p50/p95 distribution.
+    Like the single-sample form it emits the percentile pair + exec-success + the
+    sample count n, and OMITS throughput (a per-node rate over a handful of
+    activations is meaningless) and density (measured once via the warm-pool
+    DENSITY_SOURCE_SCENARIO, never per activation).
+
+    n is the number of ATTEMPTED activations (len(exec_oks)); exec_success_rate is
+    over all attempts so a failed cycle drags it down honestly. The percentile keys
+    appear iff >=1 cycle produced a latency — a failed exec contributes None, is
+    excluded from the distribution, but still counts against exec_success_rate.
+
+    For N=1 this returns output byte-identical to ``single_sample_ttfe_point``, so
+    the default (cycle_count=1) emit is unchanged.
+    """
+    if not exec_oks:
+        raise ValueError("multi_sample_ttfe_point of empty attempt set")
+    metrics: dict[str, float] = {
+        "exec_success_rate": exec_success_rate(exec_oks),
+        "n": len(exec_oks),
+    }
+    present = [float(t) for t in ttfe_ms_samples if t is not None]
+    if present:
+        metrics["ttfe_p50_ms"] = round(percentile(present, 50), 1)
+        metrics["ttfe_p95_ms"] = round(percentile(present, 95), 1)
+    return metrics

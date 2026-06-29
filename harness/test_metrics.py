@@ -262,6 +262,85 @@ def test_single_sample_point_merge_preserves_pending_reason():
     _check("n" not in sla, "n lifted out of sla_metrics")
 
 
+def test_multi_sample_n1_identical_to_single_sample_happy():
+    # The default (cycle_count=1) emit must be byte-identical to the legacy
+    # single-sample form, so the resume row is page-unchanged when the knob is
+    # not set.
+    single = m.single_sample_ttfe_point(3500.0, True)
+    multi = m.multi_sample_ttfe_point([3500.0], [True])
+    _check(multi == single, "multi(n=1) == single_sample (happy path)")
+
+
+def test_multi_sample_n1_identical_to_single_sample_failed():
+    single = m.single_sample_ttfe_point(None, False)
+    multi = m.multi_sample_ttfe_point([None], [False])
+    _check(multi == single, "multi(n=1) == single_sample (failed exec)")
+
+
+def test_multi_sample_happy_distribution():
+    # N>1 all-exec-ok -> real p50/p95 over the samples, n=N, exec rate 1.0,
+    # and still NO throughput / NO density (one-shot activation shape).
+    samples = [1000.0, 2000.0, 3000.0, 4000.0, 5000.0]
+    out = m.multi_sample_ttfe_point(samples, [True] * 5)
+    _check(out["n"] == 5, "multi n==5")
+    _check(out["exec_success_rate"] == 1.0, "multi exec rate 1.0")
+    _check(_close(out["ttfe_p50_ms"], m.percentile(samples, 50)),
+           "multi p50 matches percentile over samples")
+    _check(_close(out["ttfe_p95_ms"], m.percentile(samples, 95)),
+           "multi p95 matches percentile over samples")
+    _check("thpt_under_5s_per_node" not in out, "multi omits throughput")
+    _check("density_per_vcpu" not in out, "multi omits density")
+
+
+def test_multi_sample_mixed_exec_excludes_failed_from_distribution():
+    # A failed cycle contributes None (excluded from the latency distribution)
+    # but still counts against exec_success_rate and n.
+    out = m.multi_sample_ttfe_point([1000.0, None, 3000.0], [True, False, True])
+    _check(out["n"] == 3, "mixed n==3 (all attempts counted)")
+    _check(_close(out["exec_success_rate"], round(2 / 3, 4)),
+           "mixed exec rate = 2/3")
+    _check(_close(out["ttfe_p50_ms"], m.percentile([1000.0, 3000.0], 50)),
+           "mixed p50 over present samples only")
+    _check(_close(out["ttfe_p95_ms"], m.percentile([1000.0, 3000.0], 95)),
+           "mixed p95 over present samples only")
+
+
+def test_multi_sample_all_failed_omits_percentiles():
+    out = m.multi_sample_ttfe_point([None, None], [False, False])
+    _check(out["n"] == 2, "all-failed n==2")
+    _check(out["exec_success_rate"] == 0.0, "all-failed exec rate 0.0")
+    _check("ttfe_p50_ms" not in out, "all-failed omits p50")
+    _check("ttfe_p95_ms" not in out, "all-failed omits p95")
+
+
+def test_multi_sample_empty_attempts_raises():
+    raised = False
+    try:
+        m.multi_sample_ttfe_point([], [])
+    except ValueError:
+        raised = True
+    _check(raised, "multi_sample on empty attempt set raises")
+
+
+def test_multi_sample_merge_lifts_n_and_preserves_pending_reason():
+    # The N>1 suspend_resume merge contract, validated offline: gap-persists path
+    # carries pending_reason, we merge the N-sample TTFE point, run.py lifts n +
+    # pending_reason to the scenario top level, the rest coerces cleanly.
+    base = {"pending_reason": "upstream-blocked"}
+    point = m.multi_sample_ttfe_point([4000.0, 6000.0, 8000.0], [True, True, True])
+    merged = {**base, **point}
+    raw = _lift_like_run_py(merged, "suspend_resume", "pending")
+    coerced = rs._coerce_scenario(raw)
+    _check(coerced.get("pending_reason") == "upstream-blocked",
+           "pending_reason survives coerce on pending outcome (N>1)")
+    _check(coerced["n"] == 3, "n=3 lifted + survives coerce")
+    sla = coerced["sla_metrics"]
+    _check(_close(sla["ttfe_p50_ms"], m.percentile([4000.0, 6000.0, 8000.0], 50)),
+           "N>1 p50 survives merge+coerce")
+    _check("pending_reason" not in sla, "pending_reason lifted out of sla_metrics")
+    _check("n" not in sla, "n lifted out of sla_metrics")
+
+
 def _run_all():
     tests = [v for k, v in sorted(globals().items())
              if k.startswith("test_") and callable(v)]
