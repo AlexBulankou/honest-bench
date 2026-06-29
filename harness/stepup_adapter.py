@@ -29,9 +29,17 @@ honesty spine: it never turns a missing scalar into a fabricated value, it just 
 
 The verdict vocabulary is identical on both sides (the 4-value set locked in the schema),
 so no remap is needed; an unknown verdict is left for `_coerce_stepup` to reject.
+
+`enrich_pareto_cost` is the optional second pass that lights up the item-4 COST axis:
+after flattening, it stamps each Pareto point's `cost_usd_per_1k_ready` from that point's
+measured `ready_per_s` and the record's `node_count` + `machine_type` (via `cost.py`),
+keeping the same honesty spine — a None cost (unknown price, no measured throughput)
+leaves the key absent rather than fabricating one.
 """
 
 from __future__ import annotations
+
+from . import cost as _cost
 
 
 def stepup_nested_to_flat(rec):
@@ -64,5 +72,45 @@ def stepup_nested_to_flat(rec):
     measured_at = rec.get("measured_at")
     if measured_at:
         flat["measured_at"] = measured_at
+
+    return flat
+
+
+def enrich_pareto_cost(flat, *, usd_per_node_hour=None):
+    """Populate `cost_usd_per_1k_ready` on each Pareto point of a flat record.
+
+    The a#3960 item-4 cost axis: the schema reserved `cost_usd_per_1k_ready` as an
+    optional Pareto-point field and `cost.cost_usd_per_1k_ready` computes it, but until
+    something joins the two the field rendered permanently ``pending``. This is that
+    join in the adapter path — it walks the flattened `pareto_points` and stamps each
+    point's measured `ready_per_s` against the record's cluster shape (`node_count` +
+    `machine_type`, both already lifted by `stepup_nested_to_flat`), with an optional
+    explicit `usd_per_node_hour` that overrides the machine_type list-price fallback.
+
+    Honesty spine (mirrors the cost helper's own posture): the cost is written ONLY when
+    `cost_usd_per_1k_ready` returns a real number. A None result — unknown machine_type
+    with no explicit rate, a non-positive/None `ready_per_s`, a missing/non-positive
+    `node_count` — leaves the key ABSENT (honest ``pending``), never a fabricated 0 or a
+    guessed cost. Mutates and returns `flat` in place; a non-list `pareto_points` (the
+    nothing-measured path) is a no-op.
+    """
+    points = flat.get("pareto_points")
+    if not isinstance(points, list):
+        return flat
+
+    node_count = flat.get("node_count")
+    machine_type = flat.get("machine_type")
+
+    for pt in points:
+        if not isinstance(pt, dict):
+            continue
+        c = _cost.cost_usd_per_1k_ready(
+            pt.get("ready_per_s"),
+            node_count=node_count,
+            usd_per_node_hour=usd_per_node_hour,
+            machine_type=machine_type,
+        )
+        if c is not None:
+            pt["cost_usd_per_1k_ready"] = c
 
     return flat
