@@ -1,0 +1,157 @@
+# Refresh the gke-sandbox (gVisor) honest-benchmark headline — MANUAL-ONLY.
+#
+# This is the gVisor counterpart to refresh.yml (the kind path). The
+# GitHub-hosted runner has no gVisor runtime, so the kind workflow renders the
+# isolation cells `pending (requires-gvisor-runtime)` — honest, but it cannot
+# measure the gke-sandbox throughput headline. This workflow closes that gap the
+# honest way: it provisions a FRESH, EPHEMERAL GKE node pool with the gVisor
+# runtime (`--sandbox type=gvisor`), installs the SAME upstream controller from
+# main as the kind path, fires the burst-create headline under
+# runtimeClassName=gvisor, renders, runs the public-safety gate fail-closed, and
+# opens a PR with the result. The cluster is torn down in an always() step.
+#
+# Honest by construction: a fresh node pool means an empty containerd cache (a
+# genuine cold pull), the controller is the public upstream main image (no fork),
+# and BENCH_CLUSTER_SUBSTRATE=gke-sandbox + BURST_CREATE_RUNTIME_CLASS=gvisor arm
+# the burst-create read-back guard that refuses to publish a gke-sandbox cell
+# unless every backing pod actually landed on the gvisor RuntimeClass. So the
+# published number is provably gVisor, not just labelled — and reproducible by
+# anyone with a GCP project (point this workflow's vars at your own).
+#
+# SCHEDULE DISABLED — same #16/#973 clobber-guard as refresh.yml, in the other
+# direction. refresh.yml's schedule is off so a kind run never DOWNGRADES the
+# gVisor headline; this workflow's schedule is off so a real GKE cluster is never
+# spun on a cron (ongoing spend) and never auto-merges a headline shift. Both
+# refreshes are workflow_dispatch-only and PR-the-result; a human reviews the
+# resulting headline change before merge.
+#
+# PRE-SIZED / NOT-YET-LIVE: this workflow needs three repo secrets to run (it is
+# inert without them — dispatch fails fast at the auth step, it can never
+# auto-fire). Keyless GCP auth via Workload Identity Federation is the secure
+# default for a PUBLIC repo (no long-lived key stored). Wiring is tracked in the
+# AlexBulankou/a s-dev issue referenced from the PR that adds this file.
+#   secrets.GCP_WIF_PROVIDER   — full WIF provider resource name
+#   secrets.GCP_SERVICE_ACCOUNT — SA email the provider impersonates (needs
+#                                 container.admin to create/delete the cluster)
+#   secrets.GCP_PROJECT        — the GCP project id (kept in a secret, not the
+#                                 workflow, so no project id ships in the public repo)
+
+name: refresh-gke-sandbox
+
+on:
+  # schedule: DISABLED (#16/#973) — a real GKE gVisor cluster must never be spun
+  # on an unattended cron (spend) nor auto-merge a headline shift. Manual only.
+  workflow_dispatch:
+    inputs:
+      pool_replicas:
+        description: "burst size K (warm slots == claims fired)"
+        required: false
+        default: "10"
+      machine_type:
+        description: "GCE machine type for the gVisor node pool"
+        required: false
+        default: "e2-standard-16"
+      region:
+        description: "GKE region"
+        required: false
+        default: "us-central1"
+
+permissions:
+  contents: write
+  pull-requests: write
+  id-token: write  # required for keyless WIF auth
+
+concurrency:
+  group: refresh-gke-sandbox
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    env:
+      CLUSTER: hb-gvisor-ci-${{ github.run_id }}
+      REGION: ${{ github.event.inputs.region || 'us-central1' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install harness deps
+        run: pip install -r harness/requirements.txt
+
+      - name: Authenticate to GCP (keyless WIF)
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ secrets.GCP_WIF_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+        with:
+          project_id: ${{ secrets.GCP_PROJECT }}
+
+      - name: Create ephemeral gVisor cluster
+        run: |
+          gcloud container clusters create "$CLUSTER" \
+            --project "${{ secrets.GCP_PROJECT }}" \
+            --region "$REGION" \
+            --release-channel rapid \
+            --machine-type "${{ github.event.inputs.machine_type || 'e2-standard-16' }}" \
+            --node-locations "$REGION-a" \
+            --num-nodes 1 \
+            --enable-autoscaling --min-nodes 1 --max-nodes 3 \
+            --sandbox type=gvisor \
+            --no-enable-basic-auth --no-issue-client-certificate
+
+      - name: Get cluster credentials
+        uses: google-github-actions/get-gke-credentials@v2
+        with:
+          cluster_name: ${{ env.CLUSTER }}
+          location: ${{ env.REGION }}
+
+      - name: Install OSS controller from upstream main
+        run: bash recipe/install-controller-from-main.sh
+
+      - name: Run sandbox harness (gke-sandbox / gVisor)
+        env:
+          BENCH_CLUSTER_SUBSTRATE: gke-sandbox
+          BURST_CREATE_RUNTIME_CLASS: gvisor
+          BURST_CREATE_POOL_REPLICAS: ${{ github.event.inputs.pool_replicas || '10' }}
+        run: python3 -m harness.run --product sandbox
+
+      - name: Render README tables from results
+        run: python3 -m render.generate
+
+      - name: Public-safety gate (fail-closed)
+        run: bash scripts/check-public-safety.sh
+
+      - name: Open refresh PR
+        uses: peter-evans/create-pull-request@v6
+        with:
+          branch: auto/refresh-gke-sandbox
+          title: "data: auto-refresh gke-sandbox (gVisor) benchmark headline"
+          commit-message: "data: auto-refresh benchmark results (substrate=gke-sandbox, gVisor)"
+          body: |
+            Automated gke-sandbox (gVisor) benchmark refresh from a manual dispatch.
+
+            - substrate: `gke-sandbox` — fresh ephemeral node pool with `--sandbox type=gvisor`
+            - burst fired under `runtimeClassName=gvisor`; the burst-create read-back guard confirmed every backing pod landed on the gvisor RuntimeClass (a runc fallback crash-fails, never ships)
+            - results regenerated from `sandbox/results/latest.json`
+            - public-safety scanner passed (fail-closed gate before this PR opened)
+
+            Review the headline change before merge.
+          add-paths: |
+            sandbox/results/latest.json
+            README.md
+
+      - name: Tear down ephemeral cluster
+        if: always()
+        run: |
+          gcloud container clusters delete "$CLUSTER" \
+            --project "${{ secrets.GCP_PROJECT }}" \
+            --region "$REGION" \
+            --quiet || true
