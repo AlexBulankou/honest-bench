@@ -224,6 +224,94 @@ def test_emit_to_render_matrix_convergence_gvisor_doc_rows():
     assert "| Kata + microVM | Resume-from-suspend | pending | pending | pending | pending | pending | N/A | pending |" in out
 
 
+def test_emit_to_render_scale_proof_convergence_doc_linearity():
+    """End-to-end convergence for the SECOND public table: the REAL metrics.py producers
+    (density_per_vcpu + throughput_per_node + retention) -> _clean_scale_proof (the closed
+    SCALE_PROOF_FIELDS guard) -> render_scale_proof (the LIVE public path — generate.build_readme
+    renders this table right after the matrix, render/generate.py:111-112).
+
+    The sibling of test_emit_to_render_matrix_convergence_* above, for the Scale Proof (Linearity
+    Check) table. The matrix test guards the 9 metric cells; this guards the linearity table whose
+    contract is metrics.{density_per_vcpu,throughput_per_node,retention} -> the closed scale_proof
+    guard -> render_scale_proof. Without this, a key-name drift on the scale_proof object (e.g. a
+    producer renaming density_retention/thpt_retention, or a scale_points shape change) would make
+    _clean_scale_proof silently drop the ratio -> the cell renders `pending` (or the whole table
+    vanishes) with NO test failing. We feed synthetic raw samples through the ACTUAL producers,
+    engineered to land on the doc's flat-linearity claim (~1.88/vCPU held across 1->2->4 nodes,
+    throughput held at 4 sb/s/node), and assert (a) every producer-emitted scale_proof key
+    survives the closed guard with NO drop, and (b) the table renders EXACTLY the doc's linearity
+    row with the asymmetric ✅ verdict.
+
+    Why value-exact (not just non-pending): thpt_retention has NO per-point fallback (the locked
+    contract — the producer MUST emit it), so a dropped key renders the throughput cell `pending`,
+    and a unit/format regression renders a wrong ratio -- both silent on a non-pending check.
+    """
+    metrics = _load_metrics()
+    if metrics is None:
+        print("  (skip: harness metrics core not in-tree / not importable)")
+        return
+
+    # density via the REAL producer for nodes 1/2/4 — all land on the locked 1.88/vCPU basis
+    # (per-node-allocatable denominator, NOT cluster-wide capacity), so density holds flat.
+    densities = [
+        metrics.density_per_vcpu(188, 100.0),   # 1 node
+        metrics.density_per_vcpu(376, 200.0),   # 2 nodes
+        metrics.density_per_vcpu(752, 400.0),   # 4 nodes
+    ]
+    # throughput via the REAL producer: 200 sb under 5s in a 50s window on 1 node = 4 sb/s/node;
+    # 800 sb under 5s in the same window on 4 nodes = 4 sb/s/node — i.e. per-node thpt holds flat.
+    thpt_1 = metrics.throughput_per_node([600.0] * 200, metrics.THRESHOLD_5S_MS, 50.0, 1)
+    thpt_4 = metrics.throughput_per_node([600.0] * 800, metrics.THRESHOLD_5S_MS, 50.0, 4)
+    density_retention = metrics.retention(densities[0], densities[-1])
+    thpt_retention = metrics.retention(thpt_1, thpt_4)
+
+    scale_proof = {
+        "scale_points": [
+            {"node_count": 1, "density": densities[0]},
+            {"node_count": 2, "density": densities[1]},
+            {"node_count": 4, "density": densities[2]},
+        ],
+        "density_retention": density_retention,
+        "thpt_retention": thpt_retention,
+    }
+    results = {
+        "product": "sandbox",
+        "generated_at": "2026-06-29T03:00:00Z",
+        "provenance": {"runtime": "gvisor", "cluster_substrate": "gke", "node_count": 4},
+        "scenarios": [],
+        "scale_proof": scale_proof,
+    }
+
+    # (a) field-level convergence: every producer-emitted ratio survives the closed guard. A drop
+    # would null the ratio (thpt_retention has no per-point fallback) -> the cell renders pending.
+    cleaned = render._clean_scale_proof(results)
+    assert cleaned is not None, (
+        "emit/render schema DRIFT: the closed scale_proof guard rejected a producer-shaped "
+        f"object outright -- the whole Scale Proof table would vanish.\n{scale_proof}"
+    )
+    assert cleaned["density_retention"] == density_retention, (
+        "emit/render DRIFT on density_retention: producer emitted "
+        f"{density_retention}, guard kept {cleaned['density_retention']}"
+    )
+    assert cleaned["thpt_retention"] == thpt_retention, (
+        "emit/render DRIFT on thpt_retention (NO per-point fallback): producer emitted "
+        f"{thpt_retention}, guard kept {cleaned['thpt_retention']} -- the throughput cell "
+        "would render pending."
+    )
+    assert [p["density"] for p in cleaned["points"]] == densities, (
+        "emit/render DRIFT on scale_points: producer densities "
+        f"{densities}, guard kept {[p['density'] for p in cleaned['points']]}"
+    )
+
+    # (b) the table renders EXACTLY the doc's flat-linearity row. retention 1.0 >= 0.9 reads ✅
+    # (the asymmetric verdict); density verdict carries the per-node sequence inline.
+    out = render.render_scale_proof(results)
+    assert "## Scale Proof (Linearity Check)" in out
+    assert "| 1 → 2 → 4 | ✅ Yes (1.88 → 1.88 → 1.88) | ✅ Yes |" in out, (
+        "scale-proof linearity row drifted from the doc's flat claim:\n" + out
+    )
+
+
 def _run_all():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:
