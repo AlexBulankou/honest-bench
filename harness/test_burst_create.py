@@ -22,7 +22,14 @@ These cover the two PURE functions on the BENCH_TTFE_EXEC path:
 
 from __future__ import annotations
 
-from .scenarios import burst_create as bc
+# Make this file runnable BOTH as `python3 harness/test_x.py` and
+# `python3 -m harness.test_x` by putting the repo root on sys.path before
+# the absolute `from harness import ...` below (mirrors test_warm_vs_cold.py).
+import os as _os
+import sys as _sys
+_sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
+
+from harness.scenarios import burst_create as bc
 
 
 def _check(cond, msg):

@@ -16,8 +16,15 @@ cell that does not declare one).
 
 from __future__ import annotations
 
-from . import run
-from .scenario_map import SANDBOX_CELLS, Cell
+# Make this file runnable BOTH as `python3 harness/test_x.py` and
+# `python3 -m harness.test_x` by putting the repo root on sys.path before
+# the absolute `from harness import ...` below (mirrors test_warm_vs_cold.py).
+import os as _os
+import sys as _sys
+_sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
+
+from harness import run
+from harness.scenario_map import SANDBOX_CELLS, Cell
 
 
 def _check(cond, msg):
