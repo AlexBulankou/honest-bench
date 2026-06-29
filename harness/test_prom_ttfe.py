@@ -275,6 +275,131 @@ def test_histogram_delta_subtracts_and_detects_reset():
     _check(p.histogram_delta(e, s) is None, "reset (end<start) -> None at the Histogram level")
 
 
+# ---------------------------------------------------------------- sandbox_template aggregation
+#
+# The controller emits one histogram series per (launch_type, sandbox_template) pair. The
+# PUBLIC page surfaces latency ONLY by launch_type, so the parser must SUM the template series
+# per launch_type before taking a percentile -- and the template label VALUES (internal
+# scenario names) must never reach the output. The template names below are SYNTHETIC.
+
+# warm has two templates with DIFFERENT distributions, so first-template-wins (the old bug)
+# would give a DIFFERENT, wrong answer than the aggregate: alpha all <=100ms, beta all in
+# (1000,2500]. cold is single-template.
+_WARM_ALPHA = [("100", 50), ("250", 50), ("500", 50), ("1000", 50), ("2500", 50), ("+Inf", 50)]
+_WARM_BETA = [("100", 0), ("250", 0), ("500", 0), ("1000", 0), ("2500", 50), ("+Inf", 50)]
+_COLD_GAMMA = [("1000", 0), ("2500", 6), ("5000", 9), ("+Inf", 10)]
+
+
+def _tpl_bucket(metric, launch_type, template, le, c):
+    return (f'{metric}_bucket{{launch_type="{launch_type}",'
+            f'sandbox_template="{template}",le="{le}"}} {c}')
+
+
+def _multi_template_scrape(metric, scale=1.0):
+    def series(lt, tpl, buckets):
+        out = [_tpl_bucket(metric, lt, tpl, le, int(c * scale)) for le, c in buckets]
+        out.append(f'{metric}_count{{launch_type="{lt}",sandbox_template="{tpl}"}} '
+                   f'{int(buckets[-1][1] * scale)}')
+        return out
+    lines = (series("warm", "alpha", _WARM_ALPHA)
+             + series("warm", "beta", _WARM_BETA)
+             + series("cold", "gamma", _COLD_GAMMA))
+    return "\n".join(lines) + "\n"
+
+
+def test_aggregate_sums_templates_per_launch_type():
+    agg = p.aggregate_by_launch_type(
+        p.parse_metric_histograms(_multi_template_scrape(p.HEADLINE_METRIC)))
+    _check(set(agg) == {"warm", "cold"}, "aggregated to launch_types only")
+    warm = dict(agg["warm"].buckets)
+    _check(warm[100.0] == 50.0, "warm le=100 == 50(alpha)+0(beta) == 50")
+    _check(warm[2500.0] == 100.0, "warm le=2500 == 50(alpha)+50(beta) == 100")
+    _check(warm[float("inf")] == 100.0, "warm +Inf == 100 (both templates)")
+    _check(agg["warm"].count == 100.0, "warm _count summed across templates")
+    _check(set(agg["warm"].labels) == {"launch_type"}, "template label dropped from aggregate")
+
+
+def test_aggregate_percentile_differs_from_first_template():
+    out = p.ttfe_by_launch_type(_multi_template_scrape(p.HEADLINE_METRIC))
+    # aggregated warm p50 rank=50 -> le=100 boundary (cum 50) -> 0 + 100*(50/50) == 100.0;
+    # first-template-only (alpha) would give 50.0 -- so aggregation is load-bearing here.
+    _check(_close(out["warm"]["ttfe_p50_ms"], 100.0), "aggregated warm p50 == 100.0 (not 50.0)")
+    _check(_close(out["warm"]["ttfe_p95_ms"], 2350.0), "aggregated warm p95 == 2350.0")
+
+
+def test_aggregate_skips_series_without_launch_type():
+    scrape = (
+        f'{p.HEADLINE_METRIC}_bucket{{sandbox_template="alpha",le="100"}} 5\n'
+        f'{p.HEADLINE_METRIC}_bucket{{sandbox_template="alpha",le="+Inf"}} 10\n'
+    )
+    _check(p.aggregate_by_launch_type(p.parse_metric_histograms(scrape)) == {},
+           "series with no launch_type label is skipped, not invented")
+
+
+# ---------------------------------------------------------------- controller-startup proxy
+#
+# PROXY_METRIC (controller-observed -> ready) populates on the deployed controller NOW. Its
+# percentiles are a LOWER BOUND on true TTFE, surfaced as a distinct caveated field with
+# proxy emit keys -- never aliased onto the headline.
+
+def test_proxy_assembler_emits_proxy_keys_aggregated():
+    out = p.controller_startup_by_launch_type(_multi_template_scrape(p.PROXY_METRIC))
+    _check(set(out) == {"warm", "cold"}, "proxy measured for both launch_types")
+    _check(set(out["warm"]) == {
+        "controller_startup_p50_ms", "controller_startup_p95_ms", "controller_startup_p99_ms"},
+        "proxy emits exactly the controller_startup triple")
+    _check(_close(out["warm"]["controller_startup_p50_ms"], 100.0),
+           "proxy warm p50 aggregated == 100.0")
+    _check(_close(out["warm"]["controller_startup_p95_ms"], 2350.0),
+           "proxy warm p95 aggregated == 2350.0")
+
+
+def test_proxy_and_headline_never_alias():
+    # A scrape carrying ONLY the headline metric -> proxy assembler measures nothing; and a
+    # scrape with ONLY the proxy metric -> headline assembler measures nothing. The exact-name
+    # match keeps the lower-bound proxy and the headline TTFE from ever bleeding together.
+    headline_only = _multi_template_scrape(p.HEADLINE_METRIC)
+    proxy_only = _multi_template_scrape(p.PROXY_METRIC)
+    _check(p.controller_startup_by_launch_type(headline_only) == {},
+           "proxy assembler ignores the headline metric")
+    _check(p.ttfe_by_launch_type(proxy_only) == {},
+           "headline assembler ignores the proxy metric")
+
+
+def test_proxy_output_carries_no_template_names():
+    # The public-page rule: a template label VALUE must never surface. The proxy output is
+    # keyed by launch_type, and each value dict holds only controller_startup_* numeric keys.
+    out = p.controller_startup_by_launch_type(_multi_template_scrape(p.PROXY_METRIC))
+    for lt, triple in out.items():
+        _check(lt in ("warm", "cold"), "top key is a launch_type, never a template")
+        for k in triple:
+            _check(k.startswith("controller_startup_p"),
+                   f"{k} is a proxy percentile key, not a template name")
+
+
+def test_proxy_delta_windowed_and_aggregated():
+    # Per-step proxy increment over multi-template scrapes: start = half-count, end = full,
+    # so the increment is the other half. The increment still aggregates across templates and
+    # emits the proxy triple.
+    start = _multi_template_scrape(p.PROXY_METRIC, scale=0.5)
+    end = _multi_template_scrape(p.PROXY_METRIC, scale=1.0)
+    step = p.controller_startup_by_launch_type_delta(start, end)
+    _check(set(step["warm"]) == {
+        "controller_startup_p50_ms", "controller_startup_p95_ms", "controller_startup_p99_ms"},
+        "proxy delta emits the controller_startup triple")
+    # warm increment per le: alpha 25 each + beta {2500:25,+Inf:25} -> le=100..1000 cum 25,
+    # le=2500 cum 50, +Inf 50. p50 rank=25 -> le=100 boundary -> 0 + 100*(25/25) == 100.0.
+    _check(_close(step["warm"]["controller_startup_p50_ms"], 100.0),
+           "proxy delta warm p50 aggregated == 100.0")
+
+
+def test_proxy_delta_empty_start_equals_single_end():
+    end = _multi_template_scrape(p.PROXY_METRIC)
+    _check(p.controller_startup_by_launch_type_delta("", end)
+           == p.controller_startup_by_launch_type(end),
+           "empty start -> proxy delta == single end-scrape proxy quantile")
+
+
 def _run_all():
     tests = [v for k, v in sorted(globals().items())
              if k.startswith("test_") and callable(v)]
