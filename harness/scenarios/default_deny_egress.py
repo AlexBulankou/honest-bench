@@ -69,6 +69,7 @@ body runs only where a policy-enforcing CNI is genuinely available.
 
 from __future__ import annotations
 
+from . import netpol_probe
 from ._apiversion import sandbox_api_version, sandbox_gvr
 from ._kube import load_cluster_config
 
@@ -89,6 +90,14 @@ _READY_TIMEOUT_S = 240
 # healthy cluster; the short window only absorbs informer-cache lag.
 _POD_DISCOVERY_TIMEOUT_S = 30
 _POLL_S = 0.25
+
+# Armed data-plane probe (#3907) egress target. A public vendor endpoint
+# (Cloudflare 1.1.1.1:443) the backing Pod attempts to reach; default-deny-egress
+# should block it post-policy. Env-overridable so a fire can point at a reachable
+# target appropriate to the cluster's egress path. No internal host is ever
+# defaulted here (public-repo hygiene).
+_EGRESS_PROBE_HOST = os.environ.get("BENCH_NETPOL_EGRESS_PROBE_HOST", "1.1.1.1")
+_EGRESS_PROBE_PORT = int(os.environ.get("BENCH_NETPOL_EGRESS_PROBE_PORT", "443"))
 
 _SBX_GVR = sandbox_gvr()
 
@@ -303,6 +312,21 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
                 {},
             )
 
+        # Data-plane probe (#3907) — default-off. Baseline egress connect BEFORE the
+        # policy: establishes that outbound egress works at all, so a later
+        # post-policy block is attributable to the policy and not to a no-egress test
+        # environment. Only a True baseline arms the deny half below; a None/False
+        # baseline keeps the probe inconclusive (the cell keeps its control-plane
+        # badge — never a fabricated breach). Never raises (exec_connection returns
+        # None on any cluster/exec error).
+        egress_armed = netpol_probe.dataplane_probe_enabled()
+        baseline_egress = None
+        if egress_armed:
+            baseline_egress = netpol_probe.exec_connection(
+                core, namespace=_NAMESPACE, pod_name=pod.metadata.name,
+                host=_EGRESS_PROBE_HOST, port=_EGRESS_PROBE_PORT,
+            )
+
         networking.create_namespaced_network_policy(
             namespace=_NAMESPACE, body=_build_egress_policy_manifest(policy_name),
         )
@@ -322,6 +346,56 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
         is_bound = _selector_matches(selector_labels, pod_labels)
 
         if is_deny_all_egress and is_bound:
+            # Data-plane probe (#3907) — default-off. When armed AND the baseline
+            # egress connect succeeded pre-policy, re-attempt the same outbound
+            # connect: with default-deny-egress in place it should now be blocked.
+            # control_allowed carries the baseline precondition (True only if egress
+            # worked pre-policy), so a non-True baseline degrades to inconclusive ->
+            # control-plane (never a false breach/over-block). enforced upgrades the
+            # badge; a breach (egress still flowed) FAILs.
+            if egress_armed:
+                if baseline_egress is True:
+                    post = netpol_probe.exec_connection(
+                        core, namespace=_NAMESPACE, pod_name=pod.metadata.name,
+                        host=_EGRESS_PROBE_HOST, port=_EGRESS_PROBE_PORT,
+                    )
+                    deny_blocked = (not post) if post is not None else None
+                    control_allowed = True
+                else:
+                    deny_blocked = None
+                    control_allowed = None
+                verdict, scope = netpol_probe.classify_dataplane(
+                    deny_blocked, control_allowed
+                )
+                if verdict == "enforced":
+                    return (
+                        "PASS",
+                        f"NetworkPolicy {policy_name} ENFORCED: the in-Pod probe "
+                        f"confirmed outbound egress from Pod {pod.metadata.name} to "
+                        f"{_EGRESS_PROBE_HOST}:{_EGRESS_PROBE_PORT} worked pre-policy "
+                        f"and is blocked on the wire with default-deny-egress applied "
+                        f"— egress lockdown verified, not just admitted.",
+                        {"badge_scope": "enforced"},
+                    )
+                if verdict in ("breach", "over-block"):
+                    return (
+                        "FAIL",
+                        f"NetworkPolicy {policy_name} admitted+bound (control-plane "
+                        f"OK) but the in-Pod data-plane probe read {verdict}: "
+                        f"egress from Pod {pod.metadata.name} to "
+                        f"{_EGRESS_PROBE_HOST}:{_EGRESS_PROBE_PORT} still flowed "
+                        f"despite default-deny-egress. The policy is declared but "
+                        f"does NOT enforce egress lockdown on the wire — an "
+                        f"admitted-but-inert policy is not isolation.",
+                        {},
+                    )
+                # inconclusive: probe could not establish a clean baseline+block —
+                # degrade to the control-plane badge (the admission proof) below.
+                log.info(
+                    "dataplane egress probe inconclusive (baseline=%s, "
+                    "deny_blocked=%s) — keeping control-plane badge",
+                    baseline_egress, deny_blocked,
+                )
             return (
                 "PASS",
                 f"NetworkPolicy {policy_name} admitted (policyTypes={policy_types}, "
