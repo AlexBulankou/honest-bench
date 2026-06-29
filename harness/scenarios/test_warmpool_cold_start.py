@@ -131,6 +131,46 @@ def test_n_equals_claim_count_across_mixed_outcomes():
     assert samples == [100.0, 250.0, 180.0]    # three samples, in claim order
 
 
+# ---- _build_template_manifest: the runtime-class pin wiring (#3942) ----
+#
+# The pure pin logic lives in test_runtime_class.py; these lock that the SCENARIO
+# actually routes its template pod_spec through the shared helper, gated on the
+# module-level _RUNTIME_CLASS knob. _RUNTIME_CLASS is read at import; monkeypatch the
+# module attribute (not os.environ) to exercise each runtime in-process, restoring it.
+
+def _pod_spec_with_runtime(value):
+    saved = cell._RUNTIME_CLASS
+    cell._RUNTIME_CLASS = value
+    try:
+        return cell._build_template_manifest("tmpl-test")["spec"]["podTemplate"]["spec"]
+    finally:
+        cell._RUNTIME_CLASS = saved
+
+
+def test_template_default_off_is_byte_identical():
+    # Unset knob -> the template is its pre-#3942 shape: no runtime fields added.
+    spec = _pod_spec_with_runtime("")
+    assert "runtimeClassName" not in spec
+    assert "tolerations" not in spec
+    assert "nodeSelector" not in spec
+    assert spec["restartPolicy"] == "Never"
+    assert spec["containers"][0]["name"] == "sandbox"
+
+
+def test_template_gvisor_pins_class_and_toleration():
+    spec = _pod_spec_with_runtime("gvisor")
+    assert spec["runtimeClassName"] == "gvisor"
+    assert "sandbox.gke.io/runtime" in {t["key"] for t in spec["tolerations"]}
+    assert "nodeSelector" not in spec  # gVisor needs no node label
+
+
+def test_template_kata_pins_class_toleration_and_selector():
+    spec = _pod_spec_with_runtime("kata")
+    assert spec["runtimeClassName"] == "kata"
+    assert "sandbox.gke.io/kata" in {t["key"] for t in spec["tolerations"]}
+    assert spec["nodeSelector"] == {"nested-virtualization": "enabled"}
+
+
 def _run_all():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:
