@@ -60,6 +60,8 @@ _generated-at: 2026-06-29T05:24:43Z_
 
 | Nodes Tested | Density Holds Flat? | Throughput Holds Flat? |
 |---|---|---|
-| 1 → 2 → 4 | ✅ Yes (0.63 → 0.63 → 0.63) | ⚠️ No |
+| 1 → 2 → 4 → 8 → 16 | ✅ Yes (0.63 → 0.63 → 0.63 → 0.63 → 0.63) | ⚠️ No |
+
+_Per-step density retention: 1→2 ✅ 1 · 2→4 ✅ 1 · 4→8 ✅ 1 · 8→16 ✅ 1 — holds flat step-to-step._
 
 _Measured 2026-06-29 — node-count linearity sweep (point-in-time; refreshed on the next multi-node sweep)._

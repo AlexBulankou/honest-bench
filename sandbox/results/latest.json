@@ -13,7 +13,7 @@
   },
   "scale_proof": {
     "density_retention": 1.0,
-    "measured_at": "2026-06-29T05:24:43Z",
+    "measured_at": "2026-06-29T17:35:07Z",
     "scale_points": [
       {
         "density": 0.63,
@@ -26,9 +26,17 @@
       {
         "density": 0.63,
         "node_count": 4
+      },
+      {
+        "density": 0.63,
+        "node_count": 8
+      },
+      {
+        "density": 0.63,
+        "node_count": 16
       }
     ],
-    "thpt_retention": 0.286
+    "thpt_retention": 0.15
   },
   "scenarios": [
     {
