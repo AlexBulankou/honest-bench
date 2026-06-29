@@ -470,10 +470,16 @@ def render_matrix(results):
 
 
 def _flat_verdict(retention):
-    """✅/⚠️ flat verdict for a retention ratio (1.0 = perfectly flat); pending when absent."""
+    """✅/⚠️ flat verdict for a retention ratio; pending when absent.
+
+    ASYMMETRIC framing (a4s2 v2 lock, PR #28): retention >= ~0.9 reads flat/linear-or-better
+    — a superlinear result (>1.0) is a BEAT under the floor-not-ceiling framing, NOT a
+    regression, so it must read ✅, not ⚠️. Only retention < ~0.9 reads ⚠️ No: the per-node
+    number sagged as the cluster grew, i.e. the controller is the ceiling and the page says so.
+    """
     if retention is None:
         return _PENDING
-    return "✅ Yes" if 0.9 <= retention <= 1.1 else "⚠️ No"
+    return "✅ Yes" if retention >= 0.9 else "⚠️ No"
 
 
 def _clean_scale_proof(results):
@@ -511,7 +517,8 @@ def render_scale_proof(results):
     """Render the doc's Scale Proof (Linearity Check) table, or "" when no scale_proof present.
 
     Proof that per-node throughput + density hold flat as the cluster grows — the linearity the
-    doc's second table asserts. A retention ratio within ±10% of 1.0 reads ✅; outside reads ⚠️.
+    doc's second table asserts. Retention >= ~0.9 reads ✅ (flat or a superlinear beat); only a
+    sag below ~0.9 reads ⚠️ (controller-is-ceiling). See _flat_verdict for the asymmetric framing.
     """
     sp = _clean_scale_proof(results)
     if not sp:

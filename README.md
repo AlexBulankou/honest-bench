@@ -39,8 +39,8 @@ bash scripts/check-public-safety.sh           # fail-closed public-safety scan
 
 | Runtime | Activation Mode | Throughput @ <5s TTFE (sb/s/node) | Throughput @ <1s TTFE (sb/s/node) | TTFE p50 | TTFE p95 | Samples (N) | Max Density (sb/vCPU) | Execution Success (Honesty Check) |
 |---|---|---|---|---|---|---|---|---|
-| gVisor | Warm-pool hit (Base image) | pending | pending | pending | pending | 5 | 0.45 | pending |
-| gVisor | Unique-image cold (RL reality) | pending | pending | pending | pending | 1 | 0.45 | pending |
+| gVisor | Warm-pool hit (Base image) | pending | pending | pending | pending | 5 | pending | pending |
+| gVisor | Unique-image cold (RL reality) | pending | pending | pending | pending | 1 | pending | pending |
 | gVisor | Resume-from-suspend | pending | pending | pending | pending | pending | N/A | pending |
 | Kata + microVM | Warm-pool hit (Base image) | pending | pending | pending | pending | pending | pending | pending |
 | Kata + microVM | Unique-image cold (RL reality) | pending | pending | pending | pending | pending | pending | pending |

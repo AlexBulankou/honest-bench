@@ -497,6 +497,22 @@ def test_matrix_resume_density_is_na():
     assert cells[7] == "N/A"  # Max Density column is N/A for resume (no steady-state pool)
 
 
+def test_matrix_density_sourced_from_warmpool_not_stale_burst_create():
+    # a4s2 Q3 lock (PR #28): DENSITY_SOURCE_SCENARIOS = (warmpool_cold_start,). A stale
+    # burst_create row carrying the OLD cluster-wide-capacity 0.45 must NOT shadow warmpool's
+    # corrected per-node-allocatable 1.88 — the warm + cold rows source 1.88, never 0.45.
+    scen = _full_gvisor_scenarios() + [
+        {
+            "name": "burst_create", "outcome": "PASS", "n": 10,
+            "sla_metrics": {"density_per_vcpu": 0.45},
+        }
+    ]
+    out = render.render_matrix(_matrix_results(scen))
+    assert "| gVisor | Warm-pool hit (Base image) | 4 | 4 | 0.6s | 0.9s | 200 | 1.88 | 100% |" in out
+    assert "| gVisor | Unique-image cold (RL reality) | 4 | 0 | 1.2s | 1.56s | 200 | 1.88 | 100% |" in out
+    assert "0.45" not in out
+
+
 def test_matrix_kata_rows_all_pending():
     out = render.render_matrix(_matrix_results(_full_gvisor_scenarios()))
     kata_lines = [l for l in out.splitlines() if l.startswith("| Kata + microVM |")]
@@ -618,6 +634,26 @@ def test_scale_proof_out_of_band_retention_flags_no():
     # density_retention derives from points (1.0/1.88 ≈ 0.53 < 0.9) ⇒ ⚠️ No; thpt 0.5 ⇒ ⚠️ No
     assert "⚠️ No" in out
     assert "✅ Yes" not in out
+
+
+def test_scale_proof_superlinear_retention_reads_beat_not_regression():
+    # a4s2 v2 lock (PR #28): asymmetric verdict. A superlinear result (retention > 1.1) is a
+    # BEAT under the floor-not-ceiling framing, NOT a regression — must read ✅, never ⚠️.
+    # (The prior symmetric 0.9–1.1 band wrongly flagged this legit beat as failure.)
+    results = _matrix_results(
+        _full_gvisor_scenarios(),
+        scale_proof={
+            "scale_points": [
+                {"node_count": 1, "density": 1.88},
+                {"node_count": 4, "density": 2.40},  # density GREW with scale ⇒ ratio 1.28
+            ],
+            "thpt_retention": 1.35,  # superlinear throughput beat
+        },
+    )
+    out = render.render_scale_proof(results)
+    assert "⚠️ No" not in out
+    # both columns read the flat/beat ✅
+    assert out.count("✅ Yes") == 2
 
 
 def test_scale_proof_density_retention_derived_when_absent():

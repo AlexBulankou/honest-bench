@@ -187,7 +187,11 @@ ACTIVATION_MODE_ROWS = (
 # Density is a per-RUNTIME property (holds across activation modes), not per-mode. The
 # renderer sources it from whichever of these scenarios carries density_per_vcpu, applies it
 # to the warm-pool + cold rows, and renders N/A on the resume row (matching the doc).
-DENSITY_SOURCE_SCENARIOS = ("gvisor_density", "burst_create")
+# Single canonical source = warmpool_cold_start (a4s2 emit lock, PR #28): Layer-2 emits
+# density ONLY on warm-pool with the per-node-allocatable denominator (the 1.88 basis), so
+# the 1.88 is sourced unambiguously. burst_create is intentionally NOT here — its old
+# cluster-wide-capacity 0.45 must never shadow the corrected per-node number.
+DENSITY_SOURCE_SCENARIOS = ("warmpool_cold_start",)
 
 # Matrix metric keys (per-scenario sla_metrics) -> closed-schema predicate. exec_success_n
 # is OPTIONAL (the numerator for the doc's "(1277/1376)" fraction); absent ⇒ render the bare
