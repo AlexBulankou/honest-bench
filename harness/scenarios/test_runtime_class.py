@@ -8,7 +8,11 @@ consistency guard (`assert_substrate_runtime_consistency`), and the bound-pod vi
 classifier (`classify_runtime_violations` / `assert_no_runtime_violations`). The one
 I/O surface (`verify_bound_pod_runtimes`) touches a cluster and is exercised live by
 the matrix scenarios on a4s1's armed fire; here we pin the pure verdict it delegates to
-so a runc Pod can never publish under a gVisor/Kata banner.
+so a runc Pod can never publish under a gVisor/Kata banner. Its owner-uid Sandbox->Pod
+WALK (the logic between the two API reads — the part that decides which Pod backs which
+Sandbox and can silently shrink the violation set) is itself covered offline with
+in-memory fake clients, so a regression in the walk fails here rather than only on the
+armed fire.
 """
 
 try:  # cwd == scenarios/ (dependency-free `python3 test_runtime_class.py`)
@@ -253,6 +257,101 @@ def test_assert_raise_message_names_runtime_and_counts():
         assert "2/2" in msg  # both bound sandboxes violated
         return
     raise AssertionError("expected RuntimeError")
+
+
+# ---- verify_bound_pod_runtimes: owner-uid Sandbox->Pod walk (fake clients) ----
+# The two API reads are faked; what is under test is the pure walk between them:
+# Sandbox uid -> backing Pod (by owner-uid) -> runtimeClassName, plus the guard that
+# an unreadable Sandbox uid surfaces as an unresolved violation rather than vanishing
+# from the count.
+
+
+class _FakeOwnerRef:
+    def __init__(self, uid):
+        self.uid = uid
+
+
+class _FakePodMeta:
+    def __init__(self, owner_uids):
+        self.owner_references = [_FakeOwnerRef(u) for u in owner_uids]
+
+
+class _FakePodSpec:
+    def __init__(self, runtime_class_name):
+        self.runtime_class_name = runtime_class_name
+
+
+class _FakePod:
+    def __init__(self, owner_uids, runtime_class_name):
+        self.metadata = _FakePodMeta(owner_uids)
+        self.spec = _FakePodSpec(runtime_class_name)
+
+
+class _FakePodList:
+    def __init__(self, pods):
+        self.items = pods
+
+
+class _FakeCore:
+    def __init__(self, pods):
+        self._pods = pods
+
+    def list_namespaced_pod(self, namespace):
+        return _FakePodList(self._pods)
+
+
+class _FakeCustom:
+    """sandbox name -> uid; a None uid simulates an unreadable Sandbox GET."""
+
+    def __init__(self, name_to_uid):
+        self._name_to_uid = name_to_uid
+
+    def get_namespaced_custom_object(self, *, group, version, namespace, plural, name):
+        uid = self._name_to_uid.get(name)
+        return {"metadata": {"uid": uid}} if uid is not None else {"metadata": {}}
+
+
+_GVR = ("agents.x-k8s.io", "v1beta1", "sandboxes")
+
+
+def test_verify_all_pods_match_returns_count():
+    custom = _FakeCustom({"sb-a": "uid-a", "sb-b": "uid-b"})
+    core = _FakeCore([_FakePod(["uid-a"], "kata"), _FakePod(["uid-b"], "kata")])
+    assert rc.verify_bound_pod_runtimes(
+        custom, core, namespace="ns", sandbox_names=["sb-a", "sb-b"],
+        sandbox_gvr=_GVR, expected_runtime_class="kata",
+    ) == 2
+
+
+def test_verify_backing_pod_wrong_runtime_raises():
+    # The silent isolation drop: Sandbox Ready but its backing Pod ran runc.
+    custom = _FakeCustom({"sb-a": "uid-a"})
+    core = _FakeCore([_FakePod(["uid-a"], "runc")])
+    _assert_raises(lambda: rc.verify_bound_pod_runtimes(
+        custom, core, namespace="ns", sandbox_names=["sb-a"],
+        sandbox_gvr=_GVR, expected_runtime_class="kata",
+    ))
+
+
+def test_verify_missing_backing_pod_is_unresolved_violation():
+    # uid resolves but no Pod owns it -> None -> violation (cannot prove the runtime).
+    custom = _FakeCustom({"sb-a": "uid-a"})
+    core = _FakeCore([])
+    _assert_raises(lambda: rc.verify_bound_pod_runtimes(
+        custom, core, namespace="ns", sandbox_names=["sb-a"],
+        sandbox_gvr=_GVR, expected_runtime_class="kata",
+    ))
+
+
+def test_verify_unreadable_sandbox_uid_cannot_silently_shrink_count():
+    # sb-b's uid is unreadable: it must surface as an unresolved violation, NOT vanish
+    # from the count (else the gate passes on a quietly-shrunk set).
+    custom = _FakeCustom({"sb-a": "uid-a", "sb-b": None})
+    core = _FakeCore([_FakePod(["uid-a"], "kata")])
+    _assert_raises(lambda: rc.verify_bound_pod_runtimes(
+        custom, core, namespace="ns", sandbox_names=["sb-a", "sb-b"],
+        sandbox_gvr=_GVR, expected_runtime_class="kata",
+    ))
 
 
 def _run_all():
