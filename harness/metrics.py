@@ -195,3 +195,32 @@ def ttfe_sla_metrics(
             max_concurrent_sandboxes, allocatable_sandbox_vcpu_per_node
         )
     return metrics
+
+
+def single_sample_ttfe_point(
+    ttfe_ms: Optional[Real], exec_ok: bool
+) -> dict[str, float]:
+    """Single-sample TTFE metrics for a one-shot activation scenario (cold / resume).
+
+    The cold-start and resume-from-suspend cells measure ONE activation per fire,
+    not a sustained burst, so they emit the percentile pair + exec-success + n=1
+    and deliberately OMIT throughput (a per-node rate over n=1 is meaningless) and
+    density (measured once via the warm-pool DENSITY_SOURCE_SCENARIO, never per
+    one-shot sample). This is the shared assembler for those scenarios -- distinct
+    from ``ttfe_sla_metrics``, which always emits the throughput pair.
+
+    The percentile keys appear iff the exec succeeded (a failed exec has no honest
+    first-instruction latency, so ttfe_ms is None): a failed one-shot exec emits
+    ``exec_success_rate=0.0`` with no TTFE percentiles -- honest about both the
+    failure and the absent latency. For n=1 the p50 and p95 are both the single
+    sample.
+    """
+    metrics: dict[str, float] = {
+        "exec_success_rate": exec_success_rate([exec_ok]),
+        "n": 1,
+    }
+    if ttfe_ms is not None:
+        p = percentile([ttfe_ms], 50)
+        metrics["ttfe_p50_ms"] = round(p, 1)
+        metrics["ttfe_p95_ms"] = round(p, 1)
+    return metrics
