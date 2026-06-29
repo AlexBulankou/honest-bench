@@ -326,3 +326,103 @@ def ttfe_by_launch_type(text: str, metric_name: str = HEADLINE_METRIC) -> dict[s
         if pct:
             result[lt] = pct
     return result
+
+
+# --------------------------------------------------------------- per-step delta convergence
+#
+# ``ttfe_by_launch_type`` above reads ONE cumulative scrape, so its quantile is the
+# CUMULATIVE-UNION over every claim since the controller started observing. CL2's step-up
+# pareto percentiles, by contrast, come from ``histogram_quantile(q, sum(rate(..._bucket[
+# $promRange])) by (le))`` -- rate-windowed PER STEP. (The ``rate()`` wrapper is a non-issue:
+# histogram_quantile depends only on cumulative-count RATIOS, and rate() scales every bucket
+# by the same 1/window factor, so the quantile is invariant to it.) What is NOT a non-issue
+# is the POPULATION WINDOW: for a multi-step sweep on one controller, a single end-scrape's
+# union quantile matches NO single per-step pareto point. The faithful offline cross-check of
+# a per-step pareto point therefore needs the per-step INCREMENT: subtract the step's START
+# cumulative scrape from its END cumulative scrape, per (launch_type, le), and run the SAME
+# classic ``histogram_quantile`` on the increment. That is what these two functions do.
+#
+# (The single-step / fresh-restart case -- Phase-1's 300/s single step on a controller
+# restarted to an empty histogram -- needs no diffing: an empty start scrape makes the
+# increment equal the end scrape, and ``histogram_delta`` / the assembler below fall through
+# to exactly ``ttfe_by_launch_type(end)``. So one code path covers both shapes honestly.)
+
+# Counter-reset tolerance: bucket counts are integers, but absorb float-parse noise before
+# declaring a genuine decrease (which signals a controller restart between the two scrapes).
+_RESET_EPS = 1e-9
+
+
+def histogram_delta(start: Histogram, end: Histogram) -> Optional[Histogram]:
+    """Per-step increment ``end - start`` for one launch_type's cumulative histogram.
+
+    Returns a new Histogram whose cumulative buckets are ``end_cum(le) - start_cum(le)``
+    (aligned by ``le``; an ``le`` absent from ``start`` is treated as 0, so a launch_type
+    that first appeared during this step carries its whole end histogram as the increment).
+    The result is itself a valid cumulative histogram -- each per-bucket increment is a
+    count of claims that completed in (start, end], hence non-negative, so the cumulative
+    increment is monotonic in ``le`` -- and is fed straight to ``ttfe_percentiles``.
+
+    Returns ``None`` (an honest measured=False, never a fabricated delta) when a counter
+    RESET is detected: any ``le`` where ``end < start`` beyond ``_RESET_EPS`` means the
+    controller restarted between the two scrapes, so the difference is meaningless. Tiny
+    within-epsilon negatives (scrape-race noise) are clamped to 0 rather than rejected.
+    """
+    start_map = dict(start.buckets)
+    delta = Histogram(dict(end.labels))
+    for le, end_c in end.buckets:
+        start_c = start_map.get(le, 0.0)
+        inc = end_c - start_c
+        if inc < -_RESET_EPS:
+            return None  # counter reset between scrapes -> measured=False, honest
+        delta.buckets.append((le, inc if inc > 0.0 else 0.0))
+
+    if end.count is not None:
+        start_count = start.count if start.count is not None else 0.0
+        dc = end.count - start_count
+        delta.count = dc if dc >= -_RESET_EPS else None
+    if end.sum is not None:
+        start_sum = start.sum if start.sum is not None else 0.0
+        delta.sum = end.sum - start_sum
+    return delta
+
+
+def ttfe_by_launch_type_delta(
+    start_text: str, end_text: str, metric_name: str = HEADLINE_METRIC
+) -> dict[str, dict[str, float]]:
+    """Per-step ``{launch_type: {ttfe_p50_ms, ttfe_p95_ms, ttfe_p99_ms}}`` from the INCREMENT.
+
+    Parse both consecutive cumulative scrapes, subtract ``end - start`` per launch_type via
+    ``histogram_delta``, and emit the percentile triple of each increment. This is the
+    per-step analogue of ``ttfe_by_launch_type`` and converges against the matching CL2
+    pareto point (rate-windowed per step). The same honesty spine holds end-to-end:
+
+      - a launch_type appears IFF its increment had >0 observations AND produced a full
+        triple -- a step that took no new claims of a launch_type omits it (never a fake 0);
+      - a counter reset for a launch_type (``histogram_delta`` -> None) drops that
+        launch_type (measured=False), rather than reporting a meaningless cross-reset delta;
+      - a launch_type present in ``end`` but absent from ``start`` carries its full end
+        histogram as the increment (its observations all fell in this window);
+      - an empty/absent ``start`` scrape (fresh-restarted controller) makes every increment
+        equal its end histogram, so the result equals ``ttfe_by_launch_type(end_text)``.
+    """
+    start_by_lt = {
+        h.launch_type: h
+        for h in parse_metric_histograms(start_text, metric_name)
+        if h.launch_type is not None
+    }
+    result: dict[str, dict[str, float]] = {}
+    for end_hist in parse_metric_histograms(end_text, metric_name):
+        lt = end_hist.launch_type
+        if lt is None or lt in result:
+            continue
+        start_hist = start_by_lt.get(lt)
+        if start_hist is None:
+            delta = end_hist  # new launch_type since start: increment == end (start all-0)
+        else:
+            delta = histogram_delta(start_hist, end_hist)
+            if delta is None:
+                continue  # counter reset -> measured=False for this launch_type
+        pct = ttfe_percentiles(delta)
+        if pct:
+            result[lt] = pct
+    return result
