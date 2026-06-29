@@ -165,6 +165,38 @@ def run_suite(cells, substrate: str) -> list[dict]:
     return raw
 
 
+def _env_flag(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in ("1", "true", "yes", "on")
+
+
+# Scale Proof (Linearity Check) producer opt-in. DEFAULT-OFF.
+#
+# gated: heavy multi-K cluster fire, armed only in the coordinated sweep [#3949].
+# scale_slope.run_sweep() provisions K*slots warm pools across multiple node-counts
+# and fires that many claims — it is a heavy MUTATING live producer, NOT part of the
+# default single-node auto-refresh (on one node only K=1 is achievable, so the
+# classifier returns {} by construction). It is armed ONLY in a4s1's coordinated,
+# collision-acked multi-node sweep. Dual-gated below: BENCH_SCALE_SLOPE=1 AND the
+# sandbox product — any other product returns None (fail-closed), since the Scale
+# Proof table is a sandbox-page artifact and the substrate suite has no scale_proof
+# render contract. Flip/launch issue: #3949.
+def maybe_scale_proof(product: str):
+    """Return the scale_proof object when armed for sandbox, else None.
+
+    None is the honest absence signal the emitter understands: build_results passes
+    it through _coerce_scale_proof, which omits the top-level scale_proof key for
+    None / empty / malformed input, so the Scale Proof table simply does not render
+    rather than showing a partial lie. A K=1-only sweep (single-node cluster) makes
+    run_sweep return {} — also None-equivalent here — so the table stays absent until
+    a genuine multi-K sweep produces >=2 points.
+    """
+    if not _env_flag("BENCH_SCALE_SLOPE") or product != "sandbox":
+        return None
+    from .scenarios import scale_slope
+    proof = scale_slope.run_sweep()
+    return proof or None
+
+
 def build_provenance(substrate: str) -> dict:
     return {
         "cluster_substrate": substrate,
@@ -220,7 +252,8 @@ def main(argv=None) -> int:
     # register (#3909) — read BEFORE the wholesale write below, which would drop them.
     raw = merge_seed_placeholders(raw, _read_prior_scenarios(out))
     results = results_schema.build_results(
-        raw, build_provenance(substrate), generated_at=_now_iso(), product=args.product
+        raw, build_provenance(substrate), generated_at=_now_iso(), product=args.product,
+        scale_proof=maybe_scale_proof(args.product),
     )
 
     out.parent.mkdir(parents=True, exist_ok=True)
