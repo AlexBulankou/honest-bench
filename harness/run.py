@@ -33,6 +33,7 @@ import uuid
 
 from . import results_schema
 from . import stepup_adapter
+from . import warm_vs_cold as warm_vs_cold_mod
 from .scenario_map import cells_for_product, substrate_satisfies
 
 log = logging.getLogger("bench-harness")
@@ -109,6 +110,18 @@ def _run_one(cell, substrate: str) -> dict:
         reason = sla_metrics.pop("pending_reason", None)
         if isinstance(reason, str):
             raw["pending_reason"] = reason
+        # A scenario may surface its per-claim warm-pool TTFE samples under the
+        # reserved "warm_ttfe_samples_ms" key inside sla_metrics (burst_create
+        # does so under BENCH_TTFE_EXEC, #1018). They are the warm leg of the
+        # warm-vs-cold speedup; maybe_warm_vs_cold reads them from raw[...] AFTER
+        # this loop. Pop them so they never reach the public results schema (a
+        # list would be dropped by _coerce_sla_metrics anyway, but popping keeps
+        # the raw cell clean and makes the channel explicit). Keep only a clean
+        # list of finite-looking numbers; anything else is a corrupt warm leg and
+        # the classifier's own gates will refuse it.
+        warm = sla_metrics.pop("warm_ttfe_samples_ms", None)
+        if isinstance(warm, list):
+            raw["warm_ttfe_samples_ms"] = warm
     raw["sla_metrics"] = sla_metrics
     # badge_scope (#3905) is a static per-scenario property — inject the Cell's value
     # onto the outcome so a PASS carries its scope qualifier BY CONSTRUCTION (#3948),
@@ -205,6 +218,21 @@ def _read_prior_stepup(out_path: pathlib.Path):
     return su if isinstance(su, dict) else None
 
 
+def _read_prior_warm_vs_cold(out_path: pathlib.Path):
+    """Read the existing results file's top-level warm_vs_cold object (#1018).
+
+    Best-effort, mirroring _read_prior_stepup: a missing/malformed file or an
+    absent warm_vs_cold key means there is nothing to carry forward, so return None
+    (the honest-absence signal the emitter understands).
+    """
+    try:
+        prior = json.loads(out_path.read_text())
+    except (FileNotFoundError, ValueError):
+        return None
+    wvc = prior.get("warm_vs_cold") if isinstance(prior, dict) else None
+    return wvc if isinstance(wvc, dict) else None
+
+
 def carry_prior_scale_proof(fresh, prior, *, generated_at: str):
     """Persist the Scale Proof block across the daily single-node refresh (#3952).
 
@@ -246,6 +274,31 @@ def carry_prior_stepup(fresh, prior, *, generated_at: str):
     block stays honestly dated against the daily-refreshed top-level `generated_at`.
     Both paths flow through the closed emitter (`_coerce_stepup`), so a carried block
     that is not a valid stepup is dropped, never published as a partial lie.
+    """
+    if isinstance(fresh, dict) and fresh:
+        stamped = dict(fresh)
+        stamped.setdefault("measured_at", generated_at)
+        return stamped
+    return prior
+
+
+def carry_prior_warm_vs_cold(fresh, prior, *, generated_at: str):
+    """Persist the warm-vs-cold speedup block across the daily refresh (#1018).
+
+    Exact mirror of carry_prior_scale_proof / carry_prior_stepup, and for the same
+    reason: the honest warm-vs-cold ratio needs BOTH legs measured the same way in
+    the SAME fire (warm samples from burst_create + the single cold TTFE sample from
+    native_digest_cold, both under BENCH_TTFE_EXEC). A daily refresh that does not
+    arm TTFE produces no fresh block, so without this carry-forward the published
+    speedup would vanish on the next refresh after a measured fire.
+
+    Fresh always wins: a real measurement this run stamps `measured_at = generated_at`
+    (the instant it was measured) via setdefault, and is returned as-is. Otherwise
+    the prior committed block is carried forward UNCHANGED, keeping its original
+    `measured_at` so a carried point-in-time block stays honestly dated against the
+    daily-refreshed top-level `generated_at`. Both paths flow through the closed
+    emitter (`_coerce_warm_vs_cold`), so a carried block that is not a valid
+    warm_vs_cold is dropped, never published as a partial lie.
     """
     if isinstance(fresh, dict) and fresh:
         stamped = dict(fresh)
@@ -356,6 +409,66 @@ def maybe_stepup(product: str):
     return flat or None
 
 
+def _raw_cell(raw: list, name: str):
+    """Return the raw per-scenario dict for `name`, or None if the cell did not run."""
+    for cell in raw:
+        if isinstance(cell, dict) and cell.get("name") == name:
+            return cell
+    return None
+
+
+# Warm-vs-cold speedup producer. DEFAULT-OFF (rides BENCH_TTFE_EXEC).
+#
+# Unlike maybe_scale_proof (which runs its own sweep) and maybe_stepup (which reads
+# an out-of-process file), the warm-vs-cold legs are BOTH produced by cells already
+# in this same in-process suite — so there is no extra fire to arm. The warm leg is
+# burst_create's per-claim warm-pool TTFE sample list (surfaced under the reserved
+# `warm_ttfe_samples_ms` key, #1018); the cold leg is native_digest_cold's single
+# cold TTFE sample (its emitted `ttfe_p50_ms`, n=1). Both are only present when
+# BENCH_TTFE_EXEC armed the literal-TTFE path on this fire, so the same flag gates
+# this producer. The runtime classes come from the two scenarios' own env knobs
+# (BURST_CREATE_RUNTIME_CLASS / NATIVE_DIGEST_COLD_RUNTIME_CLASS) — burst_create's is
+# read-back-verified against the live pods on gke-sandbox, so a misconfigured fire
+# (gvisor-warm vs runc/empty-cold) makes the classifier's parity gate refuse to
+# publish rather than print an apples-to-oranges ratio.
+def maybe_warm_vs_cold(product: str, raw: list):
+    """Return the warm_vs_cold inner object when armed for sandbox, else None.
+
+    Dual-gated like maybe_scale_proof / maybe_stepup: BENCH_TTFE_EXEC must be armed
+    AND the product must be sandbox (the warm-vs-cold cell is a sandbox-page artifact;
+    the substrate suite has no warm_vs_cold render contract). None is the honest
+    absence signal — an unarmed fire, a non-sandbox product, a missing leg, or any
+    classifier honesty-gate failure (semantic/runtime-class mismatch, empty/corrupt
+    warm samples, non-positive cold) all return None, and build_results omits the
+    top-level warm_vs_cold key for None input so the cell renders pending rather than
+    a fabricated number. The pure classifier (`classify_warm_vs_cold`) is the single
+    honesty gate — this function only locates the two legs and reads their env-knob
+    runtime classes.
+    """
+    if not _env_flag("BENCH_TTFE_EXEC") or product != "sandbox":
+        return None
+    warm_cell = _raw_cell(raw, "burst_create")
+    cold_cell = _raw_cell(raw, "native_digest_cold")
+    if warm_cell is None or cold_cell is None:
+        return None
+    warm_samples = warm_cell.get("warm_ttfe_samples_ms")
+    cold_sla = cold_cell.get("sla_metrics")
+    cold_sample = cold_sla.get("ttfe_p50_ms") if isinstance(cold_sla, dict) else None
+    if not isinstance(warm_samples, list) or cold_sample is None:
+        return None
+    result = warm_vs_cold_mod.classify_warm_vs_cold(
+        warm_samples,
+        cold_sample,
+        warm_semantic="ttfe",
+        cold_semantic="ttfe",
+        warm_runtime_class=os.environ.get("BURST_CREATE_RUNTIME_CLASS", "").strip(),
+        cold_runtime_class=os.environ.get(
+            "NATIVE_DIGEST_COLD_RUNTIME_CLASS", ""
+        ).strip(),
+    )
+    return result or None
+
+
 def build_provenance(substrate: str) -> dict:
     return {
         "cluster_substrate": substrate,
@@ -412,6 +525,7 @@ def main(argv=None) -> int:
     prior_scenarios = _read_prior_scenarios(out)
     prior_scale_proof = _read_prior_scale_proof(out)
     prior_stepup = _read_prior_stepup(out)
+    prior_warm_vs_cold = _read_prior_warm_vs_cold(out)
     raw = merge_seed_placeholders(raw, prior_scenarios)
     generated_at = _now_iso()
     # Carry the Scale Proof block across the daily refresh (#3952): a fresh sweep
@@ -427,9 +541,17 @@ def main(argv=None) -> int:
     stepup = carry_prior_stepup(
         maybe_stepup(args.product), prior_stepup, generated_at=generated_at
     )
+    # Carry the warm-vs-cold speedup block across the daily refresh (#1018), same
+    # posture: a fresh measurement this run (both TTFE legs present + parity-clean)
+    # wins; otherwise the prior committed block is carried so the speedup cell does
+    # not auto-decay between TTFE-armed fires.
+    warm_vs_cold_obj = carry_prior_warm_vs_cold(
+        maybe_warm_vs_cold(args.product, raw), prior_warm_vs_cold,
+        generated_at=generated_at,
+    )
     results = results_schema.build_results(
         raw, build_provenance(substrate), generated_at=generated_at, product=args.product,
-        scale_proof=scale_proof, stepup=stepup,
+        scale_proof=scale_proof, stepup=stepup, warm_vs_cold=warm_vs_cold_obj,
     )
 
     out.parent.mkdir(parents=True, exist_ok=True)

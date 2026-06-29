@@ -1042,6 +1042,21 @@ def test_warm_vs_cold_kata_runtime_label():
     assert "Kata + microVM" in out
 
 
+def test_warm_vs_cold_measured_at_renders_dated_subline():
+    # a carried point-in-time block carries its own measured date, rendered as a subline
+    # distinct from the page's daily-refreshed top-level timestamp (mirrors scale_proof #3952).
+    out = render.render_warm_vs_cold(
+        _matrix_results(_full_gvisor_scenarios(), warm_vs_cold=_wc(measured_at="2026-06-29T03:46:01Z")))
+    assert "_Measured 2026-06-29 — warm-vs-cold speedup" in out
+    assert "point-in-time" in out
+
+
+def test_warm_vs_cold_measured_at_absent_no_subline():
+    # No measured_at ⇒ no dated subline (back-compat with pre-carry blocks).
+    out = render.render_warm_vs_cold(_matrix_results(_full_gvisor_scenarios(), warm_vs_cold=_wc()))
+    assert "_Measured " not in out
+
+
 def _run_all():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:

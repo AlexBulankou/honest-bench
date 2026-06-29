@@ -298,6 +298,10 @@ WARM_VS_COLD_FIELDS = {
     "semantic": lambda v: v in ("ttfi", "ttfe"),
     "runtime_class": lambda v: v in RUNTIME_LABELS,
     "n_warm": lambda v: isinstance(v, int) and not isinstance(v, bool) and v >= 0,
+    # measured_at: ISO-8601 instant the two legs were measured. Optional, carried forward
+    # across the daily refresh (same as scale_proof) so a point-in-time block is honestly
+    # dated apart from the daily-refreshed top-level generated_at. Non-empty string only.
+    "measured_at": lambda v: isinstance(v, str) and bool(v),
 }
 
 # --- a#3960: Step-up backfill saturation Pareto ------------------------------------------

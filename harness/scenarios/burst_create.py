@@ -874,6 +874,13 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
             sla_metrics.update(corroboration)
             breakdown["exec_corroboration"] = corroboration
             breakdown["all_ttfe_ms"] = sorted(ttfe_ms_samples)
+            # ADDITIVE warm-leg surface (#1018): the per-claim warm-pool TTFE
+            # samples are the ONLY datum the warm-vs-cold speedup classifier
+            # needs that is not already in the emitted headline. Carry them as a
+            # reserved sla_metrics key that run._run_one pops off (so it never
+            # reaches the public results schema) and maybe_warm_vs_cold reads to
+            # pair against native_digest_cold's single cold TTFE sample.
+            sla_metrics["warm_ttfe_samples_ms"] = sorted(ttfe_ms_samples)
 
         all_ttfi_str = ", ".join(f"{x:.3f}" for x in breakdown["all_ttfi_s"])
         density = breakdown["density_per_vcpu"]
