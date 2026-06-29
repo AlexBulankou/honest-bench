@@ -73,10 +73,12 @@ measures a cold start (PASS) or the provision genuinely failed (raise).
 from __future__ import annotations
 
 try:  # package context (production: run.py loads harness.scenarios.native_digest_cold)
+    from . import runtime_class as rc
     from ._apiversion import sandbox_api_version, sandbox_gvr
     from ._kube import load_cluster_config
     from .. import metrics, ttfe_probe
 except ImportError:  # standalone (dependency-free test from the scenarios/ dir)
+    import runtime_class as rc
     from _apiversion import sandbox_api_version, sandbox_gvr
     from _kube import load_cluster_config
     import sys as _sys
@@ -97,6 +99,22 @@ _NAMESPACE = os.environ.get("BENCH_NAMESPACE", "default")
 _SANDBOX_IMAGE = os.environ.get(
     "NATIVE_DIGEST_COLD_SANDBOX_IMAGE", "busybox:1.36"
 )
+
+# Runtime-class pin for the #3942 Core Metrics matrix Kata row. DEFAULT-OFF: with
+# the knob unset, apply_runtime_class is a byte-identical no-op so the Sandbox
+# manifest is exactly its pre-#3942 shape and this scenario stays the plain
+# cold-start cell. Set to "gvisor"/"kata" to pin the cold provision to that
+# runtime (runtimeClassName + the runtime's toleration/nodeSelector) so the
+# published cold row is honestly attributed to the runtime it ran under. The
+# shared runtime_class helper owns the pin + post-measurement verify so this
+# scenario, warmpool_cold_start, and burst_create pin-and-verify identically.
+_RUNTIME_CLASS = os.environ.get("NATIVE_DIGEST_COLD_RUNTIME_CLASS", "")
+
+# The cluster's substrate banner (run.py provenance). A gke-sandbox banner asserts
+# gVisor isolation, so the consistency guard refuses an unset/non-gVisor runtime on
+# it before any cluster call — preventing a runc cold number from publishing under a
+# gVisor label. kind/gke make no isolation claim and impose no constraint.
+_CLUSTER_SUBSTRATE = os.environ.get("BENCH_CLUSTER_SUBSTRATE", "kind")
 
 # Public benchmark metric key (milliseconds). The cold create→Ready wall-clock
 # this scenario measures internally in seconds is emitted via the run() 3-tuple
@@ -142,7 +160,28 @@ def _build_sandbox_manifest(sandbox_name: str) -> dict:
     to cold on a reused tag; a full layer pull when the env points at a unique /
     never-cached tag). Mirrors the upstream hello-world minimum; the controller
     backfills the underlying Pod naming + UID + status.
+
+    When NATIVE_DIGEST_COLD_RUNTIME_CLASS is set, the inner pod_spec is pinned to
+    that runtime (runtimeClassName + the runtime's toleration/nodeSelector) via the
+    shared runtime_class helper. Default-off: with the knob unset apply_runtime_class
+    is a byte-identical no-op, so the manifest is exactly its pre-#3942 shape.
     """
+    pod_spec = {
+        "containers": [
+            {
+                "name": "sandbox",
+                "image": _SANDBOX_IMAGE,
+                "imagePullPolicy": "Always",
+                "command": ["sh", "-c", "sleep 600"],
+                "resources": {
+                    "requests": {"cpu": "10m", "memory": "16Mi"},
+                    "limits": {"cpu": "100m", "memory": "64Mi"},
+                },
+            },
+        ],
+        "restartPolicy": "Never",
+    }
+    rc.apply_runtime_class(pod_spec, _RUNTIME_CLASS)
     return {
         "apiVersion": sandbox_api_version(),
         "kind": "Sandbox",
@@ -153,21 +192,7 @@ def _build_sandbox_manifest(sandbox_name: str) -> dict:
         },
         "spec": {
             "podTemplate": {
-                "spec": {
-                    "containers": [
-                        {
-                            "name": "sandbox",
-                            "image": _SANDBOX_IMAGE,
-                            "imagePullPolicy": "Always",
-                            "command": ["sh", "-c", "sleep 600"],
-                            "resources": {
-                                "requests": {"cpu": "10m", "memory": "16Mi"},
-                                "limits": {"cpu": "100m", "memory": "64Mi"},
-                            },
-                        },
-                    ],
-                    "restartPolicy": "Never",
-                },
+                "spec": pod_spec,
             },
         },
     }
@@ -240,6 +265,12 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
     """
     from kubernetes import client as k8s_client
 
+    # Pure, fail-fast (mirrors warmpool_cold_start): a gke-sandbox-labeled result
+    # MUST pin the gVisor RuntimeClass, else the published cold row is a runc number
+    # under a gVisor banner. Checked before the cluster is touched so the mistake
+    # crashes immediately. kind/gke impose no constraint.
+    rc.assert_substrate_runtime_consistency(_CLUSTER_SUBSTRATE, _RUNTIME_CLASS)
+
     # Portable kubeconfig load (see _kube.load_cluster_config): an explicit
     # KUBECONFIG wins, else in-cluster when running as a pod, else the default
     # kubeconfig.
@@ -265,6 +296,28 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
         t1 = _wait_for_sandbox_ready(custom, sandbox_name=sandbox_name)
         cold_start_s = t1 - t0
         log.info("Sandbox %s Ready in %.2fs (cold)", sandbox_name, cold_start_s)
+
+        # Runtime read-back (post-measurement, mirrors warmpool_cold_start): verify the
+        # cold Sandbox's backing Pod actually scheduled under the pinned runtime before
+        # publishing the runtime-labeled cold row. Crash-FAILs on a silent runc fallback.
+        # kind/gke skip this (required_runtime_for_substrate -> None — no runtime claim to
+        # verify, so the path stays read-free there, preserving the default INERT shape).
+        # Runs AFTER the measurement so it never perturbs the measured cold latency. The
+        # gate shares the single substrate->runtime source of truth with the consistency
+        # guard above, which already proved _RUNTIME_CLASS == the required runtime.
+        if rc.required_runtime_for_substrate(_CLUSTER_SUBSTRATE) is not None:
+            core_v1 = k8s_client.CoreV1Api()
+            verified = rc.verify_bound_pod_runtimes(
+                custom, core_v1,
+                namespace=_NAMESPACE,
+                sandbox_names=[sandbox_name],
+                sandbox_gvr=_SBX_GVR,
+                expected_runtime_class=_RUNTIME_CLASS,
+            )
+            log.info(
+                "runtime read-back: %d/1 cold sandbox verified under RuntimeClass %r",
+                verified, _RUNTIME_CLASS,
+            )
 
         # Emit-key assembly. Two paths, gated by BENCH_TTFE_EXEC:
         #
