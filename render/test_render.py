@@ -820,6 +820,78 @@ def test_scale_proof_per_step_zero_base_step_pending_not_crash():
     assert "holds flat step-to-step" in out
 
 
+def test_scale_proof_per_step_throughput_flat_three_points():
+    # The producer emits per-point throughput ⇒ a throughput subline renders alongside density.
+    results = _matrix_results(
+        _full_gvisor_scenarios(),
+        scale_proof={
+            "scale_points": [
+                {"node_count": 1, "density": 2.0, "throughput": 10.0},
+                {"node_count": 2, "density": 1.98, "throughput": 9.9},  # 0.99
+                {"node_count": 4, "density": 1.96, "throughput": 9.8},  # 0.99
+            ],
+        },
+    )
+    out = render.render_scale_proof(results)
+    assert "_Per-step throughput retention: 1→2 ✅ 0.99 · 2→4 ✅ 0.99 — holds flat step-to-step._" in out
+
+
+def test_scale_proof_per_step_throughput_sag_is_visible():
+    # A mid-sweep throughput collapse is exposed per-step (the endpoint ratio averages it away).
+    results = _matrix_results(
+        _full_gvisor_scenarios(),
+        scale_proof={
+            "scale_points": [
+                {"node_count": 1, "density": 2.0, "throughput": 10.0},
+                {"node_count": 2, "density": 1.98, "throughput": 9.8},  # 0.98 ✅
+                {"node_count": 4, "density": 1.96, "throughput": 5.0},  # ~0.51 ⚠️
+            ],
+        },
+    )
+    out = render.render_scale_proof(results)
+    assert "_Per-step throughput retention:" in out
+    assert "2→4 ⚠️" in out
+    assert "sags mid-sweep" in out
+
+
+def test_scale_proof_per_step_throughput_absent_when_producer_omits():
+    # Older blocks (density-only points) ⇒ no throughput subline, density subline still renders.
+    results = _matrix_results(
+        _full_gvisor_scenarios(),
+        scale_proof={
+            "scale_points": [
+                {"node_count": 1, "density": 2.0},
+                {"node_count": 2, "density": 1.98},
+                {"node_count": 4, "density": 1.96},
+            ],
+        },
+    )
+    out = render.render_scale_proof(results)
+    assert "Per-step density retention" in out
+    assert "Per-step throughput retention" not in out
+
+
+def test_scale_proof_per_step_compounding_decay_read():
+    # a4s1's PR #54 fast-follow: every step within tolerance (≥0.9) yet the endpoint ratio
+    # compounds below 0.9 — the table reads ⚠️ No, so the subline must NOT say "holds flat".
+    # 1.0 → 0.93 → 0.8649: steps 0.93/0.93 both ✅, endpoint 0.8649 < 0.9.
+    results = _matrix_results(
+        _full_gvisor_scenarios(),
+        scale_proof={
+            "scale_points": [
+                {"node_count": 1, "density": 1.0},
+                {"node_count": 2, "density": 0.93},
+                {"node_count": 4, "density": 0.8649},
+            ],
+        },
+    )
+    out = render.render_scale_proof(results)
+    assert "1→2 ✅ 0.93" in out
+    assert "2→4 ✅ 0.93" in out
+    assert "compounds to an endpoint sag" in out
+    assert "holds flat step-to-step" not in out
+
+
 def _run_all():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:
