@@ -61,3 +61,5 @@ _generated-at: 2026-06-29T02:05:10Z_
 | Nodes Tested | Density Holds Flat? | Throughput Holds Flat? |
 |---|---|---|
 | 1 → 2 → 4 | ✅ Yes (5.18 → 5.18 → 5.18) | ⚠️ No |
+
+_Measured 2026-06-29 — node-count linearity sweep (point-in-time; refreshed on the next multi-node sweep)._

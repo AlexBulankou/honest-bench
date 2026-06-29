@@ -71,6 +71,7 @@
   ],
   "scale_proof": {
     "density_retention": 1.0,
+    "measured_at": "2026-06-29T03:46:01Z",
     "scale_points": [
       {
         "density": 5.18,

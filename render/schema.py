@@ -230,4 +230,8 @@ SCALE_PROOF_FIELDS = {
     "scale_points": _scale_points_ok,
     "density_retention": _nonneg,
     "thpt_retention": _nonneg,
+    # measured_at (#3952): ISO-8601 instant the sweep ran. Optional, carried forward
+    # across the daily refresh so a point-in-time block is honestly dated apart from
+    # the daily-refreshed top-level generated_at. Non-empty string only.
+    "measured_at": lambda v: isinstance(v, str) and bool(v),
 }
