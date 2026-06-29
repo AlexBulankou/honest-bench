@@ -224,6 +224,78 @@ def test_emit_to_render_matrix_convergence_gvisor_doc_rows():
     assert "| Kata + microVM | Resume-from-suspend | pending | pending | pending | pending | pending | N/A | pending |" in out
 
 
+def test_emit_to_render_matrix_convergence_single_sample_ttfe_point():
+    """Convergence guard for the SINGLE-SAMPLE shape (n=1): metrics.single_sample_ttfe_point ->
+    _clean_matrix_metrics -> render_matrix. This is the shape the cold (native_digest_cold) and
+    resume (suspend_resume) rows ACTUALLY emit (PR #31) -- a lone create->first-execution sample,
+    not a burst. The sibling test above feeds the multi-sample BURST producer (ttfe_sla_metrics);
+    this one pins the n=1 path, which differs in two honesty-load-bearing ways:
+
+      1. p50 == p95 == the one sample (a single point has no distribution spread), and
+      2. NO throughput key is emitted at all (one provision is not a per-second rate), so the two
+         throughput columns MUST render `pending` -- the honest "not measured", NOT a false 0.
+
+    The (2) distinction is the load-bearing one: a regression that defaulted an ABSENT throughput
+    key to 0 in render would conflate it with metrics.throughput_per_node's honest-zero (samples
+    exist but none beat the threshold). For n=1 there is no rate at all; pending is the only honest
+    render. A naive "default missing numeric to 0" change would silently turn a single cold
+    provision into a false "0 sb/s/node throughput" claim -- this test fails loudly on it,
+    value-exact.
+    """
+    metrics = _load_metrics()
+    if metrics is None:
+        print("  (skip: harness metrics core not in-tree / not importable)")
+        return
+
+    cold = metrics.single_sample_ttfe_point(1200.0, True)
+    resume = metrics.single_sample_ttfe_point(3500.0, True)
+    cold_fail = metrics.single_sample_ttfe_point(None, False)
+
+    # (a) field-level: every emitted key (minus the lifted-out n) survives the closed guard.
+    for label, pt in (("cold", cold), ("resume", resume), ("cold_fail", cold_fail)):
+        sla = {k: v for k, v in pt.items() if k != "n"}
+        kept = render._clean_matrix_metrics(sla)
+        assert kept == sla, (
+            f"emit/render schema DRIFT on single-sample {label}: closed guard dropped "
+            f"{set(sla) - set(kept)} -- the cell would render pending.\nemitted={sla}\nkept={kept}"
+        )
+
+    def _row(name, outcome, pt):
+        # mirror run.py:_run_one -- n is lifted out of sla_metrics to the scenario top level.
+        return {
+            "name": name,
+            "outcome": outcome,
+            "n": pt.get("n", 1),
+            "sla_metrics": {k: v for k, v in pt.items() if k != "n"},
+        }
+
+    results = {
+        "product": "sandbox",
+        "generated_at": "2026-06-29T03:00:00Z",
+        "provenance": {"runtime": "gvisor", "cluster_substrate": "gke", "node_count": 1},
+        "scenarios": [
+            _row("native_digest_cold", "PASS", cold),
+            _row("suspend_resume", "PASS", resume),
+        ],
+    }
+    out = render.render_matrix(results)
+
+    # (b) single-sample rows: p50 == p95 (one point), throughput columns PENDING (not a false 0),
+    # density pending (cold) / N/A (resume), exec 100%.
+    assert "| gVisor | Unique-image cold (RL reality) | pending | pending | 1.2s | 1.2s | 1 | pending | 100% |" in out
+    assert "| gVisor | Resume-from-suspend | pending | pending | 3.5s | 3.5s | 1 | N/A | 100% |" in out
+
+    # never-reached-first-execution cold provision: every measured column pending, exec honest 0%.
+    fail_results = {
+        "product": "sandbox",
+        "generated_at": "2026-06-29T03:00:00Z",
+        "provenance": {"runtime": "gvisor", "cluster_substrate": "gke", "node_count": 1},
+        "scenarios": [_row("native_digest_cold", "FAIL", cold_fail)],
+    }
+    out_fail = render.render_matrix(fail_results)
+    assert "| gVisor | Unique-image cold (RL reality) | pending | pending | pending | pending | 1 | pending | 0% (0/1) ⚠️ |" in out_fail
+
+
 def test_emit_to_render_scale_proof_convergence_doc_linearity():
     """End-to-end convergence for the SECOND public table: the REAL metrics.py producers
     (density_per_vcpu + throughput_per_node + retention) -> _clean_scale_proof (the closed
