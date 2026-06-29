@@ -200,6 +200,68 @@ def test_ttfe_sla_metrics_survives_results_schema_coerce():
         _check(_close(coerced[k], float(out[k])), f"value mutated for {k}")
 
 
+# --------------------------------------------- single-sample (cold / resume)
+
+def test_single_sample_ttfe_point_happy():
+    # one activation that executed -> p50==p95==the single sample, n=1, full credit
+    out = m.single_sample_ttfe_point(3500.0, True)
+    _check(out["exec_success_rate"] == 1.0, "single-sample exec rate 1.0")
+    _check(out["n"] == 1, "single-sample n==1")
+    _check(_close(out["ttfe_p50_ms"], 3500.0), "single-sample p50==sample")
+    _check(_close(out["ttfe_p95_ms"], 3500.0), "single-sample p95==sample")
+    _check("thpt_under_5s_per_node" not in out, "single-sample omits throughput")
+    _check("density_per_vcpu" not in out, "single-sample omits density")
+
+
+def test_single_sample_ttfe_point_failed_exec():
+    # a failed one-shot exec has no honest first-instruction latency -> no
+    # percentiles, exec_success_rate 0.0, n=1 (honest about both the failure
+    # and the absent latency)
+    out = m.single_sample_ttfe_point(None, False)
+    _check(out["exec_success_rate"] == 0.0, "failed single-sample exec rate 0.0")
+    _check(out["n"] == 1, "failed single-sample n==1")
+    _check("ttfe_p50_ms" not in out, "failed single-sample omits p50")
+    _check("ttfe_p95_ms" not in out, "failed single-sample omits p95")
+
+
+def _lift_like_run_py(sla_metrics: dict, name: str, outcome: str) -> dict:
+    """Mirror run.py:_run_one's lift of n + pending_reason out of sla_metrics
+    to the scenario top level, so we can validate the suspend_resume merge
+    contract end-to-end offline (no cluster, no run.py import)."""
+    raw: dict = {"name": name, "outcome": outcome}
+    sm = dict(sla_metrics)
+    n = sm.pop("n", None)
+    if isinstance(n, (int, float)) and not isinstance(n, bool):
+        raw["n"] = int(n)
+    reason = sm.pop("pending_reason", None)
+    if isinstance(reason, str):
+        raw["pending_reason"] = reason
+    raw["sla_metrics"] = sm
+    return raw
+
+
+def test_single_sample_point_merge_preserves_pending_reason():
+    # The suspend_resume merge contract, validated offline: on the gap-persists
+    # path the scenario's sla_metrics carries {"pending_reason": "upstream-blocked"}
+    # and we merge the single-sample TTFE point onto it. run.py lifts n +
+    # pending_reason to the scenario top level; the rest must coerce cleanly and
+    # the reason must survive _coerce_scenario when outcome == pending.
+    base = {"pending_reason": "upstream-blocked"}
+    point = m.single_sample_ttfe_point(5000.0, True)
+    merged = {**base, **point}
+    raw = _lift_like_run_py(merged, "suspend_resume", "pending")
+    coerced = rs._coerce_scenario(raw)
+    _check(coerced.get("pending_reason") == "upstream-blocked",
+           "pending_reason survives _coerce_scenario on pending outcome")
+    _check(coerced["n"] == 1, "n lifted + survives coerce")
+    sla = coerced["sla_metrics"]
+    _check(_close(sla["ttfe_p50_ms"], 5000.0), "p50 survives merge+coerce")
+    _check(_close(sla["ttfe_p95_ms"], 5000.0), "p95 survives merge+coerce")
+    _check(sla["exec_success_rate"] == 1.0, "exec rate survives merge+coerce")
+    _check("pending_reason" not in sla, "pending_reason lifted out of sla_metrics")
+    _check("n" not in sla, "n lifted out of sla_metrics")
+
+
 def _run_all():
     tests = [v for k, v in sorted(globals().items())
              if k.startswith("test_") and callable(v)]

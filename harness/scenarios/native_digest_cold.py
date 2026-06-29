@@ -72,7 +72,16 @@ measures a cold start (PASS) or the provision genuinely failed (raise).
 
 from __future__ import annotations
 
-from ._apiversion import sandbox_api_version, sandbox_gvr
+try:  # package context (production: run.py loads harness.scenarios.native_digest_cold)
+    from ._apiversion import sandbox_api_version, sandbox_gvr
+    from .. import metrics, ttfe_probe
+except ImportError:  # standalone (dependency-free test from the scenarios/ dir)
+    from _apiversion import sandbox_api_version, sandbox_gvr
+    import sys as _sys
+    import pathlib as _pathlib
+
+    _sys.path.insert(0, str(_pathlib.Path(__file__).resolve().parent.parent))
+    import metrics, ttfe_probe
 
 import logging
 import os
@@ -90,8 +99,25 @@ _SANDBOX_IMAGE = os.environ.get(
 # Public benchmark metric key (milliseconds). The cold create→Ready wall-clock
 # this scenario measures internally in seconds is emitted via the run() 3-tuple
 # as cold_start_ms, converted to milliseconds to match the render schema's
-# metric vocabulary.
+# metric vocabulary. Used only on the LEGACY (TTFE-off) emit path; the TTFE path
+# supersedes it with the create->first-instruction histogram.
 _SLA_METRIC_KEY = "cold_start_ms"
+
+
+def _env_flag(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in ("1", "true", "yes", "on")
+
+
+# TTFE Layer-2 exec probe. DEFAULT-OFF.
+#
+# gated: default-off until the runner ServiceAccount carries pods/exec RBAC and
+# the fire path flips it ON in the SAME change that grants the verb. The probe
+# (ttfe_probe.probe_first_instruction) collapses an RBAC-denied exec and a
+# genuine exec-failure to the same (None, False) — it cannot tell them apart — so
+# an ungated default-on would publish a false 0% exec-success before the grant
+# lands. Flip-issue: #3944.
+_TTFE_EXEC = _env_flag("BENCH_TTFE_EXEC")
+
 
 # Cold-provision budget. A cold image pull + schedule + container start can take
 # 30-120s on a fresh node depending on image size; 240s is a generous ceiling
@@ -239,16 +265,42 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
     try:
         t1 = _wait_for_sandbox_ready(custom, sandbox_name=sandbox_name)
         cold_start_s = t1 - t0
-        sla_metrics = {_SLA_METRIC_KEY: cold_start_s * 1000.0, "n": 1}
         log.info("Sandbox %s Ready in %.2fs (cold)", sandbox_name, cold_start_s)
-        return (
-            "PASS",
-            f"Cold provision of bare Sandbox {sandbox_name} (image={_SANDBOX_IMAGE}, "
-            f"pull=Always, no warm pool) reached Ready=True in "
-            f"{cold_start_s:.2f}s. cold_start_ms={cold_start_s * 1000.0:.0f} "
-            f"(n=1; single cold provision — a cold pull is cold once per "
-            f"node+image).",
-            sla_metrics,
-        )
+
+        # Emit-key assembly. Two paths, gated by BENCH_TTFE_EXEC:
+        #
+        #   TTFE-on  — probe the cold sandbox's first instruction (t0 = create
+        #     return) and emit the create->first-instruction-result histogram
+        #     (ttfe_p50_ms/ttfe_p95_ms = the single sample, exec_success_rate,
+        #     n=1). This SUPERSEDES cold_start_ms (the doc reports TTFE, not
+        #     create->Ready), so the legacy key is dropped on this path. The bare
+        #     Sandbox's backing pod is named for the CR (pod name == sandbox_name).
+        #   TTFE-off (legacy) — emit cold_start_ms (create->Ready, ms) + n=1.
+        if _TTFE_EXEC:
+            core_v1 = k8s_client.CoreV1Api()
+            ttfe_ms, exec_ok = ttfe_probe.probe_first_instruction(
+                core_v1,
+                pod_name=sandbox_name,
+                namespace=_NAMESPACE,
+                create_monotonic=t0,
+            )
+            sla_metrics = metrics.single_sample_ttfe_point(ttfe_ms, exec_ok)
+            excerpt = (
+                f"Cold provision of bare Sandbox {sandbox_name} "
+                f"(image={_SANDBOX_IMAGE}, pull=Always, no warm pool): "
+                f"create->Ready {cold_start_s:.2f}s; TTFE probe exec_ok={exec_ok}, "
+                f"ttfe_ms={ttfe_ms!r} (n=1; create->first-instruction-result)."
+            )
+        else:
+            sla_metrics = {_SLA_METRIC_KEY: cold_start_s * 1000.0, "n": 1}
+            excerpt = (
+                f"Cold provision of bare Sandbox {sandbox_name} "
+                f"(image={_SANDBOX_IMAGE}, pull=Always, no warm pool) reached "
+                f"Ready=True in {cold_start_s:.2f}s. "
+                f"cold_start_ms={cold_start_s * 1000.0:.0f} "
+                f"(n=1; single cold provision — a cold pull is cold once per "
+                f"node+image)."
+            )
+        return ("PASS", excerpt, sla_metrics)
     finally:
         _cleanup(custom, sandbox_name=sandbox_name)

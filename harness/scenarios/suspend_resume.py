@@ -72,7 +72,16 @@ success returns ("PASS", <excerpt>, {}).
 
 from __future__ import annotations
 
-from ._apiversion import sandbox_api_version, sandbox_gvr
+try:  # package context (production: run.py loads harness.scenarios.suspend_resume)
+    from ._apiversion import sandbox_api_version, sandbox_gvr
+    from .. import metrics, ttfe_probe
+except ImportError:  # standalone (dependency-free test from the scenarios/ dir)
+    from _apiversion import sandbox_api_version, sandbox_gvr
+    import sys as _sys
+    import pathlib as _pathlib
+
+    _sys.path.insert(0, str(_pathlib.Path(__file__).resolve().parent.parent))
+    import metrics, ttfe_probe
 
 import logging
 import os
@@ -86,6 +95,21 @@ _NAMESPACE = os.environ.get("BENCH_NAMESPACE", "default")
 _SANDBOX_IMAGE = os.environ.get(
     "SUSPEND_RESUME_SANDBOX_IMAGE", "busybox:1.36"
 )
+
+
+def _env_flag(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in ("1", "true", "yes", "on")
+
+
+# TTFE Layer-2 exec probe. DEFAULT-OFF.
+#
+# gated: default-off until the runner ServiceAccount carries pods/exec RBAC and
+# the fire path flips it ON in the SAME change that grants the verb. The probe
+# (ttfe_probe.probe_first_instruction) collapses an RBAC-denied exec and a
+# genuine exec-failure to the same (None, False) — it cannot tell them apart — so
+# an ungated default-on would publish a false 0% exec-success before the grant
+# lands. Flip-issue: #3944.
+_TTFE_EXEC = _env_flag("BENCH_TTFE_EXEC")
 
 # Timeouts. 120 (ready) + 90 (suspend) + 90 (resume) + slack keeps a hung
 # transition bounded so the cell fails rather than hanging the suite.
@@ -498,6 +522,9 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
         # --- RESUME LEG (gap probe) ---
         log.info("resuming (operatingMode=Running)")
         _patch_lifecycle(custom, sandbox_name=sandbox_name, suspend=False)
+        # t0 for the resume-activation TTFE: resume-request return -> first
+        # instruction result on the resumed Pod (the doc's resume TTFE column).
+        resume_t0 = time.monotonic()
 
         # Part 1: the resume LIFECYCLE must complete (new Pod uid + Ready=True/
         # "Pod is Ready"). Timing out here is a REAL regression — the
@@ -545,6 +572,34 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
             pod_uid=new_uid, old_uid=pre_uid,
             clear_window_s=_RESUME_SUSPENDED_CLEAR_WINDOW_S,
         )
+
+        # TTFE Layer-2 (gated): probe the resumed Pod's first instruction and
+        # merge the single-sample resume-activation TTFE point (ttfe_p50_ms/
+        # ttfe_p95_ms = the one sample, exec_success_rate, n=1) into the gap-probe
+        # verdict's sla_metrics. The verdict itself is UNCHANGED — the Suspended-
+        # clear gap (PASS vs pending) is orthogonal to whether the resumed pod can
+        # execute, so the TTFE metrics ride ALONGSIDE either verdict. The merge
+        # preserves any pending_reason key (run.py pops it from sla_metrics). NO
+        # throughput (one resume is not a sustained burst) and NO density (N/A on
+        # the resume row per the doc) — the same single-sample shape as the cold
+        # cell. Reached only after lifecycle_ok, so the resumed Pod exists; its
+        # backing Pod is named for the CR (pod name == sandbox_name).
+        if _TTFE_EXEC:
+            ttfe_ms, exec_ok = ttfe_probe.probe_first_instruction(
+                core_v1,
+                pod_name=sandbox_name,
+                namespace=_NAMESPACE,
+                create_monotonic=resume_t0,
+            )
+            sla_metrics = {
+                **sla_metrics,
+                **metrics.single_sample_ttfe_point(ttfe_ms, exec_ok),
+            }
+            excerpt = (
+                f"{excerpt} TTFE probe: exec_ok={exec_ok}, ttfe_ms={ttfe_ms!r} "
+                f"(n=1; resume-request->first-instruction-result)."
+            )
+
         log.info("resume gap-probe verdict: %s — %s", verdict, excerpt)
         return verdict, excerpt, sla_metrics
     finally:

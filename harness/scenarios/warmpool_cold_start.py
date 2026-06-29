@@ -58,7 +58,16 @@ loop catches a raised exception as a crash-fail cell.
 
 from __future__ import annotations
 
-from ._apiversion import claim_gvr, ext_api_version, template_gvr, warmpool_gvr
+try:  # package context (production: run.py loads harness.scenarios.warmpool_cold_start)
+    from ._apiversion import claim_gvr, ext_api_version, template_gvr, warmpool_gvr
+    from .. import metrics, ttfe_probe
+except ImportError:  # standalone (dependency-free test from the scenarios/ dir)
+    from _apiversion import claim_gvr, ext_api_version, template_gvr, warmpool_gvr
+    import sys as _sys
+    import pathlib as _pathlib
+
+    _sys.path.insert(0, str(_pathlib.Path(__file__).resolve().parent.parent))
+    import metrics, ttfe_probe
 
 import logging
 import os
@@ -103,8 +112,45 @@ _SEPARATION_RATIO = float(
 # Public benchmark metric key (milliseconds). The warm-tier bind latency this
 # scenario measures internally as `warm_max_s` (seconds) is emitted via the
 # run() 3-tuple as the activation latency, converted to milliseconds to match
-# the render schema's metric vocabulary.
+# the render schema's metric vocabulary. Used only on the LEGACY (TTFE-off) emit
+# path; the TTFE path supersedes it with the create->first-instruction histogram.
 _SLA_METRIC_KEY = "activation_ms"
+
+
+def _env_flag(name: str) -> bool:
+    return os.environ.get(name, "").strip().lower() in ("1", "true", "yes", "on")
+
+
+def _opt_int(name: str) -> int | None:
+    v = os.environ.get(name)
+    return int(v) if v not in (None, "") else None
+
+
+def _opt_float(name: str) -> float | None:
+    v = os.environ.get(name)
+    return float(v) if v not in (None, "") else None
+
+
+# TTFE Layer-2 exec probe. DEFAULT-OFF.
+#
+# gated: default-off until the runner ServiceAccount carries pods/exec RBAC and
+# the fire path flips it ON in the SAME change that grants the verb. The probe
+# (ttfe_probe.probe_first_instruction) collapses an RBAC-denied exec and a
+# genuine exec-failure to the same (None, False) — it cannot tell them apart —
+# so an ungated default-on would publish a false 0% exec-success + empty TTFE
+# histograms before the grant lands. Flip-issue: #3944.
+_TTFE_EXEC = _env_flag("BENCH_TTFE_EXEC")
+
+# Node count for the per-node throughput denominator (matches run.py provenance).
+_NODE_COUNT = max(1, _opt_int("BENCH_NODE_COUNT") or 1)
+
+# Density basis (the LOCKED 1.88/vCPU reconcile). Supplied by the fire path from
+# the real saturation measurement: max concurrent sandboxes / per-node
+# ALLOCATABLE sandbox-schedulable vCPU. When either is unset, no density_per_vcpu
+# key is emitted and the Max-Density cell renders pending (never a fabricated
+# value). warmpool_cold_start is the render-designated DENSITY_SOURCE_SCENARIO.
+_DENSITY_MAX_CONCURRENT = _opt_int("BENCH_DENSITY_MAX_CONCURRENT")
+_DENSITY_ALLOC_VCPU = _opt_float("BENCH_DENSITY_ALLOCATABLE_VCPU_PER_NODE")
 
 # Timeouts. Pool warmup: 180s for 5 replicas (pull + schedule + start).
 # Per-claim bind: 180s — cold-path claims can take 30-90s on a fresh node.
@@ -223,7 +269,8 @@ def _wait_for_pool_warm(
 
 
 def _watch_one_claim(*, claim_name: str, deadline: float,
-                     bound_at: dict[str, float]) -> None:
+                     bound_at: dict[str, float],
+                     sandbox_names: dict[str, str]) -> None:
     """Tight-poll a single claim until Ready+bound or deadline; record time.
 
     Runs in its own thread with its own CustomObjectsApi. The Api object is
@@ -231,8 +278,10 @@ def _watch_one_claim(*, claim_name: str, deadline: float,
     `run()` pins connection_pool_maxsize >= claim count before spawning us —
     otherwise threads would serialize waiting for a free connection and
     re-coarsen the sub-second granularity. On first observation of Ready+bound it
-    writes `bound_at[claim_name] = time.monotonic()` (dict item-assignment is
-    atomic under CPython) and returns.
+    writes `bound_at[claim_name] = time.monotonic()` and the backing pod name
+    `sandbox_names[claim_name] = status.sandbox.name` (dict item-assignment is
+    atomic under CPython) — the pod name is the exec target the TTFE probe needs
+    — and returns.
     """
     from kubernetes import client as k8s_client
 
@@ -248,7 +297,11 @@ def _watch_one_claim(*, claim_name: str, deadline: float,
             log.warning("poll: get claim %s failed: %s — retrying", claim_name, e)
             time.sleep(_POLL_S)
             continue
-        if _is_claim_ready_and_bound((obj or {}).get("status") or {}):
+        status = (obj or {}).get("status") or {}
+        if _is_claim_ready_and_bound(status):
+            pod_name = (status.get("sandbox") or {}).get("name")
+            if pod_name:
+                sandbox_names[claim_name] = pod_name
             bound_at[claim_name] = time.monotonic()
             return
         time.sleep(_POLL_S)
@@ -256,12 +309,13 @@ def _watch_one_claim(*, claim_name: str, deadline: float,
 
 def _measure_claim_latencies(
     claim_names: list[str], *, timeout_s: int,
-) -> tuple[dict[str, float], set[str]]:
+) -> tuple[dict[str, float], set[str], dict[str, str]]:
     """Measure each claim's Ready+bound latency with one thread per claim.
 
-    Returns (bound_at, pending) where bound_at maps each resolved claim to its
-    monotonic bind-observation time and pending is the set that never bound
-    within `timeout_s`.
+    Returns (bound_at, pending, sandbox_names) where bound_at maps each resolved
+    claim to its monotonic bind-observation time, pending is the set that never
+    bound within `timeout_s`, and sandbox_names maps each bound claim to its
+    backing pod name (the exec target for the TTFE probe).
 
     Thread-per-claim (not single-threaded round-robin) is required because the
     scenario gates on a sub-second threshold: a round-robin sweep of N claims
@@ -279,12 +333,13 @@ def _measure_claim_latencies(
     import threading
 
     bound_at: dict[str, float] = {}
+    sandbox_names: dict[str, str] = {}
     deadline = time.monotonic() + timeout_s
     threads = [
         threading.Thread(
             target=_watch_one_claim,
             kwargs={"claim_name": name, "deadline": deadline,
-                    "bound_at": bound_at},
+                    "bound_at": bound_at, "sandbox_names": sandbox_names},
             daemon=True,
         )
         for name in claim_names
@@ -294,7 +349,7 @@ def _measure_claim_latencies(
     for t in threads:
         t.join(timeout=timeout_s + 5)
     pending = {name for name in claim_names if name not in bound_at}
-    return bound_at, pending
+    return bound_at, pending, sandbox_names
 
 
 def _classify_latencies(
@@ -361,6 +416,106 @@ def _classify_latencies(
     breakdown["separation_ok"] = separation_ok
 
     return (absolute_ok or separation_ok), breakdown
+
+
+def _activation_window_s(
+    create_times: dict[str, float], bound_at: dict[str, float],
+) -> float | None:
+    """Wall-clock span of the activation BURST: first create -> last bind.
+
+    The throughput denominator (sandboxes/sec/node) is "how long did the whole
+    burst take to land", NOT the serial-probe span. Probes run serially in a loop
+    AFTER all claims bound, so the probe span is a function of probe
+    serialization, not of provisioning — using it would inflate window_s and
+    understate throughput. The honest window is the activation burst: from the
+    EARLIEST create (among claims that actually bound) to the LATEST bind. That
+    matches the doc's "~50s window" semantics and is independent of how the probe
+    loop is scheduled.
+
+    Returns None when no claim bound (no burst happened); the caller then has no
+    throughput to report. Floors at 0.001s so a degenerate single-claim
+    instant-bind never divides by zero.
+    """
+    if not bound_at:
+        return None
+    earliest_create = min(create_times[name] for name in bound_at)
+    latest_bind = max(bound_at.values())
+    return max(latest_bind - earliest_create, 0.001)
+
+
+def _assemble_ttfe_metrics(
+    ttfe_ms_samples: list[float],
+    exec_oks: list[bool],
+    *,
+    window_s: float,
+    node_count: int,
+    max_concurrent_sandboxes: int | None,
+    allocatable_sandbox_vcpu_per_node: float | None,
+) -> dict:
+    """Assemble the warmpool TTFE sla_metrics dict (delegates to the pure core).
+
+    Adds the reserved `n` key = the attempt total (len(exec_oks)) so the harness
+    lifts it to the top-level schema field. n == len(exec_oks) by the locked
+    contract: one exec_ok per claim FIRED (a never-bound claim contributes
+    exec_ok=False), so exec_success_rate's denominator is the attempt total and
+    the render derives exec_success_n = round(rate * n).
+    """
+    m = metrics.ttfe_sla_metrics(
+        ttfe_ms_samples,
+        exec_oks,
+        window_s=window_s,
+        node_count=node_count,
+        max_concurrent_sandboxes=max_concurrent_sandboxes,
+        allocatable_sandbox_vcpu_per_node=allocatable_sandbox_vcpu_per_node,
+    )
+    m["n"] = len(exec_oks)
+    return m
+
+
+def _probe_all_claims(
+    core_v1,
+    *,
+    claim_names: list[str],
+    sandbox_names: dict[str, str],
+    create_times: dict[str, float],
+    bound_at: dict[str, float],
+) -> tuple[list[float], list[bool]]:
+    """Run the first-instruction TTFE probe against every fired claim.
+
+    One exec_oks entry per claim FIRED (the locked contract: attempt total ==
+    len(exec_oks) == n). For a claim that bound, run the probe in its backing pod
+    with t0 = the claim's create-time; append exec_ok, and append the TTFE sample
+    only when the probe returned a latency (a failed exec contributes False to
+    exec_success_rate but NO sample to the histogram — a sandbox that never ran an
+    instruction has no honest first-instruction latency). For a claim that never
+    bound, record exec_ok=False with no sample (attempted-never-executed) so it
+    drags exec_success_rate honestly.
+
+    The probe never raises on exec/cluster/RBAC error — it collapses all of them
+    to (None, False) — so a single bad claim degrades its own cell, never crashes
+    the burst.
+    """
+    ttfe_ms_samples: list[float] = []
+    exec_oks: list[bool] = []
+    for name in claim_names:
+        if name not in bound_at:
+            exec_oks.append(False)
+            continue
+        pod_name = sandbox_names.get(name)
+        if not pod_name:
+            # Bound but no pod name observed — cannot exec; failed execution.
+            exec_oks.append(False)
+            continue
+        ttfe_ms_sample, exec_ok = ttfe_probe.probe_first_instruction(
+            core_v1,
+            pod_name=pod_name,
+            namespace=_NAMESPACE,
+            create_monotonic=create_times[name],
+        )
+        exec_oks.append(exec_ok)
+        if ttfe_ms_sample is not None:
+            ttfe_ms_samples.append(ttfe_ms_sample)
+    return ttfe_ms_samples, exec_oks
 
 
 def _cleanup(
@@ -476,7 +631,7 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
             create_times[claim_names[-1]] - create_times[claim_names[0]],
         )
 
-        bound_at, timed_out = _measure_claim_latencies(
+        bound_at, timed_out, sandbox_names = _measure_claim_latencies(
             claim_names, timeout_s=_BIND_TIMEOUT_S,
         )
 
@@ -497,17 +652,45 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
         all_lat_str = ", ".join(f"{x:.3f}" for x in breakdown["all_latencies_s"])
         warm_max = breakdown["warm_max_s"]
         warm_max_str = f"{warm_max:.3f}s" if warm_max is not None else "<n/a>"
-        # Isolated activation latency in milliseconds: only when a full warm
-        # cluster delivered a real warm_max; under-delivery (None) emits no key.
-        # The reserved "n" key reports the sample count backing the measurement
-        # (the warm-tier size, _POOL_REPLICAS — warm_max is the max over exactly
-        # those fastest claims). The harness lifts "n" to the top-level schema
-        # field so it renders as "(n=N)"; it is never coerced into a metric.
-        sla_metrics = (
-            {_SLA_METRIC_KEY: warm_max * 1000.0, "n": _POOL_REPLICAS}
-            if warm_max is not None
-            else {}
-        )
+        # Emit-key assembly. Two paths, gated by BENCH_TTFE_EXEC:
+        #
+        #   TTFE-on  (the doc-headline path) — probe each bound claim's first
+        #     instruction and emit the create->first-instruction histogram:
+        #     ttfe_p50_ms/ttfe_p95_ms, thpt_under_5s/1s_per_node,
+        #     exec_success_rate, density_per_vcpu (when both env inputs supplied),
+        #     n = attempt total. This SUPERSEDES activation_ms (the doc reports
+        #     TTFE, not bind latency), so the legacy key is dropped on this path.
+        #   TTFE-off (legacy) — emit the isolated warm-tier bind latency as
+        #     activation_ms (ms), only when a full warm cluster delivered a real
+        #     warm_max; under-delivery (None) emits no key. The reserved "n" here
+        #     is the warm-tier size (_POOL_REPLICAS) backing warm_max.
+        #
+        # The harness lifts "n" to the top-level schema field so it renders as
+        # "(n=N)"; it is never coerced into a metric.
+        if _TTFE_EXEC and bound_at:
+            core_v1 = k8s_client.CoreV1Api()
+            ttfe_ms_samples, exec_oks = _probe_all_claims(
+                core_v1,
+                claim_names=claim_names,
+                sandbox_names=sandbox_names,
+                create_times=create_times,
+                bound_at=bound_at,
+            )
+            window_s = _activation_window_s(create_times, bound_at)
+            sla_metrics = _assemble_ttfe_metrics(
+                ttfe_ms_samples,
+                exec_oks,
+                window_s=window_s,
+                node_count=_NODE_COUNT,
+                max_concurrent_sandboxes=_DENSITY_MAX_CONCURRENT,
+                allocatable_sandbox_vcpu_per_node=_DENSITY_ALLOC_VCPU,
+            )
+        else:
+            sla_metrics = (
+                {_SLA_METRIC_KEY: warm_max * 1000.0, "n": _POOL_REPLICAS}
+                if warm_max is not None
+                else {}
+            )
         sep = breakdown["separation_observed"]
         sep_str = f"{sep:.2f}x" if sep is not None else "<no-cold-tier>"
         clause = (
