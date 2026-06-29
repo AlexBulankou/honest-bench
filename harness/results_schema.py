@@ -18,7 +18,7 @@ from numbers import Real
 # Closed product vocabulary — render/schema.py's PRODUCTS shares this set. A product
 # outside it is a real bug (fail-closed), not a drop. DEFAULT_PRODUCT keeps the
 # sandbox suite the zero-arg default so existing callers are unchanged.
-PRODUCT_ENUM = ("sandbox", "substrate")
+PRODUCT_ENUM = ("sandbox", "sandbox-kata", "substrate")
 DEFAULT_PRODUCT = "sandbox"
 
 # Closed value-sets. A value outside the set is a real bug, not a leak, so the

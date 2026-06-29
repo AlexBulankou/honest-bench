@@ -94,10 +94,46 @@ SUBSTRATE_CELLS = (
     ),
 )
 
+# Sandbox-Kata (#3942 PHASE 2, OPTION A): the SAME 4 perf cells as SANDBOX_CELLS but
+# gated to the gke-kata nested-virt pool, so the matrix can carry a Kata column ALONGSIDE
+# the gVisor one without `run --product sandbox-kata` overwriting the gVisor
+# sandbox/results/latest.json (run.py writes <product>/results/latest.json wholesale).
+# Each cell requires_substrate="gke-kata" → it MEASURES for real only on the Kata pool
+# (where the EMIT invocation pins runtimeClassName: kata-clh) and renders honest-pending
+# (requires-kata-runtime) on kind/gke/gke-sandbox — the symmetric mirror of the
+# gVisor canary's requires-gvisor-runtime, and the genuine emit path for that token.
+# NO isolation badges: kata-clh is a microVM runtime, not gVisor, so the gVisor/NetworkPolicy
+# badges do not apply. The render-side matrix join (gVisor + Kata columns) is a4s1's
+# PHASE 3 lane. DEFAULT_PRODUCT stays "sandbox" — the auto-refresh kind runner never
+# fires --product sandbox-kata; it only runs at PHASE 2 on the live gke-kata pool.
+SANDBOX_KATA_CELLS = (
+    Cell(
+        "burst_create",
+        requires_substrate="gke-kata",
+        pending_reason="requires-kata-runtime",
+    ),
+    Cell(
+        "warmpool_cold_start",
+        requires_substrate="gke-kata",
+        pending_reason="requires-kata-runtime",
+    ),
+    Cell(
+        "native_digest_cold",
+        requires_substrate="gke-kata",
+        pending_reason="requires-kata-runtime",
+    ),
+    Cell(
+        "suspend_resume",
+        requires_substrate="gke-kata",
+        pending_reason="requires-kata-runtime",
+    ),
+)
+
 # Per-product cell suites. Only a registered product is runnable; an empty/absent
 # product is deliberately NOT registered — see cells_for_product.
 CELLS_BY_PRODUCT = {
     "sandbox": SANDBOX_CELLS,
+    "sandbox-kata": SANDBOX_KATA_CELLS,
     "substrate": SUBSTRATE_CELLS,
 }
 

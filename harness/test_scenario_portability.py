@@ -301,6 +301,40 @@ def test_substrate_gate_semantics():
     )
 
 
+# --- cross-contract: harness emit enums ⊆ render allow-lists ------------------
+
+
+def test_harness_enums_subset_of_render_allowlists():
+    """The harness EMITS these enum values; the render closed-schema allow-list
+    DROPS anything not in its set (render.py maps an unknown pending_reason to
+    None, and a substrate value absent from CLUSTER_SUBSTRATES is stripped). So a
+    value the harness can emit but render does not accept silently loses its
+    reason/substrate on the public page — breaking the exact-match invariant
+    (results_schema.py). This is the offline guard that catches that drift at
+    commit time (caught the requires-kata-runtime vs requires-kata-microvm drift
+    in #3942). Direction is one-way by design: render MAY carry extra render-only
+    seed tokens (e.g. requires-kata-microvm) the harness never emits."""
+    from render import schema as render_schema
+
+    missing_reasons = set(results_schema.PENDING_REASON_ENUM) - render_schema.PENDING_REASONS
+    _check(
+        not missing_reasons,
+        f"harness PENDING_REASON_ENUM values not in render PENDING_REASONS "
+        f"(would render no reason → break exact-match): {sorted(missing_reasons)}",
+    )
+    missing_subs = set(results_schema.CLUSTER_SUBSTRATE_ENUM) - render_schema.CLUSTER_SUBSTRATES
+    _check(
+        not missing_subs,
+        f"harness CLUSTER_SUBSTRATE_ENUM values not in render CLUSTER_SUBSTRATES "
+        f"(would be stripped at render): {sorted(missing_subs)}",
+    )
+    missing_products = set(results_schema.PRODUCT_ENUM) - render_schema.PRODUCTS
+    _check(
+        not missing_products,
+        f"harness PRODUCT_ENUM values not in render PRODUCTS: {sorted(missing_products)}",
+    )
+
+
 def _all_tests():
     return [
         v
