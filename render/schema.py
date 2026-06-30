@@ -309,6 +309,14 @@ WARM_VS_COLD_FIELDS = {
     # across the daily refresh (same as scale_proof) so a point-in-time block is honestly
     # dated apart from the daily-refreshed top-level generated_at. Non-empty string only.
     "measured_at": lambda v: isinstance(v, str) and bool(v),
+    # cold_start_mode (#4024): OPTIONAL closed-enum qualifying WHICH cold the cold leg
+    # measured, so the public page never mislabels one cold semantic as the other.
+    # "cold-pull" = a true-cold unique-image pull (native_digest_cold) — the locked
+    # Framing-A leg; "cold-provision" = a warm-pool-overflow fresh-node provision off the
+    # SHARED base image (image possibly node-cached), which must NOT claim unique-image.
+    # Absent ⇒ the render falls back to the historical true-cold phrasing (byte-identical
+    # to pre-#4024), so the existing locked block is unchanged.
+    "cold_start_mode": lambda v: v in COLD_START_MODES,
 }
 
 # --- a#3960: Step-up backfill saturation Pareto ------------------------------------------
