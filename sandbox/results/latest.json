@@ -39,6 +39,16 @@
     ],
     "thpt_retention": 0.15
   },
+  "warm_vs_cold": {
+    "warm_p50_ms": 6900.0,
+    "cold_ms": 60500.0,
+    "speedup": 8.768,
+    "semantic": "ttfe",
+    "runtime_class": "gvisor",
+    "n_warm": 300,
+    "measured_at": "2026-06-29T23:50:37Z",
+    "cold_start_mode": "cold-provision"
+  },
   "scenarios": [
     {
       "n": 10,
