@@ -1057,6 +1057,51 @@ def test_warm_vs_cold_measured_at_absent_no_subline():
     assert "_Measured " not in out
 
 
+def test_warm_vs_cold_absent_mode_defaults_true_cold():
+    # #4024: cold_start_mode is OPTIONAL — an object WITHOUT it (the locked native_digest_cold
+    # shape) is still VALID (renders, not INERT) and falls back to the historical true-cold
+    # phrasing byte-identical to pre-#4024.
+    out = render.render_warm_vs_cold(_matrix_results(_full_gvisor_scenarios(), warm_vs_cold=_wc()))
+    assert "| True-cold (unique-image) | 3s |" in out
+    assert "than a true-cold start (gVisor)." in out
+
+
+def test_warm_vs_cold_cold_pull_mode_explicit_matches_default():
+    # #4024: an EXPLICIT cold-pull renders identically to the absent-mode default (true-cold).
+    out = render.render_warm_vs_cold(
+        _matrix_results(_full_gvisor_scenarios(), warm_vs_cold=_wc(cold_start_mode="cold-pull")))
+    assert "| True-cold (unique-image) | 3s |" in out
+    assert "than a true-cold start (gVisor)." in out
+
+
+def test_warm_vs_cold_cold_provision_mode_honest_label():
+    # #4024: cold-provision overflow must render visibly DISTINCT from unique-image true-cold —
+    # the leg, headline descriptor, and mechanism all switch to the honest overflow phrasing.
+    out = render.render_warm_vs_cold(
+        _matrix_results(_full_gvisor_scenarios(), warm_vs_cold=_wc(cold_start_mode="cold-provision")))
+    assert "| Cold-provision (node overflow) | 3s |" in out
+    assert "than a cold-provision start (warm-pool overflow) (gVisor)." in out
+    assert "SHARED base image" in out
+    assert "NOT a unique image per claim" in out
+
+
+def test_warm_vs_cold_cold_provision_never_claims_unique_image():
+    # #4024 DoD: the cold-provision render must NOT anywhere claim unique-image (the over-claim
+    # this issue exists to kill).
+    out = render.render_warm_vs_cold(
+        _matrix_results(_full_gvisor_scenarios(), warm_vs_cold=_wc(cold_start_mode="cold-provision")))
+    assert "True-cold (unique-image)" not in out
+    assert "than a true-cold start" not in out
+
+
+def test_warm_vs_cold_unknown_mode_inert():
+    # #4024 (a4s1 ask): a present-but-INVALID cold_start_mode (e.g. a typo "cold-provison")
+    # must fail the block CLOSED ⇒ INERT, never silently fall through to the true-cold default
+    # (which would over-claim unique-image for a mislabeled cold leg).
+    results = _matrix_results(_full_gvisor_scenarios(), warm_vs_cold=_wc(cold_start_mode="cold-provison"))
+    assert render.render_warm_vs_cold(results) == ""
+
+
 def _run_all():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:

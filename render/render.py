@@ -746,7 +746,41 @@ def _clean_warm_vs_cold(results):
             return None
     if clean["warm_p50_ms"] <= 0 or clean["cold_ms"] <= 0:
         return None
+    # cold_start_mode (#4024) is OPTIONAL but NOT silently-droppable: a present-but-invalid
+    # mode (e.g. a typo "cold-provison") must fail the block CLOSED rather than fall through
+    # to the true-cold default phrasing, which would silently over-claim unique-image. The
+    # validation loop above only adds it to `clean` when valid, so "in wc but not in clean"
+    # == present-but-invalid ⇒ INERT. Absent stays valid (⇒ true-cold default). (a4s1 ask.)
+    if "cold_start_mode" in wc and "cold_start_mode" not in clean:
+        return None
     return clean
+
+
+# Public cold-leg phrasing keyed by cold_start_mode (#4024). The warm-vs-cold cold leg can
+# be a true unique-image cold pull (cold-pull, the locked Framing-A native_digest_cold leg)
+# or a warm-pool-overflow fresh-node provision off the SHARED base image (cold-provision) —
+# NOT the same cost, so an overflow provision must never claim "unique-image". Each entry
+# supplies the three public surfaces the cold semantic touches: the table leg label, the
+# headline cold-descriptor, and the mechanism sentence. Absent ⇒ _COLD_LEG_DEFAULT, which is
+# byte-identical to the pre-#4024 hardcoded true-cold phrasing, so the existing locked block
+# + its tests are unchanged (graceful degradation, mirrors _measured_cell).
+_COLD_LEG = {
+    "cold-pull": {
+        "leg": "True-cold (unique-image)",
+        "descriptor": "a true-cold start",
+        "mechanism": ("The warm pool keeps a ready slot so a claim skips the fresh-node "
+                      "image-pull path a cold start pays in full."),
+    },
+    "cold-provision": {
+        "leg": "Cold-provision (node overflow)",
+        "descriptor": "a cold-provision start (warm-pool overflow)",
+        "mechanism": ("The warm pool keeps a ready slot so a claim skips the fresh-node "
+                      "provisioning path an overflow claim pays when the pool is exhausted "
+                      "— provisioning off the SHARED base image (one node-cacheable image, "
+                      "NOT a unique image per claim)."),
+    },
+}
+_COLD_LEG_DEFAULT = _COLD_LEG["cold-pull"]
 
 
 def render_warm_vs_cold(results):
@@ -768,11 +802,11 @@ def render_warm_vs_cold(results):
     # values"). The legs are strictly-positive-gated in _clean_warm_vs_cold, so the ratio is
     # always defined and positive — this also closes an emitter speedup<=0.
     speedup = _fmt_num(wc["cold_ms"] / wc["warm_p50_ms"])
+    cold = _COLD_LEG.get(wc.get("cold_start_mode"), _COLD_LEG_DEFAULT)
     lines = ["## Warm-vs-Cold Speedup", ""]
     lines.append(
-        f"A warm-pool provision is **{speedup}× faster** than a true-cold start "
-        f"({rt_label}). The warm pool keeps a ready slot so a claim skips the fresh-node "
-        "image-pull path a cold start pays in full. Both legs are measured the same way "
+        f"A warm-pool provision is **{speedup}× faster** than {cold['descriptor']} "
+        f"({rt_label}). {cold['mechanism']} Both legs are measured the same way "
         f"({sem_label}); the ratio is the portable headline you can reproduce on your own "
         "cluster.")
     lines.append("")
@@ -780,7 +814,7 @@ def render_warm_vs_cold(results):
     lines.append("| " + " | ".join(header) + " |")
     lines.append("|" + "|".join(["---"] * len(header)) + "|")
     lines.append(f"| Warm-pool hit ({rt_label}) | {_fmt_secs(wc['warm_p50_ms'])} |")
-    lines.append(f"| True-cold (unique-image) | {_fmt_secs(wc['cold_ms'])} |")
+    lines.append(f"| {cold['leg']} | {_fmt_secs(wc['cold_ms'])} |")
     lines.append(f"| Speedup (warm is N× faster) | {speedup}× |")
     lines.append("")
     n_note = f" over n={wc['n_warm']} warm claims" if "n_warm" in wc else ""

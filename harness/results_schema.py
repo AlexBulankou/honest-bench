@@ -471,6 +471,17 @@ def _coerce_warm_vs_cold(raw):
     ma = raw.get("measured_at")
     if isinstance(ma, str) and ma:
         out["measured_at"] = ma
+    # cold_start_mode (#4024): OPTIONAL closed-enum mirroring render/schema.py's
+    # WARM_VS_COLD_FIELDS, so a back-filled cold-provision object survives this emitter-side
+    # PII guard instead of being silently stripped. Absent ⇒ omitted (render falls back to the
+    # true-cold default phrasing). Present-but-invalid ⇒ INVALIDATE the whole block (return
+    # None), matching render's _clean_warm_vs_cold fail-closed guard so a typo'd mode never
+    # publishes as true-cold. (A drift from render's set is caught by the cross-contract test.)
+    csm = raw.get("cold_start_mode")
+    if csm is not None:
+        if csm not in COLD_START_MODE_ENUM:
+            return None
+        out["cold_start_mode"] = csm
     return out
 
 

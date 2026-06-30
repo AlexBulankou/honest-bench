@@ -593,6 +593,97 @@ def test_emit_to_render_warm_vs_cold_convergence():
     )
 
 
+def test_emit_to_render_cold_start_mode_convergence():
+    """Convergence guard for the OPTIONAL cold_start_mode field (#4024).
+
+    cold_start_mode qualifies WHICH cold the cold leg measured so the public page never mislabels a
+    warm-pool-overflow cold-provision (fresh node off the SHARED base image) as a true-cold
+    unique-image pull. It is emitted by harness/results_schema._coerce_warm_vs_cold and allow-listed
+    on the render side by schema.WARM_VS_COLD_FIELDS — two INDEPENDENT closed enums that must agree
+    value-for-value, or a back-filled cold-provision object would be silently stripped (defeating the
+    #4021 back-fill) or render the wrong phrasing. This fails loudly first.
+    """
+    import importlib.util
+
+    import schema
+
+    emitter_path = os.path.join(_ROOT, "harness", "results_schema.py")
+    if not os.path.exists(emitter_path):
+        print("  (skip: harness emitter not in-tree yet)")
+        return
+    spec = importlib.util.spec_from_file_location("_bench_emitter_csm", emitter_path)
+    mod = importlib.util.module_from_spec(spec)
+    try:
+        spec.loader.exec_module(mod)
+    except Exception as exc:  # pragma: no cover - harness has its own deps
+        print(f"  (skip: harness emitter not importable in isolation: {exc})")
+        return
+
+    # The two independent closed enums must agree value-for-value.
+    assert set(mod.COLD_START_MODE_ENUM) == set(schema.COLD_START_MODES), (
+        "emit/render DRIFT: harness COLD_START_MODE_ENUM "
+        f"{set(mod.COLD_START_MODE_ENUM)} != render COLD_START_MODES "
+        f"{set(schema.COLD_START_MODES)} — a back-filled mode would be dropped or mislabeled."
+    )
+
+    base = {
+        "warm_p50_ms": 420.0, "cold_ms": 4200.0, "speedup": 10.0,
+        "semantic": "ttfe", "runtime_class": "gvisor", "n_warm": 200,
+    }
+
+    # (a) every valid mode survives the emitter AND passes the render allow-list predicate.
+    for mode in mod.COLD_START_MODE_ENUM:
+        results = mod.build_results(
+            [], {"cluster_substrate": "gke", "node_count": 1},
+            generated_at="2026-06-29T07:40:00Z",
+            warm_vs_cold={**base, "cold_start_mode": mode},
+        )
+        assert "warm_vs_cold" in results, f"emitter dropped a valid cold_start_mode={mode!r} object"
+        wvc = results["warm_vs_cold"]
+        assert wvc.get("cold_start_mode") == mode, (
+            f"emitter stripped cold_start_mode={mode!r} — back-fill would not survive the PII guard"
+        )
+        assert schema.WARM_VS_COLD_FIELDS["cold_start_mode"](wvc["cold_start_mode"]), (
+            f"render WARM_VS_COLD_FIELDS rejects emitter-kept cold_start_mode={mode!r}"
+        )
+
+    # (b) cold-provision renders the honest (non-unique-image) phrasing; never the true-cold leg.
+    results = mod.build_results(
+        [], {"cluster_substrate": "gke", "node_count": 1},
+        generated_at="2026-06-29T07:40:00Z",
+        warm_vs_cold={**base, "cold_start_mode": "cold-provision"},
+    )
+    out = render.render_warm_vs_cold(results)
+    assert "Cold-provision (node overflow)" in out and "SHARED base image" in out, (
+        "cold-provision must render the honest overflow phrasing"
+    )
+    assert "True-cold (unique-image)" not in out, (
+        "cold-provision must NOT claim unique-image"
+    )
+
+    # (c) absent cold_start_mode survives + renders the locked true-cold default (byte-compat).
+    results = mod.build_results(
+        [], {"cluster_substrate": "gke", "node_count": 1},
+        generated_at="2026-06-29T07:40:00Z", warm_vs_cold=dict(base),
+    )
+    assert "warm_vs_cold" in results and "cold_start_mode" not in results["warm_vs_cold"], (
+        "absent cold_start_mode must stay absent (optional field), not be injected"
+    )
+    out = render.render_warm_vs_cold(results)
+    assert "True-cold (unique-image)" in out, "absent mode must render the locked true-cold default"
+
+    # (d) an invalid mode drops the whole block on the EMITTER side (fail-closed PII guard parity).
+    leak = mod.build_results(
+        [], {"cluster_substrate": "gke", "node_count": 1},
+        generated_at="2026-06-29T07:40:00Z",
+        warm_vs_cold={**base, "cold_start_mode": "cold-provison"},
+    )
+    assert "warm_vs_cold" not in leak, (
+        "invalid cold_start_mode must drop the whole warm_vs_cold block (emitter fail-closed) — "
+        "a typo must never publish as the true-cold default"
+    )
+
+
 def _run_all():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:
