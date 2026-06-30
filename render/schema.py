@@ -214,6 +214,17 @@ ACTIVATION_MODE_ROWS = (
     ("suspend_resume", "Resume-from-suspend"),
 )
 
+# Cross-row TTFE-comparability floor. The matrix stacks activation-mode rows whose N differs by
+# orders of magnitude (warm-pool N can be hundreds; a cold or resume row can be N=1..few). A
+# reader scanning the TTFE p50/p95 columns top-to-bottom is invited to compare them as if equal,
+# but a single-sample p50 is not a distribution — so a low-N row can read FASTER than a
+# high-N row purely from sampling, INVERTING the true relationship (e.g. warm-pool p50 over
+# hundreds of samples vs a cold N=1 lucky draw). Rows whose N is below this floor get an
+# explicit small-sample marker on their TTFE cells so cross-row comparison stays honest. The
+# floor is a comparability heuristic, not a validity gate: the cell still renders its measured
+# value; the marker just says "don't rank this against a high-N row".
+TTFE_COMPARABILITY_MIN_N = 30
+
 # Density is a per-RUNTIME property (holds across activation modes), not per-mode. The
 # renderer sources it from whichever of these scenarios carries density_per_vcpu, applies it
 # to the warm-pool + cold rows, and renders N/A on the resume row (matching the doc).

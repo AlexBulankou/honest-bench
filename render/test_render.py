@@ -556,6 +556,56 @@ def test_matrix_renders_doc_exact_gvisor_rows():
     assert "| gVisor | Resume-from-suspend | 4 | 0 | 3.5s | 5s | 1376 | N/A | 92.8% (1277/1376) ⚠️ |" in out
 
 
+def test_matrix_low_n_ttfe_cells_marked():
+    # a4z1 footgun: a low-N row's TTFE must not read as comparable to a high-N row. A row whose
+    # N is below TTFE_COMPARABILITY_MIN_N gets the small-sample dagger on BOTH TTFE cells; the
+    # high-N warm-pool row stays unmarked.
+    scen = _full_gvisor_scenarios()
+    scen[1]["n"] = 1  # cold row: single sample (the inverting case a4z1 flagged)
+    out = render.render_matrix(_matrix_results(scen))
+    cold_line = [l for l in out.splitlines() if "Unique-image cold" in l][0]
+    cells = [c.strip() for c in cold_line.strip("|").split("|")]
+    assert cells[4] == f"1.2s {render._LOW_N_MARK}"  # TTFE p50 marked
+    assert cells[5] == f"1.56s {render._LOW_N_MARK}"  # TTFE p95 marked
+    # the high-N warm-pool row is NOT marked
+    warm_line = [l for l in out.splitlines() if "Warm-pool hit" in l][0]
+    assert render._LOW_N_MARK not in warm_line
+
+
+def test_matrix_low_n_marker_caveat_and_footnote_present():
+    # the prominent cross-row caveat (above the table) and the marker footnote (below) render
+    # whenever the matrix renders — they are static honesty scaffolding, not data-gated.
+    out = render.render_matrix(_matrix_results(_full_gvisor_scenarios()))
+    assert "Read TTFE down a column, not across rows." in out
+    assert render._LOW_N_MARK in out  # caveat + footnote reference the marker glyph
+    assert f"N={render.TTFE_COMPARABILITY_MIN_N}" in out
+
+
+def test_matrix_at_floor_n_not_marked():
+    # boundary: N exactly at the floor is comparable (the marker fires strictly below the floor).
+    scen = _full_gvisor_scenarios()
+    scen[1]["n"] = render.TTFE_COMPARABILITY_MIN_N  # exactly at floor
+    out = render.render_matrix(_matrix_results(scen))
+    cold_line = [l for l in out.splitlines() if "Unique-image cold" in l][0]
+    cells = [c.strip() for c in cold_line.strip("|").split("|")]
+    assert cells[4] == "1.2s"  # no marker at the floor
+    assert cells[5] == "1.56s"
+
+
+def test_matrix_pending_ttfe_never_marked_even_low_n():
+    # a low-N row whose TTFE metric is ABSENT renders `pending`, never `pending †` — the marker
+    # qualifies a measurement, not a missing cell.
+    scen = [
+        {"name": "native_digest_cold", "outcome": "PASS", "n": 2,
+         "sla_metrics": {"thpt_under_5s_per_node": 4}},
+    ]
+    out = render.render_matrix(_matrix_results(scen))
+    cold_line = [l for l in out.splitlines() if "Unique-image cold" in l][0]
+    cells = [c.strip() for c in cold_line.strip("|").split("|")]
+    assert cells[4] == "pending"  # TTFE p50 absent → pending, unmarked
+    assert cells[5] == "pending"
+
+
 def test_matrix_honest_zero_throughput_not_rounded():
     # the cold + resume rows print a literal 0 for throughput@<1s (p95 misses the bar).
     out = render.render_matrix(_matrix_results(_full_gvisor_scenarios()))

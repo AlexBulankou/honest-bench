@@ -329,9 +329,11 @@ def test_emit_to_render_matrix_convergence_single_sample_ttfe_point():
     out = render.render_matrix(results)
 
     # (b) single-sample rows: p50 == p95 (one point), throughput columns PENDING (not a false 0),
-    # density pending (cold) / N/A (resume), exec 100%.
-    assert "| gVisor | Unique-image cold (RL reality) | pending | pending | 1.2s | 1.2s | 1 | pending | 100% |" in out
-    assert "| gVisor | Resume-from-suspend | pending | pending | 3.5s | 3.5s | 1 | N/A | 100% |" in out
+    # density pending (cold) / N/A (resume), exec 100%. The TTFE p50/p95 cells carry the matched-N
+    # small-sample marker `†` (N=1 < TTFE_COMPARABILITY_MIN_N) so a cross-row read can't rank a
+    # 1-sample point against a high-N row -- the cross-row honesty fix this contract now pins.
+    assert "| gVisor | Unique-image cold (RL reality) | pending | pending | 1.2s † | 1.2s † | 1 | pending | 100% |" in out
+    assert "| gVisor | Resume-from-suspend | pending | pending | 3.5s † | 3.5s † | 1 | N/A | 100% |" in out
 
     # never-reached-first-execution cold provision: every measured column pending, exec honest 0%.
     fail_results = {
