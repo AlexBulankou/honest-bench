@@ -1102,6 +1102,147 @@ def test_warm_vs_cold_unknown_mode_inert():
     assert render.render_warm_vs_cold(results) == ""
 
 
+# --- a#3960 step-up saturation render (#4030 saturation_point framing) ---------------------
+def _su(**over):
+    base = {
+        # #4030 OPERATOR headline: the emitter-computed 2×2 (warm/cold × tight/loose) table.
+        "saturation_point": {
+            "tight_ms": 1000.0, "loose_ms": 5000.0,
+            "basis": "max contiguous-from-step-1 offered rate with TTFE p95 under the bar",
+            "warm": {"max_rate_under_tight": 300, "max_rate_under_loose": 500},
+            "cold": {"max_rate_under_tight": 100, "max_rate_under_loose": 300},
+        },
+        "pareto_points": [
+            {"offered_rate_per_s": 10, "ttfe_p50_ms": 400, "ttfe_p95_ms": 600, "ready_per_s": 9.8},
+            {"offered_rate_per_s": 100, "ttfe_p50_ms": 500, "ttfe_p95_ms": 800, "ready_per_s": 97},
+            {"offered_rate_per_s": 300, "ttfe_p50_ms": 650, "ttfe_p95_ms": 950, "ready_per_s": 290},
+            {"offered_rate_per_s": 500, "ttfe_p50_ms": 1100, "ttfe_p95_ms": 3200, "ready_per_s": 460},
+            {"offered_rate_per_s": 800, "ttfe_p50_ms": 3000, "ttfe_p95_ms": 9000, "ready_per_s": 600},
+        ],
+        "verdict": "saturated",
+        "max_flat_rate": 300, "north_star_breach_rate": 500, "saturation_rate": 800,
+        "node_count": 37, "machine_type": "e2-standard-16", "sld_s": 60, "wpr": 0.8,
+        "measured_at": "2026-06-30T04:30:00Z",
+    }
+    base.update(over)
+    return base
+
+
+def test_stepup_absent_renders_nothing():
+    # No stepup object ⇒ INERT (byte-absent until a sweep result is emitted).
+    assert render.render_stepup(_matrix_results(_full_gvisor_scenarios())) == ""
+
+
+def test_stepup_empty_tables_inert():
+    # A stepup object carrying only sweep params (no measured table) ⇒ INERT (no-all-empty).
+    results = _matrix_results(_full_gvisor_scenarios(), stepup={"sld_s": 60, "node_count": 37})
+    assert render.render_stepup(results) == ""
+
+
+def test_stepup_saturation_point_headline_table():
+    # #4030 headline: the operator Saturation Point table read straight off the emitter's
+    # pre-computed warm/cold × tight(1s)/loose(5s) block — no render-time frontier derivation.
+    out = render.render_stepup(_matrix_results(_full_gvisor_scenarios(), stepup=_su()))
+    assert "## Saturation Point — max sustained creation rate" in out
+    assert "Max rate @ TTFE p95 < 1s" in out
+    assert "@ p95 < 5s" in out
+    assert "| Warm-pool hit | 300/s | 500/s |" in out
+    assert "| Cold-provision (node overflow) | 100/s | 300/s |" in out
+
+
+def test_stepup_saturation_point_em_dash_on_unmet_bar():
+    # An unmet bar (rate None or absent) renders an em-dash, NEVER a fabricated 0.
+    su = _su(saturation_point={
+        "tight_ms": 1000.0, "loose_ms": 5000.0,
+        "warm": {"max_rate_under_tight": 300, "max_rate_under_loose": None},  # loose unmet
+        "cold": {"max_rate_under_loose": 100},                               # tight absent
+    })
+    out = render.render_stepup(_matrix_results(_full_gvisor_scenarios(), stepup=su))
+    assert "| Warm-pool hit | 300/s | — |" in out  # loose bar unmet ⇒ em-dash, never 0
+    assert "| Cold-provision (node overflow) | — | 100/s |" in out  # tight bar absent ⇒ em-dash
+
+
+def test_stepup_saturation_point_single_leg():
+    # Only a warm leg measured ⇒ only the warm row renders (no fabricated cold row).
+    su = _su(saturation_point={
+        "tight_ms": 1000.0, "loose_ms": 5000.0,
+        "warm": {"max_rate_under_tight": 250, "max_rate_under_loose": 400},
+    })
+    out = render.render_stepup(_matrix_results(_full_gvisor_scenarios(), stepup=su))
+    assert "| Warm-pool hit | 250/s | 400/s |" in out
+    assert "Cold-provision" not in out
+
+
+def test_stepup_saturation_point_invalid_inert_falls_to_study():
+    # A present-but-INVALID saturation_point (no positive rate anywhere) fails the predicate ⇒
+    # dropped on read; the block still renders off pareto_points under the study heading.
+    su = _su(saturation_point={"tight_ms": 1000.0, "loose_ms": 5000.0, "warm": {}})
+    out = render.render_stepup(_matrix_results(_full_gvisor_scenarios(), stepup=su))
+    assert "## Saturation Point — max sustained creation rate" not in out
+    assert "## Saturation — step-up throughput study" in out
+    assert "Warm-pool hit" not in out
+
+
+def test_stepup_band_rates_and_verdict_additive():
+    # The 500ms/2000ms methodology study renders additively BELOW the operator headline.
+    out = render.render_stepup(_matrix_results(_full_gvisor_scenarios(), stepup=_su()))
+    assert "🛑 saturated" in out
+    assert "highest rate under the 500ms North Star: **300/s**" in out
+    assert "first rate to breach 500ms: 500/s" in out
+    assert "first rate to cross 2000ms: 800/s" in out
+
+
+def test_stepup_unknown_verdict_inert():
+    # A verdict outside the closed set fails the predicate ⇒ the field is dropped; the block
+    # still renders off the (valid) tables, but the bad verdict line never appears.
+    out = render.render_stepup(_matrix_results(_full_gvisor_scenarios(), stepup=_su(verdict="totally-fine")))
+    assert "## Saturation" in out
+    assert "Curve verdict" not in out
+
+
+def test_stepup_unknown_field_dropped():
+    # Closed-schema: an undeclared key is dropped on read and never reaches the page.
+    su = _su()
+    su["operator_note"] = "internal-cluster-name-leak"
+    out = render.render_stepup(_matrix_results(_full_gvisor_scenarios(), stepup=su))
+    assert "internal-cluster-name-leak" not in out
+
+
+def test_stepup_controller_proxy_caveat_renders():
+    su = _su(controller_startup={
+        "lower_bound": True, "verdict": "degrading",
+        "pareto_points": [
+            {"offered_rate_per_s": 300, "controller_startup_p95_ms": 700, "controller_ready_per_s": 295},
+        ],
+    })
+    out = render.render_stepup(_matrix_results(_full_gvisor_scenarios(), stepup=su))
+    assert "Controller-startup lower bound (#3975)" in out
+    assert "UNDER-reports true" in out
+
+
+def test_stepup_proxy_only_renders_study_heading_not_saturation_point():
+    # #3975 proxy-only sweep: NO saturation_point + NO true-TTFE pareto_points, only the
+    # controller-startup proxy. The block renders under the study heading (never the operator
+    # Saturation Point table) and never fabricates a headline rate from the optimistic proxy.
+    su = {"controller_startup": {
+        "lower_bound": True,
+        "pareto_points": [
+            {"offered_rate_per_s": 500, "controller_startup_p95_ms": 600},  # optimistic proxy
+        ],
+    }}
+    out = render.render_stepup(_matrix_results(_full_gvisor_scenarios(), stepup=su))
+    assert "## Saturation — step-up throughput study" in out
+    assert "## Saturation Point — max sustained creation rate" not in out
+    assert "500/s" not in out  # never derive an operator headline rate from the proxy
+    assert "Controller-startup lower bound (#3975)" in out
+
+
+def test_stepup_sweep_params_subline():
+    out = render.render_stepup(_matrix_results(_full_gvisor_scenarios(), stepup=_su()))
+    assert "37 nodes, e2-standard-16, SLD 60s, WPR 0.8" in out
+    assert "measured 2026-06-30" in out
+
+
 def _run_all():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:
