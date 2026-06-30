@@ -181,14 +181,26 @@ gVisor `RuntimeClass` admission path are both stable.
 
 **Node pool.** A gVisor-enabled pool —
 `--enable-sandbox=type=gvisor`, which installs the `gvisor` `RuntimeClass` the
-burst pins to — on **`e2-standard-16`** nodes (16 vCPU each; the same machine type
-the build banner names, so a reproduced number is comparable to ours). Size the
-pool's autoscaling **maximum** to the node count the headline needs *before* the
-fire — a warm-pool burst that has to wait on node autoscaling is measuring the
+burst pins to — on a **16-vCPU machine type** (the build banner records exactly
+which one, so a reproduced number is comparable to ours). Size the pool's
+autoscaling **maximum** to the node count the headline needs *before* the fire —
+a warm-pool burst that has to wait on node autoscaling is measuring the
 autoscaler, not the sandbox path, and that cold tail is exactly what the warm pool
 exists to remove. The per-node sandbox density (sandboxes per node-allocatable
 sandbox-schedulable vCPU) is published in the Core Metrics matrix; divide the
 target concurrency by that density to size the pool's node ceiling.
+
+The gate on that node ceiling is **per-machine-family CPU quota, not the generic
+CPU quota** — `node_ceiling × 16` vCPU must fit under the quota for the *specific*
+machine family you pick (e.g. the `N2_CPUS` / `E2_CPUS` regional quota for an
+`n2-standard-16` / `e2-standard-16` pool), and raising generic CPU does not lift a
+per-family cap. So pick a family whose adjustable quota covers the headline's node
+count: a few-hundred-node scale-headline pool needs a family quota in the
+thousands of vCPU, while the smaller published cells fit comfortably inside a
+modest one. If your preferred family's quota is capped below the node ceiling,
+either request an increase on that family or switch to a 16-vCPU family that
+already has the headroom — the architecture is identical, only the family-quota
+math changes.
 
 **Pod networking.** A **pod CIDR wide enough that `node_count × pods-per-node`
 does not exhaust the range** — a **`/16` cluster pod range** comfortably addresses
