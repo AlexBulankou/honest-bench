@@ -417,6 +417,44 @@ def _stepup_controller_ok(v):
 # validate the present-and-positive case.
 _pos_int = lambda v: isinstance(v, int) and not isinstance(v, bool) and 0 < v < 100000
 
+
+# The operator-facing SATURATION POINT block (a#3960 #4030). alex's headline ask: the max
+# sustained creation rate (offered sb/sec) holding TTFE p95 under the human "under 1s" (tight)
+# and "under 5s" (loose) bars, split by leg — warm-pool hit vs cold-provision (node overflow).
+# Distinct from the 500ms/2000ms methodology bands above (which stay on the characteristic-rate
+# fields for the Pareto/study story). tight_ms + loose_ms are REQUIRED positive bar floats;
+# basis is an OPTIONAL non-empty descriptor string. Each leg (warm/cold) is OPTIONAL; when
+# present its max_rate_under_{tight,loose} is a positive int OR None (honest "no swept rate met
+# that bar" — render prints em-dash, never a fabricated 0). At least one leg must carry at least
+# one present rate, else the block is honest "nothing" and is dropped (fail-closed).
+def _stepup_saturation_point_ok(v):
+    if not isinstance(v, dict):
+        return False
+    for bar in ("tight_ms", "loose_ms"):
+        b = v.get(bar)
+        if not (isinstance(b, (int, float)) and not isinstance(b, bool) and b > 0):
+            return False
+    if "basis" in v and not (isinstance(v["basis"], str) and v["basis"]):
+        return False
+    legs = [l for l in ("warm", "cold") if l in v]
+    if not legs:
+        return False
+    any_rate = False
+    for l in legs:
+        leg = v[l]
+        if not isinstance(leg, dict):
+            return False
+        for k in ("max_rate_under_tight", "max_rate_under_loose"):
+            if k in leg:
+                rv = leg[k]
+                if rv is None:
+                    continue  # honest "bar unmet" — valid, renders em-dash
+                if not (isinstance(rv, int) and not isinstance(rv, bool) and 0 < rv < 100000):
+                    return False
+                any_rate = True
+    return any_rate
+
+
 STEPUP_PARETO_FIELDS = {
     # The true-TTFE Pareto table. OMITTED (not emitted as []) when no step measured a true
     # TTFE warm p95 — the #3975 gap — in which case the controller_startup proxy below carries
@@ -424,6 +462,8 @@ STEPUP_PARETO_FIELDS = {
     # of {pareto_points, controller_startup} to be non-empty (no all-empty stepup block).
     "pareto_points": _stepup_points_ok,
     "verdict": lambda v: v in STEPUP_VERDICTS,
+    # The operator saturation-point headline (2×2 warm/cold × 1s/5s) — see above (#4030).
+    "saturation_point": _stepup_saturation_point_ok,
     # The controller-startup LOWER-BOUND proxy block (#3975) — see _stepup_controller_ok.
     "controller_startup": _stepup_controller_ok,
     # The three characteristic rates (all optional — absent when the curve never crossed that

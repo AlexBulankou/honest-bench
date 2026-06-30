@@ -31,6 +31,7 @@ from schema import (
     RUNTIME_LABELS,
     SCALE_PROOF_FIELDS,
     SCENARIO_LABELS,
+    STEPUP_PARETO_FIELDS,
     WARM_VS_COLD_FIELDS,
     _ISO,
 )
@@ -830,6 +831,177 @@ def render_warm_vs_cold(results):
             f"_Measured {wc['measured_at'][:10]} — warm-vs-cold speedup "
             "(point-in-time; refreshed on the next TTFE fire)._"
         )
+        lines.append("")
+    return "\n".join(lines)
+
+
+# --- a#3960: Step-up backfill saturation render -------------------------------------------
+# The saturation headline alex/a4z1 asked for ("max sandboxes/sec under 5s AND under 1s,
+# warm+cold") is computed by the internal classifier (#4030) and emitted as the pre-validated
+# saturation_point block (2×2 warm/cold × tight(1s)/loose(5s) bars). Render reads it straight —
+# the operator headline is the emitter's number, not a render-time re-derivation. The schema
+# characteristic band-rates + verdict (North Star 500ms / collapse 2000ms) and the per-step
+# Pareto table render additively below as the methodology/study story.
+
+
+def _clean_stepup(results):
+    """Closed-schema-validate the TOP-LEVEL stepup object (a#3960). None ⇒ INERT.
+
+    Every present field renders ONLY if it is declared in STEPUP_PARETO_FIELDS and passes its
+    predicate; anything else is dropped on read. The block is INERT unless the union of
+    {pareto_points, controller_startup} is non-empty (the emitter's no-all-empty invariant) —
+    a stepup object carrying only sweep params but no measured table never renders.
+    """
+    su = results.get("stepup")
+    if not isinstance(su, dict):
+        return None
+    clean = {}
+    for key, ok in STEPUP_PARETO_FIELDS.items():
+        if key in su:
+            try:
+                if ok(su[key]):
+                    clean[key] = su[key]
+            except (TypeError, ValueError):
+                pass
+    if not any(k in clean for k in ("saturation_point", "pareto_points", "controller_startup")):
+        return None
+    return clean
+
+
+def _sp_cell(leg, key):
+    """One saturation-point table cell: the positive-int rate as "N/s", or em-dash when the bar
+    was unmet (value None or absent) — honest "nothing met this bar", never a fabricated 0."""
+    rv = leg.get(key)
+    if isinstance(rv, int) and not isinstance(rv, bool):
+        return f"{_fmt_num(rv)}/s"
+    return "—"
+
+
+_STEPUP_VERDICT_LABELS = {
+    "flat-through-sweep": "✅ flat through the whole sweep (no measured step breached the North Star)",
+    "degrading": "⚠️ degrading (at least one step breached the North Star; none collapsed)",
+    "saturated": "🛑 saturated (at least one step crossed the collapse band)",
+    "no-measured-steps": "pending (no step produced a measured TTFE — infra/scrape gap, honest)",
+}
+
+
+def render_stepup(results):
+    """Render the step-up saturation block (a#3960), or "" when INERT.
+
+    Headline = the operator Saturation Point table (#4030): max sustained creation rate with
+    TTFE p95 under the 1s (tight) and 5s (loose) bars, split by leg (warm-pool hit vs cold-
+    provision overflow), read straight off the emitter's pre-validated saturation_point block.
+    An unmet bar renders em-dash, never a fabricated 0. The schema verdict + characteristic
+    band-rates (North Star 500ms / collapse 2000ms) and the per-step Pareto table render
+    additively below as the methodology/study story. The controller_startup proxy renders as an
+    explicit LOWER BOUND (it excludes claim→first-reconcile queueing, so it under-reports true
+    TTFE). INERT until a closed-schema-clean stepup object with a non-empty table is emitted.
+    """
+    su = _clean_stepup(results)
+    if not su:
+        return ""
+    lines = []
+
+    sp = su.get("saturation_point")
+    if sp:
+        tight = _fmt_secs(sp["tight_ms"])
+        loose = _fmt_secs(sp["loose_ms"])
+        lines.append("## Saturation Point — max sustained creation rate")
+        lines.append("")
+        lines.append(
+            "Max sustained creation rate (offered sandboxes/sec) that held TTFE p95 under each "
+            "operator bar, split by leg — warm-pool hit vs cold-provision (node overflow). An "
+            "em-dash means no swept rate met that bar; we never round a miss up to a 0.")
+        lines.append("")
+        header = ["Leg", f"Max rate @ TTFE p95 < {tight}", f"@ p95 < {loose}"]
+        lines.append("| " + " | ".join(header) + " |")
+        lines.append("|" + "|".join(["---"] * len(header)) + "|")
+        for leg_key, leg_label in (("warm", "Warm-pool hit"), ("cold", "Cold-provision (node overflow)")):
+            leg = sp.get(leg_key)
+            if not isinstance(leg, dict):
+                continue
+            lines.append(f"| {leg_label} | {_sp_cell(leg, 'max_rate_under_tight')} | {_sp_cell(leg, 'max_rate_under_loose')} |")
+        lines.append("")
+    else:
+        # No saturation_point — e.g. the #3975 proxy-only sweep (no true-TTFE steps, so the
+        # classifier emits no headline). The study/proxy detail below still renders.
+        lines.append("## Saturation — step-up throughput study")
+        lines.append("")
+
+    pts = su.get("pareto_points")
+    # Schema verdict + characteristic band-rates (stricter 500ms/2000ms framing) — additive.
+    if "verdict" in su:
+        lines.append(f"Curve verdict (North Star p95<500ms / collapse 2000ms bands): {_STEPUP_VERDICT_LABELS[su['verdict']]}.")
+        lines.append("")
+    band_bits = []
+    if "max_flat_rate" in su:
+        band_bits.append(f"highest rate under the 500ms North Star: **{_fmt_num(su['max_flat_rate'])}/s**")
+    if "north_star_breach_rate" in su:
+        band_bits.append(f"first rate to breach 500ms: {_fmt_num(su['north_star_breach_rate'])}/s")
+    if "saturation_rate" in su:
+        band_bits.append(f"first rate to cross 2000ms: {_fmt_num(su['saturation_rate'])}/s")
+    if band_bits:
+        lines.append("Characteristic rates — " + "; ".join(band_bits) + ".")
+        lines.append("")
+
+    # True-TTFE Pareto table.
+    if pts:
+        header = ["Offered rate (/s)", "TTFE p50", "TTFE p95", "TTFE p99", "Ready /s"]
+        lines.append("| " + " | ".join(header) + " |")
+        lines.append("|" + "|".join(["---"] * len(header)) + "|")
+        for p in sorted(pts, key=lambda q: q["offered_rate_per_s"]):
+            cells = [
+                _fmt_num(p["offered_rate_per_s"]),
+                _fmt_secs(p["ttfe_p50_ms"]) if "ttfe_p50_ms" in p else "—",
+                _fmt_secs(p["ttfe_p95_ms"]),
+                _fmt_secs(p["ttfe_p99_ms"]) if "ttfe_p99_ms" in p else "—",
+                _fmt_num(p["ready_per_s"]) if "ready_per_s" in p else "—",
+            ]
+            lines.append("| " + " | ".join(cells) + " |")
+        lines.append("")
+
+    # Controller-startup LOWER-BOUND proxy (#3975) — separate table, explicit caveat keyed
+    # off lower_bound (load-bearing: the schema requires lower_bound=true, so this caveat can
+    # never be dropped while the proxy renders).
+    cs = su.get("controller_startup")
+    if cs:
+        lines.append(
+            "_Controller-startup lower bound: controller-first-observed → Ready, which "
+            "EXCLUDES the claim-admission → first-reconcile queueing lag — it UNDER-reports true "
+            "TTFE, so treat it as a floor, not a TTFE measurement._")
+        lines.append("")
+        if "verdict" in cs:
+            lines.append(f"Proxy curve verdict: {_STEPUP_VERDICT_LABELS[cs['verdict']]}.")
+            lines.append("")
+        header = ["Offered rate (/s)", "Ctrl-startup p50", "Ctrl-startup p95", "Ctrl-startup p99", "Ready /s"]
+        lines.append("| " + " | ".join(header) + " |")
+        lines.append("|" + "|".join(["---"] * len(header)) + "|")
+        for p in sorted(cs["pareto_points"], key=lambda q: q["offered_rate_per_s"]):
+            cells = [
+                _fmt_num(p["offered_rate_per_s"]),
+                _fmt_secs(p["controller_startup_p50_ms"]) if "controller_startup_p50_ms" in p else "—",
+                _fmt_secs(p["controller_startup_p95_ms"]),
+                _fmt_secs(p["controller_startup_p99_ms"]) if "controller_startup_p99_ms" in p else "—",
+                _fmt_num(p["controller_ready_per_s"]) if "controller_ready_per_s" in p else "—",
+            ]
+            lines.append("| " + " | ".join(cells) + " |")
+        lines.append("")
+
+    # Sweep-parameter subline (Little's-law inputs + date) — public-safe scalars.
+    params = []
+    if "node_count" in su:
+        params.append(f"{_fmt_num(su['node_count'])} nodes")
+    if "machine_type" in su:
+        params.append(su["machine_type"])
+    if "sld_s" in su:
+        params.append(f"SLD {_fmt_num(su['sld_s'])}s")
+    if "wpr" in su:
+        params.append(f"WPR {_fmt_num(su['wpr'])}")
+    tail = ""
+    if su.get("measured_at"):
+        tail = f" — measured {su['measured_at'][:10]} (point-in-time; refreshed on the next sweep)"
+    if params or tail:
+        lines.append(f"_Sweep: {', '.join(params)}{tail}._")
         lines.append("")
     return "\n".join(lines)
 

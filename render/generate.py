@@ -38,10 +38,12 @@ def _load_render():
         mod.render_burst_corroboration,
         mod.render_warm_vs_cold,
         mod.render_scale_proof,
+        mod.render_stepup,
     )
 
 
-render_matrix, render_burst_corroboration, render_warm_vs_cold, render_scale_proof = _load_render()
+(render_matrix, render_burst_corroboration, render_warm_vs_cold, render_scale_proof,
+ render_stepup) = _load_render()
 
 # Product -> results path, relative to the repo root (parent of render/).
 # The PUBLIC customer page is SANDBOX-ONLY (alex 2026-06-28): substrate demotes from a
@@ -126,6 +128,9 @@ def build_readme(root=None):
         scale = render_scale_proof(results)
         if scale.strip():
             sections.append(scale.rstrip())
+        stepup = render_stepup(results)
+        if stepup.strip():
+            sections.append(stepup.rstrip())
     return "\n\n".join(sections) + "\n"
 
 
