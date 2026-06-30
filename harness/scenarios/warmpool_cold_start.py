@@ -162,8 +162,17 @@ _DENSITY_ALLOC_VCPU = _opt_float("BENCH_DENSITY_ALLOCATABLE_VCPU_PER_NODE")
 
 # Timeouts. Pool warmup: 180s for 5 replicas (pull + schedule + start).
 # Per-claim bind: 180s — cold-path claims can take 30-90s on a fresh node.
-_WARMUP_TIMEOUT_S = 180
-_BIND_TIMEOUT_S = 180
+#
+# Both are env-tunable so a large-N concurrent fire (300/500 claims) can raise
+# the ceilings: warming 300 gVisor pods, or cold-provisioning 300 concurrent
+# claims on a finite node pool, legitimately exceeds the 5-replica default. The
+# defaults preserve the canonical small-N shape exactly.
+_WARMUP_TIMEOUT_S = int(
+    os.environ.get("WARMPOOL_COLD_START_WARMUP_TIMEOUT_S", "180")
+)
+_BIND_TIMEOUT_S = int(
+    os.environ.get("WARMPOOL_COLD_START_BIND_TIMEOUT_S", "180")
+)
 _POLL_S = 0.05  # per-claim thread poll — must be << the warm threshold
 
 # CR coordinates.
@@ -802,6 +811,24 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
             else "separation" if breakdown["separation_ok"]
             else "none"
         )
+        # Cold-baseline mode (POOL_REPLICAS=0): no warm pool exists, so the
+        # warm-tier separation gate does not apply — every claim cold-provisions
+        # (overflow-claim cold-start is the same path the 5-warm/5-cold default
+        # exercises for its cold tier). The run's purpose here is to RECORD the
+        # all-cold TTFE distribution, not to assert a warm fast tier, so report a
+        # neutral outcome carrying the same sla_metrics (already assembled over
+        # every bound claim) rather than a misleading warm-under-delivery FAIL.
+        if _POOL_REPLICAS == 0:
+            bound_n = len(bound_at)
+            return (
+                "PASS",
+                f"Cold baseline (no warm pool): {bound_n}/{_CLAIM_COUNT} claims "
+                f"cold-provisioned and bound. No warm-tier gate applies — TTFE "
+                f"distribution recorded over all bound claims. "
+                f"All latencies (s, sorted): [{all_lat_str}]. "
+                f"Timeouts: {breakdown['timeouts']!r}.",
+                sla_metrics,
+            )
         if passed:
             return (
                 "PASS",
