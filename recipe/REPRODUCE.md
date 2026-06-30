@@ -121,6 +121,49 @@ confirms it, and the build banner's `cluster_substrate=gke-sandbox` records the
 substrate — so a `kind` (runc) number is never mistaken for a `gke-sandbox` one,
 and a `gke-sandbox` number is provably gVisor, not just labelled.
 
+## The scale headline: concurrent-N warm vs cold TTFE
+
+`burst_create` above answers the sub-1s **count** question against a warm pool.
+The scale headline answers a different one — **at a fixed concurrency N, what is
+the create-to-first-instruction (TTFE) latency distribution, warm vs cold** — and
+publishes the per-node-throughput and TTFE-percentile columns of the Core Metrics
+matrix. The driver is `scripts/fire-concurrent-n.sh`:
+
+```bash
+# the caller exports KUBECONFIG first — the script hardcodes no cluster identity.
+# the TTFE probe execs into each backing pod, so this must be a kubeconfig with
+# pods/exec RBAC (an admin kubeconfig), pointed at a gVisor cluster.
+export KUBECONFIG=/path/to/admin.kubeconfig
+
+bash scripts/fire-concurrent-n.sh warm 300   # warm pool of 300, 300 claims
+bash scripts/fire-concurrent-n.sh cold 300   # pool replicas 0 — every claim cold-provisions
+bash scripts/fire-concurrent-n.sh warm 500
+bash scripts/fire-concurrent-n.sh cold 500
+```
+
+`warm` sizes the warm pool to N so every claim is served from a ready slot; `cold`
+sets the pool to zero so every claim overflows to a cold provision — that is the
+warm-vs-cold contrast, measured on the same path at the same N rather than across
+two different scenarios. The fire arms the TTFE exec probe (`BENCH_TTFE_EXEC=1`)
+and pins the burst to the `gvisor` RuntimeClass, with the same read-back guard the
+burst-create section describes (a `gvisor` class that silently fell back to runc is
+caught, not shipped).
+
+Each run prints the matrix-cell numbers — `thpt_under_5s_per_node`,
+`thpt_under_1s_per_node`, `ttfe_p50_ms`, `ttfe_p95_ms`, `exec_success_rate`, and
+`n` — and tees the full result to a timestamped `concurrent-n-<mode>-<N>-<ts>.json`.
+Those map one-to-one onto the matrix columns (Throughput @&lt;5s TTFE, Throughput
+@&lt;1s TTFE, TTFE p50, TTFE p95, Samples N, Execution Success), so you can read a
+published cell straight off your own fire's stdout. The driver writes that
+timestamped file, **not** `sandbox/results/latest.json` — it is a measurement
+probe, deliberately decoupled from the published page; folding a fresh fire into
+`latest.json` (then regenerating with step 3) is a separate, reviewed step so a
+single ad-hoc fire never silently rewrites a headline.
+
+Tunables (env, optional): `BENCH_NODE_COUNT` (per-node throughput denominator,
+default 20), `BENCH_NAMESPACE` (default `default`), `FIRE_TIMEOUT_S` (warmup +
+per-claim-bind ceiling, default 900s — raise for a large cold burst).
+
 ## Reproduce in CI (no laptop required)
 
 The same two paths above also run as **dispatch-only** GitHub Actions, so you can
