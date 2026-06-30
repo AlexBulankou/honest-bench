@@ -288,6 +288,90 @@ def test_badge_scope_enforced_value_renders():
     assert "PASS (enforced) (n=12)" in out
 
 
+def test_badge_construction_renders_as_second_term_with_scope():
+    # #3950: badge_construction is an ORTHOGONAL second term naming WHICH NP mechanism was
+    # measured. With a scope present it renders "PASS (<scope>, <construction>)" so an
+    # `enforced` flip discloses the standard-NP-with-label-propagation mechanism and can
+    # never be read as a managed-gke-sandbox-NP guarantee.
+    out = _render(
+        {
+            "product": "sandbox",
+            "scenarios": [
+                {
+                    "name": "cross_tenant_network_isolation",
+                    "outcome": "PASS",
+                    "badge_scope": "enforced",
+                    "badge_construction": "standard-np",
+                    "n": 12,
+                }
+            ],
+        }
+    )
+    assert "PASS (enforced, standard-np) (n=12)" in out
+
+
+def test_badge_construction_without_scope_renders_nothing():
+    # construction qualifies the enforcement claim and is meaningless alone, so a cell that
+    # carries a construction but NO scope renders a bare PASS (the construction is suppressed,
+    # not promoted to a lone suffix that would assert nothing).
+    out = _render(
+        {
+            "product": "sandbox",
+            "scenarios": [
+                {
+                    "name": "default_deny_egress",
+                    "outcome": "PASS",
+                    "badge_construction": "standard-np",
+                    "n": 12,
+                }
+            ],
+        }
+    )
+    assert "Default-deny egress | PASS (n=12)" in out
+    assert "standard-np" not in out
+
+
+def test_badge_construction_invalid_dropped_scope_survives():
+    # The render guard is SECONDARY (the emitter fail-closes); an out-of-enum construction is
+    # dropped while a valid scope still renders — no free-text leaks onto the public badge.
+    out = _render(
+        {
+            "product": "sandbox",
+            "scenarios": [
+                {
+                    "name": "cross_tenant_network_isolation",
+                    "outcome": "PASS",
+                    "badge_scope": "control-plane",
+                    "badge_construction": "magic-firewall-9000",
+                    "n": 12,
+                }
+            ],
+        }
+    )
+    assert "PASS (control-plane) (n=12)" in out
+    assert "magic-firewall-9000" not in out
+
+
+def test_badge_construction_managed_np_value_renders():
+    # The enum's second member: a cell measured against the managed gke-sandbox NP discloses
+    # "managed-np" so the reader knows a control-plane PASS rode the inert-podSelector path.
+    out = _render(
+        {
+            "product": "sandbox",
+            "scenarios": [
+                {
+                    "name": "default_deny_egress",
+                    "outcome": "PASS",
+                    "badge_scope": "control-plane",
+                    "badge_construction": "managed-np",
+                    "n": 12,
+                }
+            ],
+        }
+    )
+    assert "PASS (control-plane, managed-np) (n=12)" in out
+
+
 def test_unknown_product_raises():
     try:
         _render({"product": "internal-prod", "scenarios": []})
