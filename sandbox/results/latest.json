@@ -49,6 +49,31 @@
     "measured_at": "2026-06-29T23:50:37Z",
     "cold_start_mode": "cold-provision"
   },
+  "kata_activation": {
+    "runtime_class": "kata-microvm",
+    "microvm_activation_ms": 2000,
+    "warm_ready_ms": 3000,
+    "warm_image": "ubuntu:24.04",
+    "cold_ready": [
+      {
+        "image": "debian:12",
+        "ready_ms": 3000,
+        "image_pull_ms": 900
+      },
+      {
+        "image": "ubuntu:24.04",
+        "ready_ms": 5000,
+        "image_pull_ms": 887
+      }
+    ],
+    "guest_kernel": "6.18.35",
+    "host_kernel": "6.8.0-1054-gke",
+    "hypervisor": "Cloud Hypervisor",
+    "resume_status": "upstream-blocked",
+    "kata_version": "3.32.0",
+    "n": 3,
+    "measured_at": "2026-06-30"
+  },
   "scenarios": [
     {
       "n": 10,

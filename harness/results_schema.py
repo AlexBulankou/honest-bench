@@ -13,6 +13,7 @@ Pure + side-effect-free: no I/O, no cluster, no clock. Offline-testable.
 
 from __future__ import annotations
 
+import re
 from numbers import Real
 
 # Closed product vocabulary — render/schema.py's PRODUCTS shares this set. A product
@@ -92,6 +93,26 @@ STEPUP_VERDICT_ENUM = (
 WARM_VS_COLD_SEMANTIC_ENUM = ("ttfi", "ttfe")
 WARM_VS_COLD_RUNTIME_CLASS_ENUM = ("gvisor", "kata-microvm")
 
+# #3942 Kata+microVM activation block — the emitter's INDEPENDENT copies of render's
+# KATA_ACTIVATION closed vocabularies. This block publishes Kata pod-Ready / microVM-activation
+# latency (NOT TTFE — the matrix TTFE cells for Kata stay honestly pending). hypervisor is a
+# PUBLIC hypervisor name only (a free-text value drops the whole block). resume_status is a
+# closed enum — "upstream-blocked" means CRIU resume is not wired upstream (#3097), a genuine
+# upstream gap, the only state measured today. A drift from render's set is caught by the
+# cross-contract test, not papered over by a shared import.
+KATA_HYPERVISOR_ENUM = ("Cloud Hypervisor", "QEMU", "Firecracker", "Dragonball", "Stratovirt")
+KATA_RESUME_STATUS_ENUM = ("upstream-blocked",)
+# Kernel release shape (mirror of render/schema.py _KERNEL): MAJOR.MINOR.PATCH + optional vendor
+# suffix (6.18.35 / 6.8.0-1054-gke). Tightly bounded so an internal node/pool name cannot ride a
+# kernel field.
+_KATA_KERNEL_RE = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z._-]+)?$")
+# Kata version shape (mirror of _KATA_VERSION): bare semantic version (3.32.0), no suffix.
+_KATA_VERSION_RE = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
+# Kata image shape (mirror of _KATA_IMAGE): a PUBLIC base-image ref with NO registry path
+# (forbids `/`) — debian:12, ubuntu:24.04. Stricter than provenance image refs so an internal
+# registry/project path can never ride an image field.
+_KATA_IMAGE_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*:[A-Za-z0-9][A-Za-z0-9._-]*$")
+
 PROVENANCE_FIELDS = (
     "cluster_substrate",
     "controller_image",
@@ -117,8 +138,6 @@ SCENARIO_FIELDS = (
 # leaked path/DSN/host:port cannot pass this shape, so an excerpt smuggled in as
 # an sla key is dropped. Underscores are permitted so render's canonical metric
 # keys (activation_ms, cold_start_ms, …) pass; hyphen forms still pass too.
-import re
-
 _METRIC_KEY_RE = re.compile(r"^[a-z0-9]+(?:[_-][a-z0-9]+)*$")
 
 # GCP machine-type shape — emitter-side bound (independent mirror of render/schema.py's
@@ -567,6 +586,124 @@ def _coerce_warm_vs_cold(raw):
     return out
 
 
+def _coerce_kata_activation(raw):
+    """Keep the closed top-level Kata+microVM activation shape; return None to omit the key.
+
+    The #3942 Kata block publishes pod-Ready / microVM-activation latency — explicitly NOT TTFE
+    (the matrix TTFE cells for Kata stay honestly pending; render's caption restates this so a
+    reader cannot conflate the two). It renders from a TOP-LEVEL `kata_activation` object (mirrors
+    scale_proof / stepup / warm_vs_cold — a nested/list-bearing value cannot ride per-scenario
+    sla_metrics). This coercer is the closed-schema PII guard mirroring render/schema.py's
+    KATA_ACTIVATION_FIELDS exactly so emitter and renderer share one contract.
+
+    REQUIRED spine: runtime_class (enum-validated against the public runtime set), microvm_activation_ms
+    + warm_ready_ms (nonneg), cold_ready (non-empty list of {image: public base-image ref with NO
+    registry path, ready_ms: nonneg, image_pull_ms?: nonneg}), guest_kernel + host_kernel (bounded
+    kernel-release shape — so an internal node/pool name cannot ride a kernel field). Any
+    missing/invalid required field returns None (the block renders nothing rather than a partial lie).
+
+    OPTIONAL: warm_image (public image shape), hypervisor (public hypervisor enum), resume_status
+    ("upstream-blocked" — CRIU resume not wired upstream, #3097), kata_version (bare semver), n
+    (sample count), measured_at (ISO-8601). A present-but-invalid optional enum/shape INVALIDATES the
+    whole block (return None) — a typo'd hypervisor / a registry-path image / a free-text resume must
+    never publish, matching the warm_vs_cold fail-closed posture. (A drift from render's set is caught
+    by the cross-contract test.)
+    """
+    if not isinstance(raw, dict):
+        return None
+
+    def _clean_nonneg(x):
+        if isinstance(x, bool) or not isinstance(x, Real):
+            return None
+        fx = float(x)
+        if fx != fx or fx in (float("inf"), float("-inf")) or fx < 0:
+            return None
+        return fx
+
+    runtime_class = raw.get("runtime_class")
+    if runtime_class not in WARM_VS_COLD_RUNTIME_CLASS_ENUM:
+        return None
+    microvm = _clean_nonneg(raw.get("microvm_activation_ms"))
+    if microvm is None:
+        return None
+    warm_ready = _clean_nonneg(raw.get("warm_ready_ms"))
+    if warm_ready is None:
+        return None
+
+    # cold_ready: non-empty list of public-image-ref entries. Any malformed entry fails the whole
+    # block closed (mirrors scale_points), so a partial/leaky list never publishes.
+    points = raw.get("cold_ready")
+    if not isinstance(points, list) or not points:
+        return None
+    clean_cold = []
+    for e in points:
+        if not isinstance(e, dict):
+            return None
+        img = e.get("image")
+        if not (isinstance(img, str) and bool(_KATA_IMAGE_RE.match(img))):
+            return None
+        rm = _clean_nonneg(e.get("ready_ms"))
+        if rm is None:
+            return None
+        ce = {"image": img, "ready_ms": rm}
+        if "image_pull_ms" in e:
+            pm = _clean_nonneg(e["image_pull_ms"])
+            if pm is None:
+                return None
+            ce["image_pull_ms"] = pm
+        clean_cold.append(ce)
+
+    guest_kernel = raw.get("guest_kernel")
+    if not (isinstance(guest_kernel, str) and bool(_KATA_KERNEL_RE.match(guest_kernel))):
+        return None
+    host_kernel = raw.get("host_kernel")
+    if not (isinstance(host_kernel, str) and bool(_KATA_KERNEL_RE.match(host_kernel))):
+        return None
+
+    out = {
+        "runtime_class": runtime_class,
+        "microvm_activation_ms": microvm,
+        "warm_ready_ms": warm_ready,
+        "cold_ready": clean_cold,
+        "guest_kernel": guest_kernel,
+        "host_kernel": host_kernel,
+    }
+
+    # OPTIONAL fields — a present-but-invalid value INVALIDATES the whole block (fail-closed),
+    # so a typo'd hypervisor / registry-path image / free-text resume never publishes.
+    if "warm_image" in raw:
+        wi = raw["warm_image"]
+        if not (isinstance(wi, str) and bool(_KATA_IMAGE_RE.match(wi))):
+            return None
+        out["warm_image"] = wi
+    if "hypervisor" in raw:
+        hv = raw["hypervisor"]
+        if hv not in KATA_HYPERVISOR_ENUM:
+            return None
+        out["hypervisor"] = hv
+    if "resume_status" in raw:
+        rs = raw["resume_status"]
+        if rs not in KATA_RESUME_STATUS_ENUM:
+            return None
+        out["resume_status"] = rs
+    if "kata_version" in raw:
+        kv = raw["kata_version"]
+        if not (isinstance(kv, str) and bool(_KATA_VERSION_RE.match(kv))):
+            return None
+        out["kata_version"] = kv
+    if "n" in raw:
+        n = raw["n"]
+        if isinstance(n, bool) or not isinstance(n, int) or n < 0:
+            return None
+        out["n"] = n
+    if "measured_at" in raw:
+        ma = raw["measured_at"]
+        if not (isinstance(ma, str) and ma):
+            return None
+        out["measured_at"] = ma
+    return out
+
+
 def _coerce_provenance(raw: dict) -> dict:
     if not isinstance(raw, dict):
         raise TypeError("provenance must be a dict")
@@ -606,7 +743,7 @@ def _coerce_provenance(raw: dict) -> dict:
 
 def build_results(scenario_outcomes, provenance, generated_at: str,
                   product: str = DEFAULT_PRODUCT, scale_proof=None,
-                  stepup=None, warm_vs_cold=None) -> dict:
+                  stepup=None, warm_vs_cold=None, kata_activation=None) -> dict:
     """Assemble the closed-schema results dict.
 
     `scenario_outcomes` is the loop's per-scenario dicts (any extra keys dropped);
@@ -635,6 +772,14 @@ def build_results(scenario_outcomes, provenance, generated_at: str,
     runtime_class) — same partial-lie-omission contract as scale_proof/stepup. The
     inner object is produced by warm_vs_cold.classify_warm_vs_cold; this makes the
     `build_results(warm_vs_cold=...)` contract documented there real.
+
+    `kata_activation` is the OPTIONAL top-level Kata+microVM activation object (#3942; defaults
+    None so existing callers are unchanged). When supplied it passes through
+    `_coerce_kata_activation`; the key is emitted only when the required spine survives (enum
+    runtime_class, nonneg activation/warm legs, a non-empty public-image cold_ready list, bounded
+    kernel shapes) — same partial-lie-omission contract as scale_proof/stepup/warm_vs_cold. This
+    block publishes pod-Ready / microVM-activation latency, NOT TTFE (Kata TTFE matrix cells stay
+    pending).
     """
     if not isinstance(generated_at, str) or not generated_at:
         raise ValueError("generated_at must be a non-empty ISO-8601 UTC string")
@@ -656,4 +801,7 @@ def build_results(scenario_outcomes, provenance, generated_at: str,
     cleaned_warm_vs_cold = _coerce_warm_vs_cold(warm_vs_cold)
     if cleaned_warm_vs_cold is not None:
         out["warm_vs_cold"] = cleaned_warm_vs_cold
+    cleaned_kata_activation = _coerce_kata_activation(kata_activation)
+    if cleaned_kata_activation is not None:
+        out["kata_activation"] = cleaned_kata_activation
     return out

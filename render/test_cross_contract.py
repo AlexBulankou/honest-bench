@@ -732,6 +732,127 @@ def test_emit_to_render_cold_start_mode_convergence():
     )
 
 
+def test_emit_to_render_kata_activation_convergence():
+    """Convergence guard for the Kata+microVM activation object (#3942).
+
+    The kata_activation object is emitted by harness/results_schema.build_results(kata_activation=...)
+    (via _coerce_kata_activation) and allow-listed on the render side by schema.KATA_ACTIVATION_FIELDS.
+    It publishes pod-Ready / microVM-activation latency — explicitly NOT TTFE (the matrix TTFE cells
+    for Kata stay pending). Every field the EMITTER keeps on a real object must pass the INDEPENDENT
+    render-side predicate, the two closed enum vocabularies (hypervisor, resume_status) must agree
+    value-for-value, and the emitter's fail-closed PII guard must drop an out-of-enum hypervisor / a
+    registry-path image / an internal node-name-shaped kernel. This fails loudly first.
+    """
+    import importlib.util
+
+    import schema
+
+    emitter_path = os.path.join(_ROOT, "harness", "results_schema.py")
+    if not os.path.exists(emitter_path):
+        print("  (skip: harness emitter not in-tree yet)")
+        return
+    spec = importlib.util.spec_from_file_location("_bench_emitter_kata", emitter_path)
+    mod = importlib.util.module_from_spec(spec)
+    try:
+        spec.loader.exec_module(mod)
+    except Exception as exc:  # pragma: no cover - harness has its own deps
+        print(f"  (skip: harness emitter not importable in isolation: {exc})")
+        return
+
+    # Both enum vocabularies must agree value-for-value across the two independent closed sets,
+    # or a future render drops a hypervisor / resume-status the emitter happily emits.
+    assert set(mod.KATA_HYPERVISOR_ENUM) == set(schema.KATA_HYPERVISORS), (
+        "emit/render DRIFT: harness KATA_HYPERVISOR_ENUM "
+        f"{set(mod.KATA_HYPERVISOR_ENUM)} != render KATA_HYPERVISORS {set(schema.KATA_HYPERVISORS)}"
+    )
+    assert set(mod.KATA_RESUME_STATUS_ENUM) == set(schema.KATA_RESUME_STATUSES), (
+        "emit/render DRIFT: harness KATA_RESUME_STATUS_ENUM "
+        f"{set(mod.KATA_RESUME_STATUS_ENUM)} != render KATA_RESUME_STATUSES "
+        f"{set(schema.KATA_RESUME_STATUSES)}"
+    )
+
+    # A full kata_activation object: every field populated, exercised for each public hypervisor so
+    # the convergence covers the whole hypervisor vocabulary, not just Cloud Hypervisor.
+    for hypervisor in mod.KATA_HYPERVISOR_ENUM:
+        ka_in = {
+            "runtime_class": "kata-microvm",
+            "microvm_activation_ms": 2000,
+            "warm_ready_ms": 3000,
+            "warm_image": "ubuntu:24.04",
+            "cold_ready": [
+                {"image": "debian:12", "ready_ms": 3000, "image_pull_ms": 900},
+                {"image": "ubuntu:24.04", "ready_ms": 5000, "image_pull_ms": 887},
+            ],
+            "guest_kernel": "6.18.35",
+            "host_kernel": "6.8.0-1054-gke",
+            "hypervisor": hypervisor,
+            "resume_status": "upstream-blocked",
+            "kata_version": "3.32.0",
+            "n": 3,
+            "measured_at": "2026-06-30",
+        }
+        results = mod.build_results(
+            [], {"cluster_substrate": "gke", "node_count": 1},
+            generated_at="2026-06-30T07:40:00Z", kata_activation=ka_in,
+        )
+        assert "kata_activation" in results, (
+            f"emitter dropped the whole kata_activation object — rejected a valid full object:\n{ka_in}"
+        )
+        ka = results["kata_activation"]
+
+        # (a) every top-level field the emitter KEPT passes the independent render allow-list.
+        for key, val in ka.items():
+            assert key in schema.KATA_ACTIVATION_FIELDS, (
+                f"emit/render DRIFT: emitter kept key {key!r} absent from render "
+                "KATA_ACTIVATION_FIELDS — render_kata_activation would silently drop it."
+            )
+            assert schema.KATA_ACTIVATION_FIELDS[key](val), (
+                f"emit/render DRIFT: render KATA_ACTIVATION_FIELDS[{key!r}] rejects emitter value "
+                f"{val!r} — the block would render nothing."
+            )
+
+        # (b) the required spine survives intact on a clean object.
+        assert ka["runtime_class"] == "kata-microvm" and ka["hypervisor"] == hypervisor
+        assert ka["resume_status"] == "upstream-blocked" and len(ka["cold_ready"]) == 2
+
+    # (c) an out-of-enum hypervisor drops the block entirely (emitter fail-closed PII guard).
+    base = {
+        "runtime_class": "kata-microvm", "microvm_activation_ms": 2000, "warm_ready_ms": 3000,
+        "cold_ready": [{"image": "debian:12", "ready_ms": 3000}],
+        "guest_kernel": "6.18.35", "host_kernel": "6.8.0-1054-gke",
+    }
+    leak_hv = mod.build_results(
+        [], {"cluster_substrate": "gke", "node_count": 1},
+        generated_at="2026-06-30T07:40:00Z",
+        kata_activation={**base, "hypervisor": "internal-pool-name"},
+    )
+    assert "kata_activation" not in leak_hv, (
+        "out-of-enum hypervisor must drop the whole kata_activation block — fail-closed PII guard"
+    )
+
+    # (d) a registry-path image (carries an internal project/registry path) drops the block.
+    leak_img = mod.build_results(
+        [], {"cluster_substrate": "gke", "node_count": 1},
+        generated_at="2026-06-30T07:40:00Z",
+        kata_activation={**base, "cold_ready": [
+            {"image": "us-central1-docker.pkg.dev/proj/img:1", "ready_ms": 3000}]},
+    )
+    assert "kata_activation" not in leak_img, (
+        "a registry-path image must drop the block — an internal registry path can never publish"
+    )
+
+    # (e) an internal node-name-shaped kernel value is rejected (the kernel regex is the guard
+    # that keeps a node/pool name off a kernel field).
+    leak_kern = mod.build_results(
+        [], {"cluster_substrate": "gke", "node_count": 1},
+        generated_at="2026-06-30T07:40:00Z",
+        kata_activation={**base, "guest_kernel": "gke-sandbox-scenario-kata-microvm-poo-1e3d8e05"},
+    )
+    assert "kata_activation" not in leak_kern, (
+        "an internal node-name-shaped kernel must drop the block — the kernel regex is the guard"
+    )
+
+
 def _run_all():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:
