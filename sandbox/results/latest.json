@@ -7,8 +7,9 @@
     "controller_digest": "sha256:6edaf7b6b22d9dfaf6ab077cd1c6517acf5fc6cf96b1ad58fe83bcfd477977ec",
     "controller_image": "us-central1-docker.pkg.dev/k8s-staging-images/agent-sandbox/agent-sandbox-controller:latest-main",
     "crd_version": "v1beta1",
-    "node_count": 1,
+    "node_count": 20,
     "run_id": "247326d41d0749319d823948bc5fbaf0",
+    "runtime": "gvisor",
     "suite_git_sha": "fbc1a5d362f8a7befa3c3c2cb33703013cfb49b0"
   },
   "scale_proof": {
@@ -49,15 +50,15 @@
       }
     },
     {
-      "n": 10,
+      "n": 500,
       "name": "warmpool_cold_start",
       "outcome": "PASS",
       "sla_metrics": {
         "exec_success_rate": 1.0,
-        "thpt_under_1s_per_node": 0.627,
-        "thpt_under_5s_per_node": 2.09,
-        "ttfe_p50_ms": 2386.8,
-        "ttfe_p95_ms": 4906.2
+        "thpt_under_1s_per_node": 0.0,
+        "thpt_under_5s_per_node": 0.04,
+        "ttfe_p50_ms": 11490.1,
+        "ttfe_p95_ms": 16577.8
       }
     },
     {
