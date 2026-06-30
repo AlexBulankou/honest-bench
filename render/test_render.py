@@ -1216,7 +1216,7 @@ def test_stepup_controller_proxy_caveat_renders():
         ],
     })
     out = render.render_stepup(_matrix_results(_full_gvisor_scenarios(), stepup=su))
-    assert "Controller-startup lower bound (#3975)" in out
+    assert "Controller-startup lower bound" in out
     assert "UNDER-reports true" in out
 
 
@@ -1234,7 +1234,7 @@ def test_stepup_proxy_only_renders_study_heading_not_saturation_point():
     assert "## Saturation — step-up throughput study" in out
     assert "## Saturation Point — max sustained creation rate" not in out
     assert "500/s" not in out  # never derive an operator headline rate from the proxy
-    assert "Controller-startup lower bound (#3975)" in out
+    assert "Controller-startup lower bound" in out
 
 
 def test_stepup_sweep_params_subline():

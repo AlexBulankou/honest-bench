@@ -32,7 +32,6 @@ from schema import (
     SCALE_PROOF_FIELDS,
     SCENARIO_LABELS,
     STEPUP_PARETO_FIELDS,
-    STEPUP_VERDICTS,
     WARM_VS_COLD_FIELDS,
     _ISO,
 )
@@ -967,7 +966,7 @@ def render_stepup(results):
     cs = su.get("controller_startup")
     if cs:
         lines.append(
-            "_Controller-startup lower bound (#3975): controller-first-observed → Ready, which "
+            "_Controller-startup lower bound: controller-first-observed → Ready, which "
             "EXCLUDES the claim-admission → first-reconcile queueing lag — it UNDER-reports true "
             "TTFE, so treat it as a floor, not a TTFE measurement._")
         lines.append("")
