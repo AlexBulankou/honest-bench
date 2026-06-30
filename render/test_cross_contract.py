@@ -21,11 +21,18 @@ It guards the contract two ways:
 
 import json
 import os
+import sys
 
 import render
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _ROOT = os.path.dirname(_HERE)
+
+# Import the real harness emitter so the badge_construction test below exercises the TRUE
+# emit -> render path (build_results -> render_product), not a hand-shaped dict — the whole
+# point of the coupling guard is that it lives in the emitter.
+sys.path.insert(0, os.path.join(_ROOT, "harness"))
+import results_schema as _rs  # noqa: E402
 
 # Inline result in the canonical render vocabulary — exactly the shape the ported emitter
 # (#3869) produces: uppercase outcomes, underscore scenario names, kebab pending reason,
@@ -89,6 +96,47 @@ def test_inline_emitter_shape_renders_all_six_rows():
     # #3894: the emitter's cold_start_mode carries through to the cold-start cell label —
     # a drift that dropped it (or rendered the raw value elsewhere) fails here.
     assert "Cold start (ms) 4200 (cold-provision)" in out
+
+
+def test_enforced_construction_emits_and_renders():
+    # #4051: the harness emitter MUST be able to carry badge_construction end-to-end, so a
+    # future enforced-flip renders `PASS (enforced, standard-np)` — never a bare
+    # `PASS (enforced)` that misreads as a managed-gke-sandbox-NP guarantee (#3950/#2082).
+    # This runs the REAL emitter (build_results, which holds the coupling guard) and feeds
+    # its output through render_product, proving both vocabularies agree on the term.
+    prov = {
+        "cluster_substrate": "kind",
+        "controller_image": "registry.k8s.io/agent-sandbox-controller:latest-main",
+        "controller_digest": "sha256:" + "0" * 64,
+        "crd_version": "v1beta1",
+        "suite_git_sha": "0123abc",
+        "run_id": "sandbox-2026-06-30-0647",
+        "node_count": 3,
+        "cold_start_mode": "cold-provision",
+    }
+    results = _rs.build_results(
+        [
+            {"name": "cross_tenant_network_isolation", "outcome": "pass",
+             "badge_scope": "enforced", "badge_construction": "standard-np", "n": 12},
+            {"name": "default_deny_egress", "outcome": "pass",
+             "badge_scope": "enforced", "badge_construction": "standard-np", "n": 12},
+        ],
+        prov, "2026-06-30T06:47:00Z",
+    )
+    out = render.render_product(results)
+    assert "rows dropped by closed-schema guard" not in out, (
+        "emitter/render DRIFT on badge_construction — render dropped an enforced+construction "
+        "row the emitter produced:\n" + out
+    )
+    # the construction renders as the SECOND suffix term, only alongside the scope
+    assert "PASS (enforced, standard-np)" in out, (
+        "enforced+construction did not render the coupled cell:\n" + out
+    )
+    # and never a bare enforced for these armed cells (the over-claim the term closes)
+    assert "PASS (enforced)" not in out, (
+        "bare `PASS (enforced)` leaked — the construction term must ride every enforced cell:\n"
+        + out
+    )
 
 
 def test_committed_fixtures_render_without_drops():

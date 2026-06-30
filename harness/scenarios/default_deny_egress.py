@@ -375,7 +375,7 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
                         f"{_EGRESS_PROBE_HOST}:{_EGRESS_PROBE_PORT} worked pre-policy "
                         f"and is blocked on the wire with default-deny-egress applied "
                         f"— egress lockdown verified, not just admitted.",
-                        {"badge_scope": "enforced"},
+                        {"badge_scope": "enforced", "badge_construction": "standard-np"},
                     )
                 if verdict in ("breach", "over-block"):
                     return (

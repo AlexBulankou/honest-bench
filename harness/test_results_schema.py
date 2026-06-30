@@ -228,11 +228,13 @@ def test_badge_scope_enum_only():
     # out-of-set value fails closed (a mislabeled isolation badge must never publish);
     # absent is simply dropped (optional, so non-isolation cells stay clean).
     for scope in rs.BADGE_SCOPE_ENUM:
-        r = rs.build_results(
-            [{"name": "cross_tenant_network_isolation", "outcome": "pass",
-              "badge_scope": scope}],
-            _prov(), GEN_AT,
-        )
+        sc = {"name": "cross_tenant_network_isolation", "outcome": "pass",
+              "badge_scope": scope}
+        # enforced is coupled to a construction (#4051 guard) — supply one so this
+        # test isolates the scope-enum behavior, not the coupling.
+        if scope == "enforced":
+            sc["badge_construction"] = "standard-np"
+        r = rs.build_results([sc], _prov(), GEN_AT)
         _check(r["scenarios"][0]["badge_scope"] == scope, f"{scope} kept")
     try:
         rs.build_results(
@@ -247,6 +249,75 @@ def test_badge_scope_enum_only():
     # absent -> dropped, not an error
     r = rs.build_results([{"name": "a", "outcome": "pass"}], _prov(), GEN_AT)
     _check("badge_scope" not in r["scenarios"][0], "absent badge_scope dropped")
+
+
+def test_badge_construction_enum_only():
+    # #3950/#4051: badge_construction is a per-SCENARIO CLOSED enum, orthogonal to
+    # badge_scope. A valid value (paired with an enforced scope to satisfy the coupling
+    # guard) is kept; an out-of-set value fails closed; absent is dropped.
+    for construction in rs.BADGE_CONSTRUCTION_ENUM:
+        r = rs.build_results(
+            [{"name": "cross_tenant_network_isolation", "outcome": "pass",
+              "badge_scope": "enforced", "badge_construction": construction}],
+            _prov(), GEN_AT,
+        )
+        _check(
+            r["scenarios"][0]["badge_construction"] == construction,
+            f"{construction} kept",
+        )
+    try:
+        rs.build_results(
+            [{"name": "default_deny_egress", "outcome": "pass",
+              "badge_scope": "enforced",
+              "badge_construction": "totally-airtight-np"}],
+            _prov(), GEN_AT,
+        )
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("non-enum badge_construction must raise (fail-closed)")
+    # absent -> dropped, not an error
+    r = rs.build_results([{"name": "a", "outcome": "pass"}], _prov(), GEN_AT)
+    _check(
+        "badge_construction" not in r["scenarios"][0],
+        "absent badge_construction dropped",
+    )
+
+
+def test_badge_enforced_requires_construction():
+    # #4051 flip-time coupling guard: an "enforced" data-plane PASS MUST carry a
+    # badge_construction, or it would render a bare `PASS (enforced)` that misreads as a
+    # managed-NP guarantee (the over-claim #3950 closes).
+    try:
+        rs.build_results(
+            [{"name": "cross_tenant_network_isolation", "outcome": "pass",
+              "badge_scope": "enforced"}],
+            _prov(), GEN_AT,
+        )
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("enforced without badge_construction must raise (#4051)")
+    # control-plane scope needs NO construction — admission, not a wire mechanism.
+    r = rs.build_results(
+        [{"name": "cross_tenant_network_isolation", "outcome": "pass",
+          "badge_scope": "control-plane"}],
+        _prov(), GEN_AT,
+    )
+    _check(
+        "badge_construction" not in r["scenarios"][0],
+        "control-plane needs no construction",
+    )
+    # a construction with no scope is harmless (render shows it only with a scope) —
+    # kept, not forced.
+    r = rs.build_results(
+        [{"name": "a", "outcome": "pass", "badge_construction": "standard-np"}],
+        _prov(), GEN_AT,
+    )
+    _check(
+        r["scenarios"][0]["badge_construction"] == "standard-np",
+        "construction without scope kept",
+    )
 
 
 def test_n_coercion():
