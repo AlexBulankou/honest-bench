@@ -15,6 +15,7 @@ import sys
 
 from schema import (
     ACTIVATION_MODE_ROWS,
+    BADGE_CONSTRUCTIONS,
     BADGE_SCOPES,
     BURST_CORROBORATION_FIELDS,
     DENSITY_SOURCE_SCENARIOS,
@@ -88,6 +89,9 @@ def _clean_scenarios(scenarios):
         scope = s.get("badge_scope")
         if scope is not None and scope not in BADGE_SCOPES:
             scope = None  # drop unknown scope, keep the row (never render free-text)
+        construction = s.get("badge_construction")
+        if construction is not None and construction not in BADGE_CONSTRUCTIONS:
+            construction = None  # drop unknown construction, keep the row
         n = s.get("n")
         n = n if isinstance(n, int) and not isinstance(n, bool) and n >= 0 else 0
         rows.append(
@@ -96,6 +100,7 @@ def _clean_scenarios(scenarios):
                 "outcome": outcome,
                 "pending_reason": reason,
                 "badge_scope": scope,
+                "badge_construction": construction,
                 "n": n,
                 "metrics": _clean_metrics(s.get("sla_metrics")),
             }
@@ -124,9 +129,19 @@ def _measured_cell(row, cold_start_mode=None):
     # badge_scope (#3905) qualifies what a security-isolation PASS asserts (control-plane
     # admission vs data-plane enforcement); suffix it on the PASS token so the badge cannot
     # over-claim. Absent ⇒ no suffix (graceful degradation). Applies to both the metric and
-    # bare PASS forms.
+    # bare PASS forms. badge_construction (#3950) is an ORTHOGONAL second term naming WHICH
+    # NetworkPolicy mechanism was measured (standard-np vs managed-np); it renders only
+    # alongside a scope (it qualifies the enforcement claim and is meaningless alone), so an
+    # `enforced` flip discloses the mechanism (e.g. "PASS (enforced, standard-np)") and can
+    # never be read as a managed-gke-sandbox-NP guarantee it does not make.
     scope = row.get("badge_scope")
-    pass_token = f"PASS ({scope})" if scope else "PASS"
+    construction = row.get("badge_construction")
+    if scope and construction:
+        pass_token = f"PASS ({scope}, {construction})"
+    elif scope:
+        pass_token = f"PASS ({scope})"
+    else:
+        pass_token = "PASS"
     if row["metrics"]:
         parts = []
         for k in sorted(row["metrics"]):

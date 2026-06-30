@@ -36,6 +36,22 @@ COLD_START_MODES = {"cold-provision", "cold-pull"}
 # (graceful degradation); out-of-enum ⇒ dropped at render (the emitter fail-closes first).
 BADGE_SCOPES = {"control-plane", "enforced"}
 
+# badge_construction (#3950) is a per-SCENARIO closed enum, ORTHOGONAL to badge_scope, that
+# names WHICH NetworkPolicy mechanism a security-isolation cell actually measured — so an
+# `enforced` scope can never be read as a guarantee it does not make. "standard-np" = a
+# standard networking.k8s.io/v1 NetworkPolicy the harness built with explicit label
+# propagation (the podSelector actually binds the tenant pods, so a data-plane breach is
+# observable); "managed-np" = the managed gke-sandbox NetworkPolicy, whose podSelector may
+# select zero pods (an inert breach — a PASS against it asserts admission, not data-plane
+# blocking). It renders as a SECOND suffix term on the PASS cell ONLY when badge_scope is
+# also present (e.g. "PASS (enforced, standard-np)"); it qualifies the enforcement claim and
+# is meaningless alone, so construction-without-scope renders nothing. Absent ⇒ no second
+# term (graceful degradation); out-of-enum ⇒ dropped at render (the emitter fail-closes
+# first). This is the #3950-mandatory disclosure: a charter-#5 flip of the two NP cells from
+# control-plane → enforced MUST carry the construction so the public badge discloses the
+# standard-NP-with-label-propagation mechanism and never conflates it with managed-gke-sandbox NP.
+BADGE_CONSTRUCTIONS = {"standard-np", "managed-np"}
+
 # pending/FAIL cells render an ENUM reason only — never harness free-text.
 PENDING_REASONS = {
     "requires-gvisor-runtime",
