@@ -1327,6 +1327,81 @@ def test_stepup_sweep_params_subline():
     assert "measured 2026-06-30" in out
 
 
+def _cb(**over):
+    base = {
+        "legs": [
+            {"n": 300, "mode": "warm", "ttfe_p50_ms": 6874.3, "ttfe_p95_ms": 9393.0,
+             "thpt_under_5s_per_node": 0.392, "thpt_under_1s_per_node": 0.0,
+             "exec_success_rate": 1.0},
+            {"n": 300, "mode": "cold", "ttfe_p50_ms": 56029.4, "ttfe_p95_ms": 58412.4,
+             "thpt_under_5s_per_node": 0.0, "thpt_under_1s_per_node": 0.0,
+             "exec_success_rate": 1.0},
+        ],
+        "node_count": 20,
+        "machine_type": "e2-standard-16",
+        "measured_at": "2026-06-30",
+    }
+    base.update(over)
+    return base
+
+
+def test_concurrent_burst_absent_renders_nothing():
+    # No concurrent_burst object ⇒ INERT (byte-absent until a burst result is emitted).
+    assert render.render_concurrent_burst(_matrix_results(_full_gvisor_scenarios())) == ""
+
+
+def test_concurrent_burst_empty_legs_inert():
+    # An object with an empty/missing legs list ⇒ INERT (no partial-lie table).
+    assert render.render_concurrent_burst(
+        _matrix_results(_full_gvisor_scenarios(), concurrent_burst={"legs": []})) == ""
+    assert render.render_concurrent_burst(
+        _matrix_results(_full_gvisor_scenarios(), concurrent_burst={"node_count": 20})) == ""
+
+
+def test_concurrent_burst_renders_table():
+    out = render.render_concurrent_burst(_matrix_results(_full_gvisor_scenarios(), concurrent_burst=_cb()))
+    assert "## Concurrent Burst — TTFE at N simultaneous claims" in out
+    # TTFE renders on the same seconds spine as the matrix; warm + cold rows present.
+    assert "| 300 | Warm pool | 6.8743s | 9.393s | 0.392 | 0 | 100% |" in out
+    assert "| 300 | Cold provision | 56.0294s | 58.4124s | 0 | 0 | 100% |" in out
+    # provenance caption + measured_at subline.
+    assert "node_count=20" in out and "`e2-standard-16`" in out
+    assert "_Measured 2026-06-30 — concurrent-burst TTFE (point-in-time)._" in out
+
+
+def test_concurrent_burst_em_dash_on_missing_throughput():
+    # A leg that omits a throughput field renders an em-dash, NEVER a fabricated 0.
+    cb = _cb(legs=[{"n": 500, "mode": "warm", "ttfe_p50_ms": 11188.0, "ttfe_p95_ms": 15374.0}])
+    out = render.render_concurrent_burst(_matrix_results(_full_gvisor_scenarios(), concurrent_burst=cb))
+    assert "| 500 | Warm pool | 11.188s | 15.374s | — | — | — |" in out
+
+
+def test_concurrent_burst_sub_100_exec_flags():
+    # An exec-success rate < 100% renders the fraction + ⚠️ (honest, never rounded to 100%).
+    cb = _cb(legs=[{"n": 300, "mode": "cold", "ttfe_p50_ms": 5000.0, "ttfe_p95_ms": 6000.0,
+                    "exec_success_rate": 0.99}])
+    out = render.render_concurrent_burst(_matrix_results(_full_gvisor_scenarios(), concurrent_burst=cb))
+    assert "99% (297/300) ⚠️" in out
+
+
+def test_concurrent_burst_bad_leg_inert():
+    # A single malformed leg (out-of-enum mode) fails the legs predicate ⇒ whole block INERT.
+    cb = _cb(legs=[
+        {"n": 300, "mode": "warm", "ttfe_p50_ms": 6874.3, "ttfe_p95_ms": 9393.0},
+        {"n": 300, "mode": "lukewarm", "ttfe_p50_ms": 100.0, "ttfe_p95_ms": 200.0},
+    ])
+    assert render.render_concurrent_burst(_matrix_results(_full_gvisor_scenarios(), concurrent_burst=cb)) == ""
+
+
+def test_concurrent_burst_invalid_provenance_dropped_spine_renders():
+    # A registry-path-shaped machine_type fails its predicate ⇒ dropped on read; the valid spine
+    # still renders (provenance is best-effort, never fabricated, never blocks the table).
+    cb = _cb(machine_type="us-central1-docker.pkg.dev/proj/img:1")
+    out = render.render_concurrent_burst(_matrix_results(_full_gvisor_scenarios(), concurrent_burst=cb))
+    assert "## Concurrent Burst — TTFE at N simultaneous claims" in out
+    assert "docker.pkg.dev" not in out  # internal registry path never reaches the page
+
+
 def _run_all():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:

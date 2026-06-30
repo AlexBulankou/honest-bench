@@ -423,11 +423,12 @@ def test_verify_backing_pod_wrong_runtime_raises():
 
 def test_verify_missing_backing_pod_is_unresolved_violation():
     # uid resolves but no Pod owns it -> None -> violation (cannot prove the runtime).
+    # settle_retries=0 keeps the terminal-unresolved assertion fast (no settle sleep).
     custom = _FakeCustom({"sb-a": "uid-a"})
     core = _FakeCore([])
     _assert_raises(lambda: rc.verify_bound_pod_runtimes(
         custom, core, namespace="ns", sandbox_names=["sb-a"],
-        sandbox_gvr=_GVR, expected_runtime_class="kata",
+        sandbox_gvr=_GVR, expected_runtime_class="kata", settle_retries=0,
     ))
 
 
@@ -438,8 +439,52 @@ def test_verify_unreadable_sandbox_uid_cannot_silently_shrink_count():
     core = _FakeCore([_FakePod(["uid-a"], "kata")])
     _assert_raises(lambda: rc.verify_bound_pod_runtimes(
         custom, core, namespace="ns", sandbox_names=["sb-a", "sb-b"],
-        sandbox_gvr=_GVR, expected_runtime_class="kata",
+        sandbox_gvr=_GVR, expected_runtime_class="kata", settle_retries=0,
     ))
+
+
+class _FlakyCore:
+    """Returns no pods until call N, then the real pods — simulates owner-ref
+    propagation lag where a warm pod's re-parent to its Sandbox lands after the
+    first read-back pass."""
+
+    def __init__(self, pods, ready_on_call):
+        self._pods = pods
+        self._ready_on_call = ready_on_call
+        self.calls = 0
+
+    def list_namespaced_pod(self, namespace):
+        self.calls += 1
+        items = self._pods if self.calls >= self._ready_on_call else []
+        return _FakePodList(items)
+
+
+def test_verify_unresolved_clears_on_settle_retry():
+    # The propagation-lag case: backing Pod not matchable on the first pass, then
+    # resolvable on retry. With settle_retries>0 (zero sleep) the None settles to the
+    # correct runtime and the gate PASSES — a transient race must not read as a
+    # violation.
+    custom = _FakeCustom({"sb-a": "uid-a"})
+    core = _FlakyCore([_FakePod(["uid-a"], "kata")], ready_on_call=2)
+    assert rc.verify_bound_pod_runtimes(
+        custom, core, namespace="ns", sandbox_names=["sb-a"],
+        sandbox_gvr=_GVR, expected_runtime_class="kata",
+        settle_retries=3, settle_sleep_s=0.0,
+    ) == 1
+    assert core.calls >= 2  # proves it retried past the first empty pass
+
+
+def test_verify_wrong_runtime_not_retried_fails_fast():
+    # A runc fallback is observed_rc='runc' (not None) -> never enters the retry subset
+    # -> fails immediately even with retries enabled. Settle is for None only.
+    custom = _FakeCustom({"sb-a": "uid-a"})
+    core = _FlakyCore([_FakePod(["uid-a"], "runc")], ready_on_call=1)
+    _assert_raises(lambda: rc.verify_bound_pod_runtimes(
+        custom, core, namespace="ns", sandbox_names=["sb-a"],
+        sandbox_gvr=_GVR, expected_runtime_class="kata",
+        settle_retries=3, settle_sleep_s=0.0,
+    ))
+    assert core.calls == 1  # wrong runtime is terminal — no settle retry burned
 
 
 def _run_all():

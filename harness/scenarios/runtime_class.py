@@ -304,6 +304,8 @@ def verify_bound_pod_runtimes(
     sandbox_names: Sequence[str],
     sandbox_gvr: tuple[str, str, str],
     expected_runtime_class: str,
+    settle_retries: int = 3,
+    settle_sleep_s: float = 2.0,
 ) -> int:
     """Resolve each bound Sandbox -> its backing Pod -> runtimeClassName; assert.
 
@@ -314,37 +316,59 @@ def verify_bound_pod_runtimes(
     post-measurement so it never perturbs the measured latency; the caller gates it to
     the substrate/runtime where a runtime headline is actually claimed. Returns the
     count verified; raises on ANY violation.
+
+    Bounded settle+retry on the UNRESOLVED (None) subset only. A Ready+bound sandbox
+    whose backing Pod cannot yet be matched by owner-uid is almost always owner-ref
+    propagation lag — a warm-pool pod re-parents from the SandboxWarmPool to the
+    Sandbox during the claim->active conversion, and a read-back fired immediately
+    after bind can catch a fraction of the pods mid-flip (observed ~10/300 at warm-500
+    burst). That is NOT the silent isolation drop this gate exists to catch: a runc
+    fallback surfaces a WRONG ``runtimeClassName`` (not None), so it is never retried
+    and still fails immediately at the assert below. Re-resolving just the None subset
+    a few times lets the propagation race settle before a None is treated as terminal,
+    while the conservative "unresolved counts as a violation" guarantee is preserved
+    for pods that stay unresolvable past the retries.
     """
     sbx_group, sbx_version, sbx_plural = sandbox_gvr
 
-    uid_to_sandbox: dict[str, str] = {}
-    for sbx_name in sandbox_names:
-        sbx = custom.get_namespaced_custom_object(
-            group=sbx_group, version=sbx_version, namespace=namespace,
-            plural=sbx_plural, name=sbx_name,
-        )
-        uid = ((sbx or {}).get("metadata") or {}).get("uid")
-        if uid:
-            uid_to_sandbox[uid] = sbx_name
+    def _resolve(names: Sequence[str]) -> dict[str, Optional[str]]:
+        """One read pass for ``names`` -> {name: runtimeClassName or None}."""
+        uid_to_sandbox: dict[str, str] = {}
+        for sbx_name in names:
+            sbx = custom.get_namespaced_custom_object(
+                group=sbx_group, version=sbx_version, namespace=namespace,
+                plural=sbx_plural, name=sbx_name,
+            )
+            uid = ((sbx or {}).get("metadata") or {}).get("uid")
+            if uid:
+                uid_to_sandbox[uid] = sbx_name
 
-    pods = core.list_namespaced_pod(namespace=namespace)
-    uid_to_pod: dict[str, object] = {}
-    for pod in pods.items:
-        for owner in (pod.metadata.owner_references or []):
-            if owner.uid in uid_to_sandbox:
-                uid_to_pod[owner.uid] = pod
+        pods = core.list_namespaced_pod(namespace=namespace)
+        uid_to_pod: dict[str, object] = {}
+        for pod in pods.items:
+            for owner in (pod.metadata.owner_references or []):
+                if owner.uid in uid_to_sandbox:
+                    uid_to_pod[owner.uid] = pod
 
-    observed: list[tuple[str, Optional[str]]] = []
-    for uid, sbx_name in uid_to_sandbox.items():
-        pod = uid_to_pod.get(uid)
-        observed.append(
-            (sbx_name, pod.spec.runtime_class_name if pod is not None else None)
-        )
-    # Sandboxes whose uid was unreadable never made it into uid_to_sandbox; surface
-    # them as unresolved so the count cannot silently shrink past the violation gate.
-    resolved = set(uid_to_sandbox.values())
-    for sbx_name in sandbox_names:
-        if sbx_name not in resolved:
-            observed.append((sbx_name, None))
+        out: dict[str, Optional[str]] = {}
+        for uid, sbx_name in uid_to_sandbox.items():
+            pod = uid_to_pod.get(uid)
+            out[sbx_name] = pod.spec.runtime_class_name if pod is not None else None
+        # Sandboxes whose uid was unreadable never made it into uid_to_sandbox; surface
+        # them as unresolved so the count cannot silently shrink past the violation gate.
+        for sbx_name in names:
+            out.setdefault(sbx_name, None)
+        return out
 
+    observed_map = _resolve(sandbox_names)
+    for _ in range(max(0, settle_retries)):
+        unresolved = [n for n, runtime in observed_map.items() if runtime is None]
+        if not unresolved:
+            break
+        import time as _time
+
+        _time.sleep(settle_sleep_s)
+        observed_map.update(_resolve(unresolved))
+
+    observed = [(name, observed_map[name]) for name in sandbox_names]
     return assert_no_runtime_violations(observed, expected_runtime_class)

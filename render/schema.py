@@ -570,3 +570,61 @@ KATA_ACTIVATION_FIELDS = {
     "n": lambda v: isinstance(v, int) and not isinstance(v, bool) and v >= 0,
     "measured_at": lambda v: isinstance(v, str) and bool(v),
 }
+
+# --- #4021: concurrent-burst sweep block (TOP-LEVEL concurrent_burst object) --------------
+# The step-up Pareto / Scale Proof blocks above sweep the per-SECOND offered RATE. This block
+# sweeps the orthogonal axis customers actually ask about for warm-pool sizing: a single
+# all-at-once CONCURRENT burst of N claims against one warm pool (and the cold baseline), at
+# two concurrency levels (e.g. 300, 500) × two activation modes (warm / cold). Each leg
+# carries the SAME TTFE honesty spine as the Core Metrics matrix — executed-first-instruction
+# p50/p95, the per-node throughput-under-bar rates, and the exec-success honesty check — so a
+# reader compares the burst numbers to the matrix on identical terms. The headline finding it
+# surfaces: warm-pool activation stays an order of magnitude faster than cold even when a
+# 300/500-way burst serializes the controller bind+exec path past the sub-second bar.
+#
+# Same closed-schema discipline as warm_vs_cold/scale_proof/stepup/kata: only these field-names
+# render, each validated by its predicate; anything else is dropped on read, so a fire result
+# cannot smuggle free-text onto the public page. Each leg's spine (n, mode, ttfe_p50_ms,
+# ttfe_p95_ms) is REQUIRED; the throughput + exec fractions are OPTIONAL (a missing one renders
+# em-dash, never a fabricated 0). A non-empty legs list is REQUIRED; a malformed leg fails the
+# whole block CLOSED (no partial-lie table). mode is a closed enum, never free text.
+CONCURRENT_BURST_MODES = {"warm", "cold"}
+
+
+def _concurrent_burst_leg_ok(v):
+    if not isinstance(v, dict):
+        return False
+    nc = v.get("n")
+    if not (isinstance(nc, int) and not isinstance(nc, bool) and 0 < nc < 100000):
+        return False
+    if v.get("mode") not in CONCURRENT_BURST_MODES:
+        return False
+    for req in ("ttfe_p50_ms", "ttfe_p95_ms"):
+        if not _nonneg(v.get(req)):
+            return False
+    for opt in ("thpt_under_5s_per_node", "thpt_under_1s_per_node"):
+        if opt in v and not _nonneg(v[opt]):
+            return False
+    if "exec_success_rate" in v:
+        esr = v["exec_success_rate"]
+        if not (isinstance(esr, (int, float)) and not isinstance(esr, bool) and 0.0 <= esr <= 1.0):
+            return False
+    return True
+
+
+def _concurrent_burst_legs_ok(v):
+    if not isinstance(v, list) or not v:
+        return False
+    return all(_concurrent_burst_leg_ok(leg) for leg in v)
+
+
+CONCURRENT_BURST_FIELDS = {
+    # REQUIRED: a non-empty list of per-leg cells (each: n, mode, ttfe_p50_ms, ttfe_p95_ms
+    # required; thpt_under_{5s,1s}_per_node + exec_success_rate optional). A malformed leg
+    # fails the whole block closed.
+    "legs": _concurrent_burst_legs_ok,
+    # OPTIONAL provenance scalars — public-safe.
+    "node_count": lambda v: isinstance(v, int) and not isinstance(v, bool) and 0 < v < 10000,
+    "machine_type": lambda v: isinstance(v, str) and bool(_MACHINE_TYPE.match(v)),
+    "measured_at": lambda v: isinstance(v, str) and bool(v),
+}

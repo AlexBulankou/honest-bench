@@ -853,6 +853,118 @@ def test_emit_to_render_kata_activation_convergence():
     )
 
 
+def test_emit_to_render_concurrent_burst_convergence():
+    """Convergence guard for the concurrent-burst block (#4021).
+
+    concurrent_burst is emitted by harness/results_schema.build_results(concurrent_burst=...) (via
+    _coerce_concurrent_burst) and allow-listed on the render side by schema.CONCURRENT_BURST_FIELDS.
+    It reports a single ALL-AT-ONCE burst of N concurrent claims on the SAME TTFE spine as the Core
+    Metrics matrix (warm-pool vs cold-provision). Every field the EMITTER keeps on a real object
+    must pass the INDEPENDENT render-side predicate, the closed mode enum must agree value-for-value
+    across the two independent sets, and the emitter's fail-closed guard must drop an out-of-enum
+    mode / a negative ttfe / a registry-shaped machine_type. Fails loudly first.
+    """
+    import importlib.util
+
+    import schema
+
+    emitter_path = os.path.join(_ROOT, "harness", "results_schema.py")
+    if not os.path.exists(emitter_path):
+        print("  (skip: harness emitter not in-tree yet)")
+        return
+    spec = importlib.util.spec_from_file_location("_bench_emitter_cb", emitter_path)
+    mod = importlib.util.module_from_spec(spec)
+    try:
+        spec.loader.exec_module(mod)
+    except Exception as exc:  # pragma: no cover - harness has its own deps
+        print(f"  (skip: harness emitter not importable in isolation: {exc})")
+        return
+
+    # The closed mode vocabulary must agree value-for-value across the two independent sets,
+    # or a future render drops a mode the emitter happily emits.
+    assert set(mod.CONCURRENT_BURST_MODE_ENUM) == set(schema.CONCURRENT_BURST_MODES), (
+        "emit/render DRIFT: harness CONCURRENT_BURST_MODE_ENUM "
+        f"{set(mod.CONCURRENT_BURST_MODE_ENUM)} != render CONCURRENT_BURST_MODES "
+        f"{set(schema.CONCURRENT_BURST_MODES)}"
+    )
+
+    # A full concurrent_burst object: every field populated, both modes exercised so the
+    # convergence covers the whole mode vocabulary.
+    cb_in = {
+        "legs": [
+            {"n": 300, "mode": "warm", "ttfe_p50_ms": 6874.3, "ttfe_p95_ms": 9393.0,
+             "thpt_under_5s_per_node": 0.392, "thpt_under_1s_per_node": 0.0,
+             "exec_success_rate": 1.0},
+            {"n": 300, "mode": "cold", "ttfe_p50_ms": 56029.4, "ttfe_p95_ms": 58412.4,
+             "thpt_under_5s_per_node": 0.0, "thpt_under_1s_per_node": 0.0,
+             "exec_success_rate": 1.0},
+        ],
+        "node_count": 20,
+        "machine_type": "e2-standard-16",
+        "measured_at": "2026-06-30",
+    }
+    results = mod.build_results(
+        [], {"cluster_substrate": "gke", "node_count": 20},
+        generated_at="2026-06-30T21:50:00Z", concurrent_burst=cb_in,
+    )
+    assert "concurrent_burst" in results, (
+        f"emitter dropped the whole concurrent_burst object — rejected a valid full object:\n{cb_in}"
+    )
+    cb = results["concurrent_burst"]
+
+    # (a) every top-level field the emitter KEPT passes the independent render allow-list.
+    for key, val in cb.items():
+        assert key in schema.CONCURRENT_BURST_FIELDS, (
+            f"emit/render DRIFT: emitter kept key {key!r} absent from render "
+            "CONCURRENT_BURST_FIELDS — render_concurrent_burst would silently drop it."
+        )
+        assert schema.CONCURRENT_BURST_FIELDS[key](val), (
+            f"emit/render DRIFT: render CONCURRENT_BURST_FIELDS[{key!r}] rejects emitter value "
+            f"{val!r} — the block would render nothing."
+        )
+
+    # (b) the required spine survives intact on a clean object, both modes present.
+    assert len(cb["legs"]) == 2
+    assert {leg["mode"] for leg in cb["legs"]} == {"warm", "cold"}
+    assert cb["legs"][0]["n"] == 300 and cb["legs"][0]["ttfe_p50_ms"] == 6874.3
+
+    # (c) an out-of-enum mode drops the whole block (emitter fail-closed guard).
+    leak_mode = mod.build_results(
+        [], {"cluster_substrate": "gke", "node_count": 20},
+        generated_at="2026-06-30T21:50:00Z",
+        concurrent_burst={"legs": [
+            {"n": 300, "mode": "lukewarm", "ttfe_p50_ms": 100.0, "ttfe_p95_ms": 200.0}]},
+    )
+    assert "concurrent_burst" not in leak_mode, (
+        "out-of-enum mode must drop the whole concurrent_burst block — fail-closed guard"
+    )
+
+    # (d) a negative ttfe drops the whole block (no partial-lie table).
+    leak_neg = mod.build_results(
+        [], {"cluster_substrate": "gke", "node_count": 20},
+        generated_at="2026-06-30T21:50:00Z",
+        concurrent_burst={"legs": [
+            {"n": 300, "mode": "warm", "ttfe_p50_ms": -1.0, "ttfe_p95_ms": 200.0}]},
+    )
+    assert "concurrent_burst" not in leak_neg, (
+        "a negative ttfe must drop the whole block — closed-schema guard"
+    )
+
+    # (e) a registry-path-shaped machine_type is dropped (provenance scalar), but the block with
+    # a valid spine still renders — provenance is best-effort, the spine is load-bearing.
+    drop_mt = mod.build_results(
+        [], {"cluster_substrate": "gke", "node_count": 20},
+        generated_at="2026-06-30T21:50:00Z",
+        concurrent_burst={"legs": [
+            {"n": 300, "mode": "warm", "ttfe_p50_ms": 100.0, "ttfe_p95_ms": 200.0}],
+            "machine_type": "us-central1-docker.pkg.dev/proj/img:1"},
+    )
+    assert "concurrent_burst" in drop_mt, "a valid spine must survive a dropped provenance scalar"
+    assert "machine_type" not in drop_mt["concurrent_burst"], (
+        "a registry-path-shaped machine_type must be dropped — bounded GCP-shape guard"
+    )
+
+
 def _run_all():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:
