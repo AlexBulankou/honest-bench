@@ -93,6 +93,12 @@ STEPUP_VERDICT_ENUM = (
 WARM_VS_COLD_SEMANTIC_ENUM = ("ttfi", "ttfe")
 WARM_VS_COLD_RUNTIME_CLASS_ENUM = ("gvisor", "kata-microvm")
 
+# #4021 concurrent-burst block — the emitter's INDEPENDENT copy of render's CONCURRENT_BURST_MODES
+# closed vocabulary. A leg is a single all-at-once burst of N concurrent claims; mode distinguishes
+# a warm-pool hit from a cold provision. A free-text mode fails the whole block closed. A drift from
+# render's set is caught by the cross-contract test, not papered over by a shared import.
+CONCURRENT_BURST_MODE_ENUM = ("warm", "cold")
+
 # #3942 Kata+microVM activation block — the emitter's INDEPENDENT copies of render's
 # KATA_ACTIVATION closed vocabularies. This block publishes Kata pod-Ready / microVM-activation
 # latency (NOT TTFE — the matrix TTFE cells for Kata stay honestly pending). hypervisor is a
@@ -704,6 +710,80 @@ def _coerce_kata_activation(raw):
     return out
 
 
+def _coerce_concurrent_burst(raw):
+    """Keep the closed top-level concurrent-burst shape (#4021); return None to omit the key.
+
+    The #4021 block reports a single ALL-AT-ONCE burst of N concurrent claims (the complement to
+    the per-second rate the matrix/step-up report), warm-pool vs cold-provision, on the SAME TTFE
+    spine as the Core Metrics matrix. It renders from a TOP-LEVEL `concurrent_burst` object (a
+    list-bearing value cannot ride per-scenario sla_metrics). This coercer mirrors render/schema.py's
+    CONCURRENT_BURST_FIELDS exactly so emitter and renderer share one contract (a drift is caught by
+    the cross-contract test).
+
+    REQUIRED: a non-empty `legs` list; each leg's spine (n: int 0<n<100000, mode: warm|cold enum,
+    ttfe_p50_ms + ttfe_p95_ms: nonneg) required; thpt_under_5s_per_node / thpt_under_1s_per_node
+    (nonneg) + exec_success_rate (0..1) optional per leg. Any malformed leg fails the whole block
+    CLOSED (no partial-lie table). OPTIONAL provenance scalars: node_count (int), machine_type
+    (bounded GCP shape), measured_at (ISO-8601 string) — a present-but-invalid one is dropped.
+    """
+    if not isinstance(raw, dict):
+        return None
+
+    def _clean_nonneg(x):
+        if isinstance(x, bool) or not isinstance(x, Real):
+            return None
+        fx = float(x)
+        if fx != fx or fx in (float("inf"), float("-inf")) or fx < 0:
+            return None
+        return fx
+
+    legs = raw.get("legs")
+    if not isinstance(legs, list) or not legs:
+        return None
+    clean_legs = []
+    for leg in legs:
+        if not isinstance(leg, dict):
+            return None
+        n = leg.get("n")
+        if isinstance(n, bool) or not isinstance(n, int) or not (0 < n < 100000):
+            return None
+        mode = leg.get("mode")
+        if mode not in CONCURRENT_BURST_MODE_ENUM:
+            return None
+        p50 = _clean_nonneg(leg.get("ttfe_p50_ms"))
+        p95 = _clean_nonneg(leg.get("ttfe_p95_ms"))
+        if p50 is None or p95 is None:
+            return None
+        cl = {"n": n, "mode": mode, "ttfe_p50_ms": p50, "ttfe_p95_ms": p95}
+        for opt in ("thpt_under_5s_per_node", "thpt_under_1s_per_node"):
+            if opt in leg:
+                ov = _clean_nonneg(leg[opt])
+                if ov is None:
+                    return None
+                cl[opt] = ov
+        if "exec_success_rate" in leg:
+            esr = leg["exec_success_rate"]
+            if isinstance(esr, bool) or not isinstance(esr, Real):
+                return None
+            fesr = float(esr)
+            if fesr != fesr or not (0.0 <= fesr <= 1.0):
+                return None
+            cl["exec_success_rate"] = fesr
+        clean_legs.append(cl)
+
+    out = {"legs": clean_legs}
+    nc = raw.get("node_count")
+    if not isinstance(nc, bool) and isinstance(nc, int) and 0 < nc < 10000:
+        out["node_count"] = nc
+    mt = raw.get("machine_type")
+    if isinstance(mt, str) and _MACHINE_TYPE_RE.match(mt):
+        out["machine_type"] = mt
+    ma = raw.get("measured_at")
+    if isinstance(ma, str) and ma:
+        out["measured_at"] = ma
+    return out
+
+
 def _coerce_provenance(raw: dict) -> dict:
     if not isinstance(raw, dict):
         raise TypeError("provenance must be a dict")
@@ -743,7 +823,8 @@ def _coerce_provenance(raw: dict) -> dict:
 
 def build_results(scenario_outcomes, provenance, generated_at: str,
                   product: str = DEFAULT_PRODUCT, scale_proof=None,
-                  stepup=None, warm_vs_cold=None, kata_activation=None) -> dict:
+                  stepup=None, warm_vs_cold=None, kata_activation=None,
+                  concurrent_burst=None) -> dict:
     """Assemble the closed-schema results dict.
 
     `scenario_outcomes` is the loop's per-scenario dicts (any extra keys dropped);
@@ -804,4 +885,7 @@ def build_results(scenario_outcomes, provenance, generated_at: str,
     cleaned_kata_activation = _coerce_kata_activation(kata_activation)
     if cleaned_kata_activation is not None:
         out["kata_activation"] = cleaned_kata_activation
+    cleaned_concurrent_burst = _coerce_concurrent_burst(concurrent_burst)
+    if cleaned_concurrent_burst is not None:
+        out["concurrent_burst"] = cleaned_concurrent_burst
     return out

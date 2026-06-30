@@ -93,3 +93,16 @@ These are **Kata + microVM pod-Ready / microVM-activation** latencies — the ti
 | Snapshot resume | N/A — upstream-blocked (CRIU resume not wired, #3097) |
 
 _Measured 2026-06-30 — Kata pod-Ready / microVM-activation (point-in-time; not TTFE)._
+
+## Concurrent Burst — TTFE at N simultaneous claims
+
+Each row is a **single all-at-once burst of N concurrent claims** (not a ramped per-second rate). TTFE is the same metric the Core Metrics matrix reports (executed-first-instruction-and-returned-a-result), so these columns **are comparable to the matrix TTFE columns**. *Warm pool* fires against a pre-provisioned pool of N ready sandboxes; *cold provision* starts from an empty pool (node-autoscaler + image-pull in the critical path). Measured on node_count=20, `e2-standard-16`.
+
+| Concurrency (N) | Activation Mode | TTFE p50 | TTFE p95 | Throughput @ <5s/node | Throughput @ <1s/node | Execution Success |
+|---|---|---|---|---|---|---|
+| 300 | Warm pool | 6.8743s | 9.393s | 0.392 | 0 | 100% |
+| 300 | Cold provision | 56.0294s | 58.4124s | 0 | 0 | 100% |
+| 500 | Warm pool | 11.188s | 15.374s | 0.052 | 0 | 100% |
+| 500 | Cold provision | 97.3988s | 99.8002s | 0 | 0 | 100% |
+
+_Measured 2026-06-30 — concurrent-burst TTFE (point-in-time)._

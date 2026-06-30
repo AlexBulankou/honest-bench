@@ -40,11 +40,12 @@ def _load_render():
         mod.render_scale_proof,
         mod.render_stepup,
         mod.render_kata_activation,
+        mod.render_concurrent_burst,
     )
 
 
 (render_matrix, render_burst_corroboration, render_warm_vs_cold, render_scale_proof,
- render_stepup, render_kata_activation) = _load_render()
+ render_stepup, render_kata_activation, render_concurrent_burst) = _load_render()
 
 # Product -> results path, relative to the repo root (parent of render/).
 # The PUBLIC customer page is SANDBOX-ONLY (alex 2026-06-28): substrate demotes from a
@@ -135,6 +136,9 @@ def build_readme(root=None):
         kata = render_kata_activation(results)
         if kata.strip():
             sections.append(kata.rstrip())
+        burst = render_concurrent_burst(results)
+        if burst.strip():
+            sections.append(burst.rstrip())
     return "\n\n".join(sections) + "\n"
 
 

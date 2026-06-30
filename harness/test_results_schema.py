@@ -858,6 +858,86 @@ def test_warm_vs_cold_extra_keys_dropped():
            f"only contract fields emitted, got {sorted(out)}")
 
 
+def _cb(**over):
+    base = {
+        "legs": [
+            {"n": 300, "mode": "warm", "ttfe_p50_ms": 6874.3, "ttfe_p95_ms": 9393.0,
+             "thpt_under_5s_per_node": 0.392, "thpt_under_1s_per_node": 0.0,
+             "exec_success_rate": 1.0},
+            {"n": 300, "mode": "cold", "ttfe_p50_ms": 56029.4, "ttfe_p95_ms": 58412.4,
+             "exec_success_rate": 1.0},
+        ],
+        "node_count": 20,
+        "machine_type": "e2-standard-16",
+        "measured_at": "2026-06-30",
+    }
+    base.update(over)
+    return base
+
+
+def test_concurrent_burst_passthrough_valid():
+    # A well-formed object survives intact and is emitted at the top level (#4021). Makes the
+    # build_results(concurrent_burst=...) contract real.
+    out = rs.build_results([], _prov(), GEN_AT, concurrent_burst=_cb())["concurrent_burst"]
+    _check(len(out["legs"]) == 2, "both legs kept")
+    _check(out["legs"][0]["mode"] == "warm" and out["legs"][0]["n"] == 300, "warm leg spine kept")
+    _check(out["legs"][0]["ttfe_p50_ms"] == 6874.3, "ttfe_p50_ms kept")
+    _check(out["legs"][1]["mode"] == "cold", "cold leg kept")
+    # cold leg omitted throughput fields stay omitted (no fabrication).
+    _check("thpt_under_5s_per_node" not in out["legs"][1], "absent throughput not fabricated")
+    _check(out["node_count"] == 20 and out["machine_type"] == "e2-standard-16", "provenance kept")
+
+
+def test_concurrent_burst_absent_emits_no_key():
+    # Default callers pass no concurrent_burst — the top-level key must be omitted.
+    _check("concurrent_burst" not in rs.build_results([], _prov(), GEN_AT),
+           "no concurrent_burst key when none supplied")
+    _check("concurrent_burst" not in rs.build_results([], _prov(), GEN_AT, concurrent_burst="nope"),
+           "non-dict concurrent_burst omits key")
+
+
+def test_concurrent_burst_empty_legs_omits_key():
+    # An empty / missing legs list ⇒ the whole key is omitted (render shows nothing, not a lie).
+    _check("concurrent_burst" not in rs.build_results([], _prov(), GEN_AT, concurrent_burst={"legs": []}),
+           "empty legs omits key")
+    _check("concurrent_burst" not in rs.build_results([], _prov(), GEN_AT, concurrent_burst={"node_count": 20}),
+           "missing legs omits key")
+
+
+def test_concurrent_burst_bad_leg_drops_whole_block():
+    # Any malformed leg fails the whole block CLOSED — no partial-lie table.
+    for bad_leg in (
+        {"n": 300, "mode": "lukewarm", "ttfe_p50_ms": 100.0, "ttfe_p95_ms": 200.0},  # out-of-enum mode
+        {"n": 300, "mode": "warm", "ttfe_p50_ms": -1.0, "ttfe_p95_ms": 200.0},        # negative ttfe
+        {"n": 0, "mode": "warm", "ttfe_p50_ms": 100.0, "ttfe_p95_ms": 200.0},         # n out of range
+        {"n": 300, "mode": "warm", "ttfe_p95_ms": 200.0},                              # missing p50
+        {"n": 300, "mode": "warm", "ttfe_p50_ms": 100.0, "ttfe_p95_ms": 200.0,
+         "exec_success_rate": 1.5},                                                     # esr out of 0..1
+    ):
+        _check("concurrent_burst" not in rs.build_results([], _prov(), GEN_AT,
+               concurrent_burst={"legs": [bad_leg]}),
+               f"malformed leg drops block: {bad_leg!r}")
+
+
+def test_concurrent_burst_invalid_provenance_dropped_spine_kept():
+    # A present-but-invalid provenance scalar is dropped on read; the valid spine still emits.
+    out = rs.build_results([], _prov(), GEN_AT,
+                           concurrent_burst=_cb(machine_type="us-central1-docker.pkg.dev/proj/img:1")
+                           )["concurrent_burst"]
+    _check("machine_type" not in out, "registry-shaped machine_type dropped")
+    _check(len(out["legs"]) == 2, "spine survives a dropped provenance scalar")
+
+
+def test_concurrent_burst_extra_keys_dropped():
+    # Closed-schema: only contract field-names survive at the top level; an extra key is dropped.
+    out = rs.build_results([], _prov(), GEN_AT,
+                           concurrent_burst=_cb(failure_excerpt="secret", cluster="internal")
+                           )["concurrent_burst"]
+    _check("failure_excerpt" not in out and "cluster" not in out, "extra top-level keys dropped")
+    _check(set(out) <= {"legs", "node_count", "machine_type", "measured_at"},
+           f"only contract fields emitted, got {sorted(out)}")
+
+
 def _all_tests():
     return [v for k, v in sorted(globals().items())
             if k.startswith("test_") and callable(v)]

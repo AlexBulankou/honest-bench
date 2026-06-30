@@ -18,6 +18,7 @@ from schema import (
     BADGE_CONSTRUCTIONS,
     BADGE_SCOPES,
     BURST_CORROBORATION_FIELDS,
+    CONCURRENT_BURST_FIELDS,
     DENSITY_SOURCE_SCENARIOS,
     GOAL_COLUMNS,
     HISTORY_FIELDS,
@@ -940,6 +941,111 @@ def render_kata_activation(results):
             f"_Measured {ka['measured_at'][:10]} — Kata pod-Ready / microVM-activation "
             "(point-in-time; not TTFE)._"
         )
+        lines.append("")
+    return "\n".join(lines)
+
+
+# --- #4021: concurrent-burst sweep render -------------------------------------------------
+# The Core Metrics matrix and the step-up table both report a per-SECOND creation RATE (sandboxes
+# launched per second, ramped). This block reports the complementary axis alex/a4z1 asked for: a
+# single ALL-AT-ONCE burst of N concurrent claims (300/500), warm-pool vs cold-provision. Same TTFE
+# honesty spine as the matrix (executed-first-instruction-and-returned-a-result), so the numbers are
+# directly comparable to the matrix TTFE columns. INERT (returns "") until the harness emits a
+# complete, closed-schema-clean concurrent_burst object.
+
+
+def _clean_concurrent_burst(results):
+    """Closed-schema-validate the TOP-LEVEL concurrent_burst object (#4021). None ⇒ INERT.
+
+    Returns the cleaned dict ONLY when the REQUIRED `legs` list is present and every leg passes
+    its predicate (n, mode, ttfe_p50_ms, ttfe_p95_ms required per leg; throughput + exec fractions
+    optional). Optional provenance scalars (node_count, machine_type, measured_at) render only when
+    valid; a present-but-invalid one is dropped on read, never fabricated.
+    """
+    cb = results.get("concurrent_burst")
+    if not isinstance(cb, dict):
+        return None
+    clean = {}
+    for key, ok in CONCURRENT_BURST_FIELDS.items():
+        if key in cb:
+            try:
+                if ok(cb[key]):
+                    clean[key] = cb[key]
+            except (TypeError, ValueError):
+                pass
+    if "legs" not in clean:
+        return None
+    return clean
+
+
+_CONCURRENT_BURST_MODE_LABELS = {
+    "warm": "Warm pool",
+    "cold": "Cold provision",
+}
+
+
+def _cb_thpt_cell(leg, key):
+    """Throughput-per-node cell: the value as-is (compact), or em-dash when the leg omits it —
+    honest "not measured", never a fabricated 0."""
+    if key in leg:
+        return _fmt_num(leg[key])
+    return "—"
+
+
+def render_concurrent_burst(results):
+    """Render the concurrent-burst sweep block (#4021), or "" when INERT.
+
+    Publishes a single all-at-once burst of N concurrent claims (the complement to the per-second
+    rate the matrix/step-up report), warm-pool vs cold-provision, on the SAME TTFE spine as the
+    Core Metrics matrix — so the TTFE columns ARE comparable to the matrix. INERT until the harness
+    emits a closed-schema-clean concurrent_burst object.
+    """
+    cb = _clean_concurrent_burst(results)
+    if not cb:
+        return ""
+    lines = ["## Concurrent Burst — TTFE at N simultaneous claims", ""]
+    caption = (
+        "Each row is a **single all-at-once burst of N concurrent claims** (not a ramped "
+        "per-second rate). TTFE is the same metric the Core Metrics matrix reports "
+        "(executed-first-instruction-and-returned-a-result), so these columns **are comparable "
+        "to the matrix TTFE columns**. *Warm pool* fires against a pre-provisioned pool of N "
+        "ready sandboxes; *cold provision* starts from an empty pool (node-autoscaler + image-pull "
+        "in the critical path)."
+    )
+    meta = []
+    if cb.get("node_count") is not None:
+        meta.append(f"node_count={cb['node_count']}")
+    if cb.get("machine_type"):
+        meta.append(f"`{cb['machine_type']}`")
+    if meta:
+        caption += f" Measured on {', '.join(meta)}."
+    lines.append(caption)
+    lines.append("")
+    header = [
+        "Concurrency (N)", "Activation Mode", "TTFE p50", "TTFE p95",
+        "Throughput @ <5s/node", "Throughput @ <1s/node", "Execution Success",
+    ]
+    lines.append("| " + " | ".join(header) + " |")
+    lines.append("|" + "|".join(["---"] * len(header)) + "|")
+    for leg in cb["legs"]:
+        mode_label = _CONCURRENT_BURST_MODE_LABELS.get(leg["mode"], leg["mode"])
+        exec_cell = (
+            _exec_cell(leg["exec_success_rate"], leg["n"])
+            if "exec_success_rate" in leg else "—"
+        )
+        row = [
+            _fmt_num(leg["n"]),
+            mode_label,
+            _fmt_secs(leg["ttfe_p50_ms"]),
+            _fmt_secs(leg["ttfe_p95_ms"]),
+            _cb_thpt_cell(leg, "thpt_under_5s_per_node"),
+            _cb_thpt_cell(leg, "thpt_under_1s_per_node"),
+            exec_cell,
+        ]
+        lines.append("| " + " | ".join(row) + " |")
+    lines.append("")
+    if cb.get("measured_at"):
+        lines.append(f"_Measured {cb['measured_at'][:10]} — concurrent-burst TTFE (point-in-time)._")
         lines.append("")
     return "\n".join(lines)
 
