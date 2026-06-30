@@ -37,11 +37,13 @@ bash scripts/check-public-safety.sh           # fail-closed public-safety scan
 
 ## Agent Sandbox — Core Metrics
 
+**Read TTFE down a column, not across rows.** Each activation-mode row carries its own sample size (the Samples (N) column) — they differ by orders of magnitude. A p50 over hundreds of samples and a p50 over one are not comparable: cross-row TTFE ranking is only meaningful between rows with similar N. Rows below N=30 are marked † on their TTFE cells.
+
 | Runtime | Activation Mode | Throughput @ <5s TTFE (sb/s/node) | Throughput @ <1s TTFE (sb/s/node) | TTFE p50 | TTFE p95 | Samples (N) | Max Density (sb/vCPU) | Execution Success (Honesty Check) |
 |---|---|---|---|---|---|---|---|---|
 | gVisor | Warm-pool hit (Base image) | 0.04 | 0 | 11.4901s | 16.5778s | 500 | pending | 100% |
-| gVisor | Unique-image cold (RL reality) | pending | pending | 2.1276s | 2.1276s | 1 | pending | 100% |
-| gVisor | Resume-from-suspend | pending | pending | 32.5161s | 32.7104s | 3 | N/A | 100% |
+| gVisor | Unique-image cold (RL reality) | pending | pending | 2.1276s † | 2.1276s † | 1 | pending | 100% |
+| gVisor | Resume-from-suspend | pending | pending | 32.5161s † | 32.7104s † | 3 | N/A | 100% |
 | Kata + microVM | Warm-pool hit (Base image) | pending | pending | pending | pending | pending | pending | pending |
 | Kata + microVM | Unique-image cold (RL reality) | pending | pending | pending | pending | pending | pending | pending |
 | Kata + microVM | Resume-from-suspend | pending | pending | pending | pending | pending | N/A | pending |
@@ -50,6 +52,7 @@ _TTFE = Time-To-First-Instruction: the sandbox executed its first instruction an
 _Throughput @ <1s renders the harness-emitted `0` when the p95 misses the 1s bar (we print a zero rather than round up)._
 _Max Density is sandboxes per node-allocatable sandbox-schedulable vCPU (the per-node denominator), not per total-cluster vCPU._
 _Execution Success is the Honesty Check: <100% prints the succeeded/total fraction and a ⚠️ flag._
+_† marks a TTFE measured over fewer than N=30 samples — read it as a single observation, not a distribution, and do not rank it against a high-N row._
 _Kata + microVM rows are not-yet-measured (requires-kata-microvm)._
 _Cells render `pending` until the TTFE-instrumented run lands._
 

@@ -35,6 +35,7 @@ from schema import (
     SCALE_PROOF_FIELDS,
     SCENARIO_LABELS,
     STEPUP_PARETO_FIELDS,
+    TTFE_COMPARABILITY_MIN_N,
     WARM_VS_COLD_FIELDS,
     _ISO,
 )
@@ -297,6 +298,11 @@ def render_trend(history_rows):
 
 _PENDING = "pending"
 
+# Small-sample marker for TTFE cells below TTFE_COMPARABILITY_MIN_N. A dagger, NOT the ⚠️ used
+# for the exec-success honesty check — overloading ⚠️ would conflate "this run had failures"
+# with "this row's N is too small to rank against another row".
+_LOW_N_MARK = "†"
+
 
 def _fmt_num(v):
     """Compact numeric (no trailing zeros): 4.0 -> 4, 1.86 -> 1.86."""
@@ -413,6 +419,14 @@ def render_matrix(results):
         "Execution Success (Honesty Check)",
     ]
     lines = ["## Agent Sandbox — Core Metrics", ""]
+    lines.append(
+        "**Read TTFE down a column, not across rows.** Each activation-mode row carries its own "
+        "sample size (the Samples (N) column) — they differ by orders of magnitude. A p50 over "
+        "hundreds of samples and a p50 over one are not comparable: cross-row TTFE ranking is "
+        f"only meaningful between rows with similar N. Rows below N={TTFE_COMPARABILITY_MIN_N} "
+        f"are marked {_LOW_N_MARK} on their TTFE cells."
+    )
+    lines.append("")
     lines.append("| " + " | ".join(header) + " |")
     lines.append("|" + "|".join(["---"] * len(header)) + "|")
 
@@ -428,12 +442,22 @@ def render_matrix(results):
             def cell(key, fmt):
                 return fmt(m[key]) if key in m else _PENDING
 
-            thpt5 = cell("thpt_under_5s_per_node", _fmt_num)
-            thpt1 = cell("thpt_under_1s_per_node", _fmt_num)
-            p50 = cell("ttfe_p50_ms", _fmt_secs)
-            p95 = cell("ttfe_p95_ms", _fmt_secs)
             n_val = sc["n"] if (sc and sc["n"] > 0) else None
             n_cell = str(n_val) if n_val else _PENDING
+
+            # Low-N TTFE cells carry a small-sample marker so a reader does not rank them
+            # against a high-N row (a single-sample p50 is not a distribution). Mark only a
+            # rendered measurement (not `pending`) whose N is known and below the floor.
+            low_n_ttfe = n_val is not None and n_val < TTFE_COMPARABILITY_MIN_N
+
+            def ttfe_cell(key):
+                v = cell(key, _fmt_secs)
+                return f"{v} {_LOW_N_MARK}" if (v != _PENDING and low_n_ttfe) else v
+
+            thpt5 = cell("thpt_under_5s_per_node", _fmt_num)
+            thpt1 = cell("thpt_under_1s_per_node", _fmt_num)
+            p50 = ttfe_cell("ttfe_p50_ms")
+            p95 = ttfe_cell("ttfe_p95_ms")
             if "exec_success_rate" in m:
                 exec_cell = _exec_cell(m["exec_success_rate"], n_val, m.get("exec_success_n"))
             else:
@@ -470,6 +494,11 @@ def render_matrix(results):
     lines.append(
         "_Execution Success is the Honesty Check: <100% prints the succeeded/total fraction "
         "and a ⚠️ flag._"
+    )
+    lines.append(
+        f"_{_LOW_N_MARK} marks a TTFE measured over fewer than N={TTFE_COMPARABILITY_MIN_N} "
+        "samples — read it as a single observation, not a distribution, and do not rank it "
+        "against a high-N row._"
     )
     lines.append("_Kata + microVM rows are not-yet-measured (requires-kata-microvm)._")
     lines.append("_Cells render `pending` until the TTFE-instrumented run lands._")
