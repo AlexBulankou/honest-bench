@@ -21,6 +21,7 @@ from schema import (
     DENSITY_SOURCE_SCENARIOS,
     GOAL_COLUMNS,
     HISTORY_FIELDS,
+    KATA_ACTIVATION_FIELDS,
     MATRIX_METRIC_FIELDS,
     MATRIX_RUNTIMES,
     METRIC_LABELS,
@@ -845,6 +846,99 @@ def render_warm_vs_cold(results):
         lines.append(
             f"_Measured {wc['measured_at'][:10]} — warm-vs-cold speedup "
             "(point-in-time; refreshed on the next TTFE fire)._"
+        )
+        lines.append("")
+    return "\n".join(lines)
+
+
+# Optional Kata fields that fail the block CLOSED when present-but-invalid (mirrors warm_vs_cold's
+# cold_start_mode handling): a typo'd hypervisor / a registry-path image / a free-text resume must
+# never publish, so "present in raw but not in clean" ⇒ INERT for these. (Required fields are
+# enforced by the separate required-loop below.) Kept in sync with the emitter coercer's fail-closed
+# optionals; a drift is caught by the cross-contract test.
+_KATA_FAIL_CLOSED_OPTIONALS = ("warm_image", "hypervisor", "resume_status", "kata_version")
+
+
+def _clean_kata_activation(results):
+    """Closed-schema-validate the TOP-LEVEL kata_activation object (#3942).
+
+    Returns the cleaned dict ONLY when every REQUIRED field (runtime_class, microvm_activation_ms,
+    warm_ready_ms, cold_ready, guest_kernel, host_kernel) is present and passes its predicate; None
+    otherwise (⇒ INERT). The optional enum/shape fields fail the block CLOSED when present-but-invalid
+    (a typo'd hypervisor / registry-path image / free-text resume never publishes), mirroring
+    warm_vs_cold's cold_start_mode posture.
+    """
+    ka = results.get("kata_activation")
+    if not isinstance(ka, dict):
+        return None
+    clean = {}
+    for key, ok in KATA_ACTIVATION_FIELDS.items():
+        if key in ka:
+            try:
+                if ok(ka[key]):
+                    clean[key] = ka[key]
+            except (TypeError, ValueError):
+                pass
+    for req in ("runtime_class", "microvm_activation_ms", "warm_ready_ms",
+                "cold_ready", "guest_kernel", "host_kernel"):
+        if req not in clean:
+            return None
+    # Present-but-invalid optional enum/shape ⇒ fail closed (over-claim guard).
+    for opt in _KATA_FAIL_CLOSED_OPTIONALS:
+        if opt in ka and opt not in clean:
+            return None
+    return clean
+
+
+def render_kata_activation(results):
+    """Render the Kata+microVM activation block (#3942), or "" when INERT.
+
+    Publishes Kata pod-Ready / microVM-activation latency. This is DELIBERATELY NOT the TTFE the
+    Core Metrics matrix keys on (executed first-instruction + returned a result): the matrix TTFE
+    cells for Kata stay honestly `pending`, and the caption restates the distinction so a reader
+    cannot read these Ready numbers as TTFE or compare them against the gVisor TTFE columns. The
+    resume cell reads N/A — upstream-blocked (CRIU resume not wired upstream, #3097), a genuine
+    upstream gap rather than an unrun or failed test. INERT (returns "") until the harness emits a
+    complete, closed-schema-clean kata_activation object.
+    """
+    ka = _clean_kata_activation(results)
+    if not ka:
+        return ""
+    rt_label = RUNTIME_LABELS[ka["runtime_class"]]
+    lines = ["## Kata + microVM Activation (pod-Ready — NOT TTFE)", ""]
+    caption = (
+        f"These are **{rt_label} pod-Ready / microVM-activation** latencies — the time to bring "
+        "the guest microVM up and the pod Ready. They are **not TTFE** (the Core Metrics matrix's "
+        "executed-first-instruction-and-returned-a-result metric), so they are **not comparable "
+        "to the matrix TTFE columns**; the Kata TTFE cells there stay `pending` until a TTFE probe "
+        "runs under Kata."
+    )
+    meta = []
+    if ka.get("hypervisor"):
+        meta.append(f"hypervisor **{ka['hypervisor']}**")
+    if ka.get("kata_version"):
+        meta.append(f"Kata **{ka['kata_version']}**")
+    meta.append(f"guest kernel `{ka['guest_kernel']}`")
+    meta.append(f"host kernel `{ka['host_kernel']}`")
+    n_note = f", n={ka['n']}" if "n" in ka else ""
+    lines.append(caption + f" Measured on {', '.join(meta)}{n_note}.")
+    lines.append("")
+    header = ["Phase", "Pod-Ready latency"]
+    lines.append("| " + " | ".join(header) + " |")
+    lines.append("|" + "|".join(["---"] * len(header)) + "|")
+    warm_img = f" ({ka['warm_image']})" if ka.get("warm_image") else ""
+    lines.append(f"| microVM activation | {_fmt_secs(ka['microvm_activation_ms'])} |")
+    lines.append(f"| Warm-pool hit{warm_img} | {_fmt_secs(ka['warm_ready_ms'])} |")
+    for e in ka["cold_ready"]:
+        pull = f" (image pull {_fmt_secs(e['image_pull_ms'])})" if "image_pull_ms" in e else ""
+        lines.append(f"| Cold start — {e['image']}{pull} | {_fmt_secs(e['ready_ms'])} |")
+    # Resume row: a genuine upstream gap, NOT a failed/unrun test. (a4s1 ask (b).)
+    lines.append("| Snapshot resume | N/A — upstream-blocked (CRIU resume not wired, #3097) |")
+    lines.append("")
+    if ka.get("measured_at"):
+        lines.append(
+            f"_Measured {ka['measured_at'][:10]} — Kata pod-Ready / microVM-activation "
+            "(point-in-time; not TTFE)._"
         )
         lines.append("")
     return "\n".join(lines)

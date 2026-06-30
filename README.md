@@ -79,3 +79,17 @@ _Measured 2026-06-29 — warm-vs-cold speedup (point-in-time; refreshed on the n
 _Per-step density retention: 1→2 ✅ 1 · 2→4 ✅ 1 · 4→8 ✅ 1 · 8→16 ✅ 1 — holds flat step-to-step._
 
 _Measured 2026-06-29 — node-count linearity sweep (point-in-time; refreshed on the next multi-node sweep)._
+
+## Kata + microVM Activation (pod-Ready — NOT TTFE)
+
+These are **Kata + microVM pod-Ready / microVM-activation** latencies — the time to bring the guest microVM up and the pod Ready. They are **not TTFE** (the Core Metrics matrix's executed-first-instruction-and-returned-a-result metric), so they are **not comparable to the matrix TTFE columns**; the Kata TTFE cells there stay `pending` until a TTFE probe runs under Kata. Measured on hypervisor **Cloud Hypervisor**, Kata **3.32.0**, guest kernel `6.18.35`, host kernel `6.8.0-1054-gke`, n=3.
+
+| Phase | Pod-Ready latency |
+|---|---|
+| microVM activation | 2s |
+| Warm-pool hit (ubuntu:24.04) | 3s |
+| Cold start — debian:12 (image pull 0.9s) | 3s |
+| Cold start — ubuntu:24.04 (image pull 0.887s) | 5s |
+| Snapshot resume | N/A — upstream-blocked (CRIU resume not wired, #3097) |
+
+_Measured 2026-06-30 — Kata pod-Ready / microVM-activation (point-in-time; not TTFE)._

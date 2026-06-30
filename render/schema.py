@@ -496,3 +496,77 @@ STEPUP_PARETO_FIELDS = {
     # measured_at: ISO-8601-ish instant the sweep ran (non-empty string), same as scale_proof.
     "measured_at": lambda v: isinstance(v, str) and bool(v),
 }
+
+# --- #3942: Kata + microVM activation latency block (TOP-LEVEL kata_activation object) ----
+# The Kata+microVM fire measured pod-Ready / microVM-activation latency — NOT TTFE. The Core
+# Metrics matrix above is keyed on TTFE (executed-first-instruction) BY CONTRACT, so dropping a
+# Ready/activation number into a ttfe_* column would contradict the honesty spine — the Kata TTFE
+# matrix cells therefore stay honestly `pending` (no Kata TTFE-exec was measured). This SEPARATE
+# additive block surfaces the Ready/activation numbers we DO have, with the Ready-not-TTFE
+# distinction carried IN the render caption (not just the schema key) so a reader cannot conflate
+# it with the TTFE columns. Resume-from-suspend renders N/A upstream-blocked (CRIU resume not
+# wired upstream) — a genuine upstream gap, not an unrun test.
+#
+# Same closed-schema discipline as warm_vs_cold/scale_proof/stepup: the block renders ONLY these
+# field-names, each validated by its predicate; anything else is dropped on read, so an accrual
+# writer cannot smuggle free-text (an internal node/cluster/pool name) onto the public page. The
+# risky free-text fields are enum- or regex-bounded: hypervisor against a PUBLIC hypervisor enum,
+# resume_status against a closed enum, kernels/version/image against tight shape regexes that
+# forbid registry paths and arbitrary text.
+
+# Public hypervisor names only — an internal/free-text value drops the whole block (fail-closed).
+KATA_HYPERVISORS = {"Cloud Hypervisor", "QEMU", "Firecracker", "Dragonball", "Stratovirt"}
+# Resume status is a closed enum, never free text. "upstream-blocked" = CRIU resume not wired
+# upstream (a genuine upstream gap), the only state measured today.
+KATA_RESUME_STATUSES = {"upstream-blocked"}
+# Kernel release shape: MAJOR.MINOR.PATCH with an optional vendor suffix (e.g. 6.18.35 or
+# 6.8.0-1054-gke). Tightly bounded so an internal node/pool name can never ride a kernel field.
+_KERNEL = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z._-]+)?$")
+# Kata version shape: bare semantic version (e.g. 3.32.0). No suffix, no free text.
+_KATA_VERSION = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
+# Kata image shape: a PUBLIC base-image ref with NO registry path (forbids `/`) — e.g. debian:12,
+# ubuntu:24.04. Deliberately stricter than provenance _IMAGE (which allows registry paths for the
+# controller image): a base-image name is a short public tag, so forbidding `/` keeps any internal
+# AR project path off the page by construction.
+_KATA_IMAGE = re.compile(r"^[a-z0-9][a-z0-9._-]*:[A-Za-z0-9][A-Za-z0-9._-]*$")
+
+
+# Per cold-start entry: image (required, public base-image shape) + ready_ms (required, nonneg
+# total-to-Ready) + image_pull_ms (OPTIONAL nonneg). A non-empty list is required; a malformed
+# entry (bad image shape, missing/invalid ready_ms, bad optional pull) drops the whole block —
+# a malformed fire degrades to no Kata block, never to a leak or a partial lie.
+def _kata_cold_ready_ok(v):
+    if not isinstance(v, list) or not v:
+        return False
+    for e in v:
+        if not isinstance(e, dict):
+            return False
+        img = e.get("image")
+        if not (isinstance(img, str) and bool(_KATA_IMAGE.match(img))):
+            return False
+        rm = e.get("ready_ms")
+        if not (isinstance(rm, (int, float)) and not isinstance(rm, bool) and rm >= 0):
+            return False
+        if "image_pull_ms" in e:
+            pm = e["image_pull_ms"]
+            if not (isinstance(pm, (int, float)) and not isinstance(pm, bool) and pm >= 0):
+                return False
+    return True
+
+
+KATA_ACTIVATION_FIELDS = {
+    # REQUIRED spine.
+    "runtime_class": lambda v: v in RUNTIME_LABELS,
+    "microvm_activation_ms": _nonneg,
+    "warm_ready_ms": _nonneg,
+    "cold_ready": _kata_cold_ready_ok,
+    "guest_kernel": lambda v: isinstance(v, str) and bool(_KERNEL.match(v)),
+    "host_kernel": lambda v: isinstance(v, str) and bool(_KERNEL.match(v)),
+    # OPTIONAL.
+    "warm_image": lambda v: isinstance(v, str) and bool(_KATA_IMAGE.match(v)),
+    "hypervisor": lambda v: v in KATA_HYPERVISORS,
+    "resume_status": lambda v: v in KATA_RESUME_STATUSES,
+    "kata_version": lambda v: isinstance(v, str) and bool(_KATA_VERSION.match(v)),
+    "n": lambda v: isinstance(v, int) and not isinstance(v, bool) and v >= 0,
+    "measured_at": lambda v: isinstance(v, str) and bool(v),
+}
