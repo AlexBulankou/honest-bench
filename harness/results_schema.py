@@ -58,6 +58,18 @@ COLD_START_MODE_ENUM = ("cold-provision", "cold-pull")
 # fail-closed when present (a non-enum value is a misconfiguration, not a leak).
 BADGE_SCOPE_ENUM = ("control-plane", "enforced")
 
+# badge_construction (#3950) — an ORTHOGONAL per-SCENARIO closed enum disclosing WHICH
+# NetworkPolicy mechanism a security-isolation PASS measured: "standard-np" = a standard
+# networking.k8s.io/v1 NetworkPolicy built with explicit label propagation, whose podSelector
+# binds the tenant pods so a data-plane breach is OBSERVABLE; "managed-np" = a managed
+# gke-sandbox NP whose podSelector may select zero pods, so a breach is inert (#2082). It
+# renders as a SECOND suffix term on the PASS cell, ONLY alongside a badge_scope — `PASS
+# (enforced, standard-np)` — so a future enforced-flip cannot read as a managed-NP guarantee.
+# Optional per-scenario — dropped when absent, fail-closed when present (a non-enum value is a
+# misconfiguration, not a leak, mirroring badge_scope). Mirrors render/schema.py's
+# BADGE_CONSTRUCTIONS; a drift is caught by the cross-contract test, not a shared import.
+BADGE_CONSTRUCTION_ENUM = ("standard-np", "managed-np")
+
 # a#3960 step-up saturation verdicts — the emitter's INDEPENDENT copy of render's
 # STEPUP_VERDICTS (the two modules deliberately keep separate vocabularies; a drift is
 # caught by the cross-contract test, not papered over by a shared import). A verdict outside
@@ -90,7 +102,15 @@ PROVENANCE_FIELDS = (
     "node_count",
     "cold_start_mode",
 )
-SCENARIO_FIELDS = ("name", "outcome", "pending_reason", "badge_scope", "n", "sla_metrics")
+SCENARIO_FIELDS = (
+    "name",
+    "outcome",
+    "pending_reason",
+    "badge_scope",
+    "badge_construction",
+    "n",
+    "sla_metrics",
+)
 
 # sla_metric keys must be machine-readable metric names: lowercase alphanumerics
 # separated by underscore or hyphen. No spaces, colons, slashes, or dots — a
@@ -170,6 +190,29 @@ def _coerce_scenario(raw: dict) -> dict:
                 f"scenario {name!r}: badge_scope {scope!r} not in {BADGE_SCOPE_ENUM}"
             )
         out["badge_scope"] = scope
+
+    # badge_construction is optional and per-scenario; when present it MUST be in the closed
+    # enum (fail-closed, same posture as badge_scope). Dropped silently when absent.
+    construction = raw.get("badge_construction")
+    if construction is not None:
+        if construction not in BADGE_CONSTRUCTION_ENUM:
+            raise ValueError(
+                f"scenario {name!r}: badge_construction {construction!r} not in "
+                f"{BADGE_CONSTRUCTION_ENUM}"
+            )
+        out["badge_construction"] = construction
+
+    # Flip-time coupling guard (#4051): an "enforced" data-plane PASS MUST carry a
+    # badge_construction. Without it the cell renders a bare `PASS (enforced)` that misreads as a
+    # managed-gke-sandbox-NP guarantee — the exact over-claim badge_construction exists to close
+    # (#3950/#2082). control-plane scope needs no construction (it asserts admission, not which
+    # NP mechanism was exercised), and a construction with no scope is harmless (render shows it
+    # only alongside a scope) so it is not forced the other way.
+    if out.get("badge_scope") == "enforced" and "badge_construction" not in out:
+        raise ValueError(
+            f"scenario {name!r}: badge_scope 'enforced' requires a badge_construction in "
+            f"{BADGE_CONSTRUCTION_ENUM} (over-claim guard, #4051)"
+        )
 
     n = raw.get("n")
     if isinstance(n, bool):

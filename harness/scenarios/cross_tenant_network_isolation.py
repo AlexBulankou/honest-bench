@@ -477,7 +477,7 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
                         f"same-tenant traffic still reaches the tenant-A Pod "
                         f"{pod_a.metadata.name} — data-plane isolation verified, not "
                         f"just admitted.",
-                        {"badge_scope": "enforced"},
+                        {"badge_scope": "enforced", "badge_construction": "standard-np"},
                     )
                 if verdict in ("breach", "over-block"):
                     return (
