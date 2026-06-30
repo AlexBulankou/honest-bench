@@ -164,6 +164,82 @@ Tunables (env, optional): `BENCH_NODE_COUNT` (per-node throughput denominator,
 default 20), `BENCH_NAMESPACE` (default `default`), `FIRE_TIMEOUT_S` (warmup +
 per-claim-bind ceiling, default 900s — raise for a large cold burst).
 
+## Cluster shape for the warm-pool scale headline
+
+The fire commands above presume a cluster that can actually *serve* a few hundred
+warm claims at sub-second TTFE. The fire is the easy part; the **cluster shape**
+is what makes the headline reproducible rather than autoscaler-bound. None of the
+shape below is a private tuning — it is the vanilla architecture any GKE user can
+provision, and it is exactly what the published headline's build banner records.
+The numbers a given shape *achieves* are filled in from a real fire (see the
+placeholder block at the end of this section); the shape itself is the recipe.
+
+**Control plane.** A **regional GKE cluster on >= 1.31** — regional so the control
+plane is not a single-zone SPOF under a burst of N simultaneous claim writes, and
+>= 1.31 because that is the floor where the sandbox CRDs (`v1beta1`) and the
+gVisor `RuntimeClass` admission path are both stable.
+
+**Node pool.** A gVisor-enabled pool —
+`--enable-sandbox=type=gvisor`, which installs the `gvisor` `RuntimeClass` the
+burst pins to — on a **16-vCPU machine type** (the build banner records exactly
+which one, so a reproduced number is comparable to ours). Size the pool's
+autoscaling **maximum** to the node count the headline needs *before* the fire —
+a warm-pool burst that has to wait on node autoscaling is measuring the
+autoscaler, not the sandbox path, and that cold tail is exactly what the warm pool
+exists to remove. The per-node sandbox density (sandboxes per node-allocatable
+sandbox-schedulable vCPU) is published in the Core Metrics matrix; divide the
+target concurrency by that density to size the pool's node ceiling.
+
+The gate on that node ceiling is **per-machine-family CPU quota, not the generic
+CPU quota** — `node_ceiling × 16` vCPU must fit under the quota for the *specific*
+machine family you pick (e.g. the `N2_CPUS` / `E2_CPUS` regional quota for an
+`n2-standard-16` / `e2-standard-16` pool), and raising generic CPU does not lift a
+per-family cap. So pick a family whose adjustable quota covers the headline's node
+count: a few-hundred-node scale-headline pool needs a family quota in the
+thousands of vCPU, while the smaller published cells fit comfortably inside a
+modest one. If your preferred family's quota is capped below the node ceiling,
+either request an increase on that family or switch to a 16-vCPU family that
+already has the headroom — the architecture is identical, only the family-quota
+math changes.
+
+**Pod networking.** A **pod CIDR wide enough that `node_count × pods-per-node`
+does not exhaust the range** — a **`/16` cluster pod range** comfortably addresses
+a several-hundred-node pool at the default per-node pod allocation. A pod range
+sliced too thin caps the node count *below* the headline's needed fan-out, so the
+burst silently tops out on IP exhaustion rather than on the sandbox path — another
+confound the shape removes up front.
+
+**Warm-pool sizing.** Size the `SandboxWarmPool` so a ready slot is waiting when
+each claim arrives: **replicas ≈ active-concurrency × 0.75, replenished at the
+claim rate.** The 0.75 factor keeps a steady-state buffer of ready slots without
+over-provisioning idle capacity; "replenished at the claim rate" means the pool
+controller refills a drained slot as fast as claims consume them, so a sustained
+arrival rate is served warm rather than draining the pool into the cold-overflow
+path partway through the burst. (Set the pool to the same N the fire uses for a
+fully-warm headline; set it to zero for the cold-contrast leg, exactly as the
+`fire-concurrent-n.sh warm|cold N` driver above does.)
+
+**Zero-cold-start image pre-pull.** Run an **image pre-pull `DaemonSet`** that
+pulls the sandbox **base image** onto every node before the burst. A warm-pool
+slot still pays a one-time image pull the first time the base image lands on a
+fresh node; pre-pulling on every node ahead of the fire removes that pull from the
+critical path, so the warm leg measures the activation path and not a containerd
+cache miss. This is what makes the warm number a *warm* number — provisioning off
+one node-cacheable shared base image, never a unique image per claim.
+
+```
+# placeholder — measured numbers filled post-fire (a4s1's lane).
+# achieved sustained throughput : TODO sb/s            (target: 300 sb/s)
+# warm-pool claim->ready p95    : TODO ms              (target: < 500 ms; doc ideal)
+# TTFE p95 (executed first-instr): TODO s              (target: < 1 s)
+# node_count / pool replicas    : TODO / TODO
+# build banner (substrate / image digest / suite sha)  : TODO
+```
+
+Everything above is architecture-shape only; the achieved figures come from a real
+gke-sandbox fire and land in the build banner + the Core Metrics / Concurrent
+Burst tables on the published page, never hand-entered here.
+
 ## Reproduce in CI (no laptop required)
 
 The same two paths above also run as **dispatch-only** GitHub Actions, so you can
