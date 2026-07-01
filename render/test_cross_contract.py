@@ -1279,6 +1279,160 @@ def test_emit_to_render_at_scale_contention_convergence():
     )
 
 
+def test_emit_to_render_provisioning_rate_sweep_convergence():
+    """Convergence guard for the provisioning-rate-sweep block (#4086; carried across #112).
+
+    provisioning_rate_sweep is emitted by harness/results_schema.build_results(
+    provisioning_rate_sweep=...) (via _coerce_provisioning_rate_sweep) and allow-listed on the render
+    side by schema.PROVISIONING_RATE_SWEEP_FIELDS. Like scale_proof it is a list-bearing top-level
+    block with NO in-process producer — the daily `harness.run --product sandbox` refresh carries the
+    prior committed block forward verbatim (run.carry_prior_provisioning_rate_sweep, #112), so it MUST
+    survive the emit→render round-trip or the daily refresh would carry a block the renderer silently
+    treats as INERT (the #112 "other door" drop). Every field the EMITTER keeps on a real object must
+    pass the INDEPENDENT render-side predicate; the runtime_class enum must agree value-for-value
+    across the two independent sets.
+
+    The load-bearing DIFFERENCE from at_scale_contention (whose runtime_class is a REQUIRED, fail-
+    closed spine): here `rate_points` is the ONLY required spine, and `runtime_class` is an OPTIONAL
+    top-level color — an out-of-enum runtime_class is DROPPED PER-FIELD while the block SURVIVES, it
+    does NOT fail the whole block closed. What DOES fail the whole block closed is a bad PER-POINT
+    value (a negative ready_pct, an over-100 ready_pct, a non-int offered_rate): a bad point must
+    never render as a partial-lie row. Fails loudly first.
+    """
+    import importlib.util
+
+    import schema
+
+    emitter_path = os.path.join(_ROOT, "harness", "results_schema.py")
+    if not os.path.exists(emitter_path):
+        print("  (skip: harness emitter not in-tree yet)")
+        return
+    spec = importlib.util.spec_from_file_location("_bench_emitter_prs", emitter_path)
+    mod = importlib.util.module_from_spec(spec)
+    try:
+        spec.loader.exec_module(mod)
+    except Exception as exc:  # pragma: no cover - harness has its own deps
+        print(f"  (skip: harness emitter not importable in isolation: {exc})")
+        return
+
+    # The closed runtime vocabulary must agree value-for-value across the two independent sets,
+    # or a future render drops a runtime_class the emitter happily emits.
+    assert set(mod.WARM_VS_COLD_RUNTIME_CLASS_ENUM) == set(schema.RUNTIME_LABELS), (
+        "emit/render DRIFT: harness WARM_VS_COLD_RUNTIME_CLASS_ENUM "
+        f"{set(mod.WARM_VS_COLD_RUNTIME_CLASS_ENUM)} != render RUNTIME_LABELS "
+        f"{set(schema.RUNTIME_LABELS)}"
+    )
+
+    # A full provisioning_rate_sweep object: every top-level field + every optional per-point color
+    # populated so the convergence covers the whole surface, not just the required spine.
+    prs_in = {
+        "runtime_class": "gvisor",
+        "ceiling_low_per_s": 100,
+        "ceiling_high_per_s": 150,
+        "measured_at": "2026-07-01",
+        "rate_points": [
+            {"offered_rate_per_s": 100, "ready_pct": 100.0, "warmpool_size": 1500,
+             "elapsed_s": 301.0, "converged": True},
+            {"offered_rate_per_s": 150, "ready_pct": 42.0, "warmpool_size": 2250,
+             "timeout_s": 1125.0, "converged": False},
+            {"offered_rate_per_s": 200, "ready_pct": 21.0, "warmpool_size": 3000,
+             "timeout_s": 1880.0, "converged": False},
+        ],
+    }
+    results = mod.build_results(
+        [], {"cluster_substrate": "gke-sandbox", "node_count": 1},
+        generated_at="2026-07-01T12:00:00Z", provisioning_rate_sweep=prs_in,
+    )
+    assert "provisioning_rate_sweep" in results, (
+        f"emitter dropped the whole provisioning_rate_sweep object — rejected a valid full object:\n{prs_in}"
+    )
+    prs = results["provisioning_rate_sweep"]
+
+    # (a) every top-level field the emitter KEPT passes the independent render allow-list.
+    for key, val in prs.items():
+        assert key in schema.PROVISIONING_RATE_SWEEP_FIELDS, (
+            f"emit/render DRIFT: emitter kept key {key!r} absent from render "
+            "PROVISIONING_RATE_SWEEP_FIELDS — render_provisioning_rate_sweep would silently drop it."
+        )
+        assert schema.PROVISIONING_RATE_SWEEP_FIELDS[key](val), (
+            f"emit/render DRIFT: render PROVISIONING_RATE_SWEEP_FIELDS[{key!r}] rejects emitter value "
+            f"{val!r} — the block would render nothing."
+        )
+
+    # (b) the required spine (rate_points) survives intact, sorted, with per-point color preserved.
+    assert "rate_points" in prs and len(prs["rate_points"]) == 3
+    rates = [p["offered_rate_per_s"] for p in prs["rate_points"]]
+    assert rates == [100, 150, 200], f"rate_points must survive all three points: {rates}"
+    p0 = prs["rate_points"][0]
+    assert p0["ready_pct"] == 100.0 and p0["warmpool_size"] == 1500 and p0["converged"] is True
+
+    # (c) an out-of-enum runtime_class is DROPPED PER-FIELD but the block SURVIVES (the load-bearing
+    # difference from at_scale_contention: runtime_class here is optional color, not a fail-closed spine).
+    drop_rc = mod.build_results(
+        [], {"cluster_substrate": "gke-sandbox", "node_count": 1},
+        generated_at="2026-07-01T12:00:00Z",
+        provisioning_rate_sweep={"runtime_class": "firecracker",
+                                 "rate_points": [{"offered_rate_per_s": 100, "ready_pct": 100.0}]},
+    )
+    assert "provisioning_rate_sweep" in drop_rc, (
+        "an out-of-enum runtime_class must NOT drop the whole block — it is optional color, not a "
+        "fail-closed spine (the #4086 distinction from at_scale_contention)"
+    )
+    assert "runtime_class" not in drop_rc["provisioning_rate_sweep"], (
+        "an out-of-enum runtime_class must be dropped per-field — closed-enum guard"
+    )
+
+    # (d) a bad PER-POINT value fails the WHOLE block closed (no partial-lie row).
+    for bad_point in (
+        {"offered_rate_per_s": 100, "ready_pct": -1.0},      # negative pct
+        {"offered_rate_per_s": 100, "ready_pct": 101.0},     # over-100 pct
+        {"offered_rate_per_s": 0, "ready_pct": 50.0},        # non-positive rate
+        {"offered_rate_per_s": 100.5, "ready_pct": 50.0},    # non-int rate
+    ):
+        leak = mod.build_results(
+            [], {"cluster_substrate": "gke-sandbox", "node_count": 1},
+            generated_at="2026-07-01T12:00:00Z",
+            provisioning_rate_sweep={"rate_points": [bad_point]},
+        )
+        assert "provisioning_rate_sweep" not in leak, (
+            f"a bad per-point value {bad_point!r} must drop the WHOLE block — no partial-lie row"
+        )
+
+    # (e) a negative ceiling is dropped PER-FIELD, but a valid spine still renders.
+    drop_ceil = mod.build_results(
+        [], {"cluster_substrate": "gke-sandbox", "node_count": 1},
+        generated_at="2026-07-01T12:00:00Z",
+        provisioning_rate_sweep={"ceiling_low_per_s": -5,
+                                 "rate_points": [{"offered_rate_per_s": 100, "ready_pct": 100.0}]},
+    )
+    assert "provisioning_rate_sweep" in drop_ceil, "a valid spine must survive a dropped ceiling"
+    assert "ceiling_low_per_s" not in drop_ceil["provisioning_rate_sweep"], (
+        "a negative ceiling_low_per_s must be dropped per-field — nonneg guard"
+    )
+
+    # (f) an empty / missing rate_points list drops the whole block (the required spine).
+    for empty in ({"rate_points": []}, {"runtime_class": "gvisor"}):
+        leak_empty = mod.build_results(
+            [], {"cluster_substrate": "gke-sandbox", "node_count": 1},
+            generated_at="2026-07-01T12:00:00Z", provisioning_rate_sweep=empty,
+        )
+        assert "provisioning_rate_sweep" not in leak_empty, (
+            f"a missing/empty rate_points spine must drop the whole block: {empty!r}"
+        )
+
+    # (g) an unknown top-level key is dropped by the emitter's closed schema, spine survives.
+    smuggle = mod.build_results(
+        [], {"cluster_substrate": "gke-sandbox", "node_count": 1},
+        generated_at="2026-07-01T12:00:00Z",
+        provisioning_rate_sweep={"rate_points": [{"offered_rate_per_s": 100, "ready_pct": 100.0}],
+                                 "internal_cluster_name": "leak-me"},
+    )
+    assert "provisioning_rate_sweep" in smuggle, "a valid spine must survive an unknown extra key"
+    assert "internal_cluster_name" not in smuggle["provisioning_rate_sweep"], (
+        "an unknown top-level key must be dropped by the emitter's closed schema — Layer-1 PII guard"
+    )
+
+
 def _run_all():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:

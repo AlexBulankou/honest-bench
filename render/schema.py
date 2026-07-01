@@ -749,3 +749,63 @@ AT_SCALE_CONTENTION_FIELDS = {
     "machine_type": lambda v: isinstance(v, str) and bool(_MACHINE_TYPE.match(v)),
     "measured_at": lambda v: isinstance(v, str) and bool(v),
 }
+
+
+# --- #4086 sibling: provisioning-rate-sweep block (TOP-LEVEL provisioning_rate_sweep object) ---
+# The honest reconcile-throughput ceiling: for each offered warm-pool provisioning rate
+# (sandboxes/sec), what fraction of the pool reached Ready WITHIN pool_warm_timeout. This is a
+# THIRD, distinct axis — NOT the step-up TTFE Pareto (per-claim latency at a fixed pool) and NOT
+# at_scale_contention (claim:pool ratio). It measures convergence-vs-offered-rate, so folding it
+# into either of those would falsely imply same-regime measurement (an honesty violation, #4086).
+# Produced only by the heavy, manual, collision-acked reconcile rate-sweep (out-of-process); the
+# daily single-node auto-refresh never produces one, so the render side is INERT until the object
+# appears and the block is carried forward across the daily refresh (mirrors scale_proof #3952).
+#
+# Closed-schema discipline (Layer-1 PII guard): the block renders ONLY these field-names, each
+# validated by its predicate; anything else is dropped on read. runtime_class is validated against
+# the PUBLIC RUNTIME_LABELS enum (NOT a bare non-empty string) so an out-of-enum/free-text runtime
+# can never reach the public page. Each rate point requires offered_rate_per_s (positive int) and
+# ready_pct (0..100); warmpool_size / elapsed_s / timeout_s / converged are optional per-point
+# color. ceiling_low_per_s / ceiling_high_per_s bound the converge→over-subscribe knee.
+def _rate_points_ok(v):
+    if not isinstance(v, list) or not v:
+        return False
+    for p in v:
+        if not isinstance(p, dict):
+            return False
+        rate = p.get("offered_rate_per_s")
+        if not (isinstance(rate, int) and not isinstance(rate, bool) and 0 < rate < 100000):
+            return False
+        pct = p.get("ready_pct")
+        if not (isinstance(pct, (int, float)) and not isinstance(pct, bool) and 0.0 <= pct <= 100.0):
+            return False
+        # warm-pool target for this rate (rate x pool_warm_timeout). Optional per point: present
+        # so the table can show the target the pool was sized to, older blocks may omit it.
+        wps = p.get("warmpool_size")
+        if wps is not None and not (isinstance(wps, int) and not isinstance(wps, bool) and 0 < wps < 100000000):
+            return False
+        # convergence wall-clock seconds + timeout ceiling: optional color, non-negative when present.
+        for k in ("elapsed_s", "timeout_s"):
+            if k in p:
+                x = p[k]
+                if not (isinstance(x, (int, float)) and not isinstance(x, bool) and x >= 0):
+                    return False
+        # did this rate reach 100% Ready within timeout? Optional bool.
+        conv = p.get("converged")
+        if conv is not None and not isinstance(conv, bool):
+            return False
+    return True
+
+
+PROVISIONING_RATE_SWEEP_FIELDS = {
+    "rate_points": _rate_points_ok,
+    "runtime_class": lambda v: v in RUNTIME_LABELS,
+    # bounded converge->over-subscribe knee: ceiling is in (ceiling_low_per_s, ceiling_high_per_s].
+    # Optional (the table alone proves the ceiling); non-negative numerics when present.
+    "ceiling_low_per_s": _nonneg,
+    "ceiling_high_per_s": _nonneg,
+    # measured_at: ISO-8601 instant the sweep ran. Optional, carried forward across the daily
+    # refresh (same as scale_proof) so a point-in-time block is honestly dated apart from the
+    # daily-refreshed top-level generated_at. Non-empty string only.
+    "measured_at": lambda v: isinstance(v, str) and bool(v),
+}
