@@ -207,6 +207,86 @@ def test_ttfe_sla_metrics_survives_results_schema_coerce():
         _check(_close(coerced[k], float(out[k])), f"value mutated for {k}")
 
 
+# --------------------------------------------- bind-vs-exec decomposition (inch #1)
+
+def test_ttfe_sla_metrics_emits_bind_percentiles_when_samples_present():
+    # inch #1: bind_ms_samples supplied -> bind_p50_ms/bind_p95_ms alongside the TTFE pair.
+    samples = [1396.0] * 30
+    oks = [True] * 30
+    binds = [400.0] * 30
+    out = m.ttfe_sla_metrics(samples, oks, 50.0, 1, bind_ms_samples=binds)
+    _check(_close(out["bind_p50_ms"], 400.0), "bind p50 emitted")
+    _check(_close(out["bind_p95_ms"], 400.0), "bind p95 emitted")
+    _check(_close(out["ttfe_p50_ms"], 1396.0), "ttfe p50 still emitted")
+
+
+def test_ttfe_sla_metrics_omits_bind_when_samples_absent():
+    # default (no bind_ms_samples arg) -> no bind keys; page stays pre-decomposition.
+    out = m.ttfe_sla_metrics([600.0] * 5, [True] * 5, 5.0, 1)
+    _check("bind_p50_ms" not in out, "bind p50 omitted by default")
+    _check("bind_p95_ms" not in out, "bind p95 omitted by default")
+
+
+def test_ttfe_sla_metrics_omits_bind_when_all_none():
+    # a run where no claim bound -> every bind sample is None -> no bind distribution.
+    out = m.ttfe_sla_metrics([600.0] * 3, [True] * 3, 5.0, 1,
+                             bind_ms_samples=[None, None, None])
+    _check("bind_p50_ms" not in out, "bind p50 omitted when all None")
+    _check("bind_p95_ms" not in out, "bind p95 omitted when all None")
+
+
+def test_ttfe_sla_metrics_bind_survives_results_schema_coerce():
+    # convergence: the new bind keys must survive the closed-schema emitter guard.
+    out = m.ttfe_sla_metrics([1396.0] * 30, [True] * 30, 50.0, 1,
+                             bind_ms_samples=[400.0] * 30)
+    coerced = rs._coerce_sla_metrics(out)
+    _check("bind_p50_ms" in coerced, "bind p50 survives coerce")
+    _check("bind_p95_ms" in coerced, "bind p95 survives coerce")
+
+
+def test_ttfe_sla_metrics_emits_exec_percentiles_when_samples_present():
+    # inch #1: exec_ms_samples supplied -> exec_p50_ms/exec_p95_ms emitted. These
+    # are GENUINELY-MEASURED per-claim (ttfe_ms - bind_ms), never subtracted
+    # percentiles. Deliberately use exec values that do NOT equal ttfe_p50 -
+    # bind_p50 (1396-400=996) to prove the emit percentiles the supplied samples,
+    # not an arithmetic split.
+    samples = [1396.0] * 30
+    oks = [True] * 30
+    binds = [400.0] * 30
+    execs = [1000.0] * 30  # != 1396 - 400 == 996; measured, not subtracted
+    out = m.ttfe_sla_metrics(samples, oks, 50.0, 1,
+                             bind_ms_samples=binds, exec_ms_samples=execs)
+    _check(_close(out["exec_p50_ms"], 1000.0), "exec p50 emitted (measured)")
+    _check(_close(out["exec_p95_ms"], 1000.0), "exec p95 emitted (measured)")
+    _check(_close(out["bind_p50_ms"], 400.0), "bind p50 still emitted")
+    _check(_close(out["ttfe_p50_ms"], 1396.0), "ttfe p50 still emitted")
+
+
+def test_ttfe_sla_metrics_omits_exec_when_samples_absent():
+    # default (no exec_ms_samples arg) -> no exec keys; page stays pre-decomposition.
+    out = m.ttfe_sla_metrics([600.0] * 5, [True] * 5, 5.0, 1)
+    _check("exec_p50_ms" not in out, "exec p50 omitted by default")
+    _check("exec_p95_ms" not in out, "exec p95 omitted by default")
+
+
+def test_ttfe_sla_metrics_omits_exec_when_all_none():
+    # a run where no claim produced a paired exec sample -> no exec distribution.
+    out = m.ttfe_sla_metrics([600.0] * 3, [True] * 3, 5.0, 1,
+                             exec_ms_samples=[None, None, None])
+    _check("exec_p50_ms" not in out, "exec p50 omitted when all None")
+    _check("exec_p95_ms" not in out, "exec p95 omitted when all None")
+
+
+def test_ttfe_sla_metrics_exec_survives_results_schema_coerce():
+    # convergence: the new exec keys must survive the closed-schema emitter guard.
+    out = m.ttfe_sla_metrics([1396.0] * 30, [True] * 30, 50.0, 1,
+                             bind_ms_samples=[400.0] * 30,
+                             exec_ms_samples=[1000.0] * 30)
+    coerced = rs._coerce_sla_metrics(out)
+    _check("exec_p50_ms" in coerced, "exec p50 survives coerce")
+    _check("exec_p95_ms" in coerced, "exec p95 survives coerce")
+
+
 # --------------------------------------------- single-sample (cold / resume)
 
 def test_single_sample_ttfe_point_happy():

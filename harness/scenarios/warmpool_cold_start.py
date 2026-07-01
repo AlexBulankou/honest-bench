@@ -558,6 +558,8 @@ def _assemble_ttfe_metrics(
     node_count: int,
     max_concurrent_sandboxes: int | None,
     allocatable_sandbox_vcpu_per_node: float | None,
+    bind_ms_samples: list[float] | None = None,
+    exec_ms_samples: list[float] | None = None,
 ) -> dict:
     """Assemble the warmpool TTFE sla_metrics dict (delegates to the pure core).
 
@@ -566,6 +568,14 @@ def _assemble_ttfe_metrics(
     contract: one exec_ok per claim FIRED (a never-bound claim contributes
     exec_ok=False), so exec_success_rate's denominator is the attempt total and
     the render derives exec_success_n = round(rate * n).
+
+    bind_ms_samples / exec_ms_samples (the TTFE decomposition, inch #1): the
+    per-claim bind latencies (create->bound, ms) and per-claim exec latencies
+    (create->first-instruction minus create->bound, ms) for the SAME emit set as
+    the TTFE samples, so metrics.ttfe_sla_metrics emits bind_p50_ms/bind_p95_ms +
+    exec_p50_ms/exec_p95_ms alongside the TTFE percentiles. exec is measured
+    per-claim (NOT p50(ttfe)-p50(bind)). Diagnostic-only — see
+    metrics.ttfe_sla_metrics.
     """
     m = metrics.ttfe_sla_metrics(
         ttfe_ms_samples,
@@ -574,6 +584,8 @@ def _assemble_ttfe_metrics(
         node_count=node_count,
         max_concurrent_sandboxes=max_concurrent_sandboxes,
         allocatable_sandbox_vcpu_per_node=allocatable_sandbox_vcpu_per_node,
+        bind_ms_samples=bind_ms_samples,
+        exec_ms_samples=exec_ms_samples,
     )
     m["n"] = len(exec_oks)
     return m
@@ -883,6 +895,37 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
                 emit_names, ttfe_results,
             )
             window_s = _activation_window_s(create_times, emit_bound_at)
+            # TTFE decomposition (inch #1): the per-claim BIND latency
+            # (create->bound, i.e. provisioning) for the SAME emit set, in ms.
+            # latencies[name] is create->bound in SECONDS; scope to emit_names
+            # (the gate-warm set when POOL_REPLICAS>0, else all claims) so the
+            # bind percentiles describe the exact same population as the TTFE
+            # percentiles. A never-bound claim (latencies[name] is None) has no
+            # bind sample — dropped, same as its absent TTFE sample.
+            bind_ms_samples = [
+                latencies[name] * 1000.0
+                for name in emit_names
+                if latencies.get(name) is not None
+            ]
+            # EXEC decomposition (inch #1): the per-claim exec latency
+            # (websocket setup + first-instruction round-trip) as a GENUINELY
+            # MEASURED sample, paired per-claim so the exec percentile is real —
+            # NOT p50(ttfe) - p50(bind) (percentiles don't subtract linearly).
+            # For each claim we have both create->bound (latencies[name], s) and
+            # create->first-instruction (ttfe_results[name][0], ms), sharing the
+            # same create() t0; their difference is that claim's exec time. Only
+            # claims with BOTH a bind and a non-None TTFE sample contribute (a
+            # claim that never bound or never executed has no honest exec split).
+            exec_ms_samples = []
+            for name in emit_names:
+                bind_s = latencies.get(name)
+                probe = ttfe_results.get(name)
+                if bind_s is None or probe is None:
+                    continue
+                ttfe_ms_for_claim = probe[0]
+                if ttfe_ms_for_claim is None:
+                    continue
+                exec_ms_samples.append(ttfe_ms_for_claim - bind_s * 1000.0)
             sla_metrics = _assemble_ttfe_metrics(
                 ttfe_ms_samples,
                 exec_oks,
@@ -890,6 +933,8 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
                 node_count=_NODE_COUNT,
                 max_concurrent_sandboxes=_DENSITY_MAX_CONCURRENT,
                 allocatable_sandbox_vcpu_per_node=_DENSITY_ALLOC_VCPU,
+                bind_ms_samples=bind_ms_samples,
+                exec_ms_samples=exec_ms_samples,
             )
         else:
             sla_metrics = (

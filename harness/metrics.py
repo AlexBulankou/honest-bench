@@ -163,6 +163,8 @@ def ttfe_sla_metrics(
     *,
     max_concurrent_sandboxes: Optional[int] = None,
     allocatable_sandbox_vcpu_per_node: Optional[float] = None,
+    bind_ms_samples: Optional[Sequence[Optional[Real]]] = None,
+    exec_ms_samples: Optional[Sequence[Optional[Real]]] = None,
 ) -> dict[str, float]:
     """Assemble the numeric sla_metrics dict a TTFE scenario emits.
 
@@ -175,6 +177,25 @@ def ttfe_sla_metrics(
 
     density_per_vcpu is emitted only when both density inputs are supplied (the
     suspend-from-resume scenario has density N/A in the doc, so it omits them).
+
+    bind_p50_ms/bind_p95_ms + exec_p50_ms/exec_p95_ms (the TTFE DECOMPOSITION,
+    inch #1): when bind_ms_samples / exec_ms_samples are supplied, emit the
+    bind- and exec-latency percentiles alongside the TTFE percentiles. TTFE =
+    bind (create->bound, i.e. provisioning) + exec (websocket setup +
+    first-instruction round-trip). Publishing the split lets the page show WHERE
+    a >1s warm-hit lives: a bind_p50 near ttfe_p50 means provisioning dominates
+    (a real controller/clone target); a small bind_p50 with a large exec_p50
+    means the exec channel (websocket setup) dominates (a harness/product
+    artifact, not a controller regression).
+
+    HONESTY — each is an INDEPENDENTLY-MEASURED percentile of its own per-claim
+    distribution, NOT an arithmetic split: exec is measured per-claim as
+    (ttfe_ms - bind_ms) for the SAME claim (both share the create() t0), then
+    percentiled. Percentiles do NOT sum, so bind_p50 + exec_p50 need not equal
+    ttfe_p50 — the caller pairs bind and exec per-claim so the exec percentile is
+    genuine, never p50(ttfe) - p50(bind). Diagnostic-only — adds keys, changes no
+    existing number. Each pair is emitted only when >=1 sample of that kind is
+    present (a run with no bound claim has no bind/exec distribution to report).
     """
     present = [float(t) for t in ttfe_ms_samples if t is not None]
     metrics: dict[str, float] = {
@@ -190,6 +211,16 @@ def ttfe_sla_metrics(
     if present:
         metrics["ttfe_p50_ms"] = round(percentile(present, 50), 1)
         metrics["ttfe_p95_ms"] = round(percentile(present, 95), 1)
+    if bind_ms_samples is not None:
+        bind_present = [float(b) for b in bind_ms_samples if b is not None]
+        if bind_present:
+            metrics["bind_p50_ms"] = round(percentile(bind_present, 50), 1)
+            metrics["bind_p95_ms"] = round(percentile(bind_present, 95), 1)
+    if exec_ms_samples is not None:
+        exec_present = [float(e) for e in exec_ms_samples if e is not None]
+        if exec_present:
+            metrics["exec_p50_ms"] = round(percentile(exec_present, 50), 1)
+            metrics["exec_p95_ms"] = round(percentile(exec_present, 95), 1)
     if max_concurrent_sandboxes is not None and allocatable_sandbox_vcpu_per_node is not None:
         metrics["density_per_vcpu"] = density_per_vcpu(
             max_concurrent_sandboxes, allocatable_sandbox_vcpu_per_node

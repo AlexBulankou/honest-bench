@@ -275,6 +275,34 @@ BURST_CORROBORATION_FIELDS = {
     "exec_success_n": lambda v: isinstance(v, int) and not isinstance(v, bool) and v >= 0,
 }
 
+# --- inch #1: warm-pool TTFE decomposition block (warmpool_cold_start sla_metrics) --------
+# The warm-pool-hit TTFE is create->first-instruction-result; it splits into BIND
+# (create->bound, i.e. provisioning) + EXEC (websocket setup + the first-instruction
+# round-trip). When the warm-hit p50/p95 sits above the <1s North Star, this block shows
+# WHERE the time lives: a bind_p50 near ttfe_p50 means provisioning dominates (a real
+# controller/clone target); a small bind_p50 with a large exec_p50 means the exec channel
+# (websocket setup) dominates (a harness/product artifact, not a controller regression).
+#
+# HONESTY: bind, exec, and TTFE are each an INDEPENDENTLY-MEASURED percentile of its own
+# per-claim distribution — exec is measured per-claim as (ttfe_ms - bind_ms) for the SAME
+# claim, then percentiled by the producer, NOT derived here as p50(ttfe)-p50(bind)
+# (percentiles do not subtract linearly). The render displays the three measured rows as-is;
+# they need NOT sum (bind_p50 + exec_p50 != ttfe_p50 in general), and the footnote says so.
+#
+# The render block is INERT by construction — it fires ONLY when ALL of the bind, exec, AND
+# TTFE percentile pairs are present, so today's pre-decomposition data renders nothing and the
+# public page is byte-unchanged until a fire emits bind_p50_ms/exec_p50_ms. Same closed-schema
+# discipline: only these keys render, each validated. Diagnostic-only — adds a block, changes
+# no existing cell.
+WARM_BIND_FIELDS = {
+    "bind_p50_ms": _nonneg,
+    "bind_p95_ms": _nonneg,
+    "exec_p50_ms": _nonneg,
+    "exec_p95_ms": _nonneg,
+    "ttfe_p50_ms": _nonneg,
+    "ttfe_p95_ms": _nonneg,
+}
+
 # Scale-Proof (Linearity Check) second table. Proof that per-node throughput + density hold
 # flat as the cluster grows. scale_points is the per-node sweep — each point carries
 # node_count + density and (optional) per-node throughput; the two retention ratios are
