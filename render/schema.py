@@ -639,3 +639,38 @@ CONCURRENT_BURST_FIELDS = {
     "machine_type": lambda v: isinstance(v, str) and bool(_MACHINE_TYPE.match(v)),
     "measured_at": lambda v: isinstance(v, str) and bool(v),
 }
+
+# --- #4083: warm-pool ACQUISITION-latency block (TOP-LEVEL warm_pool_acquisition object) ----
+# The concurrent_burst / step-up blocks above report full TTFE (claim → executed-first-
+# instruction). This block reports a DECOMPOSED SUB-PHASE of that path: the warm-pool
+# ACQUISITION latency — the time from SandboxClaim requested to bound (a ready warm sandbox
+# handed to the caller), measured per-claim by the step-up harness's acquisition watch-timer
+# (#1043). It EXCLUDES the exec-attach + first-instruction round-trip that the TTFE legs
+# include, so acquisition p95 is NOT comparable to the concurrent_burst/matrix TTFE columns —
+# it is the earlier, isolated "how fast does the pool hand me a sandbox" number a warm-pool
+# operator sizes against. Rendered as its own block with an explicit not-comparable caveat.
+#
+# Same closed-schema discipline as concurrent_burst/warm_vs_cold/scale_proof/stepup/kata: only
+# these field-names render, each validated by its predicate; anything else is dropped on read,
+# so a fire result cannot smuggle free-text onto the public page. The REQUIRED spine is
+# runtime_class (PUBLIC enum, fail-closed) + acq_p50_ms + acq_p95_ms + n; the p99, the offered
+# rate, the warm-pool size, the controller-startup lower-bound proxy, and the GCP shape
+# scalars are OPTIONAL (a partial fire renders a partial-but-honest block, never a fabricated
+# 0). controller_startup_p95_ms is an explicit LOWER-BOUND proxy (controller-first-observed →
+# Ready, excludes the claim-admission → first-reconcile queueing lag) — render keys a fixed
+# caveat off its presence, mirroring the step-up proxy discipline (#3975).
+WARM_POOL_ACQUISITION_FIELDS = {
+    # REQUIRED spine.
+    "runtime_class": lambda v: v in RUNTIME_LABELS,
+    "acq_p50_ms": _nonneg,
+    "acq_p95_ms": _nonneg,
+    "n": _pos_int,
+    # OPTIONAL — decomposition + provenance, all public-safe.
+    "acq_p99_ms": _nonneg,
+    "offered_rate_per_s": _pos_int,
+    "warmpool_size": _pos_int,
+    "controller_startup_p95_ms": _nonneg,
+    "machine_type": lambda v: isinstance(v, str) and bool(_MACHINE_TYPE.match(v)),
+    "node_count": lambda v: isinstance(v, int) and not isinstance(v, bool) and 0 < v < 10000,
+    "measured_at": lambda v: isinstance(v, str) and bool(v),
+}

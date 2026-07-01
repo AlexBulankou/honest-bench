@@ -109,3 +109,15 @@ Each row is a **single all-at-once burst of N concurrent claims** (not a ramped 
 | 500 | Cold provision | 97.3988s | 99.8002s | 0 | 0 | 100% |
 
 _Measured 2026-06-30 — concurrent-burst TTFE (point-in-time)._
+
+## Warm-Pool Acquisition — how fast the pool hands you a sandbox
+
+Acquisition latency on **gVisor**: the time from a `SandboxClaim` being **requested** to it being **bound** — a warm, ready sandbox handed back to the caller. This is a **decomposed sub-phase of TTFE**, not the whole thing: it stops at the moment you hold a ready sandbox and **excludes** the exec-attach + first-instruction round-trip the Concurrent Burst and Core Metrics tables measure — so these numbers are **not comparable** to those TTFE columns. It is the earlier, isolated question a warm-pool operator sizes against: *once my pool is warm, how quickly do I get a sandbox?* Measured under a sustained **300 claims/sec** offered load against a warm pool of **600**. Cluster shape: `n2-standard-16`.
+
+| Sample (n) | Acquisition p50 | Acquisition p95 | Acquisition p99 |
+|---|---|---|---|
+| 600 | 2.93965s | 3.87844s | 4.00962s |
+
+_Controller-startup lower bound (p95 **1.33812s**): controller-first-observed → Ready, which EXCLUDES the claim-admission → first-reconcile queueing lag — it UNDER-reports the true acquisition path, so treat it as a floor on the controller's own contribution, not a second acquisition measurement._
+
+_Measured 2026-07-01 — warm-pool acquisition latency (point-in-time)._

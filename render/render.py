@@ -36,6 +36,7 @@ from schema import (
     SCENARIO_LABELS,
     STEPUP_PARETO_FIELDS,
     TTFE_COMPARABILITY_MIN_N,
+    WARM_POOL_ACQUISITION_FIELDS,
     WARM_VS_COLD_FIELDS,
     _ISO,
 )
@@ -1075,6 +1076,97 @@ def render_concurrent_burst(results):
     lines.append("")
     if cb.get("measured_at"):
         lines.append(f"_Measured {cb['measured_at'][:10]} — concurrent-burst TTFE (point-in-time)._")
+        lines.append("")
+    return "\n".join(lines)
+
+
+# --- #4083: warm-pool acquisition-latency render ------------------------------------------
+def _clean_warm_pool_acquisition(results):
+    """Closed-schema-validate the TOP-LEVEL warm_pool_acquisition object (#4083). None ⇒ INERT.
+
+    Returns the cleaned dict ONLY when the REQUIRED spine (runtime_class, acq_p50_ms, acq_p95_ms,
+    n) is present and each field passes its predicate. Optional decomposition/provenance fields
+    (acq_p99_ms, offered_rate_per_s, warmpool_size, controller_startup_p95_ms, machine_type,
+    node_count, measured_at) render only when valid; a present-but-invalid one is dropped on read,
+    never fabricated. runtime_class validates against the PUBLIC RUNTIME_LABELS enum, so an
+    out-of-enum runtime fails closed and drops the whole block.
+    """
+    wpa = results.get("warm_pool_acquisition")
+    if not isinstance(wpa, dict):
+        return None
+    clean = {}
+    for key, ok in WARM_POOL_ACQUISITION_FIELDS.items():
+        if key in wpa:
+            try:
+                if ok(wpa[key]):
+                    clean[key] = wpa[key]
+            except (TypeError, ValueError):
+                pass
+    if not all(k in clean for k in ("runtime_class", "acq_p50_ms", "acq_p95_ms", "n")):
+        return None
+    return clean
+
+
+def render_warm_pool_acquisition(results):
+    """Render the warm-pool acquisition-latency block (#4083), or "" when INERT.
+
+    Reports the DECOMPOSED claim→bound sub-phase of TTFE — SandboxClaim requested → bound (a ready
+    warm sandbox handed back), the number a warm-pool operator sizes against. It EXCLUDES the
+    exec-attach + first-instruction round-trip the concurrent_burst/matrix TTFE legs include, so
+    the caption states plainly it is NOT comparable to those TTFE columns. The optional
+    controller_startup_p95 renders as an explicit LOWER-BOUND proxy (mirrors the step-up #3975
+    discipline). INERT until the harness emits a closed-schema-clean warm_pool_acquisition object.
+    """
+    wpa = _clean_warm_pool_acquisition(results)
+    if not wpa:
+        return ""
+    label = RUNTIME_LABELS[wpa["runtime_class"]]
+    lines = ["## Warm-Pool Acquisition — how fast the pool hands you a sandbox", ""]
+    caption = (
+        f"Acquisition latency on **{label}**: the time from a `SandboxClaim` being **requested** "
+        "to it being **bound** — a warm, ready sandbox handed back to the caller. This is a "
+        "**decomposed sub-phase of TTFE**, not the whole thing: it stops at the moment you hold a "
+        "ready sandbox and **excludes** the exec-attach + first-instruction round-trip the "
+        "Concurrent Burst and Core Metrics tables measure — so these numbers are **not comparable** "
+        "to those TTFE columns. It is the earlier, isolated question a warm-pool operator sizes "
+        "against: *once my pool is warm, how quickly do I get a sandbox?*"
+    )
+    ctx = []
+    if wpa.get("offered_rate_per_s") is not None:
+        ctx.append(f"a sustained **{_fmt_num(wpa['offered_rate_per_s'])} claims/sec** offered load")
+    if wpa.get("warmpool_size") is not None:
+        ctx.append(f"a warm pool of **{_fmt_num(wpa['warmpool_size'])}**")
+    if ctx:
+        caption += " Measured under " + " against ".join(ctx) + "."
+    shape = []
+    if wpa.get("node_count") is not None:
+        shape.append(f"node_count={wpa['node_count']}")
+    if wpa.get("machine_type"):
+        shape.append(f"`{wpa['machine_type']}`")
+    if shape:
+        caption += f" Cluster shape: {', '.join(shape)}."
+    lines.append(caption)
+    lines.append("")
+    header = ["Sample (n)", "Acquisition p50", "Acquisition p95", "Acquisition p99"]
+    lines.append("| " + " | ".join(header) + " |")
+    lines.append("|" + "|".join(["---"] * len(header)) + "|")
+    row = [
+        _fmt_num(wpa["n"]),
+        _fmt_secs(wpa["acq_p50_ms"]),
+        _fmt_secs(wpa["acq_p95_ms"]),
+        _fmt_secs(wpa["acq_p99_ms"]) if "acq_p99_ms" in wpa else "—",
+    ]
+    lines.append("| " + " | ".join(row) + " |")
+    lines.append("")
+    if wpa.get("controller_startup_p95_ms") is not None:
+        lines.append(
+            f"_Controller-startup lower bound (p95 **{_fmt_secs(wpa['controller_startup_p95_ms'])}**): "
+            "controller-first-observed → Ready, which EXCLUDES the claim-admission → first-reconcile "
+            "queueing lag — it UNDER-reports the true acquisition path, so treat it as a floor on the "
+            "controller's own contribution, not a second acquisition measurement._")
+        lines.append("")
+    if wpa.get("measured_at"):
+        lines.append(f"_Measured {wpa['measured_at'][:10]} — warm-pool acquisition latency (point-in-time)._")
         lines.append("")
     return "\n".join(lines)
 

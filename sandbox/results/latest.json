@@ -165,6 +165,18 @@
       "outcome": "PASS"
     }
   ],
+  "warm_pool_acquisition": {
+    "acq_p50_ms": 2939.65,
+    "acq_p95_ms": 3878.44,
+    "acq_p99_ms": 4009.62,
+    "controller_startup_p95_ms": 1338.12,
+    "machine_type": "n2-standard-16",
+    "measured_at": "2026-07-01T01:03:12Z",
+    "n": 600,
+    "offered_rate_per_s": 300,
+    "runtime_class": "gvisor",
+    "warmpool_size": 600
+  },
   "warm_vs_cold": {
     "cold_ms": 60500.0,
     "cold_start_mode": "cold-provision",
