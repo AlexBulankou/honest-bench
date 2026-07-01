@@ -186,6 +186,62 @@ def test_under_delivery_leaves_warm_names_empty():
     assert bd["warm_names"] == []
 
 
+# ---- _under_delivery_outcome: honest FAIL row vs opaque assert crash (#4093) ----
+#
+# On the TTFE-on path, an under-delivered warm pool (warm_max_s is None) would hit
+# the emit block's single-source assert (len(emit_names) == pool_replicas) on the
+# empty warm set -> AssertionError -> opaque crash-caught 'fail' cell. The helper
+# returns an explicit FAIL triple BEFORE the assert; run() returns it early. These
+# pin: (a) an under-delivery breakdown yields a FAIL triple with empty sla_metrics
+# and a shortfall-naming excerpt, (b) a delivered warm cluster returns None (fall
+# through to the normal PASS/FAIL emit path), and (c) the cold-baseline mode
+# (pool_replicas<=0) returns None (never short-circuits the neutral cold record).
+
+def test_under_delivery_outcome_emits_honest_fail_triple():
+    latencies = {"c0": 1.5, "c1": None, "c2": None}
+    _, bd = cell._classify_latencies(
+        latencies, pool_replicas=3, abs_ceiling_s=2.5, separation_ratio=1.8,
+    )
+    all_lat_str = ", ".join(f"{x:.3f}" for x in bd["all_latencies_s"])
+    out = cell._under_delivery_outcome(
+        bd, pool_replicas=3, claim_count=5, all_lat_str=all_lat_str,
+    )
+    assert out is not None
+    outcome, excerpt, sla = out
+    assert outcome == "FAIL"
+    assert sla == {}                       # no isolated warm-tier measurement
+    assert "1/3" in excerpt                # only 1 of 3 warm slots bound
+    assert "claims fired=5" in excerpt
+    assert "under-delivered" in excerpt
+
+
+def test_under_delivery_outcome_none_when_warm_cluster_delivered():
+    # A full warm cluster (warm_max_s set) -> None, so run() falls through to the
+    # normal PASS/FAIL emit path and the assert stays reachable as a drift guard.
+    latencies = {"c0": 1.5, "c1": 0.8, "c2": 1.2, "c3": 5.0, "c4": 9.0}
+    passed, bd = cell._classify_latencies(
+        latencies, pool_replicas=3, abs_ceiling_s=2.5, separation_ratio=1.8,
+    )
+    assert passed and bd["warm_max_s"] is not None
+    out = cell._under_delivery_outcome(
+        bd, pool_replicas=3, claim_count=5, all_lat_str="",
+    )
+    assert out is None
+
+
+def test_under_delivery_outcome_none_in_cold_baseline_mode():
+    # pool_replicas<=0 is the cold-baseline mode (no warm tier to under-deliver);
+    # the helper must NOT short-circuit the neutral cold PASS record.
+    latencies = {"c0": 1.5, "c1": 0.8, "c2": 1.2}
+    _, bd = cell._classify_latencies(
+        latencies, pool_replicas=0, abs_ceiling_s=2.5, separation_ratio=1.8,
+    )
+    out = cell._under_delivery_outcome(
+        bd, pool_replicas=0, claim_count=3, all_lat_str="",
+    )
+    assert out is None
+
+
 # ---- _build_template_manifest: the runtime-class pin wiring (#3942) ----
 #
 # The pure pin logic lives in test_runtime_class.py; these lock that the SCENARIO
