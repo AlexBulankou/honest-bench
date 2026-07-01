@@ -647,17 +647,38 @@ def test_matrix_density_sourced_from_warmpool_not_stale_burst_create():
     assert "0.45" not in out
 
 
-def test_matrix_kata_rows_all_pending():
+def test_matrix_kata_warm_cold_rows_pending():
+    # on an unmeasured kata runtime, the warm-pool + cold rows render pending (not-yet-measured);
+    # the resume row is N/A-by-design and is asserted separately below.
     out = render.render_matrix(_matrix_results(_full_gvisor_scenarios()))
-    kata_lines = [l for l in out.splitlines() if l.startswith("| Kata + microVM |")]
-    assert len(kata_lines) == 3
-    for l in kata_lines:
+    kata_measurable = [
+        l for l in out.splitlines()
+        if l.startswith("| Kata + microVM |") and "Resume-from-suspend" not in l
+    ]
+    assert len(kata_measurable) == 2
+    for l in kata_measurable:
         cells = [c.strip() for c in l.strip("|").split("|")]
-        # every measured column on an unmeasured runtime is pending; density warm/cold pending,
-        # resume N/A
         assert cells[2] == "pending" and cells[3] == "pending"
         assert cells[4] == "pending" and cells[5] == "pending"
         assert cells[6] == "pending"
+
+
+def test_matrix_resume_kata_is_na_by_design_not_pending():
+    # Resume-from-suspend × Kata+microVM can NEVER be measured (CRIU does not transfer to the
+    # Kata VM model), so every cell renders N/A — never `pending` (which would imply a future
+    # measurement). Holds even when kata is the MEASURED runtime.
+    for prov in (None, {"runtime": "kata-microvm"}):
+        out = render.render_matrix(_matrix_results(_full_gvisor_scenarios(), provenance=prov))
+        resume_kata = [
+            l for l in out.splitlines()
+            if l.startswith("| Kata + microVM | Resume-from-suspend")
+        ]
+        assert len(resume_kata) == 1
+        cells = [c.strip() for c in resume_kata[0].strip("|").split("|")]
+        # columns 2..8 are the 7 metric cells (thpt5, thpt1, p50, p95, n, density, exec)
+        assert all(c == "N/A" for c in cells[2:9]), cells
+        assert "pending" not in resume_kata[0]
+    assert "N/A` by construction" in out
 
 
 def test_matrix_unknown_metric_key_dropped():

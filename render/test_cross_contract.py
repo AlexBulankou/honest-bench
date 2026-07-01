@@ -267,9 +267,11 @@ def test_emit_to_render_matrix_convergence_gvisor_doc_rows():
         "| gVisor | Resume-from-suspend | 4 | 0 | 3.5s | 5s | 1376 | N/A | 92.8% (1277/1376) ⚠️ |"
         in out
     )
-    # the unmeasured runtime stays honest-pending (never a guess), resume density always N/A.
+    # the unmeasured runtime stays honest-pending (never a guess) on its measurable rows.
     assert "| Kata + microVM | Warm-pool hit (Base image) | pending | pending | pending | pending | pending | pending | pending |" in out
-    assert "| Kata + microVM | Resume-from-suspend | pending | pending | pending | pending | pending | N/A | pending |" in out
+    # resume × Kata is N/A-by-construction (CRIU does not transfer to the Kata VM model), never
+    # pending — a pending cell would imply a future measurement that is structurally impossible.
+    assert "| Kata + microVM | Resume-from-suspend | N/A | N/A | N/A | N/A | N/A | N/A | N/A |" in out
 
 
 def test_emit_to_render_matrix_convergence_single_sample_ttfe_point():
