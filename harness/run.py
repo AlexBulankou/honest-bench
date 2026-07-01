@@ -278,6 +278,21 @@ def _read_prior_warm_pool_acquisition(out_path: pathlib.Path):
     return wpa if isinstance(wpa, dict) else None
 
 
+def _read_prior_at_scale_contention(out_path: pathlib.Path):
+    """Read the existing results file's top-level at_scale_contention object (#810).
+
+    Best-effort, mirroring _read_prior_warm_pool_acquisition: a missing/malformed file
+    or an absent at_scale_contention key means there is nothing to carry forward, so
+    return None (the honest-absence signal the emitter understands).
+    """
+    try:
+        prior = json.loads(out_path.read_text())
+    except (FileNotFoundError, ValueError):
+        return None
+    asc = prior.get("at_scale_contention") if isinstance(prior, dict) else None
+    return asc if isinstance(asc, dict) else None
+
+
 def carry_prior_scale_proof(fresh, prior, *, generated_at: str):
     """Persist the Scale Proof block across the daily single-node refresh (#3952).
 
@@ -410,6 +425,30 @@ def carry_prior_warm_pool_acquisition(fresh, prior, *, generated_at: str):
     forward UNCHANGED. Both paths flow through the closed emitter
     (`_coerce_warm_pool_acquisition`), so a carried block that is not a valid
     warm_pool_acquisition is dropped, never published as a partial lie.
+    """
+    if isinstance(fresh, dict) and fresh:
+        stamped = dict(fresh)
+        stamped.setdefault("measured_at", generated_at)
+        return stamped
+    return prior
+
+
+def carry_prior_at_scale_contention(fresh, prior, *, generated_at: str):
+    """Persist the at-scale-contention RETRACTION block across the daily refresh (#810; #112 gap).
+
+    Exact mirror of carry_prior_warm_pool_acquisition: the at-scale-contention block is
+    the deliberate retraction of the sub-second-at-scale claim, produced only by the
+    heavy, manual, collision-acked over-subscribed-pool fire — the daily single-node
+    auto-refresh never produces one, so `fresh` is always None here and the prior
+    committed block is carried forward. Without this, the daily `harness.run --product
+    sandbox` refresh would build_results a wholesale write that silently DROPS the
+    retraction block from the public table.
+
+    Fresh always wins: a real fire this run stamps `measured_at = generated_at` via
+    setdefault and is returned as-is. Otherwise the prior committed block is carried
+    forward UNCHANGED. Both paths flow through the closed emitter
+    (`_coerce_at_scale_contention`), so a carried block that is not a valid
+    at_scale_contention is dropped, never published as a partial lie.
     """
     if isinstance(fresh, dict) and fresh:
         stamped = dict(fresh)
@@ -640,6 +679,7 @@ def main(argv=None) -> int:
     prior_kata_activation = _read_prior_kata_activation(out)
     prior_concurrent_burst = _read_prior_concurrent_burst(out)
     prior_warm_pool_acquisition = _read_prior_warm_pool_acquisition(out)
+    prior_at_scale_contention = _read_prior_at_scale_contention(out)
     raw = merge_seed_placeholders(raw, prior_scenarios)
     generated_at = _now_iso()
     # Carry the Scale Proof block across the daily refresh (#3952): a fresh sweep
@@ -679,11 +719,19 @@ def main(argv=None) -> int:
     warm_pool_acquisition = carry_prior_warm_pool_acquisition(
         None, prior_warm_pool_acquisition, generated_at=generated_at
     )
+    # Carry the at-scale-contention retraction block across the daily refresh (#810).
+    # Same posture as the three producer-less blocks above: no in-process producer, so
+    # `fresh` is always None and the prior committed block is carried forward — without
+    # this the daily refresh would build_results a wholesale write that DROPS it.
+    at_scale_contention = carry_prior_at_scale_contention(
+        None, prior_at_scale_contention, generated_at=generated_at
+    )
     results = results_schema.build_results(
         raw, build_provenance(substrate), generated_at=generated_at, product=args.product,
         scale_proof=scale_proof, stepup=stepup, warm_vs_cold=warm_vs_cold_obj,
         kata_activation=kata_activation, concurrent_burst=concurrent_burst,
         warm_pool_acquisition=warm_pool_acquisition,
+        at_scale_contention=at_scale_contention,
     )
 
     out.parent.mkdir(parents=True, exist_ok=True)

@@ -1,4 +1,19 @@
 {
+  "at_scale_contention": {
+    "bind_p50_ms": 1384.0,
+    "bind_p95_ms": 1700.1,
+    "claim_count": 60,
+    "exec_p50_ms": 279.9,
+    "exec_p95_ms": 323.7,
+    "exec_success_rate": 1.0,
+    "machine_type": "e2-standard-16",
+    "measured_at": "2026-07-01",
+    "node_count": 1,
+    "pool_size": 30,
+    "runtime_class": "gvisor",
+    "ttfe_p50_ms": 1658.9,
+    "ttfe_p95_ms": 2016.9
+  },
   "concurrent_burst": {
     "legs": [
       {

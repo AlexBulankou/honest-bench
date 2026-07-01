@@ -44,12 +44,14 @@ def _load_render():
         mod.render_kata_activation,
         mod.render_concurrent_burst,
         mod.render_warm_pool_acquisition,
+        mod.render_at_scale_contention,
     )
 
 
 (render_matrix, render_burst_corroboration, render_warm_bind_decomposition,
  render_cold_bind_decomposition, render_warm_vs_cold, render_scale_proof, render_stepup,
- render_kata_activation, render_concurrent_burst, render_warm_pool_acquisition) = _load_render()
+ render_kata_activation, render_concurrent_burst, render_warm_pool_acquisition,
+ render_at_scale_contention) = _load_render()
 
 # Product -> results path, relative to the repo root (parent of render/).
 # The PUBLIC customer page is SANDBOX-ONLY (alex 2026-06-28): substrate demotes from a
@@ -157,6 +159,9 @@ def build_readme(root=None):
         acq = render_warm_pool_acquisition(results)
         if acq.strip():
             sections.append(acq.rstrip())
+        contention = render_at_scale_contention(results)
+        if contention.strip():
+            sections.append(contention.rstrip())
     return "\n\n".join(sections) + "\n"
 
 
