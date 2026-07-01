@@ -42,7 +42,7 @@
     "measured_at": "2026-06-30",
     "node_count": 20
   },
-  "generated_at": "2026-06-29T05:24:43Z",
+  "generated_at": "2026-07-01T04:18:36Z",
   "kata_activation": {
     "cold_ready": [
       {
@@ -118,15 +118,15 @@
       }
     },
     {
-      "n": 500,
+      "n": 30,
       "name": "warmpool_cold_start",
       "outcome": "PASS",
       "sla_metrics": {
         "exec_success_rate": 1.0,
         "thpt_under_1s_per_node": 0.0,
-        "thpt_under_5s_per_node": 0.04,
-        "ttfe_p50_ms": 11490.1,
-        "ttfe_p95_ms": 16577.8
+        "thpt_under_5s_per_node": 19.967,
+        "ttfe_p50_ms": 1396.0,
+        "ttfe_p95_ms": 1722.1
       }
     },
     {
