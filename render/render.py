@@ -723,6 +723,23 @@ def render_warm_bind_decomposition(results):
         "(exec is measured per-claim as TTFE − bind, then percentiled — not p50(TTFE) − p50(bind)). "
         "Percentiles do not sum, so bind and exec need not add exactly to the total TTFE._"
     )
+    # Drained-regime caveat (#103/#111), data-keyed on provenance.regime so it cannot rot:
+    # once an under-load fire clears the bar and emits regime="under-load" (or omits it),
+    # this caveat stops rendering by construction. Kept off any measured cell — it qualifies
+    # the claim, it does not alter a number.
+    regime = None
+    prov = results.get("provenance")
+    if isinstance(prov, dict):
+        regime = prov.get("regime")
+    if regime == "drained":
+        lines.append("")
+        lines.append(
+            "> ⚠️ **Regime caveat:** this warm tier was measured on a **drained, "
+            "low-contention cluster** (single fire, small claim count). A green warm tier "
+            "here is honest for THIS fire but is **not yet a sustained North-Star claim** — "
+            "it wants corroboration under representative load before sub-1s warm is treated "
+            "as durable."
+        )
     lines.append("")
     return "\n".join(lines)
 

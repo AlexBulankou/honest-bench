@@ -207,6 +207,24 @@ def test_cold_start_mode_enum_only():
     _check("cold_start_mode" not in r["provenance"], "absent mode dropped")
 
 
+def test_warm_regime_enum_only():
+    # #103/#111: regime is a CLOSED enum in provenance. A valid value is kept; an
+    # out-of-set value fails closed (a mislabeled contention regime must never
+    # publish); absent is simply dropped (optional field).
+    for regime in rs.WARM_REGIME_ENUM:
+        r = rs.build_results([], _prov(regime=regime), GEN_AT)
+        _check(r["provenance"]["regime"] == regime, f"{regime} kept")
+    try:
+        rs.build_results([], _prov(regime="lightly-loaded-lie"), GEN_AT)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("non-enum regime must raise (fail-closed)")
+    # absent -> dropped, not an error (the base _prov() carries no regime)
+    r = rs.build_results([], _prov(), GEN_AT)
+    _check("regime" not in r["provenance"], "absent regime dropped")
+
+
 def test_product_enum_only():
     # #3868: product is a CLOSED enum. The default is sandbox (so existing callers
     # are unchanged); substrate is accepted; a non-enum product fails closed (a

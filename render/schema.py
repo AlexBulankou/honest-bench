@@ -25,6 +25,16 @@ OUTCOMES = {"PASS", "FAIL", "pending"}
 # absent value renders no label (graceful degradation on the empty-provenance seed).
 COLD_START_MODES = {"cold-provision", "cold-pull"}
 
+# warm_regime (#103/#111) is the cluster-contention regime a warm-tier result was measured
+# under. "drained" = a low-contention, drained cluster (single fire, few claims) — a green
+# warm tier is honest THIS fire but not yet a sustained North-Star claim; "under-load" =
+# measured under representative contention. Data-keyed (not static prose) so the caveat
+# cannot rot: once an under-load fire clears the bar, the drained caveat stops rendering by
+# construction. A closed set mirroring the harness side (WARM_REGIME_ENUM). The render guard
+# is SECONDARY — the harness emitter fail-closes on a typo'd value — so here an out-of-enum
+# value is dropped, and an absent value renders no caveat (graceful degradation).
+WARM_REGIMES = {"drained", "under-load"}
+
 # badge_scope (#3905) is a per-SCENARIO closed enum qualifying what a security-isolation
 # PASS actually asserts. "control-plane" = the policy/runtime-class was admitted and
 # correctly targeted (NOT that data-plane traffic was enforced); "enforced" = data-plane
@@ -101,6 +111,9 @@ PROVENANCE_FIELDS = {
     "run_id": lambda v: isinstance(v, str) and bool(_RUNID.match(v)),
     "node_count": lambda v: isinstance(v, int) and 0 < v < 10000,
     "cold_start_mode": lambda v: v in COLD_START_MODES,
+    # warm_regime (#103/#111): the cluster-contention regime the warm tier was measured
+    # under; drives the drained-cluster caveat under the warm bind/exec decomposition.
+    "regime": lambda v: v in WARM_REGIMES,
     # Goal-2.1 matrix: which isolation runtime this run measured (runtimeClassName). Drives
     # the matrix's Runtime column; absent ⇒ the renderer defaults to gvisor (today's only
     # live runtime — the gke-sandbox/runsc path).
