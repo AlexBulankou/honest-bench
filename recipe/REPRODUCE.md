@@ -219,13 +219,19 @@ path partway through the burst. (Set the pool to the same N the fire uses for a
 fully-warm headline; set it to zero for the cold-contrast leg, exactly as the
 `fire-concurrent-n.sh warm|cold N` driver above does.)
 
-**Zero-cold-start image pre-pull.** Run an **image pre-pull `DaemonSet`** that
-pulls the sandbox **base image** onto every node before the burst. A warm-pool
-slot still pays a one-time image pull the first time the base image lands on a
-fresh node; pre-pulling on every node ahead of the fire removes that pull from the
-critical path, so the warm leg measures the activation path and not a containerd
-cache miss. This is what makes the warm number a *warm* number — provisioning off
-one node-cacheable shared base image, never a unique image per claim.
+**Zero-cold-start image pre-pull.** Run an **image pre-pull `DaemonSet`**
+(`prepull-daemonset.yaml` in this directory — substitute your build banner's base
+image) that pulls the sandbox **base image** onto every node before the burst. It
+matters most on the **cold leg and under warm-pool overflow**: a *fully* pre-filled
+warm pool already resident-izes the base image during warm-up, so a claim served
+straight from a ready slot pays no image pull on the critical path even without the
+DaemonSet (that pull is folded into warm-up, timed separately from claim→ready).
+The DaemonSet earns its place the moment a burst drains the pool faster than it
+replenishes and spills onto a node that never pulled the image — there the pull
+lands squarely on claim→ready and inflates the tail. Pre-pulling every node ahead
+of the fire removes that confound, so the warm number stays a *warm* number under
+overflow and the cold-contrast leg measures the activation path, not a containerd
+cache miss.
 
 ```
 # placeholder — measured numbers filled post-fire (a4s1's lane).
