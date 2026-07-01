@@ -871,6 +871,83 @@ def _coerce_warm_pool_acquisition(raw):
     return out
 
 
+def _coerce_at_scale_contention(raw):
+    """Keep the closed top-level at-scale-contention RETRACTION shape (#810); None ⇒ omit the key.
+
+    The #810 block is the deliberate RETRACTION of the sub-second-at-scale claim: the operating
+    point where the warm pool is OVER-SUBSCRIBED (more concurrent claims than ready pool members)
+    and warm activation stops being sub-second. It renders from a TOP-LEVEL `at_scale_contention`
+    object (mirrors scale_proof/.../warm_pool_acquisition — a scalar-bundle top-level block). This
+    coercer mirrors render/schema.py's AT_SCALE_CONTENTION_FIELDS exactly so emitter and renderer
+    share one contract (a drift is caught by the cross-contract test).
+
+    REQUIRED spine: runtime_class (enum-validated against the public runtime set, fail-closed),
+    pool_size + claim_count (pos int), ttfe_p50_ms + ttfe_p95_ms (nonneg). Any missing/invalid
+    required field returns None (the block renders nothing rather than a partial lie). OPTIONAL
+    decomposition/provenance: bind_p50_ms + bind_p95_ms + exec_p50_ms + exec_p95_ms (nonneg),
+    exec_success_rate (0..1), node_count (int 0<v<10000), machine_type (bounded GCP shape),
+    measured_at (ISO-8601). A present-but-invalid optional value is DROPPED (not fail-closed) —
+    mirroring the render cleaner's per-field drop, so a partial fire renders a partial-but-honest
+    block, never a fabricated 0. Per-node throughput is DELIBERATELY ABSENT from the schema: this
+    point ran at node_count=1, non-comparable to the node_count=20 concurrent-burst per-node axis.
+    """
+    if not isinstance(raw, dict):
+        return None
+
+    def _clean_nonneg(x):
+        if isinstance(x, bool) or not isinstance(x, Real):
+            return None
+        fx = float(x)
+        if fx != fx or fx in (float("inf"), float("-inf")) or fx < 0:
+            return None
+        return fx
+
+    runtime_class = raw.get("runtime_class")
+    if runtime_class not in WARM_VS_COLD_RUNTIME_CLASS_ENUM:
+        return None
+    pool_size = raw.get("pool_size")
+    if isinstance(pool_size, bool) or not isinstance(pool_size, int) or not (0 < pool_size < 100000):
+        return None
+    claim_count = raw.get("claim_count")
+    if isinstance(claim_count, bool) or not isinstance(claim_count, int) or not (0 < claim_count < 100000):
+        return None
+    ttfe_p50 = _clean_nonneg(raw.get("ttfe_p50_ms"))
+    if ttfe_p50 is None:
+        return None
+    ttfe_p95 = _clean_nonneg(raw.get("ttfe_p95_ms"))
+    if ttfe_p95 is None:
+        return None
+
+    out = {
+        "runtime_class": runtime_class,
+        "pool_size": pool_size,
+        "claim_count": claim_count,
+        "ttfe_p50_ms": ttfe_p50,
+        "ttfe_p95_ms": ttfe_p95,
+    }
+
+    # OPTIONAL — a present-but-invalid value is DROPPED per-field (mirrors the render cleaner),
+    # never fabricated, so a partial fire renders a partial-but-honest block.
+    for opt in ("bind_p50_ms", "bind_p95_ms", "exec_p50_ms", "exec_p95_ms"):
+        if opt in raw:
+            ov = _clean_nonneg(raw[opt])
+            if ov is not None:
+                out[opt] = ov
+    esr = raw.get("exec_success_rate")
+    if not isinstance(esr, bool) and isinstance(esr, Real) and 0.0 <= float(esr) <= 1.0:
+        out["exec_success_rate"] = esr
+    nc = raw.get("node_count")
+    if not isinstance(nc, bool) and isinstance(nc, int) and 0 < nc < 10000:
+        out["node_count"] = nc
+    mt = raw.get("machine_type")
+    if isinstance(mt, str) and _MACHINE_TYPE_RE.match(mt):
+        out["machine_type"] = mt
+    ma = raw.get("measured_at")
+    if isinstance(ma, str) and ma:
+        out["measured_at"] = ma
+    return out
+
+
 def _coerce_provenance(raw: dict) -> dict:
     if not isinstance(raw, dict):
         raise TypeError("provenance must be a dict")
@@ -920,7 +997,8 @@ def _coerce_provenance(raw: dict) -> dict:
 def build_results(scenario_outcomes, provenance, generated_at: str,
                   product: str = DEFAULT_PRODUCT, scale_proof=None,
                   stepup=None, warm_vs_cold=None, kata_activation=None,
-                  concurrent_burst=None, warm_pool_acquisition=None) -> dict:
+                  concurrent_burst=None, warm_pool_acquisition=None,
+                  at_scale_contention=None) -> dict:
     """Assemble the closed-schema results dict.
 
     `scenario_outcomes` is the loop's per-scenario dicts (any extra keys dropped);
@@ -987,4 +1065,7 @@ def build_results(scenario_outcomes, provenance, generated_at: str,
     cleaned_warm_pool_acquisition = _coerce_warm_pool_acquisition(warm_pool_acquisition)
     if cleaned_warm_pool_acquisition is not None:
         out["warm_pool_acquisition"] = cleaned_warm_pool_acquisition
+    cleaned_at_scale_contention = _coerce_at_scale_contention(at_scale_contention)
+    if cleaned_at_scale_contention is not None:
+        out["at_scale_contention"] = cleaned_at_scale_contention
     return out

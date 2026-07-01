@@ -715,3 +715,37 @@ WARM_POOL_ACQUISITION_FIELDS = {
     "node_count": lambda v: isinstance(v, int) and not isinstance(v, bool) and 0 < v < 10000,
     "measured_at": lambda v: isinstance(v, str) and bool(v),
 }
+
+# --- at-scale-under-contention RETRACTION block (TOP-LEVEL at_scale_contention object) -------
+# The concurrent_burst block above reports 1:1 warm bursts (N ready sandboxes hit with N
+# claims). This block is the deliberate COUNTER-POINT: a single measured operating point where
+# the warm pool is OVER-SUBSCRIBED (more concurrent claims than pool members), so the "warm hit
+# is sub-second" claim from the Core Metrics matrix does NOT hold. It publishes the ceiling
+# honestly rather than only the flattering 1:1 numbers. pool_size + claim_count are REQUIRED (the
+# contention ratio is render-DERIVED from them, never a free-text field); ttfe_p50/p95_ms are the
+# REQUIRED latency spine (node-count-INDEPENDENT, so comparable to the matrix/burst TTFE columns).
+# bind_p50/p95_ms + exec_p50/p95_ms + exec_success_rate decompose the path; node_count +
+# machine_type + measured_at are provenance. There is DELIBERATELY no per-node throughput field:
+# this point was measured at node_count=1, so a per-node throughput would invite a dishonest
+# cross-block comparison against concurrent_burst's node_count=20 legs — latency is
+# node-count-independent, per-node throughput is not, so only latency crosses the block boundary.
+# Same closed-schema discipline as every block above: only these field-names render, each
+# validated by its predicate; anything else is dropped on read. runtime_class validates against
+# the PUBLIC RUNTIME_LABELS enum (fail-closed on an out-of-enum runtime).
+AT_SCALE_CONTENTION_FIELDS = {
+    # REQUIRED spine: the retraction point — warm activation under an over-subscribed pool.
+    "runtime_class": lambda v: v in RUNTIME_LABELS,
+    "pool_size": _pos_int,
+    "claim_count": _pos_int,
+    "ttfe_p50_ms": _nonneg,
+    "ttfe_p95_ms": _nonneg,
+    # OPTIONAL — bind/exec decomposition + provenance, all public-safe.
+    "bind_p50_ms": _nonneg,
+    "bind_p95_ms": _nonneg,
+    "exec_p50_ms": _nonneg,
+    "exec_p95_ms": _nonneg,
+    "exec_success_rate": lambda v: isinstance(v, (int, float)) and not isinstance(v, bool) and 0.0 <= v <= 1.0,
+    "node_count": lambda v: isinstance(v, int) and not isinstance(v, bool) and 0 < v < 10000,
+    "machine_type": lambda v: isinstance(v, str) and bool(_MACHINE_TYPE.match(v)),
+    "measured_at": lambda v: isinstance(v, str) and bool(v),
+}

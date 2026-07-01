@@ -15,6 +15,7 @@ import sys
 
 from schema import (
     ACTIVATION_MODE_ROWS,
+    AT_SCALE_CONTENTION_FIELDS,
     BADGE_CONSTRUCTIONS,
     BADGE_SCOPES,
     BURST_CORROBORATION_FIELDS,
@@ -1438,6 +1439,103 @@ def render_warm_pool_acquisition(results):
         lines.append("")
     if wpa.get("measured_at"):
         lines.append(f"_Measured {wpa['measured_at'][:10]} — warm-pool acquisition latency (point-in-time)._")
+        lines.append("")
+    return "\n".join(lines)
+
+
+# --- at-scale-under-contention RETRACTION render ------------------------------------------
+def _clean_at_scale_contention(results):
+    """Closed-schema-validate the TOP-LEVEL at_scale_contention object. None ⇒ INERT.
+
+    Returns the cleaned dict ONLY when the REQUIRED spine (runtime_class, pool_size, claim_count,
+    ttfe_p50_ms, ttfe_p95_ms) is present and each field passes its predicate. Optional bind/exec
+    decomposition + provenance fields render only when valid; a present-but-invalid one is dropped
+    on read, never fabricated. runtime_class validates against the PUBLIC RUNTIME_LABELS enum, so
+    an out-of-enum runtime fails closed and drops the whole block.
+    """
+    asc = results.get("at_scale_contention")
+    if not isinstance(asc, dict):
+        return None
+    clean = {}
+    for key, ok in AT_SCALE_CONTENTION_FIELDS.items():
+        if key in asc:
+            try:
+                if ok(asc[key]):
+                    clean[key] = asc[key]
+            except (TypeError, ValueError):
+                pass
+    if not all(k in clean for k in ("runtime_class", "pool_size", "claim_count", "ttfe_p50_ms", "ttfe_p95_ms")):
+        return None
+    return clean
+
+
+def render_at_scale_contention(results):
+    """Render the at-scale-under-contention RETRACTION block, or "" when INERT.
+
+    The deliberate counter-point to the flattering 1:1 warm bursts: a single measured operating
+    point where the pool is OVER-SUBSCRIBED (claim_count > pool_size) and warm activation is NO
+    LONGER sub-second. Publishing this ceiling keeps the fast matrix/burst numbers from reading as
+    an unconditional guarantee. TTFE is node-count-independent, so it IS comparable to the matrix /
+    Concurrent Burst TTFE columns; the per-node throughput axis is DELIBERATELY absent (this point
+    ran at node_count=1, non-comparable to the node_count=20 bursts). INERT until the harness emits
+    a closed-schema-clean at_scale_contention object.
+    """
+    asc = _clean_at_scale_contention(results)
+    if not asc:
+        return ""
+    label = RUNTIME_LABELS[asc["runtime_class"]]
+    pool, claims = asc["pool_size"], asc["claim_count"]
+    ratio = f"{_fmt_ratio(claims / pool)}:1" if pool else "—"
+    lines = ["## At Scale Under Contention — where sub-second warm activation breaks", ""]
+    caption = (
+        "The Concurrent Burst legs above are **1:1** — N ready sandboxes hit with N claims. This "
+        "row is the deliberate **retraction**: the operating point where the pool is "
+        "**over-subscribed** (more concurrent claims than ready pool members), and warm activation "
+        f"**stops being sub-second**. Measured on **{label}**: a pool of **{_fmt_num(pool)}** ready "
+        f"sandboxes hit with **{_fmt_num(claims)}** simultaneous claims (**{ratio} contention**). "
+        "Every claim still binds, but the over-subscription serializes the bind path — so the "
+        "\"warm hit is <1s\" claim from the Core Metrics matrix does **not** hold here."
+    )
+    shape = []
+    if asc.get("node_count") is not None:
+        shape.append(f"node_count={asc['node_count']}")
+    if asc.get("machine_type"):
+        shape.append(f"`{asc['machine_type']}`")
+    if shape:
+        caption += f" Cluster shape: {', '.join(shape)}."
+    lines.append(caption)
+    lines.append("")
+    header = ["Pool", "Claims", "Contention", "TTFE p50", "TTFE p95"]
+    have_bind = "bind_p50_ms" in asc and "bind_p95_ms" in asc
+    if have_bind:
+        header += ["Bind p50", "Bind p95"]
+    have_exec = "exec_success_rate" in asc
+    if have_exec:
+        header.append("Execution Success")
+    lines.append("| " + " | ".join(header) + " |")
+    lines.append("|" + "|".join(["---"] * len(header)) + "|")
+    row = [
+        _fmt_num(pool),
+        _fmt_num(claims),
+        ratio,
+        _fmt_secs(asc["ttfe_p50_ms"]),
+        _fmt_secs(asc["ttfe_p95_ms"]),
+    ]
+    if have_bind:
+        row += [_fmt_secs(asc["bind_p50_ms"]), _fmt_secs(asc["bind_p95_ms"])]
+    if have_exec:
+        row.append(_exec_cell(asc["exec_success_rate"], claims))
+    lines.append("| " + " | ".join(row) + " |")
+    lines.append("")
+    lines.append(
+        "_Not directly comparable to the 1:1 Concurrent Burst legs: this point ran at "
+        "node_count=1 with an over-subscribed pool — a distinct operating point. Latency is "
+        "node-count-independent (so the TTFE columns DO compare to the matrix/burst TTFE), but the "
+        "per-node throughput axis is omitted here as non-comparable to the node_count=20 bursts._"
+    )
+    lines.append("")
+    if asc.get("measured_at"):
+        lines.append(f"_Measured {asc['measured_at'][:10]} — warm-pool at-scale contention ceiling (point-in-time)._")
         lines.append("")
     return "\n".join(lines)
 

@@ -1795,6 +1795,102 @@ def test_warm_pool_acquisition_invalid_machine_type_dropped_spine_renders():
     assert "docker.pkg.dev" not in out  # internal registry path never reaches the page
 
 
+def _asc(**over):
+    base = {
+        "runtime_class": "gvisor",
+        "pool_size": 30,
+        "claim_count": 60,
+        "ttfe_p50_ms": 1658.9,
+        "ttfe_p95_ms": 2016.9,
+        "bind_p50_ms": 1384.0,
+        "bind_p95_ms": 1700.1,
+        "exec_p50_ms": 279.9,
+        "exec_p95_ms": 323.7,
+        "exec_success_rate": 1.0,
+        "node_count": 1,
+        "machine_type": "e2-standard-16",
+        "measured_at": "2026-07-01",
+    }
+    base.update(over)
+    return base
+
+
+def test_at_scale_contention_absent_renders_nothing():
+    # No at_scale_contention object ⇒ INERT (byte-absent until the harness emits it).
+    assert render.render_at_scale_contention(_matrix_results(_full_gvisor_scenarios())) == ""
+
+
+def test_at_scale_contention_missing_spine_inert():
+    # Missing any REQUIRED spine field (here ttfe_p95_ms) ⇒ INERT (no partial-lie table).
+    asc = _asc()
+    del asc["ttfe_p95_ms"]
+    assert render.render_at_scale_contention(
+        _matrix_results(_full_gvisor_scenarios(), at_scale_contention=asc)) == ""
+
+
+def test_at_scale_contention_renders_table():
+    out = render.render_at_scale_contention(
+        _matrix_results(_full_gvisor_scenarios(), at_scale_contention=_asc()))
+    assert "## At Scale Under Contention — where sub-second warm activation breaks" in out
+    # It is framed explicitly as a retraction of the sub-second-at-scale claim.
+    assert "retraction" in out
+    assert "does **not** hold here" in out
+    # 2:1 contention derived from data (claim_count / pool_size), never free-text.
+    assert "**2:1 contention**" in out
+    assert "| 30 | 60 | 2:1 | 1.6589s | 2.0169s | 1.384s | 1.7001s | 100% |" in out
+    # node_count=1 provenance rides the caption + cluster shape.
+    assert "node_count=1" in out and "`e2-standard-16`" in out
+    # Per-node throughput is deliberately omitted as non-comparable to node_count=20 bursts.
+    assert "per-node throughput axis is omitted" in out
+    assert "_Measured 2026-07-01 — warm-pool at-scale contention ceiling (point-in-time)._" in out
+
+
+def test_at_scale_contention_bind_columns_em_dash_when_absent():
+    # bind_p50/p95 are optional — omitting them drops the Bind columns entirely (never fabricated).
+    asc = _asc()
+    del asc["bind_p50_ms"]
+    del asc["bind_p95_ms"]
+    out = render.render_at_scale_contention(
+        _matrix_results(_full_gvisor_scenarios(), at_scale_contention=asc))
+    assert "Bind p50" not in out
+    assert "| 30 | 60 | 2:1 | 1.6589s | 2.0169s | 100% |" in out
+
+
+def test_at_scale_contention_no_exec_column_when_absent():
+    # exec_success_rate is optional — omitting it drops the Execution Success column.
+    asc = _asc()
+    del asc["exec_success_rate"]
+    out = render.render_at_scale_contention(
+        _matrix_results(_full_gvisor_scenarios(), at_scale_contention=asc))
+    assert "Execution Success" not in out
+    assert "| 30 | 60 | 2:1 | 1.6589s | 2.0169s | 1.384s | 1.7001s |" in out
+
+
+def test_at_scale_contention_out_of_enum_runtime_inert():
+    # An out-of-enum runtime_class fails the RUNTIME_LABELS predicate ⇒ whole block INERT.
+    assert render.render_at_scale_contention(
+        _matrix_results(_full_gvisor_scenarios(), at_scale_contention=_asc(runtime_class="lukewarm"))) == ""
+
+
+def test_at_scale_contention_invalid_machine_type_dropped_spine_renders():
+    # A registry-path-shaped machine_type fails its predicate ⇒ dropped on read; the valid spine
+    # still renders (provenance is best-effort, never fabricated, never blocks the table).
+    out = render.render_at_scale_contention(
+        _matrix_results(_full_gvisor_scenarios(),
+                        at_scale_contention=_asc(machine_type="us-central1-docker.pkg.dev/proj/img:1")))
+    assert "## At Scale Under Contention — where sub-second warm activation breaks" in out
+    assert "| 30 | 60 | 2:1 | 1.6589s | 2.0169s | 1.384s | 1.7001s | 100% |" in out
+    assert "docker.pkg.dev" not in out  # internal registry path never reaches the page
+
+
+def test_at_scale_contention_sub_100_exec_flags_warn():
+    # A <100% exec rate prints the succeeded/total fraction + ⚠️, never quietly dropped.
+    out = render.render_at_scale_contention(
+        _matrix_results(_full_gvisor_scenarios(), at_scale_contention=_asc(exec_success_rate=0.95)))
+    assert "⚠️" in out
+    assert "95%" in out
+
+
 def _run_all():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:
