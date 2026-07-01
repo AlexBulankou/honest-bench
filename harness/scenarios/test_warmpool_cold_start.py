@@ -131,6 +131,61 @@ def test_n_equals_claim_count_across_mixed_outcomes():
     assert samples == [100.0, 250.0, 180.0]    # three samples, in claim order
 
 
+# ---- warm-tier scoping: _classify publishes the single-source warm set ----
+#
+# The scenario OVERFLOWS on purpose (claim_count > pool_replicas) so the gate can
+# prove a distinct fast tier — but the emitted TTFE row must describe the WARM-POOL
+# HIT, not the warm+cold blend. These pin that _classify_latencies publishes the
+# gate's warm set as claim NAMES (the single source of truth the emit path reuses),
+# and that scoping the histogram to that set drops the cold overflow.
+
+def test_classify_publishes_warm_names_as_single_source():
+    # 3 warm (fast) + 2 cold overflow, pool_replicas=3.
+    latencies = {"c0": 1.5, "c1": 0.8, "c2": 1.2, "c3": 5.0, "c4": 9.0}
+    passed, bd = cell._classify_latencies(
+        latencies, pool_replicas=3, abs_ceiling_s=2.5, separation_ratio=1.8,
+    )
+    assert passed  # warm_max 1.5 < 2.5 (absolute clause)
+    # warm_names = the pool_replicas fastest-binding NAMES, ascending latency.
+    assert bd["warm_names"] == ["c1", "c2", "c0"]
+    # single source of truth: warm_max IS the last warm claim's latency.
+    assert bd["warm_max_s"] == latencies[bd["warm_names"][-1]] == 1.5
+    # the cold overflow is NOT in the warm set.
+    assert "c3" not in bd["warm_names"] and "c4" not in bd["warm_names"]
+
+
+def test_warm_scope_excludes_cold_overflow_from_histogram():
+    # Scoping the histogram to warm_names drops the cold overflow samples — the
+    # whole point of the honesty fix. Contrast against the all-claims blend.
+    latencies = {"c0": 1.5, "c1": 0.8, "c2": 1.2, "c3": 5.0, "c4": 9.0}
+    _, bd = cell._classify_latencies(
+        latencies, pool_replicas=3, abs_ceiling_s=2.5, separation_ratio=1.8,
+    )
+    ttfe_results = {
+        "c0": (1799.0, True), "c1": (1009.0, True), "c2": (1400.0, True),
+        "c3": (5200.0, True), "c4": (9800.0, True),   # cold overflow
+    }
+    warm_samples, warm_oks = cell._assemble_probe_results(
+        bd["warm_names"], ttfe_results,
+    )
+    assert sorted(warm_samples) == [1009.0, 1400.0, 1799.0]  # warm only
+    assert len(warm_oks) == 3                                # uniform N=3
+    # the all-claims blend WOULD carry the cold overflow (the mislabel we fix).
+    blend_samples, _ = cell._assemble_probe_results(list(latencies), ttfe_results)
+    assert 5200.0 in blend_samples and 9800.0 in blend_samples
+
+
+def test_under_delivery_leaves_warm_names_empty():
+    # Fewer completed than pool_replicas -> FAIL, warm_names stays the [] default
+    # (no full warm cluster to scope to).
+    latencies = {"c0": 1.5, "c1": None, "c2": None}
+    passed, bd = cell._classify_latencies(
+        latencies, pool_replicas=3, abs_ceiling_s=2.5, separation_ratio=1.8,
+    )
+    assert not passed
+    assert bd["warm_names"] == []
+
+
 # ---- _build_template_manifest: the runtime-class pin wiring (#3942) ----
 #
 # The pure pin logic lives in test_runtime_class.py; these lock that the SCENARIO

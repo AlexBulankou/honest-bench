@@ -468,7 +468,15 @@ def _classify_latencies(
     Returns (passed, breakdown) carrying the summary stats for the excerpt and
     longitudinal record.
     """
-    completed = sorted(v for v in latencies.values() if v is not None)
+    # Sort (latency, name) pairs ONCE so the warm tier's max AND its member NAMES
+    # derive from a single ordering — the single-source-of-truth the emit path
+    # reuses (a re-derived second sort could silently drift and reintroduce the
+    # blended-p50 mislabel). Ties break by name: deterministic, and irrelevant to
+    # warm_max (a tie at the boundary is the same latency either way).
+    completed_pairs = sorted(
+        (v, k) for k, v in latencies.items() if v is not None
+    )
+    completed = [v for v, _ in completed_pairs]
     timeouts = sorted(k for k, v in latencies.items() if v is None)
 
     remainder = completed[pool_replicas:]
@@ -477,6 +485,7 @@ def _classify_latencies(
 
     breakdown = {
         "warm_max_s": None,
+        "warm_names": [],
         "next_fastest_s": cold_path_min,
         "separation_observed": None,
         "cold_path_min_s": cold_path_min,
@@ -495,6 +504,11 @@ def _classify_latencies(
 
     warm_max = completed[pool_replicas - 1]
     breakdown["warm_max_s"] = warm_max
+    # The gate's warm tier = the pool_replicas fastest-binding claims. Publish the
+    # member NAMES so the emit path scopes the TTFE histogram to EXACTLY this set
+    # (never a re-derived sort). Same ordering as warm_max, so warm_max ==
+    # latencies[warm_names[-1]] by construction.
+    breakdown["warm_names"] = [k for _, k in completed_pairs[:pool_replicas]]
 
     absolute_ok = warm_max < abs_ceiling_s
     if remainder and warm_max > 0:
@@ -786,10 +800,33 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
             # Probes already ran CONCURRENTLY per claim, each at its own bind
             # moment inside its watcher thread (the honest-TTFE fix — see
             # _watch_one_claim). Here we only flatten the collected results.
+            #
+            # WARM-TIER SCOPE (the row-labels-what-it-measures fix): the scenario
+            # deliberately OVERFLOWS (claim_count > pool_replicas) so the gate can
+            # prove a distinct fast tier — but the emitted p50/p95 must describe
+            # the WARM-POOL HIT, not the warm+cold blend. Scope the whole row
+            # (TTFE, n, throughput window, density) to the gate's warm set —
+            # option b, one uniform N, keeps matched-N (#1038). POOL_REPLICAS==0
+            # is the cold-baseline mode (no warm tier): report over all claims.
+            if _POOL_REPLICAS > 0:
+                emit_names = breakdown["warm_names"]
+                # SINGLE-SOURCE ASSERT: the emitted-warm set is EXACTLY the
+                # gate-warm set — same size, every member within warm_max.
+                assert len(emit_names) == _POOL_REPLICAS and all(
+                    latencies[n] is not None
+                    and latencies[n] <= breakdown["warm_max_s"]
+                    for n in emit_names
+                ), "emit warm set drifted from gate warm set"
+                emit_bound_at = {
+                    n: bound_at[n] for n in emit_names if n in bound_at
+                }
+            else:
+                emit_names = claim_names
+                emit_bound_at = bound_at
             ttfe_ms_samples, exec_oks = _assemble_probe_results(
-                claim_names, ttfe_results,
+                emit_names, ttfe_results,
             )
-            window_s = _activation_window_s(create_times, bound_at)
+            window_s = _activation_window_s(create_times, emit_bound_at)
             sla_metrics = _assemble_ttfe_metrics(
                 ttfe_ms_samples,
                 exec_oks,
