@@ -1136,6 +1136,149 @@ def test_emit_to_render_warm_pool_acquisition_convergence():
     )
 
 
+def test_emit_to_render_at_scale_contention_convergence():
+    """Convergence guard for the at-scale-contention RETRACTION block (#810; carried across #112).
+
+    at_scale_contention is emitted by harness/results_schema.build_results(at_scale_contention=...)
+    (via _coerce_at_scale_contention) and allow-listed on the render side by
+    schema.AT_SCALE_CONTENTION_FIELDS. Like warm_pool_acquisition it has NO in-process producer —
+    the daily `harness.run --product sandbox` refresh carries the prior committed block forward
+    verbatim (run.carry_prior_at_scale_contention, #112), so this block MUST survive the emit→render
+    round-trip or the daily refresh would carry a block the renderer silently treats as INERT (the
+    #112 "other door" drop). It was the ONLY producer-less carry-forward block without a
+    cross-contract convergence test — this closes that gap so a future vocab/enum edit on EITHER
+    side fails loud, not silent-INERT. Every field the EMITTER keeps on a real object must pass the
+    INDEPENDENT render-side predicate, the runtime_class enum must agree value-for-value across the
+    two independent sets, the emitter's fail-closed guard must drop an out-of-enum runtime_class / a
+    negative ttfe, a registry-shaped machine_type is dropped while a valid spine survives, and the
+    DELIBERATE absence of any per-node throughput field holds on both sides (the #810 per-node-
+    denominator trap: this point ran at node_count=1, so a per-node rate would invite a dishonest
+    cross-block comparison against concurrent_burst's node_count=20 legs). Fails loudly first.
+    """
+    import importlib.util
+
+    import schema
+
+    emitter_path = os.path.join(_ROOT, "harness", "results_schema.py")
+    if not os.path.exists(emitter_path):
+        print("  (skip: harness emitter not in-tree yet)")
+        return
+    spec = importlib.util.spec_from_file_location("_bench_emitter_asc", emitter_path)
+    mod = importlib.util.module_from_spec(spec)
+    try:
+        spec.loader.exec_module(mod)
+    except Exception as exc:  # pragma: no cover - harness has its own deps
+        print(f"  (skip: harness emitter not importable in isolation: {exc})")
+        return
+
+    # The closed runtime vocabulary must agree value-for-value across the two independent sets,
+    # or a future render drops a runtime_class the emitter happily emits.
+    assert set(mod.WARM_VS_COLD_RUNTIME_CLASS_ENUM) == set(schema.RUNTIME_LABELS), (
+        "emit/render DRIFT: harness WARM_VS_COLD_RUNTIME_CLASS_ENUM "
+        f"{set(mod.WARM_VS_COLD_RUNTIME_CLASS_ENUM)} != render RUNTIME_LABELS "
+        f"{set(schema.RUNTIME_LABELS)}"
+    )
+
+    # A full at_scale_contention object: every field populated so the convergence covers the
+    # whole optional decomposition + provenance surface, not just the required spine.
+    asc_in = {
+        "runtime_class": "gvisor",
+        "pool_size": 30,
+        "claim_count": 60,
+        "ttfe_p50_ms": 1658.9,
+        "ttfe_p95_ms": 2016.9,
+        "bind_p50_ms": 1384.0,
+        "bind_p95_ms": 1700.1,
+        "exec_p50_ms": 279.9,
+        "exec_p95_ms": 323.7,
+        "exec_success_rate": 1.0,
+        "node_count": 1,
+        "machine_type": "e2-standard-16",
+        "measured_at": "2026-07-01",
+    }
+    results = mod.build_results(
+        [], {"cluster_substrate": "gke-sandbox", "node_count": 1},
+        generated_at="2026-07-01T12:00:00Z", at_scale_contention=asc_in,
+    )
+    assert "at_scale_contention" in results, (
+        f"emitter dropped the whole at_scale_contention object — rejected a valid full object:\n{asc_in}"
+    )
+    asc = results["at_scale_contention"]
+
+    # (a) every top-level field the emitter KEPT passes the independent render allow-list.
+    for key, val in asc.items():
+        assert key in schema.AT_SCALE_CONTENTION_FIELDS, (
+            f"emit/render DRIFT: emitter kept key {key!r} absent from render "
+            "AT_SCALE_CONTENTION_FIELDS — render_at_scale_contention would silently drop it."
+        )
+        assert schema.AT_SCALE_CONTENTION_FIELDS[key](val), (
+            f"emit/render DRIFT: render AT_SCALE_CONTENTION_FIELDS[{key!r}] rejects emitter value "
+            f"{val!r} — the block would render nothing."
+        )
+
+    # (b) the required spine survives intact on a clean object.
+    for spine in ("runtime_class", "pool_size", "claim_count", "ttfe_p50_ms", "ttfe_p95_ms"):
+        assert spine in asc, f"required spine field {spine!r} must survive a clean object"
+    assert asc["runtime_class"] == "gvisor" and asc["pool_size"] == 30 and asc["claim_count"] == 60
+
+    # (c) an out-of-enum runtime_class drops the whole block (emitter fail-closed guard).
+    leak_rc = mod.build_results(
+        [], {"cluster_substrate": "gke-sandbox", "node_count": 1},
+        generated_at="2026-07-01T12:00:00Z",
+        at_scale_contention={"runtime_class": "firecracker", "pool_size": 30, "claim_count": 60,
+                             "ttfe_p50_ms": 100.0, "ttfe_p95_ms": 200.0},
+    )
+    assert "at_scale_contention" not in leak_rc, (
+        "out-of-enum runtime_class must drop the whole at_scale_contention block — fail-closed guard"
+    )
+
+    # (d) a negative ttfe drops the whole block (no partial-lie table).
+    leak_neg = mod.build_results(
+        [], {"cluster_substrate": "gke-sandbox", "node_count": 1},
+        generated_at="2026-07-01T12:00:00Z",
+        at_scale_contention={"runtime_class": "gvisor", "pool_size": 30, "claim_count": 60,
+                             "ttfe_p50_ms": -1.0, "ttfe_p95_ms": 200.0},
+    )
+    assert "at_scale_contention" not in leak_neg, (
+        "a negative ttfe_p50_ms must drop the whole block — closed-schema guard"
+    )
+
+    # (e) a registry-path-shaped machine_type is dropped (provenance scalar), but the block with a
+    # valid spine still renders — provenance is best-effort, the spine is load-bearing.
+    drop_mt = mod.build_results(
+        [], {"cluster_substrate": "gke-sandbox", "node_count": 1},
+        generated_at="2026-07-01T12:00:00Z",
+        at_scale_contention={"runtime_class": "gvisor", "pool_size": 30, "claim_count": 60,
+                             "ttfe_p50_ms": 100.0, "ttfe_p95_ms": 200.0,
+                             "machine_type": "us-central1-docker.pkg.dev/proj/img:1"},
+    )
+    assert "at_scale_contention" in drop_mt, "a valid spine must survive a dropped provenance scalar"
+    assert "machine_type" not in drop_mt["at_scale_contention"], (
+        "a registry-path-shaped machine_type must be dropped — bounded GCP-shape guard"
+    )
+
+    # (f) the DELIBERATE per-node-throughput omission holds on BOTH sides: a throughput-shaped key
+    # is neither in the render allow-list nor kept by the emitter — so it can never sneak back in and
+    # invite the #810 per-node-denominator cross-block comparison the block was designed to refuse.
+    for banned in ("per_node_throughput", "throughput_per_node_per_s", "claims_per_node_per_s"):
+        assert banned not in schema.AT_SCALE_CONTENTION_FIELDS, (
+            f"render AT_SCALE_CONTENTION_FIELDS must NOT allow-list a per-node throughput field "
+            f"({banned!r}) — #810 deliberately omits it (node_count=1, non-comparable)."
+        )
+    smuggle = mod.build_results(
+        [], {"cluster_substrate": "gke-sandbox", "node_count": 1},
+        generated_at="2026-07-01T12:00:00Z",
+        at_scale_contention={"runtime_class": "gvisor", "pool_size": 30, "claim_count": 60,
+                             "ttfe_p50_ms": 100.0, "ttfe_p95_ms": 200.0,
+                             "per_node_throughput": 999.0},
+    )
+    assert "at_scale_contention" in smuggle, "a valid spine must survive an unknown extra key"
+    assert "per_node_throughput" not in smuggle["at_scale_contention"], (
+        "an unknown per-node throughput key must be dropped by the emitter's closed schema — "
+        "the #810 per-node-denominator trap must stay closed on the emit side too"
+    )
+
+
 def _run_all():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:
