@@ -614,6 +614,47 @@ def _assemble_probe_results(
     return ttfe_ms_samples, exec_oks
 
 
+def _under_delivery_outcome(
+    breakdown: dict,
+    *,
+    pool_replicas: int,
+    claim_count: int,
+    all_lat_str: str,
+) -> tuple[str, str, dict] | None:
+    """Honest FAIL row for warm-pool under-delivery on the TTFE-on path (#4093).
+
+    When the pool under-delivers (`len(completed) < pool_replicas`),
+    `_classify_latencies` returns early with `warm_max_s=None` and
+    `warm_names=[]`. The TTFE-on emit block's single-source assert
+    (`len(emit_names) == pool_replicas`) would then raise AssertionError on the
+    empty warm set — surfacing as an OPAQUE crash-caught 'fail' cell rather than
+    an explicit FAIL row naming the shortfall. This pure helper returns that
+    honest FAIL triple (empty sla_metrics — under-delivery has no isolated
+    warm-tier measurement, so the report skip-not-breaches on the absent key)
+    so `run()` can return it BEFORE reaching the assert. With the early return
+    in place the assert is reachable only when `warm_max_s is not None` (warm
+    set is full-length by construction), so it purely guards genuine warm-set
+    drift — its true invariant.
+
+    Returns None (no under-delivery outcome to emit) for the cold-baseline mode
+    (`pool_replicas <= 0`, no warm tier to under-deliver) or when a full warm
+    cluster delivered (`warm_max_s is not None`) — leaving both the cold-baseline
+    path and the normal PASS/FAIL path untouched.
+    """
+    if pool_replicas <= 0 or breakdown["warm_max_s"] is not None:
+        return None
+    completed_n = breakdown["completed_count"]
+    return (
+        "FAIL",
+        f"WarmPool under-delivered warm slots: only {completed_n}/{pool_replicas} "
+        f"claims bound into the warm tier (claims fired={claim_count}). No full "
+        f"warm cluster to measure TTFE against — controller-side warm-pool "
+        f"candidate. All latencies (s, sorted): [{all_lat_str}]. "
+        f"Timeouts: {breakdown['timeouts']!r}.",
+        {},
+    )
+
+
 def _cleanup(
     custom, *, claim_names: list[str], pool_name: str, template_name: str,
 ) -> None:
@@ -781,6 +822,21 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
         all_lat_str = ", ".join(f"{x:.3f}" for x in breakdown["all_latencies_s"])
         warm_max = breakdown["warm_max_s"]
         warm_max_str = f"{warm_max:.3f}s" if warm_max is not None else "<n/a>"
+        # Under-delivery honest-FAIL short-circuit (#4093). When the warm pool
+        # under-delivered (warm_max is None), return an explicit FAIL row naming
+        # the shortfall BEFORE the TTFE-on emit block below — whose single-source
+        # assert would otherwise raise on the empty warm set and surface as an
+        # opaque crash-caught 'fail' cell. No-op for the cold-baseline mode
+        # (_POOL_REPLICAS <= 0) and for a delivered warm cluster (warm_max set),
+        # so both those paths fall through unchanged.
+        under = _under_delivery_outcome(
+            breakdown,
+            pool_replicas=_POOL_REPLICAS,
+            claim_count=_CLAIM_COUNT,
+            all_lat_str=all_lat_str,
+        )
+        if under is not None:
+            return under
         # Emit-key assembly. Two paths, gated by BENCH_TTFE_EXEC:
         #
         #   TTFE-on  (the doc-headline path) — probe each bound claim's first
