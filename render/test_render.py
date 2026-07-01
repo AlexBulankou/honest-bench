@@ -631,6 +631,51 @@ def test_matrix_resume_density_is_na():
     assert cells[7] == "N/A"  # Max Density column is N/A for resume (no steady-state pool)
 
 
+def test_matrix_pending_scenario_suppresses_leaked_metrics():
+    # A scenario whose OUTCOME is `pending` carries provisional sla_metrics that are NOT a
+    # publishable measurement — the upstream-blocked resume probe records its timeout
+    # CEILING (the wall-clock waiting out a never-clearing Suspended condition), not a real
+    # resume TTFE. Those values must NOT leak onto the public page: the whole row renders
+    # `pending` across every metric column (matching the throughput columns, which already
+    # go pending when their keys are absent), never a misleading number a reader would rank
+    # against a real distribution. Regression guard for the live-page defect where the
+    # gVisor Resume-from-suspend row showed `34.8414s †` (the gap-probe ceiling).
+    scen = _full_gvisor_scenarios()
+    scen[2] = {
+        "name": "suspend_resume", "outcome": "pending",
+        "pending_reason": "upstream-blocked", "n": 1,
+        "sla_metrics": {
+            "thpt_under_5s_per_node": 4, "thpt_under_1s_per_node": 0,
+            "ttfe_p50_ms": 34841.4, "ttfe_p95_ms": 34841.4, "exec_success_rate": 1.0,
+        },
+    }
+    out = render.render_matrix(_matrix_results(scen))
+    resume_line = [l for l in out.splitlines() if "Resume-from-suspend" in l and "gVisor" in l][0]
+    cells = [c.strip() for c in resume_line.strip("|").split("|")]
+    # columns 2..6 (thpt5, thpt1, p50, p95, n) all pending; density (7) N/A-by-design;
+    # exec (8) pending — none of the provisional values survive.
+    assert cells[2] == "pending" and cells[3] == "pending"
+    assert cells[4] == "pending" and cells[5] == "pending"
+    assert cells[6] == "pending"
+    assert cells[7] == "N/A"
+    assert cells[8] == "pending"
+    # the leaked ceiling never appears anywhere in the row
+    assert "34.8414" not in resume_line and "34841" not in resume_line
+
+
+def test_matrix_pass_scenario_still_shows_metrics_after_pending_guard():
+    # The pending-suppression must not touch a PASS scenario: a graduated resume row (the
+    # post-#4099 state) still renders its real TTFE + N, so graduation is a clean
+    # pending -> real flip with no further render change.
+    scen = _full_gvisor_scenarios()  # scen[2] suspend_resume is PASS n=1376 here
+    out = render.render_matrix(_matrix_results(scen))
+    resume_line = [l for l in out.splitlines() if "Resume-from-suspend" in l and "gVisor" in l][0]
+    cells = [c.strip() for c in resume_line.strip("|").split("|")]
+    assert cells[4] == "3.5s" and cells[5] == "5s"  # real TTFE p50/p95 survive
+    assert cells[6] == "1376"  # real N survives (>= floor, no dagger)
+    assert "pending" not in [cells[4], cells[5], cells[6]]
+
+
 def test_matrix_density_sourced_from_warmpool_not_stale_burst_create():
     # a4s2 Q3 lock (PR #28): DENSITY_SOURCE_SCENARIOS = (warmpool_cold_start,). A stale
     # burst_create row carrying the OLD cluster-wide-capacity 0.45 must NOT shadow warmpool's

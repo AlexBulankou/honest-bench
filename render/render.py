@@ -377,10 +377,23 @@ def _matrix_scenarios(scenarios):
             continue
         n = s.get("n")
         n = n if isinstance(n, int) and not isinstance(n, bool) and n >= 0 else 0
+        outcome = s.get("outcome")
+        metrics = _clean_matrix_metrics(s.get("sla_metrics"))
+        # A `pending` scenario has no publishable measurement: its sla_metrics are
+        # provisional gap-probe artifacts, not results. The upstream-blocked resume probe
+        # is the canonical case — it records the probe's timeout CEILING (the wall-clock it
+        # waits out a never-clearing Suspended condition), not a real resume TTFE. Suppress
+        # those metrics so a pending matrix cell renders `pending` across EVERY metric
+        # column instead of leaking a number a reader would rank against a real
+        # distribution. A PASS scenario keeps its metrics (absent individual keys still
+        # fall through to per-cell `pending`), so a resume row graduates cleanly
+        # pending -> real the moment its outcome flips to PASS.
+        if outcome == "pending":
+            metrics = {}
         out[name] = {
-            "outcome": s.get("outcome"),
+            "outcome": outcome,
             "n": n,
-            "metrics": _clean_matrix_metrics(s.get("sla_metrics")),
+            "metrics": metrics,
         }
     return out
 
@@ -454,12 +467,15 @@ def render_matrix(results):
                 lines.append("| " + " | ".join([rt_label, mode_label] + [_NA] * 7) + " |")
                 continue
             sc = scen_by_name.get(scen_name) if measured else None
+            sc_pending = bool(sc) and sc.get("outcome") == "pending"
             m = sc["metrics"] if sc else {}
 
             def cell(key, fmt):
                 return fmt(m[key]) if key in m else _PENDING
 
-            n_val = sc["n"] if (sc and sc["n"] > 0) else None
+            # A pending scenario's N is a probe-attempt count, not a published sample size;
+            # render it `pending` too so the whole row reads pending until graduation.
+            n_val = sc["n"] if (sc and sc["n"] > 0 and not sc_pending) else None
             n_cell = str(n_val) if n_val else _PENDING
 
             # Low-N TTFE cells carry a small-sample marker so a reader does not rank them

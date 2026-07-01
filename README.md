@@ -48,7 +48,7 @@ bash scripts/check-public-safety.sh           # fail-closed public-safety scan
 |---|---|---|---|---|---|---|---|---|
 | gVisor | Warm-pool hit (Base image) | 16.144 | 16.144 | 0.4435s † | 0.4914s † | 5 | pending | 100% |
 | gVisor | Unique-image cold (RL reality) | pending | pending | 4.5191s † | 4.5191s † | 1 | pending | 100% |
-| gVisor | Resume-from-suspend | pending | pending | 34.8414s † | 34.8414s † | 1 | N/A | 100% |
+| gVisor | Resume-from-suspend | pending | pending | pending | pending | pending | N/A | pending |
 | Kata + microVM | Warm-pool hit (Base image) | pending | pending | pending | pending | pending | pending | pending |
 | Kata + microVM | Unique-image cold (RL reality) | pending | pending | pending | pending | pending | pending | pending |
 | Kata + microVM | Resume-from-suspend | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
