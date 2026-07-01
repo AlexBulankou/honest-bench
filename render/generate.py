@@ -36,6 +36,7 @@ def _load_render():
     return (
         mod.render_matrix,
         mod.render_burst_corroboration,
+        mod.render_warm_bind_decomposition,
         mod.render_warm_vs_cold,
         mod.render_scale_proof,
         mod.render_stepup,
@@ -45,8 +46,8 @@ def _load_render():
     )
 
 
-(render_matrix, render_burst_corroboration, render_warm_vs_cold, render_scale_proof,
- render_stepup, render_kata_activation, render_concurrent_burst,
+(render_matrix, render_burst_corroboration, render_warm_bind_decomposition, render_warm_vs_cold,
+ render_scale_proof, render_stepup, render_kata_activation, render_concurrent_burst,
  render_warm_pool_acquisition) = _load_render()
 
 # Product -> results path, relative to the repo root (parent of render/).
@@ -131,6 +132,9 @@ def build_readme(root=None):
         corr = render_burst_corroboration(results)
         if corr.strip():
             sections.append(corr.rstrip())
+        bind_dec = render_warm_bind_decomposition(results)
+        if bind_dec.strip():
+            sections.append(bind_dec.rstrip())
         speedup = render_warm_vs_cold(results)
         if speedup.strip():
             sections.append(speedup.rstrip())

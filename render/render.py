@@ -36,6 +36,7 @@ from schema import (
     SCENARIO_LABELS,
     STEPUP_PARETO_FIELDS,
     TTFE_COMPARABILITY_MIN_N,
+    WARM_BIND_FIELDS,
     WARM_POOL_ACQUISITION_FIELDS,
     WARM_VS_COLD_FIELDS,
     _ISO,
@@ -623,6 +624,104 @@ def render_burst_corroboration(results):
     lines.append(
         "_Pod-Ready ≥ executed-TTFE by construction; the gap is the over-claim a pod-Ready "
         "headline would hide._"
+    )
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _clean_warm_bind_decomposition(scenarios):
+    """Find warmpool_cold_start and closed-schema-clean its TTFE decomposition (inch #1).
+
+    Returns {bind_p50, bind_p95, exec_p50, exec_p95, ttfe_p50, ttfe_p95} ONLY when ALL of the six
+    percentile keys are present — that all-six-required gate is what keeps the block INERT until a
+    decomposition-instrumented fire lands (today's pre-decomposition data has the ttfe pair but
+    not the bind/exec pairs, so this renders nothing). Returns None otherwise. Every value is a
+    GENUINELY-MEASURED percentile: exec_p50_ms/exec_p95_ms come from the producer's per-claim
+    (ttfe_ms - bind_ms) distribution, NOT a render-side p50(ttfe)-p50(bind) subtraction. Any
+    sla_metrics key not in WARM_BIND_FIELDS, or failing its predicate, is dropped (closed schema).
+    """
+    if not isinstance(scenarios, list):
+        return None
+    for s in scenarios:
+        if not isinstance(s, dict) or s.get("name") != "warmpool_cold_start":
+            continue
+        metrics = s.get("sla_metrics")
+        if not isinstance(metrics, dict):
+            return None
+        clean = {}
+        for key, ok in WARM_BIND_FIELDS.items():
+            if key in metrics:
+                try:
+                    if ok(metrics[key]):
+                        clean[key] = metrics[key]
+                except (TypeError, ValueError):
+                    pass
+        needed = (
+            "bind_p50_ms", "bind_p95_ms",
+            "exec_p50_ms", "exec_p95_ms",
+            "ttfe_p50_ms", "ttfe_p95_ms",
+        )
+        if any(k not in clean for k in needed):
+            return None
+        return {
+            "bind_p50": clean["bind_p50_ms"],
+            "bind_p95": clean["bind_p95_ms"],
+            "exec_p50": clean["exec_p50_ms"],
+            "exec_p95": clean["exec_p95_ms"],
+            "ttfe_p50": clean["ttfe_p50_ms"],
+            "ttfe_p95": clean["ttfe_p95_ms"],
+        }
+    return None
+
+
+def render_warm_bind_decomposition(results):
+    """Render the warm-hit TTFE bind-vs-exec decomposition (inch #1), or "" when INERT.
+
+    The warm-pool-hit TTFE (create->first-instruction-result) splits into BIND (create->bound,
+    i.e. provisioning) + EXEC (websocket setup + the first-instruction round-trip). When the
+    warm-hit p50/p95 sits above the <1s North Star, this block shows WHERE the time lives: a bind
+    p50 near the TTFE p50 means provisioning dominates (a real controller/clone target); a small
+    bind p50 with a large exec p50 means the exec channel (websocket setup) dominates (a
+    harness/product artifact, not a controller regression).
+
+    HONESTY: bind, exec, and TTFE are each an INDEPENDENTLY-MEASURED percentile of its own
+    per-claim distribution — exec comes from the producer's per-claim (ttfe_ms - bind_ms) samples,
+    NOT a render-side p50(ttfe)-p50(bind) subtraction (percentiles do not subtract linearly). The
+    three rows therefore need NOT sum. Rendered ONLY when all of bind, exec, AND TTFE percentiles
+    are present (see _clean_warm_bind_decomposition), so the public page is byte-unchanged until a
+    fire emits the keys. Diagnostic-only — adds a block, changes no existing cell.
+    """
+    dec = _clean_warm_bind_decomposition(results.get("scenarios"))
+    if not dec:
+        return ""
+    lines = ["## Warm-Hit TTFE — Bind vs Exec Decomposition", ""]
+    lines.append(
+        "Warm-hit TTFE (create → first-instruction result) splits into **bind** (create → bound, "
+        "i.e. provisioning the pool member) and **exec** (websocket setup + the first-instruction "
+        "round-trip). This block shows *where* a warm-hit above the <1s target lives — a large "
+        "bind points at provisioning (a controller/clone target); a large exec points at the "
+        "exec channel (a harness/product artifact, not a controller regression)."
+    )
+    lines.append("")
+    header = ["Stage", "p50", "p95"]
+    lines.append("| " + " | ".join(header) + " |")
+    lines.append("|" + "|".join(["---"] * len(header)) + "|")
+    lines.append(
+        f"| Bind (create → bound, provisioning) | {_fmt_secs(dec['bind_p50'])} | "
+        f"{_fmt_secs(dec['bind_p95'])} |"
+    )
+    lines.append(
+        f"| Exec (websocket + first-instruction) | {_fmt_secs(dec['exec_p50'])} | "
+        f"{_fmt_secs(dec['exec_p95'])} |"
+    )
+    lines.append(
+        f"| **TTFE (total)** | **{_fmt_secs(dec['ttfe_p50'])}** | **{_fmt_secs(dec['ttfe_p95'])}** |"
+    )
+    lines.append("")
+    lines.append(
+        "_Each row is an independently-measured percentile of its own per-claim distribution "
+        "(exec is measured per-claim as TTFE − bind, then percentiled — not p50(TTFE) − p50(bind)). "
+        "Percentiles do not sum, so bind and exec need not add exactly to the total TTFE._"
     )
     lines.append("")
     return "\n".join(lines)

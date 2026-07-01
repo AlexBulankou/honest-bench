@@ -821,6 +821,86 @@ def test_burst_corroboration_bad_exec_value_dropped_then_inert():
     assert out == ""
 
 
+def _warmpool_scenario(metrics, n=30):
+    return {"name": "warmpool_cold_start", "outcome": "PASS", "n": n, "sla_metrics": metrics}
+
+
+def test_warm_bind_decomposition_inert_when_bind_absent():
+    # inch #1: today's warm-pool row carries the ttfe pair but not the bind/exec pairs ⇒ INERT.
+    out = render.render_warm_bind_decomposition(_matrix_results(_full_gvisor_scenarios()))
+    assert out == ""
+
+
+def test_warm_bind_decomposition_inert_when_no_warmpool_scenario():
+    scen = [s for s in _full_gvisor_scenarios() if s["name"] != "warmpool_cold_start"]
+    out = render.render_warm_bind_decomposition(_matrix_results(scen))
+    assert out == ""
+
+
+def test_warm_bind_decomposition_inert_when_ttfe_absent():
+    # bind + exec pairs present but the matching ttfe pair missing ⇒ INERT (all six required).
+    scen = [
+        _warmpool_scenario(
+            {
+                "bind_p50_ms": 400, "bind_p95_ms": 600,
+                "exec_p50_ms": 1000, "exec_p95_ms": 1150,
+            }
+        )
+    ]
+    out = render.render_warm_bind_decomposition(_matrix_results(scen))
+    assert out == ""
+
+
+def test_warm_bind_decomposition_inert_when_exec_absent():
+    # bind + ttfe present but the measured exec pair missing ⇒ INERT (exec is measured, not
+    # derived by subtraction, so its absence keeps the block dark).
+    scen = [
+        _warmpool_scenario(
+            {
+                "bind_p50_ms": 400, "bind_p95_ms": 600,
+                "ttfe_p50_ms": 1396, "ttfe_p95_ms": 1722,
+            }
+        )
+    ]
+    out = render.render_warm_bind_decomposition(_matrix_results(scen))
+    assert out == ""
+
+
+def test_warm_bind_decomposition_renders_when_all_present():
+    # exec is a MEASURED percentile passed through verbatim — deliberately NOT equal to
+    # ttfe - bind (1000 != 1396-400=996, 1150 != 1722-600=1122) so the assertions prove the
+    # render displays the measured value, never a p50(ttfe)-p50(bind) subtraction.
+    scen = [
+        _warmpool_scenario(
+            {
+                "bind_p50_ms": 400, "bind_p95_ms": 600,
+                "exec_p50_ms": 1000, "exec_p95_ms": 1150,
+                "ttfe_p50_ms": 1396, "ttfe_p95_ms": 1722,
+            }
+        )
+    ]
+    out = render.render_warm_bind_decomposition(_matrix_results(scen))
+    assert "## Warm-Hit TTFE — Bind vs Exec Decomposition" in out
+    assert "| Bind (create → bound, provisioning) | 0.4s | 0.6s |" in out
+    assert "| Exec (websocket + first-instruction) | 1s | 1.15s |" in out
+    assert "| **TTFE (total)** | **1.396s** | **1.722s** |" in out
+
+
+def test_warm_bind_decomposition_bad_bind_value_dropped_then_inert():
+    # a non-numeric bind value fails the predicate ⇒ dropped ⇒ missing bind ⇒ INERT.
+    scen = [
+        _warmpool_scenario(
+            {
+                "bind_p50_ms": "soon", "bind_p95_ms": 600,
+                "exec_p50_ms": 1000, "exec_p95_ms": 1150,
+                "ttfe_p50_ms": 1396, "ttfe_p95_ms": 1722,
+            }
+        )
+    ]
+    out = render.render_warm_bind_decomposition(_matrix_results(scen))
+    assert out == ""
+
+
 def test_scale_proof_renders_linearity_row():
     results = _matrix_results(
         _full_gvisor_scenarios(),
