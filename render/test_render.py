@@ -969,6 +969,61 @@ def test_warm_bind_decomposition_no_caveat_when_regime_absent():
     assert "Regime caveat" not in out
 
 
+def test_warm_bind_decomposition_scaling_term_renders_on_drained_caveat():
+    # #4137: drained + a valid warm_scaling_term ⇒ the caveat NAMES the scaling term.
+    out = render.render_warm_bind_decomposition(
+        _matrix_results(
+            _decomp_scen(),
+            provenance={"regime": "drained", "warm_scaling_term": "bind-concurrency"},
+        )
+    )
+    assert "Regime caveat" in out
+    assert "bind (provisioning) concurrency" in out
+
+
+def test_warm_bind_decomposition_no_scaling_clause_when_term_absent():
+    # drained but no warm_scaling_term ⇒ caveat renders WITHOUT the scaling clause.
+    out = render.render_warm_bind_decomposition(
+        _matrix_results(_decomp_scen(), provenance={"regime": "drained"})
+    )
+    assert "Regime caveat" in out
+    assert "bind (provisioning) concurrency" not in out
+
+
+def test_warm_bind_decomposition_scaling_clause_absent_when_not_drained():
+    # a warm_scaling_term with a non-drained regime ⇒ no caveat AND no scaling clause
+    # (the clause qualifies the drained caveat; it disappears coherently with it).
+    out = render.render_warm_bind_decomposition(
+        _matrix_results(
+            _decomp_scen(),
+            provenance={"regime": "under-load", "warm_scaling_term": "bind-concurrency"},
+        )
+    )
+    assert "Regime caveat" not in out
+    assert "bind (provisioning) concurrency" not in out
+
+
+def test_warm_bind_decomposition_bad_scaling_term_dropped():
+    # an out-of-enum warm_scaling_term renders the drained caveat unchanged (no clause).
+    out = render.render_warm_bind_decomposition(
+        _matrix_results(
+            _decomp_scen(),
+            provenance={"regime": "drained", "warm_scaling_term": "exec-concurrency"},
+        )
+    )
+    assert "Regime caveat" in out
+    assert "bind (provisioning) concurrency" not in out
+
+
+def test_every_warm_scaling_term_has_a_clause():
+    # sync guard: every closed-enum WARM_SCALING_TERMS member must have a render clause,
+    # else a valid emitted value would silently render nothing.
+    from schema import WARM_SCALING_TERMS
+
+    for term in WARM_SCALING_TERMS:
+        assert term in render._WARM_SCALING_TERM_CLAUSE
+
+
 def test_warm_bind_decomposition_bad_bind_value_dropped_then_inert():
     # a non-numeric bind value fails the predicate ⇒ dropped ⇒ missing bind ⇒ INERT.
     scen = [

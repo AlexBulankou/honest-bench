@@ -43,6 +43,20 @@ from schema import (
     _ISO,
 )
 
+# #4137: the sentence appended to the drained-regime warm caveat that NAMES the term driving
+# warm-hit TTFE growth with claim-count. Keyed by the schema WARM_SCALING_TERMS enum so the
+# attribution is data-driven, not hand-entered free-text; the dict .get() below is what
+# validates the emitted value against this closed vocabulary (an out-of-enum value renders no
+# clause). Every WARM_SCALING_TERMS member MUST have an entry here — enforced by a sync test.
+_WARM_SCALING_TERM_CLAUSE = {
+    "bind-concurrency": (
+        " The term that grows with claim-count here is **bind (provisioning) concurrency**, "
+        "not exec: on this fixed drained node-set the per-claim bind time climbs as more "
+        "claims contend for provisioning while exec stays flat — so the warm-hit distribution "
+        "straddles 1s at higher N because of provisioning concurrency, not the exec channel."
+    ),
+}
+
 
 def _clean_provenance(prov):
     """Return only schema-declared provenance keys whose values validate. Drops the rest."""
@@ -749,14 +763,20 @@ def render_warm_bind_decomposition(results):
     if isinstance(prov, dict):
         regime = prov.get("regime")
     if regime == "drained":
-        lines.append("")
-        lines.append(
+        caveat = (
             "> ⚠️ **Regime caveat:** this warm tier was measured on a **drained, "
             "low-contention cluster** (single fire, small claim count). A green warm tier "
             "here is honest for THIS fire but is **not yet a sustained North-Star claim** — "
             "it wants corroboration under representative load before sub-1s warm is treated "
             "as durable."
         )
+        # #4137: name the scaling term ON the caveat, only when the drained fire emits a valid
+        # warm_scaling_term. The dict .get() validates against the closed WARM_SCALING_TERMS
+        # vocabulary; an absent or out-of-enum value renders the caveat unchanged.
+        scaling_term = prov.get("warm_scaling_term") if isinstance(prov, dict) else None
+        caveat += _WARM_SCALING_TERM_CLAUSE.get(scaling_term, "")
+        lines.append("")
+        lines.append(caveat)
     lines.append("")
     return "\n".join(lines)
 
