@@ -1452,6 +1452,87 @@ def test_concurrent_burst_invalid_provenance_dropped_spine_renders():
     assert "docker.pkg.dev" not in out  # internal registry path never reaches the page
 
 
+def _wpa(**over):
+    base = {
+        "runtime_class": "gvisor",
+        "acq_p50_ms": 2939.65,
+        "acq_p95_ms": 3878.44,
+        "acq_p99_ms": 4009.62,
+        "controller_startup_p95_ms": 1338.12,
+        "machine_type": "n2-standard-16",
+        "measured_at": "2026-07-01T01:03:12Z",
+        "n": 600,
+        "offered_rate_per_s": 300,
+        "warmpool_size": 600,
+    }
+    base.update(over)
+    return base
+
+
+def test_warm_pool_acquisition_absent_renders_nothing():
+    # No warm_pool_acquisition object ⇒ INERT (byte-absent until the harness emits it).
+    assert render.render_warm_pool_acquisition(_matrix_results(_full_gvisor_scenarios())) == ""
+
+
+def test_warm_pool_acquisition_missing_spine_inert():
+    # Missing any REQUIRED spine field (here acq_p95_ms) ⇒ INERT (no partial-lie table).
+    wpa = _wpa()
+    del wpa["acq_p95_ms"]
+    assert render.render_warm_pool_acquisition(
+        _matrix_results(_full_gvisor_scenarios(), warm_pool_acquisition=wpa)) == ""
+
+
+def test_warm_pool_acquisition_renders_table():
+    out = render.render_warm_pool_acquisition(
+        _matrix_results(_full_gvisor_scenarios(), warm_pool_acquisition=_wpa()))
+    assert "## Warm-Pool Acquisition — how fast the pool hands you a sandbox" in out
+    # The claim→bound sub-phase is explicitly NOT comparable to the TTFE columns.
+    assert "**not comparable**" in out
+    assert "| 600 | 2.93965s | 3.87844s | 4.00962s |" in out
+    # offered-load + warm-pool context + cluster shape ride the caption.
+    assert "300 claims/sec" in out and "warm pool of **600**" in out
+    assert "`n2-standard-16`" in out
+    # controller-startup lower-bound caveat + measured_at subline.
+    assert "Controller-startup lower bound (p95 **1.33812s**)" in out
+    assert "_Measured 2026-07-01 — warm-pool acquisition latency (point-in-time)._" in out
+
+
+def test_warm_pool_acquisition_p99_em_dash_when_absent():
+    # p99 is optional — omitting it renders an em-dash, NEVER a fabricated value.
+    wpa = _wpa()
+    del wpa["acq_p99_ms"]
+    out = render.render_warm_pool_acquisition(
+        _matrix_results(_full_gvisor_scenarios(), warm_pool_acquisition=wpa))
+    assert "| 600 | 2.93965s | 3.87844s | — |" in out
+
+
+def test_warm_pool_acquisition_no_controller_caveat_when_absent():
+    # Omitting controller_startup_p95_ms drops the lower-bound caveat (never fabricated).
+    wpa = _wpa()
+    del wpa["controller_startup_p95_ms"]
+    out = render.render_warm_pool_acquisition(
+        _matrix_results(_full_gvisor_scenarios(), warm_pool_acquisition=wpa))
+    assert "## Warm-Pool Acquisition — how fast the pool hands you a sandbox" in out
+    assert "Controller-startup lower bound" not in out
+
+
+def test_warm_pool_acquisition_out_of_enum_runtime_inert():
+    # An out-of-enum runtime_class fails the RUNTIME_LABELS predicate ⇒ whole block INERT.
+    assert render.render_warm_pool_acquisition(
+        _matrix_results(_full_gvisor_scenarios(), warm_pool_acquisition=_wpa(runtime_class="lukewarm"))) == ""
+
+
+def test_warm_pool_acquisition_invalid_machine_type_dropped_spine_renders():
+    # A registry-path-shaped machine_type fails its predicate ⇒ dropped on read; the valid spine
+    # still renders (provenance is best-effort, never fabricated, never blocks the table).
+    out = render.render_warm_pool_acquisition(
+        _matrix_results(_full_gvisor_scenarios(),
+                        warm_pool_acquisition=_wpa(machine_type="us-central1-docker.pkg.dev/proj/img:1")))
+    assert "## Warm-Pool Acquisition — how fast the pool hands you a sandbox" in out
+    assert "| 600 | 2.93965s | 3.87844s | 4.00962s |" in out
+    assert "docker.pkg.dev" not in out  # internal registry path never reaches the page
+
+
 def _run_all():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:
