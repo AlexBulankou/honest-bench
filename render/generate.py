@@ -37,6 +37,7 @@ def _load_render():
         mod.render_matrix,
         mod.render_burst_corroboration,
         mod.render_warm_bind_decomposition,
+        mod.render_cold_bind_decomposition,
         mod.render_warm_vs_cold,
         mod.render_scale_proof,
         mod.render_stepup,
@@ -46,9 +47,9 @@ def _load_render():
     )
 
 
-(render_matrix, render_burst_corroboration, render_warm_bind_decomposition, render_warm_vs_cold,
- render_scale_proof, render_stepup, render_kata_activation, render_concurrent_burst,
- render_warm_pool_acquisition) = _load_render()
+(render_matrix, render_burst_corroboration, render_warm_bind_decomposition,
+ render_cold_bind_decomposition, render_warm_vs_cold, render_scale_proof, render_stepup,
+ render_kata_activation, render_concurrent_burst, render_warm_pool_acquisition) = _load_render()
 
 # Product -> results path, relative to the repo root (parent of render/).
 # The PUBLIC customer page is SANDBOX-ONLY (alex 2026-06-28): substrate demotes from a
@@ -135,6 +136,9 @@ def build_readme(root=None):
         bind_dec = render_warm_bind_decomposition(results)
         if bind_dec.strip():
             sections.append(bind_dec.rstrip())
+        cold_dec = render_cold_bind_decomposition(results)
+        if cold_dec.strip():
+            sections.append(cold_dec.rstrip())
         speedup = render_warm_vs_cold(results)
         if speedup.strip():
             sections.append(speedup.rstrip())

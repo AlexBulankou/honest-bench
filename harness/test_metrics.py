@@ -311,6 +311,45 @@ def test_single_sample_ttfe_point_failed_exec():
     _check("ttfe_p95_ms" not in out, "failed single-sample omits p95")
 
 
+def test_single_sample_ttfe_point_emits_bind_exec_decomposition():
+    # inch #2 (cold): bind_ms (create->Ready provision) + exec_ms (residual
+    # ttfe_ms - bind_ms) supplied -> the bind/exec p50==p95 pair emitted alongside
+    # the ttfe pair. For n=1 each percentile IS the single sample. Deliberately use
+    # an exec value that does NOT equal ttfe - bind (2130 - 2000 == 130) to prove
+    # the emit is the SUPPLIED measured sample, never an arithmetic split.
+    out = m.single_sample_ttfe_point(2130.0, True, bind_ms=2000.0, exec_ms=200.0)
+    _check(_close(out["bind_p50_ms"], 2000.0), "cold bind p50 == sample")
+    _check(_close(out["bind_p95_ms"], 2000.0), "cold bind p95 == sample")
+    _check(_close(out["exec_p50_ms"], 200.0), "cold exec p50 == sample (measured)")
+    _check(_close(out["exec_p95_ms"], 200.0), "cold exec p95 == sample (measured)")
+    _check(_close(out["ttfe_p50_ms"], 2130.0), "cold ttfe p50 still emitted")
+    _check(_close(out["ttfe_p95_ms"], 2130.0), "cold ttfe p95 still emitted")
+
+
+def test_single_sample_ttfe_point_byte_identical_when_decomposition_absent():
+    # default (no bind_ms/exec_ms kwargs) -> the emit is byte-identical to the
+    # legacy single-sample form, so un-decomposed cold callers stay page-unchanged.
+    out = m.single_sample_ttfe_point(2130.0, True)
+    _check("bind_p50_ms" not in out, "no bind key by default")
+    _check("bind_p95_ms" not in out, "no bind p95 key by default")
+    _check("exec_p50_ms" not in out, "no exec key by default")
+    _check("exec_p95_ms" not in out, "no exec p95 key by default")
+    _check(out == {"exec_success_rate": 1.0, "n": 1,
+                   "ttfe_p50_ms": 2130.0, "ttfe_p95_ms": 2130.0},
+           "un-decomposed single-sample byte-identical to legacy shape")
+
+
+def test_single_sample_ttfe_point_bind_exec_survive_results_schema_coerce():
+    # convergence: the cold bind/exec keys must survive the closed-schema emitter
+    # guard (same closed WARM_BIND_FIELDS the warm inch #1 uses).
+    out = m.single_sample_ttfe_point(2130.0, True, bind_ms=2000.0, exec_ms=200.0)
+    coerced = rs._coerce_sla_metrics(out)
+    _check("bind_p50_ms" in coerced, "cold bind p50 survives coerce")
+    _check("bind_p95_ms" in coerced, "cold bind p95 survives coerce")
+    _check("exec_p50_ms" in coerced, "cold exec p50 survives coerce")
+    _check("exec_p95_ms" in coerced, "cold exec p95 survives coerce")
+
+
 def _lift_like_run_py(sla_metrics: dict, name: str, outcome: str) -> dict:
     """Mirror run.py:_run_one's lift of n + pending_reason out of sla_metrics
     to the scenario top level, so we can validate the suspend_resume merge

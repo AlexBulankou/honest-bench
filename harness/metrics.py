@@ -229,7 +229,11 @@ def ttfe_sla_metrics(
 
 
 def single_sample_ttfe_point(
-    ttfe_ms: Optional[Real], exec_ok: bool
+    ttfe_ms: Optional[Real],
+    exec_ok: bool,
+    *,
+    bind_ms: Optional[Real] = None,
+    exec_ms: Optional[Real] = None,
 ) -> dict[str, float]:
     """Single-sample TTFE metrics for a one-shot activation scenario (cold / resume).
 
@@ -245,6 +249,15 @@ def single_sample_ttfe_point(
     ``exec_success_rate=0.0`` with no TTFE percentiles -- honest about both the
     failure and the absent latency. For n=1 the p50 and p95 are both the single
     sample.
+
+    Optional bind/exec decomposition (inch #2, cold): when ``bind_ms`` (the
+    create -> Ready provision time) and/or ``exec_ms`` (the residual ttfe_ms -
+    bind_ms, i.e. the websocket + first-instruction round-trip on the
+    already-Ready sandbox) are supplied, their p50/p95 pair is emitted alongside
+    the ttfe pair -- one measured sample each, so p50 == p95 == the sample. These
+    are INDEPENDENTLY MEASURED (bind from the create->Ready timer, exec as the
+    residual against the SAME shared t0), never derived from the ttfe percentile.
+    Both default None so the un-decomposed callers stay byte-identical.
     """
     metrics: dict[str, float] = {
         "exec_success_rate": exec_success_rate([exec_ok]),
@@ -254,6 +267,14 @@ def single_sample_ttfe_point(
         p = percentile([ttfe_ms], 50)
         metrics["ttfe_p50_ms"] = round(p, 1)
         metrics["ttfe_p95_ms"] = round(p, 1)
+    if bind_ms is not None:
+        pb = percentile([bind_ms], 50)
+        metrics["bind_p50_ms"] = round(pb, 1)
+        metrics["bind_p95_ms"] = round(pb, 1)
+    if exec_ms is not None:
+        pe = percentile([exec_ms], 50)
+        metrics["exec_p50_ms"] = round(pe, 1)
+        metrics["exec_p95_ms"] = round(pe, 1)
     return metrics
 
 

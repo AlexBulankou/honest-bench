@@ -348,6 +348,58 @@ def test_emit_to_render_matrix_convergence_single_sample_ttfe_point():
     assert "| gVisor | Unique-image cold (RL reality) | pending | pending | pending | pending | 1 | pending | 0% (0/1) ⚠️ |" in out_fail
 
 
+def test_emit_to_render_cold_bind_decomposition_convergence():
+    """Convergence guard for inch #2 (cold TTFE provision-vs-exec): the exact keys
+    metrics.single_sample_ttfe_point emits on the DECOMPOSED cold path must survive the
+    closed-schema guard AND render the cold decomposition block. This pins the emit↔render
+    contract for native_digest_cold's bind/exec pairs the same way the warm inch #1 test
+    pins the warm-pool path -- a schema drift that dropped a bind/exec key would silently
+    return the block to INERT (page byte-unchanged), so this test fails loudly on it.
+
+    The emit side is deliberately given an exec_ms that is NOT ttfe_ms - bind_ms
+    (2130 - 2000 == 130, but exec_ms=200) so the rendered exec value proves the block shows
+    the MEASURED residual carried through, never a render-side subtraction of percentiles.
+    """
+    metrics = _load_metrics()
+    if metrics is None:
+        print("  (skip: harness metrics core not in-tree / not importable)")
+        return
+
+    cold = metrics.single_sample_ttfe_point(2130.0, True, bind_ms=2000.0, exec_ms=200.0)
+
+    # (a) field-level: the decomposition keys survive the closed results-schema coerce that
+    # run.py writes to latest.json and that the render decomposition cleaner reads back. (The
+    # MATRIX cleaner deliberately drops bind/exec -- they are not matrix columns -- so the
+    # decomposition block reads from _coerce_sla_metrics, not _clean_matrix_metrics.)
+    sla = {k: v for k, v in cold.items() if k != "n"}
+    coerced = _rs._coerce_sla_metrics(sla)
+    for k in ("bind_p50_ms", "bind_p95_ms", "exec_p50_ms", "exec_p95_ms",
+              "ttfe_p50_ms", "ttfe_p95_ms"):
+        assert k in coerced, (
+            f"emit/render schema DRIFT on cold decomposition: closed guard dropped {k} -- "
+            f"the block would go INERT.\nemitted={sla}\ncoerced={coerced}"
+        )
+
+    results = {
+        "product": "sandbox",
+        "generated_at": "2026-06-29T03:00:00Z",
+        "provenance": {"runtime": "gvisor", "cluster_substrate": "gke", "node_count": 1},
+        "scenarios": [
+            {
+                "name": "native_digest_cold",
+                "outcome": "PASS",
+                "n": cold.get("n", 1),
+                "sla_metrics": sla,
+            }
+        ],
+    }
+    out = render.render_cold_bind_decomposition(results)
+    assert "## Cold-Start TTFE — Provision vs Exec Decomposition" in out
+    assert "| Provision (create → Ready) | 2s | 2s |" in out
+    assert "| Exec (websocket + first-instruction) | 0.2s | 0.2s |" in out  # measured 200, not 130
+    assert "| **TTFE (total)** | **2.13s** | **2.13s** |" in out
+
+
 def test_emit_to_render_scale_proof_convergence_doc_linearity():
     """End-to-end convergence for the SECOND public table: the REAL metrics.py producers
     (density_per_vcpu + throughput_per_node + retention) -> _clean_scale_proof (the closed
