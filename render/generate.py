@@ -64,33 +64,38 @@ _PRODUCTS = (
 _PREAMBLE = """\
 # Honest benchmarks — GKE agent sandbox
 
-This page is **machine-rendered, never hand-entered**. Every cell traces to a
-schema-validated field of a real harness run; anything the schema does not declare is
-dropped before it can reach this page. We publish only what we actually measured on the
-cluster named in the build banner — a `kind` run is labelled `kind`, so a local number is
-never presented as a production SLA.
+Most sandbox benchmarks are marketing: a best-case number, measured once, on a tuned
+cluster nobody will hand you, with no way to check it. This page is the opposite. **Every
+number is machine-rendered from a real harness run and reproducible from the recipe at the
+bottom** — no cell is ever typed by hand. Each value traces to a schema-validated field of
+an actual run; anything the schema does not declare is dropped before it can reach the page.
+We publish only what we measured on the cluster named in the build banner, so a `kind` run
+is labelled `kind` and a local number is never dressed up as a production SLA.
 
-The Core Metrics table is keyed on **TTFE — Time-To-First-Instruction**: the wall-clock
-from the create request to the moment the sandbox *executed its first instruction and
-returned a result*. TTFE is not pod-Ready — a pod can report Ready before it can run your
-code, so we measure the thing a user actually waits for. Throughput is reported per node at
-two TTFE bars (`<5s` and `<1s`); the **Execution Success (Honesty Check)** column is the
-fraction of first-instructions that actually succeeded.
+The table is keyed on the metric a user actually feels: **TTFE — Time-To-First-Instruction**,
+the wall-clock from the create request to the moment the sandbox *ran its first instruction
+and returned a result*. TTFE is not pod-Ready — a pod can report Ready seconds before it can
+run your code — so we measure the wait, not the checkbox. Throughput is reported per node at
+two TTFE bars (`<5s` and `<1s`), and the **Execution Success (Honesty Check)** column is the
+fraction of those first instructions that actually succeeded.
 
-This page prints the truth even when it is unflattering:
+The page is built to print the truth even when the truth is unflattering:
 
-- A cell we have not yet measured renders `pending` — never a guess, never a false number.
-- A throughput whose p95 misses the bar prints an honest **`0`** — we do not round up.
-- An execution-success rate below 100% prints the succeeded/total fraction and a ⚠️ flag.
+- A cell we have not yet measured renders `pending` — never a guess, never a placeholder
+  number.
+- A throughput whose p95 misses the bar prints an honest **`0`** — we do not round up to
+  make the row look better.
+- An execution-success rate below 100% prints the succeeded/total fraction and a ⚠️ flag,
+  instead of quietly dropping the failures.
 
-Every measured number here is a **reproducible floor, not a ceiling.** It is what a
-*vanilla* OSS build — the upstream controller from `main`, default runtime, no tuning,
-the cluster shape named in the build banner — delivers today. A bigger pool, denser nodes,
-or a tuned runtime should *beat* it; the value on the page is the honest lower bound you can
-reproduce from the recipe below and then improve on. We publish the floor we can stand
-behind, not the best number we could cherry-pick.
+And every measured number is a **reproducible floor, not a ceiling.** It is what a *vanilla*
+OSS build delivers today — the upstream controller from `main`, default runtime, no tuning,
+the cluster shape named in the build banner. A bigger pool, denser nodes, or a tuned runtime
+should *beat* it; the value here is the honest lower bound you can reproduce and then improve
+on. We publish the floor we can stand behind, not the best number we could cherry-pick.
 
-Reproduce any row yourself — then beat it. The suite is honest by construction:
+So don't take our word for it — reproduce any row, then beat it. The suite is honest by
+construction:
 
 ```
 bash recipe/install-controller-from-main.sh   # OSS controller from upstream main
