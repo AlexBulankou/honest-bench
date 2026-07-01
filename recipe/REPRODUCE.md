@@ -231,7 +231,11 @@ replenishes and spills onto a node that never pulled the image — there the pul
 lands squarely on claim→ready and inflates the tail. Pre-pulling every node ahead
 of the fire removes that confound, so the warm number stays a *warm* number under
 overflow and the cold-contrast leg measures the activation path, not a containerd
-cache miss.
+cache miss. (If your base image is **distroless**, the DaemonSet's `/bin/true`
+no-op will not exist, so the pod shows not-Running even though the pull succeeded —
+the kubelet fetches the image before running the command either way. Verify the
+pull by the node image cache, e.g. `crictl images` on the node, not by pod status.
+See the caveat comment in `prepull-daemonset.yaml`.)
 
 ```
 # placeholder — measured numbers filled post-fire (a4s1's lane).
