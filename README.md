@@ -46,7 +46,7 @@ bash scripts/check-public-safety.sh           # fail-closed public-safety scan
 
 | Runtime | Activation Mode | Throughput @ <5s TTFE (sb/s/node) | Throughput @ <1s TTFE (sb/s/node) | TTFE p50 | TTFE p95 | Samples (N) | Max Density (sb/vCPU) | Execution Success (Honesty Check) |
 |---|---|---|---|---|---|---|---|---|
-| gVisor | Warm-pool hit (Base image) | 16.144 | 16.144 | 0.4435s † | 0.4914s † | 5 | pending | 100% |
+| gVisor | Warm-pool hit (Base image) | 14.037 | 9.358 | 0.8913s | 1.2171s | 30 | pending | 100% |
 | gVisor | Unique-image cold (RL reality) | pending | pending | 4.5191s † | 4.5191s † | 1 | pending | 100% |
 | gVisor | Resume-from-suspend | pending | pending | 34.8414s † | 34.8414s † | 1 | N/A | 100% |
 | Kata + microVM | Warm-pool hit (Base image) | pending | pending | pending | pending | pending | pending | pending |
@@ -84,9 +84,9 @@ Warm-hit TTFE (create → first-instruction result) splits into **bind** (create
 
 | Stage | p50 | p95 |
 |---|---|---|
-| Bind (create → bound, provisioning) | 0.2331s | 0.2726s |
-| Exec (websocket + first-instruction) | 0.2016s | 0.2548s |
-| **TTFE (total)** | **0.4435s** | **0.4914s** |
+| Bind (create → bound, provisioning) | 0.6626s | 0.9715s |
+| Exec (websocket + first-instruction) | 0.2272s | 0.2573s |
+| **TTFE (total)** | **0.8913s** | **1.2171s** |
 
 _Each row is an independently-measured percentile of its own per-claim distribution (exec is measured per-claim as TTFE − bind, then percentiled — not p50(TTFE) − p50(bind)). Percentiles do not sum, so bind and exec need not add exactly to the total TTFE._
 
