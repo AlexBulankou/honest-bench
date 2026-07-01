@@ -744,6 +744,124 @@ def render_warm_bind_decomposition(results):
     return "\n".join(lines)
 
 
+def _clean_cold_bind_decomposition(scenarios):
+    """Find native_digest_cold and closed-schema-clean its TTFE decomposition (inch #2).
+
+    The cold twin of _clean_warm_bind_decomposition: same six percentile keys, same
+    all-six-required INERT gate (today's pre-decomposition cold data has the ttfe pair
+    but not the bind/exec pairs, so this renders nothing until a decomposition-
+    instrumented cold fire lands). Scoped to the native_digest_cold scenario. Reuses
+    WARM_BIND_FIELDS (identical field set + predicates). Every value is a
+    GENUINELY-MEASURED percentile: for the n=1 cold cell, bind is the measured
+    create->Ready time and exec is the measured residual (ttfe_ms - bind_ms) against
+    the SAME shared t0, NOT a render-side subtraction of percentiles. Any sla_metrics
+    key not in WARM_BIND_FIELDS, or failing its predicate, is dropped (closed schema).
+    """
+    if not isinstance(scenarios, list):
+        return None
+    for s in scenarios:
+        if not isinstance(s, dict) or s.get("name") != "native_digest_cold":
+            continue
+        metrics = s.get("sla_metrics")
+        if not isinstance(metrics, dict):
+            return None
+        clean = {}
+        for key, ok in WARM_BIND_FIELDS.items():
+            if key in metrics:
+                try:
+                    if ok(metrics[key]):
+                        clean[key] = metrics[key]
+                except (TypeError, ValueError):
+                    pass
+        needed = (
+            "bind_p50_ms", "bind_p95_ms",
+            "exec_p50_ms", "exec_p95_ms",
+            "ttfe_p50_ms", "ttfe_p95_ms",
+        )
+        if any(k not in clean for k in needed):
+            return None
+        return {
+            "bind_p50": clean["bind_p50_ms"],
+            "bind_p95": clean["bind_p95_ms"],
+            "exec_p50": clean["exec_p50_ms"],
+            "exec_p95": clean["exec_p95_ms"],
+            "ttfe_p50": clean["ttfe_p50_ms"],
+            "ttfe_p95": clean["ttfe_p95_ms"],
+        }
+    return None
+
+
+def render_cold_bind_decomposition(results):
+    """Render the cold-start TTFE provision-vs-exec decomposition (inch #2), or "" when INERT.
+
+    The cold twin of render_warm_bind_decomposition. Cold TTFE (create->first-instruction-
+    result) splits into PROVISION (create->Ready: controller reconcile + pod schedule + image
+    pull + container start) + EXEC (websocket setup + the first-instruction round-trip on the
+    already-Ready sandbox). Unlike the warm case — where a large bind is a surprise worth
+    flagging — for cold the provision is EXPECTED to dominate (a cold pull is genuinely slow),
+    so this block's diagnostic value is inverted: a *large exec* is the surprise, pointing at
+    an exec-channel artifact (websocket setup) rather than the cold provision itself.
+
+    HONESTY: provision, exec, and TTFE are each an INDEPENDENTLY-MEASURED value — for the n=1
+    cold cell, provision is the measured create->Ready time, exec is the measured residual
+    (ttfe_ms - bind_ms) against the SAME shared t0, and TTFE is the measured total; they are
+    NOT a render-side subtraction of percentiles. Rendered ONLY when all of provision, exec,
+    AND TTFE keys are present (see _clean_cold_bind_decomposition), so the public page is
+    byte-unchanged until a decomposition-instrumented cold fire lands. Diagnostic-only — adds
+    a block, changes no existing cell.
+    """
+    dec = _clean_cold_bind_decomposition(results.get("scenarios"))
+    if not dec:
+        return ""
+    lines = ["## Cold-Start TTFE — Provision vs Exec Decomposition", ""]
+    lines.append(
+        "Cold-start TTFE (create → first-instruction result) splits into **provision** "
+        "(create → Ready: controller reconcile + pod schedule + image pull + container start) "
+        "and **exec** (websocket setup + the first-instruction round-trip on the already-Ready "
+        "sandbox). For a cold start the provision is *expected* to dominate — a cold image pull "
+        "is genuinely slow — so the signal to watch here is a large **exec**, which would point "
+        "at the exec channel (a harness/product artifact), not the cold provision itself."
+    )
+    lines.append("")
+    header = ["Stage", "p50", "p95"]
+    lines.append("| " + " | ".join(header) + " |")
+    lines.append("|" + "|".join(["---"] * len(header)) + "|")
+    lines.append(
+        f"| Provision (create → Ready) | {_fmt_secs(dec['bind_p50'])} | "
+        f"{_fmt_secs(dec['bind_p95'])} |"
+    )
+    lines.append(
+        f"| Exec (websocket + first-instruction) | {_fmt_secs(dec['exec_p50'])} | "
+        f"{_fmt_secs(dec['exec_p95'])} |"
+    )
+    lines.append(
+        f"| **TTFE (total)** | **{_fmt_secs(dec['ttfe_p50'])}** | **{_fmt_secs(dec['ttfe_p95'])}** |"
+    )
+    lines.append("")
+    lines.append(
+        "_Each row is an independently-measured value against the same shared t0 (exec is the "
+        "measured residual TTFE − provision, not a subtraction of percentiles). For the "
+        "single-sample cold cell the p50 and p95 are the one measured sample._"
+    )
+    # Drained-regime caveat (#103/#111), data-keyed on provenance.regime so it cannot rot —
+    # same posture as the warm block: once an under-load fire emits regime != "drained" this
+    # caveat stops rendering by construction. Kept off any measured cell.
+    regime = None
+    prov = results.get("provenance")
+    if isinstance(prov, dict):
+        regime = prov.get("regime")
+    if regime == "drained":
+        lines.append("")
+        lines.append(
+            "> ⚠️ **Regime caveat:** this cold decomposition was measured on a **drained, "
+            "low-contention cluster** (single cold provision, n=1). The split is honest for "
+            "THIS fire but wants corroboration under representative load before the "
+            "provision/exec ratio is treated as durable."
+        )
+    lines.append("")
+    return "\n".join(lines)
+
+
 def _flat_verdict(retention):
     """✅/⚠️ flat verdict for a retention ratio; pending when absent.
 

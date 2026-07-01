@@ -939,6 +939,124 @@ def test_warm_bind_decomposition_bad_bind_value_dropped_then_inert():
     assert out == ""
 
 
+def _cold_scenario(metrics, n=1):
+    return {"name": "native_digest_cold", "outcome": "PASS", "n": n, "sla_metrics": metrics}
+
+
+def test_cold_bind_decomposition_inert_when_bind_absent():
+    # inch #2: today's cold row carries the ttfe pair but not the bind/exec pairs ⇒ INERT.
+    out = render.render_cold_bind_decomposition(_matrix_results(_full_gvisor_scenarios()))
+    assert out == ""
+
+
+def test_cold_bind_decomposition_inert_when_no_cold_scenario():
+    scen = [s for s in _full_gvisor_scenarios() if s["name"] != "native_digest_cold"]
+    out = render.render_cold_bind_decomposition(_matrix_results(scen))
+    assert out == ""
+
+
+def test_cold_bind_decomposition_inert_when_ttfe_absent():
+    # bind + exec pairs present but the matching ttfe pair missing ⇒ INERT (all six required).
+    scen = [
+        _cold_scenario(
+            {
+                "bind_p50_ms": 2000, "bind_p95_ms": 2000,
+                "exec_p50_ms": 200, "exec_p95_ms": 200,
+            }
+        )
+    ]
+    out = render.render_cold_bind_decomposition(_matrix_results(scen))
+    assert out == ""
+
+
+def test_cold_bind_decomposition_inert_when_exec_absent():
+    # bind + ttfe present but the measured exec pair missing ⇒ INERT (exec is measured, not
+    # derived by subtraction, so its absence keeps the block dark).
+    scen = [
+        _cold_scenario(
+            {
+                "bind_p50_ms": 2000, "bind_p95_ms": 2000,
+                "ttfe_p50_ms": 2130, "ttfe_p95_ms": 2130,
+            }
+        )
+    ]
+    out = render.render_cold_bind_decomposition(_matrix_results(scen))
+    assert out == ""
+
+
+def test_cold_bind_decomposition_renders_when_all_present():
+    # exec is a MEASURED percentile passed through verbatim — deliberately NOT equal to
+    # ttfe - bind (200 != 2130-2000=130) so the assertions prove the render displays the
+    # measured value, never a p50(ttfe)-p50(bind) subtraction. For cold, provision dominates.
+    scen = [
+        _cold_scenario(
+            {
+                "bind_p50_ms": 2000, "bind_p95_ms": 2000,
+                "exec_p50_ms": 200, "exec_p95_ms": 200,
+                "ttfe_p50_ms": 2130, "ttfe_p95_ms": 2130,
+            }
+        )
+    ]
+    out = render.render_cold_bind_decomposition(_matrix_results(scen))
+    assert "## Cold-Start TTFE — Provision vs Exec Decomposition" in out
+    assert "| Provision (create → Ready) | 2s | 2s |" in out
+    assert "| Exec (websocket + first-instruction) | 0.2s | 0.2s |" in out
+    assert "| **TTFE (total)** | **2.13s** | **2.13s** |" in out
+
+
+def _cold_decomp_scen():
+    return [
+        _cold_scenario(
+            {
+                "bind_p50_ms": 2000, "bind_p95_ms": 2000,
+                "exec_p50_ms": 200, "exec_p95_ms": 200,
+                "ttfe_p50_ms": 2130, "ttfe_p95_ms": 2130,
+            }
+        )
+    ]
+
+
+def test_cold_bind_decomposition_drained_caveat_renders():
+    # #103/#111: provenance.regime == "drained" appends the regime caveat under the block.
+    out = render.render_cold_bind_decomposition(
+        _matrix_results(_cold_decomp_scen(), provenance={"regime": "drained"})
+    )
+    assert "## Cold-Start TTFE — Provision vs Exec Decomposition" in out
+    assert "Regime caveat" in out
+    assert "drained, low-contention cluster" in out
+
+
+def test_cold_bind_decomposition_no_caveat_when_under_load():
+    # under-load ⇒ the drained caveat MUST NOT render (data-keyed, cannot rot).
+    out = render.render_cold_bind_decomposition(
+        _matrix_results(_cold_decomp_scen(), provenance={"regime": "under-load"})
+    )
+    assert "## Cold-Start TTFE — Provision vs Exec Decomposition" in out
+    assert "Regime caveat" not in out
+
+
+def test_cold_bind_decomposition_no_caveat_when_regime_absent():
+    # absent regime ⇒ no caveat (graceful degradation on pre-regime data).
+    out = render.render_cold_bind_decomposition(_matrix_results(_cold_decomp_scen()))
+    assert "## Cold-Start TTFE — Provision vs Exec Decomposition" in out
+    assert "Regime caveat" not in out
+
+
+def test_cold_bind_decomposition_bad_exec_value_dropped_then_inert():
+    # a non-numeric exec value fails the predicate ⇒ dropped ⇒ missing exec ⇒ INERT.
+    scen = [
+        _cold_scenario(
+            {
+                "bind_p50_ms": 2000, "bind_p95_ms": 2000,
+                "exec_p50_ms": "soon", "exec_p95_ms": 200,
+                "ttfe_p50_ms": 2130, "ttfe_p95_ms": 2130,
+            }
+        )
+    ]
+    out = render.render_cold_bind_decomposition(_matrix_results(scen))
+    assert out == ""
+
+
 def test_scale_proof_renders_linearity_row():
     results = _matrix_results(
         _full_gvisor_scenarios(),

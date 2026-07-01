@@ -340,12 +340,24 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
                 namespace=_NAMESPACE,
                 create_monotonic=t0,
             )
-            sla_metrics = metrics.single_sample_ttfe_point(ttfe_ms, exec_ok)
+            # Inch #2 — cold TTFE bind-vs-exec decomposition (INDEPENDENTLY MEASURED,
+            # shared t0). bind = create->Ready (cold_start_s: the full cold provision —
+            # controller reconcile + pod schedule + image pull + container start).
+            # exec = ttfe_ms - bind_ms (websocket setup + first-instruction round-trip
+            # on the already-Ready sandbox). Ready precedes the first instruction, so
+            # exec >= 0 by construction. For cold, provision is EXPECTED to dominate;
+            # a large exec would instead point at an exec-channel artifact.
+            bind_ms = cold_start_s * 1000.0
+            exec_ms = (ttfe_ms - bind_ms) if ttfe_ms is not None else None
+            sla_metrics = metrics.single_sample_ttfe_point(
+                ttfe_ms, exec_ok, bind_ms=bind_ms, exec_ms=exec_ms,
+            )
             excerpt = (
                 f"Cold provision of bare Sandbox {sandbox_name} "
                 f"(image={_SANDBOX_IMAGE}, pull=Always, no warm pool): "
-                f"create->Ready {cold_start_s:.2f}s; TTFE probe exec_ok={exec_ok}, "
-                f"ttfe_ms={ttfe_ms!r} (n=1; create->first-instruction-result)."
+                f"create->Ready {cold_start_s:.2f}s (bind_ms={bind_ms:.0f}); "
+                f"TTFE probe exec_ok={exec_ok}, ttfe_ms={ttfe_ms!r}, "
+                f"exec_ms={exec_ms!r} (n=1; create->first-instruction-result)."
             )
         else:
             sla_metrics = {_SLA_METRIC_KEY: cold_start_s * 1000.0, "n": 1}
