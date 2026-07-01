@@ -71,6 +71,8 @@ A warm-pool provision is **8.76812× faster** than a cold-provision start (warm-
 
 _Speedup = cold ÷ warm, computed from the displayed values over n=300 warm claims; the warm leg is the p50 so half of warm claims beat it._
 
+_This warm-vs-cold pair is a standalone point-in-time run; its warm-pool leg is a separate measurement from the Core Metrics matrix "Warm-pool hit" row (a different sample size and operating point). Read each block on its own terms — the two warm p50s are not directly comparable._
+
 _Measured 2026-06-29 — warm-vs-cold speedup (point-in-time; refreshed on the next TTFE fire)._
 
 ## Scale Proof (Linearity Check)
