@@ -304,6 +304,11 @@ _PENDING = "pending"
 # with "this row's N is too small to rank against another row".
 _LOW_N_MARK = "†"
 
+# N/A-by-construction cell (distinct from `pending`, which awaits a measurement). Used for
+# the resume-from-suspend × Kata+microVM cell: CRIU checkpoint/restore does not transfer to
+# the Kata VM model, so that cell can never be measured — na-by-design, not not-yet-measured.
+_NA = "N/A"
+
 
 def _fmt_num(v):
     """Compact numeric (no trailing zeros): 4.0 -> 4, 1.86 -> 1.86."""
@@ -437,6 +442,15 @@ def render_matrix(results):
         density = _runtime_density(scen_by_name) if measured else None
         for scen_name, mode_label in ACTIVATION_MODE_ROWS:
             is_resume = scen_name == "suspend_resume"
+            # Resume-from-suspend × Kata+microVM is N/A by construction: CRIU
+            # checkpoint/restore does not transfer to the Kata VM isolation model
+            # (harness/scenarios/suspend_resume.py), so this cell can NEVER be
+            # measured. Render it na-by-design — NOT `pending`, which would imply a
+            # future measurement that is structurally impossible. Holds regardless of
+            # which runtime this run measured (a kata-measured run still N/As it).
+            if is_resume and rt == "kata-microvm":
+                lines.append("| " + " | ".join([rt_label, mode_label] + [_NA] * 7) + " |")
+                continue
             sc = scen_by_name.get(scen_name) if measured else None
             m = sc["metrics"] if sc else {}
 
@@ -502,6 +516,11 @@ def render_matrix(results):
         "against a high-N row._"
     )
     lines.append("_Kata + microVM rows are not-yet-measured (requires-kata-microvm)._")
+    lines.append(
+        "_Resume-from-suspend × Kata + microVM renders `N/A` by construction — CRIU "
+        "checkpoint/restore does not transfer to the Kata VM isolation model, so that cell "
+        "can never be measured (distinct from `pending`, which awaits a run)._"
+    )
     lines.append("_Cells render `pending` until the TTFE-instrumented run lands._")
     lines.append("")
 
