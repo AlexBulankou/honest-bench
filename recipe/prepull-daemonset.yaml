@@ -31,6 +31,17 @@ spec:
           effect: NoSchedule
       # The init container does the actual pull: the kubelet must fetch the image
       # to run it, and `true` exits immediately once it is resident on the node.
+      #
+      # DISTROLESS CAVEAT: `/bin/true` assumes the base image ships coreutils (or a
+      # busybox-style shell). If REPLACE_WITH_SANDBOX_BASE_IMAGE is distroless, this
+      # command does not exist, so the init container fails to start and the pod
+      # shows Init:RunContainerError / not-Running. The pull (the actual goal) still
+      # SUCCEEDS regardless — the kubelet fetches the image to the node BEFORE it
+      # tries to run the command, so the layer is resident either way. On a
+      # distroless base, verify the pull by the node image cache
+      # (`crictl images` on the node), NOT by pod Running status. If your base image
+      # has a shell/coreutils (the common case for the sandbox base), `/bin/true`
+      # keeps the pod status honest and no change is needed.
       initContainers:
         - name: prepull
           image: REPLACE_WITH_SANDBOX_BASE_IMAGE
