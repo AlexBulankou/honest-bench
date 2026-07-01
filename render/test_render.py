@@ -886,6 +886,44 @@ def test_warm_bind_decomposition_renders_when_all_present():
     assert "| **TTFE (total)** | **1.396s** | **1.722s** |" in out
 
 
+def _decomp_scen():
+    return [
+        _warmpool_scenario(
+            {
+                "bind_p50_ms": 400, "bind_p95_ms": 600,
+                "exec_p50_ms": 1000, "exec_p95_ms": 1150,
+                "ttfe_p50_ms": 1396, "ttfe_p95_ms": 1722,
+            }
+        )
+    ]
+
+
+def test_warm_bind_decomposition_drained_caveat_renders():
+    # #103/#111: provenance.regime == "drained" appends the regime caveat under the block.
+    out = render.render_warm_bind_decomposition(
+        _matrix_results(_decomp_scen(), provenance={"regime": "drained"})
+    )
+    assert "## Warm-Hit TTFE — Bind vs Exec Decomposition" in out
+    assert "Regime caveat" in out
+    assert "drained, low-contention cluster" in out
+
+
+def test_warm_bind_decomposition_no_caveat_when_under_load():
+    # under-load ⇒ the drained caveat MUST NOT render (data-keyed, cannot rot).
+    out = render.render_warm_bind_decomposition(
+        _matrix_results(_decomp_scen(), provenance={"regime": "under-load"})
+    )
+    assert "## Warm-Hit TTFE — Bind vs Exec Decomposition" in out
+    assert "Regime caveat" not in out
+
+
+def test_warm_bind_decomposition_no_caveat_when_regime_absent():
+    # absent regime ⇒ no caveat (graceful degradation on pre-regime data).
+    out = render.render_warm_bind_decomposition(_matrix_results(_decomp_scen()))
+    assert "## Warm-Hit TTFE — Bind vs Exec Decomposition" in out
+    assert "Regime caveat" not in out
+
+
 def test_warm_bind_decomposition_bad_bind_value_dropped_then_inert():
     # a non-numeric bind value fails the predicate ⇒ dropped ⇒ missing bind ⇒ INERT.
     scen = [

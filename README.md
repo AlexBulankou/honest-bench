@@ -46,9 +46,9 @@ bash scripts/check-public-safety.sh           # fail-closed public-safety scan
 
 | Runtime | Activation Mode | Throughput @ <5s TTFE (sb/s/node) | Throughput @ <1s TTFE (sb/s/node) | TTFE p50 | TTFE p95 | Samples (N) | Max Density (sb/vCPU) | Execution Success (Honesty Check) |
 |---|---|---|---|---|---|---|---|---|
-| gVisor | Warm-pool hit (Base image) | 19.967 | 0 | 1.396s | 1.7221s | 30 | pending | 100% |
-| gVisor | Unique-image cold (RL reality) | pending | pending | 2.1276s † | 2.1276s † | 1 | pending | 100% |
-| gVisor | Resume-from-suspend | pending | pending | 32.5161s † | 32.7104s † | 3 | N/A | 100% |
+| gVisor | Warm-pool hit (Base image) | 16.144 | 16.144 | 0.4435s † | 0.4914s † | 5 | pending | 100% |
+| gVisor | Unique-image cold (RL reality) | pending | pending | 4.5191s † | 4.5191s † | 1 | pending | 100% |
+| gVisor | Resume-from-suspend | pending | pending | 34.8414s † | 34.8414s † | 1 | N/A | 100% |
 | Kata + microVM | Warm-pool hit (Base image) | pending | pending | pending | pending | pending | pending | pending |
 | Kata + microVM | Unique-image cold (RL reality) | pending | pending | pending | pending | pending | pending | pending |
 | Kata + microVM | Resume-from-suspend | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
@@ -62,24 +62,51 @@ _Kata + microVM rows are not-yet-measured (requires-kata-microvm)._
 _Resume-from-suspend × Kata + microVM renders `N/A` by construction — CRIU checkpoint/restore does not transfer to the Kata VM isolation model, so that cell can never be measured (distinct from `pending`, which awaits a run)._
 _Cells render `pending` until the TTFE-instrumented run lands._
 
-_build: cluster_substrate=gke-sandbox · controller_image=us-central1-docker.pkg.dev/k8s-staging-images/agent-sandbox/agent-sandbox-controller:latest-main · controller_digest=sha256:6edaf7b6b22d9dfaf6ab077cd1c6517acf5fc6cf96b1ad58fe83bcfd477977ec · crd_version=v1beta1 · suite_git_sha=fbc1a5d362f8a7befa3c3c2cb33703013cfb49b0 · run_id=247326d41d0749319d823948bc5fbaf0 · node_count=20_
-_generated-at: 2026-07-01T04:18:36Z_
+_build: cluster_substrate=gke-sandbox · run_id=dc1dd343fee74008a2f75ccdfed39eb9 · node_count=1_
+_generated-at: 2026-07-01T07:23:08Z_
+
+## Burst Create — TTFE Corroboration
+
+The headline burst count is **pod-Ready** — but a pod can report Ready before it can run your code. TTFE is the stronger claim: the sandbox *executed its first instruction and returned a result*. This block corroborates the two; the **gap** is sandboxes that reported Ready but had not yet run code.
+
+| Signal | Count |
+|---|---|
+| Pod-Ready <1s (weaker claim) | 10 |
+| Executed first-instruction <1s (TTFE, stronger claim) | 10 |
+| Ready-but-not-yet-run (gap) | 0 |
+| Execution success (Honesty Check) | 100% |
+
+_Pod-Ready ≥ executed-TTFE by construction; the gap is the over-claim a pod-Ready headline would hide._
+
+## Warm-Hit TTFE — Bind vs Exec Decomposition
+
+Warm-hit TTFE (create → first-instruction result) splits into **bind** (create → bound, i.e. provisioning the pool member) and **exec** (websocket setup + the first-instruction round-trip). This block shows *where* a warm-hit above the <1s target lives — a large bind points at provisioning (a controller/clone target); a large exec points at the exec channel (a harness/product artifact, not a controller regression).
+
+| Stage | p50 | p95 |
+|---|---|---|
+| Bind (create → bound, provisioning) | 0.2331s | 0.2726s |
+| Exec (websocket + first-instruction) | 0.2016s | 0.2548s |
+| **TTFE (total)** | **0.4435s** | **0.4914s** |
+
+_Each row is an independently-measured percentile of its own per-claim distribution (exec is measured per-claim as TTFE − bind, then percentiled — not p50(TTFE) − p50(bind)). Percentiles do not sum, so bind and exec need not add exactly to the total TTFE._
+
+> ⚠️ **Regime caveat:** this warm tier was measured on a **drained, low-contention cluster** (single fire, small claim count). A green warm tier here is honest for THIS fire but is **not yet a sustained North-Star claim** — it wants corroboration under representative load before sub-1s warm is treated as durable.
 
 ## Warm-vs-Cold Speedup
 
-A warm-pool provision is **8.76812× faster** than a cold-provision start (warm-pool overflow) (gVisor). The warm pool keeps a ready slot so a claim skips the fresh-node provisioning path an overflow claim pays when the pool is exhausted — provisioning off the SHARED base image (one node-cacheable image, NOT a unique image per claim). Both legs are measured the same way (TTFE (executed first-instruction)); the ratio is the portable headline you can reproduce on your own cluster.
+A warm-pool provision is **11.5608× faster** than a true-cold start (gVisor). The warm pool keeps a ready slot so a claim skips the fresh-node image-pull path a cold start pays in full. Both legs are measured the same way (TTFE (executed first-instruction)); the ratio is the portable headline you can reproduce on your own cluster.
 
 | Leg | TTFE (p50) |
 |---|---|
-| Warm-pool hit (gVisor) | 6.9s |
-| Cold-provision (node overflow) | 60.5s |
-| Speedup (warm is N× faster) | 8.76812× |
+| Warm-pool hit (gVisor) | 0.3909s |
+| True-cold (unique-image) | 4.5191s |
+| Speedup (warm is N× faster) | 11.5608× |
 
-_Speedup = cold ÷ warm, computed from the displayed values over n=300 warm claims; the warm leg is the p50 so half of warm claims beat it._
+_Speedup = cold ÷ warm, computed from the displayed values over n=10 warm claims; the warm leg is the p50 so half of warm claims beat it._
 
 _This warm-vs-cold pair is a standalone point-in-time run; its warm-pool leg is a separate measurement from the Core Metrics matrix "Warm-pool hit" row (a different sample size and operating point). Read each block on its own terms — the two warm p50s are not directly comparable._
 
-_Measured 2026-06-29 — warm-vs-cold speedup (point-in-time; refreshed on the next TTFE fire)._
+_Measured 2026-07-01 — warm-vs-cold speedup (point-in-time; refreshed on the next TTFE fire)._
 
 ## Scale Proof (Linearity Check)
 

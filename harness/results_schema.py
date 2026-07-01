@@ -51,6 +51,18 @@ PENDING_REASON_ENUM = (
 # proven. Optional in provenance — dropped when absent, fail-closed when present.
 COLD_START_MODE_ENUM = ("cold-provision", "cold-pull")
 
+# warm_regime (#103/#111) — a CLOSED enum qualifying the cluster-contention
+# regime a warm-tier result was measured under, so a sub-1s warm claim is not
+# over-read. "drained" = a low-contention, drained cluster (single fire, few
+# claims): a green warm tier THIS fire is honest but is NOT yet a sustained
+# North-Star claim and wants corroboration under representative load.
+# "under-load" = measured under representative contention, so a green warm tier
+# is a durable claim. Data-keyed (not static prose) precisely so the caveat
+# cannot rot: once an under-load fire clears the bar, the drained caveat stops
+# rendering by construction. Optional in provenance — dropped when absent,
+# fail-closed when present.
+WARM_REGIME_ENUM = ("drained", "under-load")
+
 # badge_scope (#3905) — a per-SCENARIO closed enum qualifying what a security-isolation
 # PASS asserts: "control-plane" = the policy/runtime-class was admitted and correctly
 # targeted (NOT data-plane traffic enforcement); "enforced" = data-plane enforcement was
@@ -128,6 +140,7 @@ PROVENANCE_FIELDS = (
     "run_id",
     "node_count",
     "cold_start_mode",
+    "regime",
 )
 SCENARIO_FIELDS = (
     "name",
@@ -814,6 +827,15 @@ def _coerce_provenance(raw: dict) -> dict:
             if v not in COLD_START_MODE_ENUM:
                 raise ValueError(
                     f"provenance.cold_start_mode {v!r} not in {COLD_START_MODE_ENUM}"
+                )
+            out[f] = v
+        elif f == "regime":
+            # Closed-enum, fail-closed (mirrors cold_start_mode): a non-enum
+            # value is a misconfiguration, not a leak — raise rather than drop
+            # so a mislabeled contention regime never publishes.
+            if v not in WARM_REGIME_ENUM:
+                raise ValueError(
+                    f"provenance.regime {v!r} not in {WARM_REGIME_ENUM}"
                 )
             out[f] = v
         elif isinstance(v, str) and v:
