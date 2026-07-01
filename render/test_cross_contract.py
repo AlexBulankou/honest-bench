@@ -969,6 +969,121 @@ def test_emit_to_render_concurrent_burst_convergence():
     )
 
 
+def test_emit_to_render_warm_pool_acquisition_convergence():
+    """Convergence guard for the warm-pool-acquisition block (#4083; carried across #112).
+
+    warm_pool_acquisition is emitted by harness/results_schema.build_results(warm_pool_acquisition=...)
+    (via _coerce_warm_pool_acquisition) and allow-listed on the render side by
+    schema.WARM_POOL_ACQUISITION_FIELDS. It has NO in-process producer — the daily
+    `harness.run --product sandbox` refresh carries the prior committed block forward verbatim
+    (run.carry_prior_warm_pool_acquisition, #112), so this block MUST survive the emit→render
+    round-trip or the daily refresh would carry a block the renderer silently treats as INERT
+    (the #112 "other door" drop). Every field the EMITTER keeps on a real object must pass the
+    INDEPENDENT render-side predicate, the runtime_class enum must agree value-for-value across the
+    two independent sets, and the emitter's fail-closed guard must drop an out-of-enum runtime_class
+    / a negative acq latency / a registry-shaped machine_type. Fails loudly first.
+    """
+    import importlib.util
+
+    import schema
+
+    emitter_path = os.path.join(_ROOT, "harness", "results_schema.py")
+    if not os.path.exists(emitter_path):
+        print("  (skip: harness emitter not in-tree yet)")
+        return
+    spec = importlib.util.spec_from_file_location("_bench_emitter_wpa", emitter_path)
+    mod = importlib.util.module_from_spec(spec)
+    try:
+        spec.loader.exec_module(mod)
+    except Exception as exc:  # pragma: no cover - harness has its own deps
+        print(f"  (skip: harness emitter not importable in isolation: {exc})")
+        return
+
+    # The closed runtime vocabulary must agree value-for-value across the two independent sets,
+    # or a future render drops a runtime_class the emitter happily emits.
+    assert set(mod.WARM_VS_COLD_RUNTIME_CLASS_ENUM) == set(schema.RUNTIME_LABELS), (
+        "emit/render DRIFT: harness WARM_VS_COLD_RUNTIME_CLASS_ENUM "
+        f"{set(mod.WARM_VS_COLD_RUNTIME_CLASS_ENUM)} != render RUNTIME_LABELS "
+        f"{set(schema.RUNTIME_LABELS)}"
+    )
+
+    # A full warm_pool_acquisition object: every field populated so the convergence covers the
+    # whole optional decomposition + provenance surface, not just the spine.
+    wpa_in = {
+        "runtime_class": "gvisor",
+        "acq_p50_ms": 2939.65,
+        "acq_p95_ms": 3878.44,
+        "acq_p99_ms": 4009.62,
+        "controller_startup_p95_ms": 1338.12,
+        "n": 600,
+        "offered_rate_per_s": 300,
+        "warmpool_size": 600,
+        "machine_type": "n2-standard-16",
+        "node_count": 24,
+        "measured_at": "2026-07-01T01:03:12Z",
+    }
+    results = mod.build_results(
+        [], {"cluster_substrate": "gke-sandbox", "node_count": 24},
+        generated_at="2026-07-01T12:00:00Z", warm_pool_acquisition=wpa_in,
+    )
+    assert "warm_pool_acquisition" in results, (
+        f"emitter dropped the whole warm_pool_acquisition object — rejected a valid full object:\n{wpa_in}"
+    )
+    wpa = results["warm_pool_acquisition"]
+
+    # (a) every top-level field the emitter KEPT passes the independent render allow-list.
+    for key, val in wpa.items():
+        assert key in schema.WARM_POOL_ACQUISITION_FIELDS, (
+            f"emit/render DRIFT: emitter kept key {key!r} absent from render "
+            "WARM_POOL_ACQUISITION_FIELDS — render_warm_pool_acquisition would silently drop it."
+        )
+        assert schema.WARM_POOL_ACQUISITION_FIELDS[key](val), (
+            f"emit/render DRIFT: render WARM_POOL_ACQUISITION_FIELDS[{key!r}] rejects emitter value "
+            f"{val!r} — the block would render nothing."
+        )
+
+    # (b) the required spine survives intact on a clean object.
+    for spine in ("runtime_class", "acq_p50_ms", "acq_p95_ms", "n"):
+        assert spine in wpa, f"required spine field {spine!r} must survive a clean object"
+    assert wpa["runtime_class"] == "gvisor" and wpa["n"] == 600
+
+    # (c) an out-of-enum runtime_class drops the whole block (emitter fail-closed guard).
+    leak_rc = mod.build_results(
+        [], {"cluster_substrate": "gke-sandbox", "node_count": 24},
+        generated_at="2026-07-01T12:00:00Z",
+        warm_pool_acquisition={"runtime_class": "firecracker", "acq_p50_ms": 100.0,
+                               "acq_p95_ms": 200.0, "n": 10},
+    )
+    assert "warm_pool_acquisition" not in leak_rc, (
+        "out-of-enum runtime_class must drop the whole warm_pool_acquisition block — fail-closed guard"
+    )
+
+    # (d) a negative acq latency drops the whole block (no partial-lie table).
+    leak_neg = mod.build_results(
+        [], {"cluster_substrate": "gke-sandbox", "node_count": 24},
+        generated_at="2026-07-01T12:00:00Z",
+        warm_pool_acquisition={"runtime_class": "gvisor", "acq_p50_ms": -1.0,
+                               "acq_p95_ms": 200.0, "n": 10},
+    )
+    assert "warm_pool_acquisition" not in leak_neg, (
+        "a negative acq_p50_ms must drop the whole block — closed-schema guard"
+    )
+
+    # (e) a registry-path-shaped machine_type is dropped (provenance scalar), but the block with
+    # a valid spine still renders — provenance is best-effort, the spine is load-bearing.
+    drop_mt = mod.build_results(
+        [], {"cluster_substrate": "gke-sandbox", "node_count": 24},
+        generated_at="2026-07-01T12:00:00Z",
+        warm_pool_acquisition={"runtime_class": "gvisor", "acq_p50_ms": 100.0,
+                               "acq_p95_ms": 200.0, "n": 10,
+                               "machine_type": "us-central1-docker.pkg.dev/proj/img:1"},
+    )
+    assert "warm_pool_acquisition" in drop_mt, "a valid spine must survive a dropped provenance scalar"
+    assert "machine_type" not in drop_mt["warm_pool_acquisition"], (
+        "a registry-path-shaped machine_type must be dropped — bounded GCP-shape guard"
+    )
+
+
 def _run_all():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:
