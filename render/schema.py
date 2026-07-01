@@ -35,6 +35,19 @@ COLD_START_MODES = {"cold-provision", "cold-pull"}
 # value is dropped, and an absent value renders no caveat (graceful degradation).
 WARM_REGIMES = {"drained", "under-load"}
 
+# warm_scaling_term (#4137) names WHICH term drives warm-hit TTFE growth as claim-count
+# climbs on the drained regime. The #119 N=30 fire showed warm-hit TTFE p50 tripling with N
+# (bind 233→663→792ms across N5→N30→N35) while exec stayed flat (202→242ms) — i.e. the
+# scaling is in provisioning/bind concurrency on the fixed drained node-set, not in the exec
+# channel. This closed enum lets the drained caveat NAME that term on the page itself (not
+# just the PR body), so a reader understands *why* the warm-hit distribution straddles 1s at
+# higher N. Data-keyed like WARM_REGIMES: it ONLY renders alongside a drained caveat (it
+# qualifies that caveat), and it is a closed set so the attribution can't rot into free-text.
+# A closed set mirroring the harness side (WARM_SCALING_TERM_ENUM). The render guard is
+# SECONDARY — the harness emitter fail-closes on a typo'd value — so here an out-of-enum
+# value is dropped, and an absent value renders no scaling clause (graceful degradation).
+WARM_SCALING_TERMS = {"bind-concurrency"}
+
 # badge_scope (#3905) is a per-SCENARIO closed enum qualifying what a security-isolation
 # PASS actually asserts. "control-plane" = the policy/runtime-class was admitted and
 # correctly targeted (NOT that data-plane traffic was enforced); "enforced" = data-plane
@@ -114,6 +127,10 @@ PROVENANCE_FIELDS = {
     # warm_regime (#103/#111): the cluster-contention regime the warm tier was measured
     # under; drives the drained-cluster caveat under the warm bind/exec decomposition.
     "regime": lambda v: v in WARM_REGIMES,
+    # warm_scaling_term (#4137): names the term driving warm-hit TTFE growth with claim-count
+    # on the drained regime; renders as a clause ON the drained caveat (only when regime is
+    # drained), so the page explains why warm-hit straddles 1s at higher N.
+    "warm_scaling_term": lambda v: v in WARM_SCALING_TERMS,
     # Goal-2.1 matrix: which isolation runtime this run measured (runtimeClassName). Drives
     # the matrix's Runtime column; absent ⇒ the renderer defaults to gvisor (today's only
     # live runtime — the gke-sandbox/runsc path).

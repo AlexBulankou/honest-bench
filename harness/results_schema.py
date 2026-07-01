@@ -63,6 +63,16 @@ COLD_START_MODE_ENUM = ("cold-provision", "cold-pull")
 # fail-closed when present.
 WARM_REGIME_ENUM = ("drained", "under-load")
 
+# warm_scaling_term (#4137) — a closed enum naming WHICH term drives warm-hit TTFE growth
+# as claim-count climbs on the drained regime. The #119 N=30 fire showed warm-hit TTFE p50
+# tripling with N via BIND (233→663→792ms across N5→N30→N35) while EXEC stayed flat
+# (202→242ms) — i.e. provisioning/bind concurrency on the fixed drained node-set, not the
+# exec channel. It qualifies the drained caveat (renders only alongside it), so the public
+# page NAMES the scaling term rather than leaving it in the PR body. Data-keyed like
+# WARM_REGIME_ENUM: a closed set precisely so the attribution can't rot into free-text.
+# Optional in provenance — dropped when absent, fail-closed when present.
+WARM_SCALING_TERM_ENUM = ("bind-concurrency",)
+
 # badge_scope (#3905) — a per-SCENARIO closed enum qualifying what a security-isolation
 # PASS asserts: "control-plane" = the policy/runtime-class was admitted and correctly
 # targeted (NOT data-plane traffic enforcement); "enforced" = data-plane enforcement was
@@ -141,6 +151,7 @@ PROVENANCE_FIELDS = (
     "node_count",
     "cold_start_mode",
     "regime",
+    "warm_scaling_term",
 )
 SCENARIO_FIELDS = (
     "name",
@@ -987,6 +998,15 @@ def _coerce_provenance(raw: dict) -> dict:
             if v not in WARM_REGIME_ENUM:
                 raise ValueError(
                     f"provenance.regime {v!r} not in {WARM_REGIME_ENUM}"
+                )
+            out[f] = v
+        elif f == "warm_scaling_term":
+            # Closed-enum, fail-closed (mirrors regime): a non-enum value is a
+            # misconfiguration, not a leak — raise rather than drop so a
+            # mislabeled scaling term never publishes.
+            if v not in WARM_SCALING_TERM_ENUM:
+                raise ValueError(
+                    f"provenance.warm_scaling_term {v!r} not in {WARM_SCALING_TERM_ENUM}"
                 )
             out[f] = v
         elif isinstance(v, str) and v:
