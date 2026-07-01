@@ -1,0 +1,235 @@
+"""Offline tests for the #112 daily-refresh carry-forward of the three producer-less
+blocks — kata_activation (#3942), concurrent_burst (#4021), warm_pool_acquisition
+(#4083). No cluster, no I/O beyond self-managed tempfiles.
+
+Run with bare python3 (the auto-refresh GH-runner needs nothing extra):
+  python3 -m harness.test_run_carry_forward_112
+or directly:
+  python3 harness/test_run_carry_forward_112.py
+
+Why this file exists (#112 structural gap): unlike scale_proof / stepup / warm_vs_cold,
+these three blocks have NO in-process producer — they are written only by manual
+data-only fires straight into latest.json. Before #112, run.main() passed only
+scale_proof/stepup/warm_vs_cold into build_results and build_results had no
+warm_pool_acquisition param at all, so the daily `harness.run --product sandbox`
+refresh did a wholesale write that SILENTLY DROPPED all three blocks from the public
+table. The fix mirrors the carry_prior_* posture for each: fresh is always None here
+(no producer), so the prior committed block is carried forward verbatim (honest, no
+auto-decay). These tests lock that carry + read + the build_results wiring. The
+matching emitter⇄renderer convergence lock (a carried warm_pool_acquisition block
+round-tripping through render's cleaner) lives in render/test_cross_contract.py,
+which can import both sides across the render/harness sys.path split.
+"""
+
+from __future__ import annotations
+
+import os as _os
+import sys as _sys
+_sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
+
+import json
+import pathlib
+import tempfile
+
+from harness import results_schema as rs
+from harness import run
+
+
+def _check(cond, msg):
+    if not cond:
+        raise AssertionError(msg)
+
+
+_GEN_AT = "2026-07-01T12:00:00Z"
+
+# Representative prior blocks (the shape a manual data-only fire committed). Each
+# carries its own measured_at so the carried-block-keeps-its-date assertion is real.
+_PRIOR_KATA = {
+    "runtime_class": "kata-microvm",
+    "microvm_activation_ms": 2000,
+    "warm_ready_ms": 3000,
+    "cold_ready": [
+        {"image": "debian:12", "image_pull_ms": 900, "ready_ms": 3000},
+        {"image": "ubuntu:24.04", "image_pull_ms": 887, "ready_ms": 5000},
+    ],
+    "guest_kernel": "6.18.35",
+    "host_kernel": "6.8.0-1054-gke",
+    "hypervisor": "Cloud Hypervisor",
+    "kata_version": "3.32.0",
+    "warm_image": "ubuntu:24.04",
+    "resume_status": "upstream-blocked",
+    "n": 3,
+    "measured_at": "2026-06-30T02:00:00Z",
+}
+_PRIOR_CB = {
+    "legs": [
+        {"n": 300, "mode": "warm", "ttfe_p50_ms": 6874.3, "ttfe_p95_ms": 9393.0,
+         "exec_success_rate": 1.0},
+        {"n": 300, "mode": "cold", "ttfe_p50_ms": 56029.4, "ttfe_p95_ms": 58412.4,
+         "exec_success_rate": 1.0},
+    ],
+    "node_count": 20,
+    "machine_type": "e2-standard-16",
+    "measured_at": "2026-06-30T03:00:00Z",
+}
+_PRIOR_WPA = {
+    "runtime_class": "gvisor",
+    "acq_p50_ms": 2939.65,
+    "acq_p95_ms": 3878.44,
+    "acq_p99_ms": 4009.62,
+    "n": 600,
+    "offered_rate_per_s": 300,
+    "warmpool_size": 600,
+    "machine_type": "n2-standard-16",
+    "node_count": 24,
+    "measured_at": "2026-07-01T01:03:12Z",
+}
+
+_BLOCKS = (
+    ("kata_activation", run.carry_prior_kata_activation,
+     run._read_prior_kata_activation, _PRIOR_KATA),
+    ("concurrent_burst", run.carry_prior_concurrent_burst,
+     run._read_prior_concurrent_burst, _PRIOR_CB),
+    ("warm_pool_acquisition", run.carry_prior_warm_pool_acquisition,
+     run._read_prior_warm_pool_acquisition, _PRIOR_WPA),
+)
+
+
+# --- carry_prior_*: fresh-wins-else-prior, with the producer-less None path ---
+
+def test_carry_no_fresh_carries_prior_unchanged():
+    # The daily-refresh path: fresh=None (no producer) ⇒ carry the committed block verbatim,
+    # keeping its ORIGINAL measured_at (not generated_at). This is the #112 core guarantee.
+    for key, carry, _read, prior in _BLOCKS:
+        out = carry(None, prior, generated_at=_GEN_AT)
+        _check(out == prior, f"{key}: no fresh ⇒ carry prior verbatim, got {out!r}")
+        _check(out["measured_at"] == prior["measured_at"],
+               f"{key}: carried block keeps its original measured_at")
+
+
+def test_carry_empty_fresh_carries_prior():
+    for key, carry, _read, prior in _BLOCKS:
+        out = carry({}, prior, generated_at=_GEN_AT)
+        _check(out == prior, f"{key}: empty fresh {{}} ⇒ carry prior, got {out!r}")
+
+
+def test_carry_no_fresh_no_prior_is_none():
+    # First-ever run with neither a producer nor a prior committed block ⇒ absent (no key).
+    for key, carry, _read, _prior in _BLOCKS:
+        out = carry(None, None, generated_at=_GEN_AT)
+        _check(out is None, f"{key}: no fresh + no prior ⇒ None (cell absent), got {out!r}")
+
+
+def test_carry_fresh_wins_and_is_stamped():
+    # Not the daily-refresh path today (no producer), but the carry contract is symmetric with
+    # the other blocks: a hypothetical fresh dict wins and is stamped measured_at=generated_at.
+    for key, carry, _read, prior in _BLOCKS:
+        fresh = dict(prior)
+        fresh.pop("measured_at", None)
+        out = carry(fresh, prior, generated_at=_GEN_AT)
+        _check(out["measured_at"] == _GEN_AT,
+               f"{key}: fresh stamps measured_at=generated_at, got {out.get('measured_at')!r}")
+        _check("measured_at" not in fresh, f"{key}: must not mutate the input fresh dict")
+
+
+def test_carry_fresh_preexisting_measured_at_respected():
+    for key, carry, _read, prior in _BLOCKS:
+        fresh = dict(prior)
+        fresh["measured_at"] = "2025-01-01T00:00:00Z"
+        out = carry(fresh, prior, generated_at=_GEN_AT)
+        _check(out["measured_at"] == "2025-01-01T00:00:00Z",
+               f"{key}: a fresh dict already carrying measured_at keeps it (setdefault)")
+
+
+# --- _read_prior_*: best-effort top-level read ---
+
+def _read_with(reader, file_content):
+    fd, tmp = tempfile.mkstemp(suffix=".json")
+    try:
+        with _os.fdopen(fd, "w") as fh:
+            if isinstance(file_content, str):
+                fh.write(file_content)
+            elif file_content is not None:
+                json.dump(file_content, fh)
+        if file_content is None:
+            pathlib.Path(tmp).unlink(missing_ok=True)
+        return reader(pathlib.Path(tmp))
+    finally:
+        pathlib.Path(tmp).unlink(missing_ok=True)
+
+
+def test_read_prior_missing_file_is_none():
+    for key, _carry, reader, _prior in _BLOCKS:
+        _check(_read_with(reader, None) is None, f"{key}: missing file ⇒ None")
+
+
+def test_read_prior_malformed_is_none():
+    for key, _carry, reader, _prior in _BLOCKS:
+        _check(_read_with(reader, "{not valid json") is None, f"{key}: malformed JSON ⇒ None")
+
+
+def test_read_prior_absent_key_is_none():
+    for key, _carry, reader, _prior in _BLOCKS:
+        _check(_read_with(reader, {"scenarios": []}) is None, f"{key}: absent key ⇒ None")
+
+
+def test_read_prior_present_returns_block():
+    for key, _carry, reader, prior in _BLOCKS:
+        out = _read_with(reader, {key: prior, "scenarios": []})
+        _check(out == prior, f"{key}: present block returned, got {out!r}")
+
+
+def test_read_prior_non_dict_block_is_none():
+    # A present-but-non-dict value (a stringly-typed corruption) reads as None, not a crash.
+    for key, _carry, reader, _prior in _BLOCKS:
+        _check(_read_with(reader, {key: "corrupt", "scenarios": []}) is None,
+               f"{key}: non-dict block value ⇒ None")
+
+
+# --- build_results wiring: the daily-refresh write must EMIT all three carried blocks ---
+
+def _prov():
+    return {"cluster_substrate": "gke-sandbox", "commit": "abc1234", "runner": "test"}
+
+
+def test_build_results_emits_all_three_carried_blocks():
+    # The #112 regression lock: a wholesale build_results write with all three blocks passed
+    # must EMIT all three top-level keys (before #112 they were silently dropped).
+    out = rs.build_results(
+        [], _prov(), _GEN_AT, product="sandbox",
+        kata_activation=_PRIOR_KATA,
+        concurrent_burst=_PRIOR_CB,
+        warm_pool_acquisition=_PRIOR_WPA,
+    )
+    _check("kata_activation" in out, "kata_activation emitted")
+    _check("concurrent_burst" in out, "concurrent_burst emitted")
+    _check("warm_pool_acquisition" in out, "warm_pool_acquisition emitted")
+
+
+def test_build_results_absent_omits_all_three_keys():
+    # Default callers (a first-ever run with no priors) pass None ⇒ no keys, no fabrication.
+    out = rs.build_results([], _prov(), _GEN_AT, product="sandbox")
+    for key in ("kata_activation", "concurrent_burst", "warm_pool_acquisition"):
+        _check(key not in out, f"{key} omitted when not supplied")
+
+
+def _all_tests():
+    return [v for k, v in sorted(globals().items())
+            if k.startswith("test_") and callable(v)]
+
+
+def main() -> int:
+    failures = 0
+    for t in _all_tests():
+        try:
+            t()
+            print(f"PASS {t.__name__}")
+        except AssertionError as e:
+            failures += 1
+            print(f"FAIL {t.__name__}: {e}")
+    print(f"\n{len(_all_tests()) - failures}/{len(_all_tests())} passed")
+    return 1 if failures else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

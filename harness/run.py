@@ -233,6 +233,51 @@ def _read_prior_warm_vs_cold(out_path: pathlib.Path):
     return wvc if isinstance(wvc, dict) else None
 
 
+def _read_prior_kata_activation(out_path: pathlib.Path):
+    """Read the existing results file's top-level kata_activation object (#3942).
+
+    Best-effort, mirroring _read_prior_warm_vs_cold: a missing/malformed file or an
+    absent kata_activation key means there is nothing to carry forward, so return
+    None (the honest-absence signal the emitter understands).
+    """
+    try:
+        prior = json.loads(out_path.read_text())
+    except (FileNotFoundError, ValueError):
+        return None
+    ka = prior.get("kata_activation") if isinstance(prior, dict) else None
+    return ka if isinstance(ka, dict) else None
+
+
+def _read_prior_concurrent_burst(out_path: pathlib.Path):
+    """Read the existing results file's top-level concurrent_burst object (#4021).
+
+    Best-effort, mirroring _read_prior_kata_activation: a missing/malformed file or
+    an absent concurrent_burst key means there is nothing to carry forward, so
+    return None (the honest-absence signal the emitter understands).
+    """
+    try:
+        prior = json.loads(out_path.read_text())
+    except (FileNotFoundError, ValueError):
+        return None
+    cb = prior.get("concurrent_burst") if isinstance(prior, dict) else None
+    return cb if isinstance(cb, dict) else None
+
+
+def _read_prior_warm_pool_acquisition(out_path: pathlib.Path):
+    """Read the existing results file's top-level warm_pool_acquisition object (#4083).
+
+    Best-effort, mirroring _read_prior_concurrent_burst: a missing/malformed file or
+    an absent warm_pool_acquisition key means there is nothing to carry forward, so
+    return None (the honest-absence signal the emitter understands).
+    """
+    try:
+        prior = json.loads(out_path.read_text())
+    except (FileNotFoundError, ValueError):
+        return None
+    wpa = prior.get("warm_pool_acquisition") if isinstance(prior, dict) else None
+    return wpa if isinstance(wpa, dict) else None
+
+
 def carry_prior_scale_proof(fresh, prior, *, generated_at: str):
     """Persist the Scale Proof block across the daily single-node refresh (#3952).
 
@@ -299,6 +344,72 @@ def carry_prior_warm_vs_cold(fresh, prior, *, generated_at: str):
     daily-refreshed top-level `generated_at`. Both paths flow through the closed
     emitter (`_coerce_warm_vs_cold`), so a carried block that is not a valid
     warm_vs_cold is dropped, never published as a partial lie.
+    """
+    if isinstance(fresh, dict) and fresh:
+        stamped = dict(fresh)
+        stamped.setdefault("measured_at", generated_at)
+        return stamped
+    return prior
+
+
+def carry_prior_kata_activation(fresh, prior, *, generated_at: str):
+    """Persist the Kata+microVM activation block across the daily refresh (#3942; #112 gap).
+
+    Exact mirror of carry_prior_warm_vs_cold, and for the same reason: the Kata block
+    is produced only by the heavy, manual, collision-acked Kata matrix-fill fire on
+    the nested-virt pool (#1021) — the daily single-node auto-refresh never arms it,
+    so without this carry-forward the published Kata activation block would vanish on
+    the next refresh after a fire (the #112 wholesale-write drop this fixes).
+
+    Fresh always wins: a real fire this run stamps `measured_at = generated_at` via
+    setdefault and is returned as-is. Otherwise the prior committed block is carried
+    forward UNCHANGED, keeping its original `measured_at`. Both paths flow through the
+    closed emitter (`_coerce_kata_activation`), so a carried block that is not a valid
+    kata_activation is dropped, never published as a partial lie.
+    """
+    if isinstance(fresh, dict) and fresh:
+        stamped = dict(fresh)
+        stamped.setdefault("measured_at", generated_at)
+        return stamped
+    return prior
+
+
+def carry_prior_concurrent_burst(fresh, prior, *, generated_at: str):
+    """Persist the concurrent-burst block across the daily refresh (#4021; #112 gap).
+
+    Exact mirror of carry_prior_kata_activation: the concurrent-burst block is
+    produced only by the heavy, manual, collision-acked all-at-once burst fire — the
+    daily single-node auto-refresh never produces one, so without this carry-forward
+    the published block would vanish on the next refresh after a fire (the #112
+    wholesale-write drop this fixes).
+
+    Fresh always wins: a real fire this run stamps `measured_at = generated_at` via
+    setdefault and is returned as-is. Otherwise the prior committed block is carried
+    forward UNCHANGED. Both paths flow through the closed emitter
+    (`_coerce_concurrent_burst`), so a carried block that is not a valid
+    concurrent_burst is dropped, never published as a partial lie.
+    """
+    if isinstance(fresh, dict) and fresh:
+        stamped = dict(fresh)
+        stamped.setdefault("measured_at", generated_at)
+        return stamped
+    return prior
+
+
+def carry_prior_warm_pool_acquisition(fresh, prior, *, generated_at: str):
+    """Persist the warm-pool acquisition-latency block across the daily refresh (#4083; #112 gap).
+
+    Exact mirror of carry_prior_concurrent_burst: the acquisition-latency block is
+    produced only by the heavy, manual, collision-acked step-up fire with the
+    per-claim acquisition watch-timer (#1043) — the daily single-node auto-refresh
+    never arms it, so without this carry-forward the published block would vanish on
+    the next refresh after a fire (the #112 wholesale-write drop this fixes).
+
+    Fresh always wins: a real fire this run stamps `measured_at = generated_at` via
+    setdefault and is returned as-is. Otherwise the prior committed block is carried
+    forward UNCHANGED. Both paths flow through the closed emitter
+    (`_coerce_warm_pool_acquisition`), so a carried block that is not a valid
+    warm_pool_acquisition is dropped, never published as a partial lie.
     """
     if isinstance(fresh, dict) and fresh:
         stamped = dict(fresh)
@@ -526,6 +637,9 @@ def main(argv=None) -> int:
     prior_scale_proof = _read_prior_scale_proof(out)
     prior_stepup = _read_prior_stepup(out)
     prior_warm_vs_cold = _read_prior_warm_vs_cold(out)
+    prior_kata_activation = _read_prior_kata_activation(out)
+    prior_concurrent_burst = _read_prior_concurrent_burst(out)
+    prior_warm_pool_acquisition = _read_prior_warm_pool_acquisition(out)
     raw = merge_seed_placeholders(raw, prior_scenarios)
     generated_at = _now_iso()
     # Carry the Scale Proof block across the daily refresh (#3952): a fresh sweep
@@ -549,9 +663,27 @@ def main(argv=None) -> int:
         maybe_warm_vs_cold(args.product, raw), prior_warm_vs_cold,
         generated_at=generated_at,
     )
+    # Carry the kata-activation (#3942), concurrent-burst (#4021), and
+    # warm-pool-acquisition (#4083) blocks across the daily refresh (#112). These
+    # three blocks have no in-process producer — they are written only by manual
+    # data-only fires straight into latest.json — so `fresh` is always None here
+    # and the prior committed block is carried forward. Without this, the daily
+    # `harness.run --product sandbox` refresh would build_results a wholesale
+    # write that silently DROPS all three blocks from the public table.
+    kata_activation = carry_prior_kata_activation(
+        None, prior_kata_activation, generated_at=generated_at
+    )
+    concurrent_burst = carry_prior_concurrent_burst(
+        None, prior_concurrent_burst, generated_at=generated_at
+    )
+    warm_pool_acquisition = carry_prior_warm_pool_acquisition(
+        None, prior_warm_pool_acquisition, generated_at=generated_at
+    )
     results = results_schema.build_results(
         raw, build_provenance(substrate), generated_at=generated_at, product=args.product,
         scale_proof=scale_proof, stepup=stepup, warm_vs_cold=warm_vs_cold_obj,
+        kata_activation=kata_activation, concurrent_burst=concurrent_burst,
+        warm_pool_acquisition=warm_pool_acquisition,
     )
 
     out.parent.mkdir(parents=True, exist_ok=True)
