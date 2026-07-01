@@ -98,7 +98,7 @@ A warm-pool provision is **11.5608× faster** than a true-cold start (gVisor). T
 
 | Leg | TTFE (p50) |
 |---|---|
-| Warm-pool hit (gVisor) | 0.3909s |
+| Warm-pool hit (gVisor, n=10) | 0.3909s |
 | True-cold (unique-image) | 4.5191s |
 | Speedup (warm is N× faster) | 11.5608× |
 
