@@ -1375,8 +1375,10 @@ def test_warm_vs_cold_complete_block_renders():
 
 def test_warm_vs_cold_legs_and_speedup_math():
     # the N× headline and both leg cells render from the displayed values (cold ÷ warm = 10×).
+    # #103: the warm leg carries its sample size INLINE (n=200 here) so it cannot be conflated
+    # with the Core Metrics matrix "Warm-pool hit (Base image)" row (a different scenario/N).
     out = render.render_warm_vs_cold(_matrix_results(_full_gvisor_scenarios(), warm_vs_cold=_wc()))
-    assert "| Warm-pool hit (gVisor) | 0.3s |" in out
+    assert "| Warm-pool hit (gVisor, n=200) | 0.3s |" in out
     assert "| True-cold (unique-image) | 3s |" in out
     assert "| Speedup (warm is N× faster) | 10× |" in out
 
@@ -1387,12 +1389,15 @@ def test_warm_vs_cold_n_warm_subline_present():
 
 
 def test_warm_vs_cold_n_warm_absent_no_subline():
-    # n_warm is optional ⇒ block still renders, but the "over n=…" qualifier is omitted.
+    # n_warm is optional ⇒ block still renders, but the "over n=…" qualifier is omitted AND the
+    # #103 inline-n label fragment falls back cleanly to the bare runtime label (no ", n=").
     wc = _wc()
     del wc["n_warm"]
     out = render.render_warm_vs_cold(_matrix_results(_full_gvisor_scenarios(), warm_vs_cold=wc))
     assert "## Warm-vs-Cold Speedup" in out
     assert "over n=" not in out
+    assert "| Warm-pool hit (gVisor) | 0.3s |" in out
+    assert ", n=" not in out
 
 
 def test_warm_vs_cold_out_of_enum_runtime_class_inert():

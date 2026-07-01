@@ -1114,7 +1114,14 @@ def render_warm_vs_cold(results):
     header = ["Leg", _SEMANTIC_LABELS[wc["semantic"]].split(" ")[0] + " (p50)"]
     lines.append("| " + " | ".join(header) + " |")
     lines.append("|" + "|".join(["---"] * len(header)) + "|")
-    lines.append(f"| Warm-pool hit ({rt_label}) | {_fmt_secs(wc['warm_p50_ms'])} |")
+    # #103: carry the warm sample size INLINE in the leg label so this row cannot be visually
+    # conflated with the Core Metrics matrix "Warm-pool hit (Base image)" row — that is the
+    # dedicated warmpool_cold_start scenario (its own N in the matrix's Samples column); THIS
+    # is the point-in-time warm-vs-cold pair's warm leg at its own n. Two different scenarios,
+    # two different operating points — the inline n (data-keyed off wc, so it cannot rot)
+    # plus the cross-block caveat below make that unambiguous to a reader scanning both tables.
+    warm_n = f", n={wc['n_warm']}" if "n_warm" in wc else ""
+    lines.append(f"| Warm-pool hit ({rt_label}{warm_n}) | {_fmt_secs(wc['warm_p50_ms'])} |")
     lines.append(f"| {cold['leg']} | {_fmt_secs(wc['cold_ms'])} |")
     lines.append(f"| Speedup (warm is N× faster) | {speedup}× |")
     lines.append("")
