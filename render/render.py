@@ -1747,6 +1747,91 @@ def render_stepup(results):
     return "\n".join(lines)
 
 
+# --- #4021: Reproducibility Recipe (static, product-agnostic) ------------------------------
+# The preamble promises "reproducible from the recipe at the bottom"; this is that section.
+# It is STATIC architecture-shape prose — no measured numbers, so it carries zero PII risk and
+# needs no results arg. The RUNNABLE version (exact commands, pinned installs, CI workflows)
+# lives in recipe/REPRODUCE.md and is cross-linked, not duplicated. The one honesty rule baked
+# in: the honest-today latency is referenced BY POINTER to the live Warm-Pool Acquisition /
+# Concurrent Burst cells rather than restated as a literal, so it can never go stale or
+# contradict the machine-rendered tables above it, and no contested sub-1s@300/s headline can
+# be slipped in ahead of the measured cells.
+_RECIPE = """\
+## Reproducibility Recipe
+
+The numbers above come from a fixed, publishable cluster shape — a *vanilla* GKE architecture
+any user can provision, not a private tuning. This section is the **load-bearing shape** a
+reader needs to reproduce the warm/cold TTFE and scale regime the tables report. The
+**runnable** version — exact commands, pinned installs, and the dispatch-only CI workflows —
+lives in [`recipe/REPRODUCE.md`](recipe/REPRODUCE.md), so it is not duplicated here.
+
+**Cluster**
+
+- A **regional** GKE Standard cluster on **Kubernetes >= 1.31** — regional so the control
+  plane is not a single-zone SPOF under a burst of simultaneous claim writes, and >= 1.31
+  because that is the floor where the sandbox CRDs and the gVisor `RuntimeClass` admission path
+  are both stable.
+- A **gVisor-enabled** node pool (`--enable-sandbox=type=gvisor`, which installs the `gvisor`
+  `RuntimeClass` the burst pins to) on a **16-vCPU** machine type (e.g. `e2-standard-16`).
+- Size the pool's autoscaling **maximum to the node count the headline needs *before* the
+  fire** — a warm burst that has to wait on node autoscaling is measuring the autoscaler, not
+  the sandbox path. The gate on that ceiling is **per-machine-family CPU quota**, not the
+  generic CPU quota; `recipe/REPRODUCE.md` has the family-quota math.
+- A **pod CIDR wide enough that node-count × pods-per-node does not exhaust the range** — a
+  **`/16`** cluster pod range comfortably addresses a several-hundred-node pool, so the burst
+  tops out on the sandbox path rather than silently on IP exhaustion.
+
+**Warm-pool sizing**
+
+- Size the `SandboxWarmPool` so a ready slot is waiting when each claim arrives: **replicas ≈
+  active-concurrency × 0.75, replenished at the claim rate.** The 0.75 factor keeps a
+  steady-state buffer of ready slots without over-provisioning idle capacity; replenishing at
+  the claim rate refills a drained slot as fast as claims consume them, so a sustained arrival
+  rate is served warm rather than draining into the cold-overflow path partway through a burst.
+- The warm-hit distribution widens at higher concurrency because the **bind (provisioning) side
+  grows with claim-count while exec stays flat** — so the warm number is a function of
+  pool-replenish-rate vs claim-rate, not a fixed constant.
+  When a drained-regime fire is on the page, the Warm-Pool decomposition caveat above names this
+  scaling term directly.
+
+**Zero-cold-start image pre-pull**
+
+- Run an image **pre-pull `DaemonSet`** (`recipe/prepull-daemonset.yaml`) that pins the sandbox
+  base image on every node before the fire, so a scale-out node that joins mid-burst does not
+  add an image-pull tax to the first sandbox scheduled onto it. It matters most on the **cold
+  leg and under warm-pool overflow** — a fully pre-filled pool already resident-izes the image
+  during warm-up. Without it, cold TTFE on a freshly-autoscaled node is dominated by pull
+  latency, not create latency — an artifact of the test setup, not the runtime.
+
+**Honesty caveats (these stay on the published recipe)**
+
+- The **sub-1s @ 300/s warm headline is not yet published.** It needs (a) the per-claim
+  acquisition watch-timer at 300/s and (b) a clean burst fire. The honest published-today
+  numbers are exactly the measured cells above — read the **Warm-Pool Acquisition** and
+  **Concurrent Burst** rows for the current p50/p95 at the offered rate and pool size named in
+  each caption. The page prints the real figure rather than the aspiration, so the recipe
+  points at those cells instead of restating a number that could drift out of sync with them.
+- **TRUE-TTFE** — first instruction actually executes, webhook-stamped — is gated on the
+  upstream webhook-stamper and renders `pending` until it lands. The executed-first-instruction
+  TTFE the tables report today is the honest bridge that proves create → first-instruction
+  wallclock without the stamp.
+- Rows marked `pending` are exactly that — **not-yet-measured, never a provisional number
+  dressed as a result.**
+"""
+
+
+def render_recipe():
+    """Render the static Reproducibility Recipe H2 block (#4021).
+
+    Product-agnostic architecture-shape prose, always rendered (the preamble forward-refs it).
+    No measured numbers — the honest-today latency is referenced by pointer to the live
+    Warm-Pool Acquisition / Concurrent Burst cells above, so this block can never go stale or
+    contradict the machine-rendered tables. The runnable recipe (commands, pinned installs, CI)
+    is cross-linked to recipe/REPRODUCE.md, not duplicated.
+    """
+    return _RECIPE.rstrip()
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("results")

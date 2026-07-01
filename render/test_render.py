@@ -1991,6 +1991,61 @@ def test_at_scale_contention_sub_100_exec_flags_warn():
     assert "95%" in out
 
 
+def test_recipe_renders_h2_and_is_static():
+    # #4021: render_recipe is product-agnostic static prose (no results arg) and always renders.
+    out = render.render_recipe()
+    assert out.startswith("## Reproducibility Recipe")
+    assert render.render_recipe() == out  # deterministic / no hidden state
+
+
+def test_recipe_cross_links_reproduce_not_duplicated():
+    # Note-1: the runnable version is cross-linked to recipe/REPRODUCE.md, not duplicated inline.
+    out = render.render_recipe()
+    assert "recipe/REPRODUCE.md" in out
+    # It must NOT inline the runnable command surface (that is REPRODUCE.md's job).
+    assert "python3 -m harness.run" not in out
+    assert "kind create cluster" not in out
+
+
+def test_recipe_drained_caveat_reference_is_soft_prose():
+    # Note-2: the drained-regime warm_scaling_term clause only renders on the #4138 fire, so the
+    # recipe must read fine whether or not that clause is on the page — the reference is
+    # conditional soft prose ("When a drained-regime fire is on the page"), never a hard forward-ref.
+    out = render.render_recipe()
+    assert "When a drained-regime fire is on the page" in out
+
+
+def test_recipe_no_contested_sub_1s_headline_and_no_stale_literal():
+    # Note-3 (honest-metrics guardrail): the recipe must NOT slip a contested sub-1s@300/s headline
+    # onto the page, and must NOT restate a hardcoded honest-today latency that could contradict the
+    # live Warm-Pool Acquisition / Concurrent Burst cells — it references those cells by pointer.
+    out = render.render_recipe()
+    assert "not yet published" in out
+    assert "1.76" not in out  # the drafted literal is stale vs the live 300/s acquisition p95
+    assert "Warm-Pool Acquisition" in out and "Concurrent Burst" in out
+
+
+def test_recipe_public_safe_generic_tokens_only():
+    # PII fence: only generic/vendor-public tokens; no internal cluster names / project-ids.
+    out = render.render_recipe()
+    for tok in ("e2-standard-16", "gvisor", "RuntimeClass", "GKE", "DaemonSet"):
+        assert tok in out
+    for forbidden in ("sandbox-scenarios-cluster", "substrate-demo-cluster",
+                      "alexbu-gke-dev-d", "postgres-obs-0", "googleplex"):
+        assert forbidden not in out
+
+
+def test_recipe_in_full_readme_after_data_sections():
+    # Note-1 placement: the recipe renders ONCE, after the data sections (it forward-refs "above").
+    from generate import build_readme
+    readme = build_readme()
+    assert readme.count("## Reproducibility Recipe") == 1
+    recipe_at = readme.index("## Reproducibility Recipe")
+    contention_at = readme.find("## At Scale Under Contention")
+    if contention_at != -1:
+        assert recipe_at > contention_at
+
+
 def _run_all():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:
