@@ -870,7 +870,7 @@ def render_warm_vs_cold(results):
         f"_Speedup = cold ÷ warm, computed from the displayed values{n_note}; the warm leg "
         "is the p50 so half of warm claims beat it._")
     lines.append("")
-    # Cross-block coherence caveat (#3093 / a4s1): this warm-vs-cold pair is its own
+    # Cross-block coherence caveat (#103 / a4s1): this warm-vs-cold pair is its own
     # point-in-time run at its own operating point and sample size — NOT the same measurement
     # as the Core Metrics matrix "Warm-pool hit" row. A reader comparing the two warm p50s
     # across blocks must not read a divergence as a contradiction. Static prose (no numbers) so
