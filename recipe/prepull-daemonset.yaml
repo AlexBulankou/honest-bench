@@ -1,0 +1,50 @@
+# Image pre-pull DaemonSet for the warm-pool scale headline.
+#
+# Pulls the sandbox base image onto every node BEFORE a burst so an image pull
+# never lands on the claim->ready critical path. See REPRODUCE.md, "Zero-cold-start
+# image pre-pull": this matters most on the cold leg and under warm-pool overflow
+# (a fully pre-filled warm pool already resident-izes the base image during warm-up).
+#
+# Substitute REPLACE_WITH_SANDBOX_BASE_IMAGE with the base image your run's build
+# banner records (the "image digest" field). Everything else is generic GKE shape.
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: sandbox-image-prepull
+  labels:
+    app: sandbox-image-prepull
+spec:
+  selector:
+    matchLabels:
+      app: sandbox-image-prepull
+  template:
+    metadata:
+      labels:
+        app: sandbox-image-prepull
+    spec:
+      # Tolerate the GKE Sandbox (gVisor) node taint so the pre-pull lands on the
+      # same gVisor pool the warm-pool sandboxes schedule onto. GKE applies this
+      # taint automatically to nodes created with --enable-sandbox=type=gvisor.
+      tolerations:
+        - key: sandbox.gke.io/runtime
+          operator: Exists
+          effect: NoSchedule
+      # The init container does the actual pull: the kubelet must fetch the image
+      # to run it, and `true` exits immediately once it is resident on the node.
+      initContainers:
+        - name: prepull
+          image: REPLACE_WITH_SANDBOX_BASE_IMAGE
+          command: ["/bin/true"]
+      # A tiny pause container keeps the DaemonSet pod Running (so it is not
+      # restarted in a loop) without holding meaningful resources.
+      containers:
+        - name: pause
+          image: registry.k8s.io/pause:3.10
+          resources:
+            requests:
+              cpu: 10m
+              memory: 8Mi
+            limits:
+              cpu: 10m
+              memory: 16Mi
+      terminationGracePeriodSeconds: 0
