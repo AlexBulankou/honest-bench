@@ -131,19 +131,19 @@
       }
     },
     {
-      "n": 5,
+      "n": 30,
       "name": "warmpool_cold_start",
       "outcome": "PASS",
       "sla_metrics": {
-        "bind_p50_ms": 233.1,
-        "bind_p95_ms": 272.6,
-        "exec_p50_ms": 201.6,
-        "exec_p95_ms": 254.8,
+        "bind_p50_ms": 662.6,
+        "bind_p95_ms": 971.5,
+        "exec_p50_ms": 227.2,
+        "exec_p95_ms": 257.3,
         "exec_success_rate": 1.0,
-        "thpt_under_1s_per_node": 16.144,
-        "thpt_under_5s_per_node": 16.144,
-        "ttfe_p50_ms": 443.5,
-        "ttfe_p95_ms": 491.4
+        "thpt_under_1s_per_node": 9.358,
+        "thpt_under_5s_per_node": 14.037,
+        "ttfe_p50_ms": 891.3,
+        "ttfe_p95_ms": 1217.1
       }
     },
     {
