@@ -146,9 +146,10 @@ _Measured 2026-07-01 — warm-pool at-scale contention ceiling (point-in-time)._
 Every number above comes from a *vanilla* GKE cluster you can provision yourself — no private
 tuning. Full runnable steps (commands, pinned installs, dispatch-only CI) are in
 [`recipe/REPRODUCE.md`](recipe/REPRODUCE.md). The one rule worth copying into your own setup:
-**size the warm pool to your peak** — keep a ready slot waiting for each claim (replicas ≈
-**0.75 × peak concurrency**, replenished at the claim rate), or a sustained burst drains into the
-slow cold-start path partway through. The cluster shape it needs (a **gVisor** node pool on a
+**size the warm pool to your active concurrency** — keep a ready slot waiting for each claim
+(replicas ≈ **0.75 × active concurrency**, replenished at the claim rate), or a sustained burst
+drains into the slow cold-start path partway through. The cluster shape it needs (a **gVisor** node
+pool on a
 16-vCPU machine like `e2-standard-16`, the `gvisor` `RuntimeClass` the burst pins to, a `/16` pod
 CIDR, and a pre-pull `DaemonSet` for nodes that join mid-burst) is spelled out there too.
 When a drained-regime fire is on the page, the Warm-Pool decomposition in
