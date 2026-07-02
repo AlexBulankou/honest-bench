@@ -2393,6 +2393,160 @@ def test_at_scale_contention_sub_100_exec_flags_warn():
     assert "95%" in out
 
 
+# --- Operating Envelope (hb#134) ------------------------------------------------------------
+# The headline "given MY load, what wait do I budget?" table. It is render-DERIVED (reads the
+# live schema through the same cleaners the detail blocks use — never hardcoded illustrative
+# numbers), ALWAYS renders as an honest skeleton (like the matrix), and each row inherits its
+# source-block's pending semantics (INERT / absent source ⇒ that row reads `pending`).
+
+def _envelope_results(**over):
+    # A fully-populated results object exercising all four envelope rows, built from the same
+    # fixtures the per-source detail-block tests use so the envelope stays in lock-step with them.
+    r = _matrix_results(
+        _full_gvisor_scenarios(),
+        at_scale_contention=_asc(),
+        concurrent_burst=_cb(),
+        warm_pool_acquisition=_wpa(),
+    )
+    r.update(over)
+    return r
+
+
+def test_operating_envelope_always_renders_skeleton_all_pending():
+    # No source blocks present ⇒ the table STILL renders (honest skeleton), every row `pending`.
+    # Absence of a measurement is `pending`, never a dropped row and never a guessed number.
+    out = render.render_operating_envelope(_matrix_results([]))
+    assert "## Operating Envelope — what wait should I budget?" in out
+    # All four rows render, all four waits pend.
+    assert "| Steady trickle — warm pool keeps up with demand | pending | full start → first result |" in out
+    assert "| Bursty — pool oversubscribed (more claims than ready pool) | pending | full start → first result |" in out
+    assert "| Hundreds of sandboxes requested at once (1:1 pool) | pending | full start → first result |" in out
+    assert "| Sustained high-rate churn | pending | pool hand-off only (before exec) |" in out
+
+
+def test_operating_envelope_renders_all_four_rows():
+    out = render.render_operating_envelope(_envelope_results())
+    # Row 1 — matrix warm scenario (warmpool_cold_start ttfe_p50_ms=600 ⇒ ~0.6s).
+    assert "| Steady trickle — warm pool keeps up with demand | ~0.6s | full start → first result |" in out
+    # Row 2 — at-scale contention (claim_count=60 / pool_size=30 ⇒ 2:1, ttfe_p50_ms=1658.9 ⇒ ~1.7s).
+    assert "| Bursty — pool oversubscribed 2:1 (60 claims / 30 ready) | ~1.7s | full start → first result |" in out
+    # Row 3 — warm concurrent-burst leg (n=300, ttfe_p50_ms=6874.3 ⇒ ~6.9s).
+    assert "| 300 sandboxes requested at once (1:1 pool) | ~6.9s | full start → first result |" in out
+    # Row 4 — warm-pool acquisition (offered_rate_per_s=300, acq_p50_ms=2939.65 ⇒ ~2.9s).
+    assert "| Sustained 300/sec churn | ~2.9s | pool hand-off only (before exec) |" in out
+
+
+def test_operating_envelope_scope_column_is_load_bearing():
+    # The Scope column must WARN that the acquisition-only row is not rankable against the
+    # full-TTFE rows — this is the whole reason the 5 warm/wait numbers can share one table.
+    out = render.render_operating_envelope(_envelope_results())
+    assert "The **Scope** column is load-bearing" in out
+    assert "do **not** rank its number against the full-TTFE rows" in out
+    assert "before your code runs" in out
+    # The first three rows share the full-TTFE scope; the fourth is the pool-handoff sub-phase.
+    assert out.count("| full start → first result |") == 3
+    assert out.count("| pool hand-off only (before exec) |") == 1
+
+
+def test_operating_envelope_wait_format_is_coarse_not_exact():
+    # The budgeting figure is a friendly 1-dp ~approximation, NOT the exact _fmt_secs precision
+    # (the exact value lives in the detail block each row is sourced from). hb#134 "remove
+    # unnecessary detail" mandate — the envelope is a plan-around-this summary for non-experts.
+    out = render.render_operating_envelope(_envelope_results())
+    assert "~1.7s" in out and "1.6589s" not in out
+    assert "~6.9s" in out and "6.8743s" not in out
+    assert "~2.9s" in out and "2.93965s" not in out
+
+
+def test_operating_envelope_row1_pends_when_scenario_not_pass():
+    # A non-PASS warm matrix scenario has no publishable warm figure ⇒ row 1 pends; the other
+    # three rows (independent sources) still render.
+    scen = _full_gvisor_scenarios()
+    for s in scen:
+        if s["name"] == "warmpool_cold_start":
+            s["outcome"] = "FAIL"
+    out = render.render_operating_envelope(
+        _matrix_results(scen, at_scale_contention=_asc(),
+                        concurrent_burst=_cb(), warm_pool_acquisition=_wpa()))
+    assert "| Steady trickle — warm pool keeps up with demand | pending | full start → first result |" in out
+    assert "| Bursty — pool oversubscribed 2:1 (60 claims / 30 ready) | ~1.7s | full start → first result |" in out
+
+
+def test_operating_envelope_row2_pends_when_contention_absent():
+    # INERT at_scale_contention (absent) ⇒ row 2 inherits its pending semantics.
+    out = render.render_operating_envelope(
+        _matrix_results(_full_gvisor_scenarios(),
+                        concurrent_burst=_cb(), warm_pool_acquisition=_wpa()))
+    assert "| Bursty — pool oversubscribed (more claims than ready pool) | pending | full start → first result |" in out
+    # its neighbours still render
+    assert "| 300 sandboxes requested at once (1:1 pool) | ~6.9s | full start → first result |" in out
+
+
+def test_operating_envelope_row2_pends_when_contention_inert_bad_runtime():
+    # A present-but-INERT contention block (out-of-enum runtime) ⇒ row 2 pends (not a partial lie).
+    out = render.render_operating_envelope(
+        _matrix_results(_full_gvisor_scenarios(),
+                        at_scale_contention=_asc(runtime_class="lukewarm"),
+                        concurrent_burst=_cb(), warm_pool_acquisition=_wpa()))
+    assert "| Bursty — pool oversubscribed (more claims than ready pool) | pending | full start → first result |" in out
+
+
+def test_operating_envelope_row3_pends_when_burst_absent():
+    out = render.render_operating_envelope(
+        _matrix_results(_full_gvisor_scenarios(),
+                        at_scale_contention=_asc(), warm_pool_acquisition=_wpa()))
+    assert "| Hundreds of sandboxes requested at once (1:1 pool) | pending | full start → first result |" in out
+
+
+def test_operating_envelope_row3_falls_back_to_largest_warm_leg():
+    # With no n=300 warm leg, the row falls back to the LARGEST-n warm leg and labels the actual
+    # N — render-derived, degrades gracefully, no hardcoded 300-lock.
+    cb = _cb(legs=[
+        {"n": 100, "mode": "warm", "ttfe_p50_ms": 3000.0, "ttfe_p95_ms": 4000.0},
+        {"n": 500, "mode": "warm", "ttfe_p50_ms": 11188.0, "ttfe_p95_ms": 15374.0},
+    ])
+    out = render.render_operating_envelope(
+        _matrix_results(_full_gvisor_scenarios(), concurrent_burst=cb))
+    assert "| 500 sandboxes requested at once (1:1 pool) | ~11.2s | full start → first result |" in out
+
+
+def test_operating_envelope_row3_ignores_cold_legs():
+    # A burst block with ONLY cold legs has no warm leg ⇒ row 3 pends (never surfaces a cold
+    # number under a warm-pool label).
+    cb = _cb(legs=[{"n": 300, "mode": "cold", "ttfe_p50_ms": 56029.4, "ttfe_p95_ms": 58412.4}])
+    out = render.render_operating_envelope(
+        _matrix_results(_full_gvisor_scenarios(), concurrent_burst=cb))
+    assert "| Hundreds of sandboxes requested at once (1:1 pool) | pending | full start → first result |" in out
+
+
+def test_operating_envelope_row4_pends_when_acquisition_absent():
+    out = render.render_operating_envelope(
+        _matrix_results(_full_gvisor_scenarios(),
+                        at_scale_contention=_asc(), concurrent_burst=_cb()))
+    assert "| Sustained high-rate churn | pending | pool hand-off only (before exec) |" in out
+
+
+def test_operating_envelope_row4_generic_label_without_rate():
+    # offered_rate_per_s is optional context — absent ⇒ generic churn label, still renders the wait.
+    wpa = _wpa()
+    del wpa["offered_rate_per_s"]
+    out = render.render_operating_envelope(
+        _matrix_results(_full_gvisor_scenarios(), warm_pool_acquisition=wpa))
+    assert "| Sustained high-rate churn | ~2.9s | pool hand-off only (before exec) |" in out
+
+
+def test_operating_envelope_excludes_speedup_leg():
+    # The warm_vs_cold speedup leg is ratio-CONTEXT, not a budgetable wait — it must NOT add a
+    # fifth row nor change any wait. Rendering with and without it is byte-identical.
+    base = render.render_operating_envelope(_envelope_results())
+    withwc = render.render_operating_envelope(_envelope_results(warm_vs_cold=_wc(warm_p50_ms=700.5, speedup=7.283)))
+    assert base == withwc
+    # exactly four data rows (header + separator + 4), no fifth speedup row
+    data_rows = [ln for ln in withwc.splitlines() if ln.startswith("| ") and "---" not in ln]
+    assert len(data_rows) == 5  # 1 header + 4 data
+    assert "speedup" not in withwc.lower()
+
+
 def test_recipe_renders_h2_and_is_static():
     # #4021: render_recipe is product-agnostic static prose (no results arg) and always renders.
     out = render.render_recipe()

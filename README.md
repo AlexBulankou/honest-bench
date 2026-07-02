@@ -68,6 +68,17 @@ _A bare `pending` cell awaits its TTFE-instrumented run. A `pending (upstream-bl
 _build: cluster_substrate=gke-sandbox · run_id=dc1dd343fee74008a2f75ccdfed39eb9 · node_count=1_
 _generated-at: 2026-07-01T07:23:08Z_
 
+## Operating Envelope — what wait should I budget?
+
+Find the row closest to **your** load; the p50 is the wait to plan around. The **Scope** column is load-bearing: the first three rows are the **full** start→first-result wait (TTFE), directly comparable to one another; the last row is only the **pool hand-off** sub-phase (it stops the moment you hold a ready sandbox, before your code runs), so do **not** rank its number against the full-TTFE rows above it. Every number is measured, not modelled — an unmeasured row reads `pending`, never a guess.
+
+| Your load pattern | Wait to budget (p50) | Scope |
+|---|---|---|
+| Steady trickle — warm pool keeps up with demand | ~0.6s | full start → first result |
+| Bursty — pool oversubscribed 2:1 (60 claims / 30 ready) | ~1.7s | full start → first result |
+| 300 sandboxes requested at once (1:1 pool) | ~6.9s | full start → first result |
+| Sustained 300/sec churn | ~2.9s | pool hand-off only (before exec) |
+
 ## Burst Create — TTFE Corroboration
 
 The headline burst count is **pod-Ready** — but a pod can report Ready before it can run your code. TTFE is the stronger claim: the sandbox *executed its first instruction and returned a result*. This block corroborates the two; the **gap** is sandboxes that reported Ready but had not yet run code.
