@@ -82,33 +82,21 @@ _KATA_RESULTS_REL = "sandbox-kata/results/latest.json"
 _PREAMBLE = """\
 # Honest benchmarks — GKE agent sandbox
 
-Most sandbox benchmarks are marketing — one best-case number, measured once, on a cluster
-you will never get, with no way to check it. This page is the opposite: **every number is
-machine-rendered from a real harness run and reproducible from the recipe at the bottom.** No
-cell is ever typed by hand, and anything the schema does not declare is dropped before it can
-reach the page.
+Most sandbox benchmarks are marketing: one best-case number, measured once, on a cluster you
+will never get. This page is the opposite — **every number is machine-rendered from a real
+harness run, and reproducible** (the exact steps are in **Reproduce it** at the bottom). No cell
+is typed by hand; anything the schema does not declare is dropped before it reaches the page.
 
-We measure the one thing you actually feel — **TTFE (Time-To-First-Instruction)**: the
-wall-clock from "create this sandbox" to "it ran my first instruction and returned a result."
-Not pod-Ready — a pod can look ready seconds before it can run your code — but the real wait.
+We measure the one thing you actually feel — **TTFE (Time-To-First-Instruction)**: the wall-clock
+from "create this sandbox" to "it ran my first instruction and returned a result." Not pod-Ready
+(a pod can look ready seconds before it can run your code) — the real wait.
 
-Every number is a **reproducible floor, not a ceiling**: what a *vanilla* OSS build delivers
-today (upstream controller from `main`, default runtime, no tuning). A bigger pool or denser
-nodes should beat it. And the page prints the truth when it is unflattering — an unmeasured
-cell reads `pending` (never a guess), a throughput that misses its bar prints an honest `0`,
-and any execution failures show as a ⚠️ fraction instead of being quietly dropped.
-
-Don't take our word for it — reproduce any row, then beat it:
-
-```
-bash recipe/install-controller-from-main.sh   # OSS controller from upstream main
-python3 -m harness.run                        # run the portable suite (cluster=kind)
-python3 -m render.generate                    # regenerate this page
-bash scripts/check-public-safety.sh           # fail-closed public-safety scan
-```
-
-The headline numbers are all here. The corroboration and decomposition tables — the
-working behind them — live in the deep-dive appendix, [DETAILS.md](DETAILS.md).
+Every number is a **reproducible floor, not a ceiling** — what a *vanilla* OSS build delivers
+today (upstream controller from `main`, default runtime, no tuning); a bigger pool or denser nodes
+should beat it. The page also prints the truth when it is unflattering: an unmeasured cell reads
+`pending` (never a guess), a throughput that misses its bar prints an honest `0`, and execution
+failures show as a ⚠️ fraction rather than being quietly dropped. The working behind these
+headline tables lives in the deep-dive appendix, [DETAILS.md](DETAILS.md).
 """
 
 # Deep-dive appendix header. Same no-measured-numbers-here rule as _PREAMBLE: every
