@@ -339,13 +339,21 @@ def test_emit_to_render_matrix_convergence_single_sample_ttfe_point():
     }
     out = render.render_matrix(results)
 
-    # (b) single-sample rows: p50 == p95 (one point), throughput columns PENDING (not a false 0),
-    # exec 100%. The TTFE p50/p95 cells carry the matched-N small-sample marker `†` (N=1 <
-    # TTFE_COMPARABILITY_MIN_N) so a cross-row read can't rank a 1-sample point against a high-N
-    # row -- the cross-row honesty fix this contract now pins. (hb#134 dropped the N + Max-Density
-    # columns from the headline matrix; Max-Density moved to render_density_detail / DETAILS.md.)
-    assert "| gVisor | Unique-image cold (RL reality) | pending | pending | 1.2s † | 1.2s † | 100% |" in out
-    assert "| gVisor | Resume-from-suspend | pending | pending | 3.5s † | 3.5s † | 100% |" in out
+    # (b) single-sample rows: p50 == p95 (one point), exec 100%. The TTFE p50/p95 cells carry the
+    # matched-N small-sample marker `†` (N=1 < TTFE_COMPARABILITY_MIN_N) so a cross-row read can't
+    # rank a 1-sample point against a high-N row. (hb#134 dropped the N + Max-Density columns from
+    # the headline matrix; Max-Density moved to render_density_detail / DETAILS.md.)
+    #
+    # Throughput columns (hb#142.1 derivable honest-0): the @<5s cell stays `pending` because the
+    # measured p95 is WITHIN the 5s bar (1.2s / 3.5s) — some sandboxes may clear it, so we cannot
+    # derive a 0 and no fire has run. The @<1s cell DERIVES `0 /node · 0 /cluster` because the
+    # measured p95 EXCEEDS the 1s bar: that sample missed the bar, so 0 in-sample sandboxes cleared
+    # <1s — the SAME honest-0 a real fire would emit, and a per-node 0 forces the per-cluster 0 (the
+    # one exact case, not an extrapolation). This is NOT the guarded regression (defaulting an
+    # ABSENT key to 0): the derivation is gated on p95 > bar; absent/within-bar p95 still pends —
+    # see the FAIL row below, which pends both throughput columns because p95 is absent.
+    assert "| gVisor | Unique-image cold (RL reality) | pending | 0 /node · 0 /cluster | 1.2s † | 1.2s † | 100% |" in out
+    assert "| gVisor | Resume-from-suspend | pending | 0 /node · 0 /cluster | 3.5s † | 3.5s † | 100% |" in out
 
     # never-reached-first-execution cold provision: every measured column pending, exec honest 0%.
     fail_results = {

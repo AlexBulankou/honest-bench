@@ -50,7 +50,7 @@ _Measured 2026-07-02 — warm-vs-cold speedup (point-in-time; refreshed on the n
 
 ## Kata + microVM Activation (pod-Ready — NOT TTFE)
 
-These are **Kata + microVM pod-Ready / microVM-activation** latencies — the time to bring the guest microVM up and the pod Ready. They are **not TTFE** (the Core Metrics matrix's executed-first-instruction-and-returned-a-result metric), so they are **not comparable to the matrix TTFE columns**; the Kata TTFE cells there stay `pending` until a TTFE probe runs under Kata. Measured on hypervisor **Cloud Hypervisor**, Kata **3.32.0**, guest kernel `6.18.35`, host kernel `6.8.0-1054-gke`, n=3.
+These are **Kata + microVM pod-Ready / microVM-activation** latencies — the time to bring the guest microVM up and the pod Ready. They are **not TTFE** (the Core Metrics matrix's executed-first-instruction-and-returned-a-result metric), so they are **not comparable to the matrix TTFE columns**. For the Kata TTFE itself, read the matrix TTFE cells: they report it where a TTFE probe has run under Kata, and `pending` where one has not. Measured on hypervisor **Cloud Hypervisor**, Kata **3.32.0**, guest kernel `6.18.35`, host kernel `6.8.0-1054-gke`, n=3.
 
 | Phase | Pod-Ready latency |
 |---|---|
@@ -76,7 +76,7 @@ _Measured 2026-07-01 — warm-pool acquisition latency (point-in-time)._
 
 ## Max Density (sandboxes per vCPU)
 
-Max Density is sandboxes per node-allocatable sandbox-schedulable vCPU (the per-node denominator), not per total-cluster vCPU. An unmeasured runtime renders `pending`.
+Max Density is sandboxes per node-allocatable sandbox-schedulable vCPU (the per-node denominator), not per total-cluster vCPU. This is the absolute per-vCPU figure — distinct from the linearity check's per-node density-retention series (a ratio across node counts), which uses a different denominator. An unmeasured runtime renders `pending`.
 
 | Runtime | Max Density (sb/vCPU) |
 |---|---|

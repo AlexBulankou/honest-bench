@@ -482,8 +482,10 @@ def render_density_detail(results, kata_results=None):
     lines = ["## Max Density (sandboxes per vCPU)", ""]
     lines.append(
         "Max Density is sandboxes per node-allocatable sandbox-schedulable vCPU (the "
-        "per-node denominator), not per total-cluster vCPU. An unmeasured runtime "
-        "renders `pending`."
+        "per-node denominator), not per total-cluster vCPU. This is the absolute per-vCPU "
+        "figure — distinct from the linearity check's per-node density-retention series "
+        "(a ratio across node counts), which uses a different denominator. An unmeasured "
+        "runtime renders `pending`."
     )
     lines.append("")
     lines.append("| Runtime | Max Density (sb/vCPU) |")
@@ -751,8 +753,24 @@ def render_matrix(results, kata_results=None):
             # per_cluster figure with no X has no measurement size to disclose, so it pends
             # rather than rendering a real rate under a caption that can't pin its X
             # (defense-in-depth: the emit side already couples the triple all-or-nothing).
-            def thpt_dual_cell(node_key, cluster_key):
+            def thpt_dual_cell(node_key, cluster_key, bar_s):
                 if node_key not in m:
+                    # Derivable honest-0 (hb#142.1): the throughput fire has not run, but if the
+                    # TTFE p95 IS measured and exceeds this cell's bar, then p95 misses the bar —
+                    # the SAME condition under which a real fire emits `0` (see the honesty
+                    # footnote below). So the sustained throughput at that bar is a derived `0`,
+                    # obtainable from the measured TTFE distribution with no throughput fire. A
+                    # per-node rate of exactly 0 forces the per-cluster rate to 0 (the one exact
+                    # case, NOT a per-node × N extrapolation), so BOTH halves render the derived 0.
+                    # If p95 is absent or within the bar, we cannot derive a 0 and fall back to
+                    # `pending`.
+                    p95_ms = m.get("ttfe_p95_ms")
+                    if (
+                        isinstance(p95_ms, (int, float))
+                        and not isinstance(p95_ms, bool)
+                        and p95_ms / 1000.0 > bar_s
+                    ):
+                        return f"{_fmt_num(0)} /node · {_fmt_num(0)} /cluster"
                     return pending_tok
                 node_half = f"{_fmt_num(m[node_key])} /node"
                 if cluster_key in m and _landed_cluster_x(m) is not None:
@@ -763,8 +781,8 @@ def render_matrix(results, kata_results=None):
                     cluster_half = f"{_PENDING} ({_CLUSTER_FIRE})"
                 return f"{node_half} · {cluster_half}"
 
-            thpt5 = thpt_dual_cell("thpt_under_5s_per_node", "thpt_under_5s_per_cluster")
-            thpt1 = thpt_dual_cell("thpt_under_1s_per_node", "thpt_under_1s_per_cluster")
+            thpt5 = thpt_dual_cell("thpt_under_5s_per_node", "thpt_under_5s_per_cluster", 5.0)
+            thpt1 = thpt_dual_cell("thpt_under_1s_per_node", "thpt_under_1s_per_cluster", 1.0)
             p50 = ttfe_cell("ttfe_p50_ms")
             p95 = ttfe_cell("ttfe_p95_ms")
             if "exec_success_rate" in m:
@@ -787,14 +805,21 @@ def render_matrix(results, kata_results=None):
         "returned a result — not merely pod-Ready._"
     )
     lines.append(
-        "_Throughput @ <1s renders the harness-emitted `0` when the p95 misses the 1s bar "
-        "(we print a zero rather than round up)._"
+        "_A throughput cell renders an honest `0` when the measured TTFE p95 misses that cell's "
+        "bar (we print a zero rather than round up). The cell is an SLO-gated rate — the sustained "
+        "creation rate at which p95 TTFE stays within the bar — so this holds even before a "
+        "throughput fire runs: if the measured p95 already exceeds the bar, the p95-SLO is unmet at "
+        "the tested point and the SLO-compliant rate is a derived `0` at every scale, both `/node` "
+        "and `/cluster`. A derived `0` inherits the sample basis of the p95 it reads: where that "
+        "p95 carries the single-sample † dagger, so does the `0`._"
     )
     lines.append(
         "_Throughput cells are dual — `per-node · per-cluster`. The per-node figure is the "
-        "engineering rate; the per-cluster figure is a MEASURED cluster saturation rate, never a "
-        "per-node × N extrapolation. The cluster half renders `pending (cluster-fire)` until our "
-        "own schema-validated saturation fire lands it; a landed figure below the cluster sizing "
+        "engineering rate; the per-cluster figure is a MEASURED per-activation-mode cluster rate, "
+        "never a per-node × N extrapolation. It renders `pending (cluster-fire)` until a "
+        "schema-validated per-mode cluster-throughput fire lands it (distinct from the standalone "
+        "whole-cluster Saturation ceiling reported separately in DETAILS — that fire measures the "
+        "aggregate ceiling, not these per-mode cells); a landed figure below the cluster sizing "
         "target carries ⚠️._"
     )
     lines.append(
@@ -1446,6 +1471,16 @@ def render_scale_proof(results, heading="## Scale Proof (Linearity Check)"):
     lines.append("|" + "|".join(["---"] * len(header)) + "|")
     lines.append("| " + " | ".join([nodes, dens_verdict, thpt_verdict]) + " |")
     lines.append("")
+    # hb#142.3: the density figures in the sequence above are the per-node density RETAINED at
+    # each node count (a linearity series — does per-node density hold flat as nodes grow?), a
+    # DIFFERENT denominator than the absolute Max Density per vCPU (reported in DETAILS). Label
+    # it so a reader does not read this retention series against the Max-Density figure.
+    lines.append(
+        "_The density values in this row are the per-node density retained at each node count "
+        "(a linearity series — does per-node density stay flat as the cluster grows?), not the "
+        "absolute Max Density per vCPU (reported separately in DETAILS)._"
+    )
+    lines.append("")
     for key, noun in (("density", "density"), ("throughput", "throughput")):
         step_line = _per_step_retention_line(sp["points"], key, noun)
         if step_line:
@@ -1683,8 +1718,8 @@ def render_kata_activation(results):
         f"These are **{rt_label} pod-Ready / microVM-activation** latencies — the time to bring "
         "the guest microVM up and the pod Ready. They are **not TTFE** (the Core Metrics matrix's "
         "executed-first-instruction-and-returned-a-result metric), so they are **not comparable "
-        "to the matrix TTFE columns**; the Kata TTFE cells there stay `pending` until a TTFE probe "
-        "runs under Kata."
+        "to the matrix TTFE columns**. For the Kata TTFE itself, read the matrix TTFE cells: they "
+        "report it where a TTFE probe has run under Kata, and `pending` where one has not."
     )
     meta = []
     if ka.get("hypervisor"):
