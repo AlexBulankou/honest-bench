@@ -636,10 +636,13 @@ def test_matrix_pending_scenario_suppresses_leaked_metrics():
     # publishable measurement — the upstream-blocked resume probe records its timeout
     # CEILING (the wall-clock waiting out a never-clearing Suspended condition), not a real
     # resume TTFE. Those values must NOT leak onto the public page: the whole row renders
-    # `pending` across every metric column (matching the throughput columns, which already
-    # go pending when their keys are absent), never a misleading number a reader would rank
-    # against a real distribution. Regression guard for the live-page defect where the
-    # gVisor Resume-from-suspend row showed `34.8414s †` (the gap-probe ceiling).
+    # `pending (upstream-blocked)` across every metric column (matching the throughput
+    # columns, which already go pending when their keys are absent), never a misleading
+    # number a reader would rank against a real distribution. Regression guard for the
+    # live-page defect where the gVisor Resume-from-suspend row showed `34.8414s †` (the
+    # gap-probe ceiling). The `(upstream-blocked)` qualifier is the honesty distinction: this
+    # run DID land but is held by an upstream controller gap — see
+    # test_matrix_gvisor_resume_pending_carries_upstream_blocked_reason below.
     scen = _full_gvisor_scenarios()
     scen[2] = {
         "name": "suspend_resume", "outcome": "pending",
@@ -653,12 +656,14 @@ def test_matrix_pending_scenario_suppresses_leaked_metrics():
     resume_line = [l for l in out.splitlines() if "Resume-from-suspend" in l and "gVisor" in l][0]
     cells = [c.strip() for c in resume_line.strip("|").split("|")]
     # columns 2..6 (thpt5, thpt1, p50, p95, n) all pending; density (7) N/A-by-design;
-    # exec (8) pending — none of the provisional values survive.
-    assert cells[2] == "pending" and cells[3] == "pending"
-    assert cells[4] == "pending" and cells[5] == "pending"
-    assert cells[6] == "pending"
+    # exec (8) pending — none of the provisional values survive. Each pending cell carries
+    # the upstream-blocked reason.
+    pend = "pending (upstream-blocked)"
+    assert cells[2] == pend and cells[3] == pend
+    assert cells[4] == pend and cells[5] == pend
+    assert cells[6] == pend
     assert cells[7] == "N/A"
-    assert cells[8] == "pending"
+    assert cells[8] == pend
     # the leaked ceiling never appears anywhere in the row
     assert "34.8414" not in resume_line and "34841" not in resume_line
 
@@ -724,6 +729,72 @@ def test_matrix_resume_kata_is_na_by_design_not_pending():
         assert all(c == "N/A" for c in cells[2:9]), cells
         assert "pending" not in resume_kata[0]
     assert "N/A` by construction" in out
+
+
+def test_matrix_gvisor_resume_pending_carries_upstream_blocked_reason():
+    # The honesty distinction (positive assertion): a gVisor resume cell whose run DID land
+    # but is held by an upstream controller gap renders `pending (upstream-blocked)` in EVERY
+    # metric column — NOT a bare `pending` (which reads as a not-yet-run cell). This is the
+    # gap fix: previously _matrix_scenarios dropped pending_reason, so the upstream-blocked
+    # resume row was indistinguishable from an unmeasured one. Density stays N/A-by-design.
+    scen = _full_gvisor_scenarios()
+    scen[2] = {
+        "name": "suspend_resume", "outcome": "pending",
+        "pending_reason": "upstream-blocked", "n": 1,
+    }
+    out = render.render_matrix(_matrix_results(scen))
+    resume_line = [l for l in out.splitlines() if "Resume-from-suspend" in l and "gVisor" in l][0]
+    cells = [c.strip() for c in resume_line.strip("|").split("|")]
+    pend = "pending (upstream-blocked)"
+    # thpt5, thpt1, p50, p95, n, exec all carry the reason; density is N/A-by-design.
+    assert cells[2] == pend and cells[3] == pend
+    assert cells[4] == pend and cells[5] == pend
+    assert cells[6] == pend
+    assert cells[7] == "N/A"
+    assert cells[8] == pend
+    # a bare `pending` never appears in this row (every pending cell is qualified)
+    for c in (cells[2], cells[3], cells[4], cells[5], cells[6], cells[8]):
+        assert c == pend
+
+
+def test_matrix_bare_pending_no_reason_stays_bare():
+    # A genuinely not-yet-run cell (outcome pending, NO pending_reason) renders bare `pending`
+    # — the qualifier only appears when there is a real, enum-valid reason. This is the other
+    # half of the distinction: a bare `pending` means "awaits a run", `pending (<reason>)`
+    # means "ran, but held".
+    scen = _full_gvisor_scenarios()
+    scen[2] = {"name": "suspend_resume", "outcome": "pending", "n": 0}
+    out = render.render_matrix(_matrix_results(scen))
+    resume_line = [l for l in out.splitlines() if "Resume-from-suspend" in l and "gVisor" in l][0]
+    cells = [c.strip() for c in resume_line.strip("|").split("|")]
+    assert cells[2] == "pending" and cells[4] == "pending" and cells[8] == "pending"
+    assert "(" not in resume_line.split("Resume-from-suspend")[1]  # no qualifier anywhere
+
+
+def test_matrix_free_text_pending_reason_dropped_renders_bare_pending():
+    # PII/leak guard on the matrix path (mirrors the non-matrix test_free_text_pending_reason
+    # _dropped_row_kept): a pending_reason outside the closed enum is dropped, the cell falls
+    # back to bare `pending`, and the free-text NEVER reaches the public page.
+    scen = _full_gvisor_scenarios()
+    scen[2] = {
+        "name": "suspend_resume", "outcome": "pending",
+        "pending_reason": "SYNTHETIC-MATRIX-FREETEXT-LEAK", "n": 0,
+    }
+    out = render.render_matrix(_matrix_results(scen))
+    assert "SYNTHETIC-MATRIX-FREETEXT-LEAK" not in out
+    resume_line = [l for l in out.splitlines() if "Resume-from-suspend" in l and "gVisor" in l][0]
+    cells = [c.strip() for c in resume_line.strip("|").split("|")]
+    assert cells[2] == "pending" and cells[4] == "pending"  # bare, no leaked qualifier
+
+
+def test_matrix_upstream_blocked_footnote_distinguishes_from_bare_pending():
+    # The footnote must teach the reader the difference: a bare `pending` awaits a run; a
+    # `pending (upstream-blocked)` cell's run landed but is held by an upstream controller gap
+    # and graduates on the fix, not on scheduling. Static honesty scaffolding, always rendered.
+    out = render.render_matrix(_matrix_results(_full_gvisor_scenarios()))
+    assert "pending (upstream-blocked)" in out
+    assert "run DID land" in out
+    assert "the moment the upstream fix lands" in out
 
 
 def test_matrix_unknown_metric_key_dropped():
