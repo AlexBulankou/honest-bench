@@ -37,6 +37,7 @@ def _load_render():
         mod.render_matrix,
         mod.render_north_star,
         mod.render_operating_envelope,
+        mod.render_what_this_means,
         mod.render_burst_corroboration,
         mod.render_warm_bind_decomposition,
         mod.render_cold_bind_decomposition,
@@ -58,12 +59,12 @@ def _load_render():
     )
 
 
-(render_matrix, render_north_star, render_operating_envelope, render_burst_corroboration,
- render_warm_bind_decomposition, render_cold_bind_decomposition, render_warm_vs_cold,
- render_scale_proof, render_cluster_scale, render_stepup, render_kata_activation,
- render_concurrent_burst, render_warm_pool_acquisition, render_at_scale_contention,
- render_cluster_saturation, render_provisioning_rate_sweep, render_session_turnover,
- render_suspend_latency, render_density_detail, render_vcpu_footprint,
+(render_matrix, render_north_star, render_operating_envelope, render_what_this_means,
+ render_burst_corroboration, render_warm_bind_decomposition, render_cold_bind_decomposition,
+ render_warm_vs_cold, render_scale_proof, render_cluster_scale, render_stepup,
+ render_kata_activation, render_concurrent_burst, render_warm_pool_acquisition,
+ render_at_scale_contention, render_cluster_saturation, render_provisioning_rate_sweep,
+ render_session_turnover, render_suspend_latency, render_density_detail, render_vcpu_footprint,
  render_recipe) = _load_render()
 
 # Product -> results path, relative to the repo root (parent of render/).
@@ -158,6 +159,10 @@ def build_readme(root=None):
         speedup = render_warm_vs_cold(results, punchline_only=True)
         if speedup.strip():
             sections.append(speedup.rstrip())
+        # hb#134: plain-English "What this means for you" synthesis — the non-infra reader lens.
+        # Always rendered (each measured clause degrades to a qualitative statement when its
+        # source block is absent); sits after the headline numbers, before the scale deep-dive.
+        sections.append(render_what_this_means(results).rstrip())
         # hb#134: Scale-Proof + Concurrent-Burst merge into ONE user-facing "Does it hold at
         # cluster scale?" section (render_cluster_scale demotes each to a ### sub-block).
         cluster_scale = render_cluster_scale(results)

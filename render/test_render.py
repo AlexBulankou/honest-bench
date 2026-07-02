@@ -3047,6 +3047,101 @@ def test_operating_envelope_excludes_speedup_leg():
     assert "speedup" not in withwc.lower()
 
 
+# --- hb#134: "What this means for you" plain-English synthesis ------------------------------
+
+
+def test_what_this_means_always_renders_skeleton_all_clauses_degrade():
+    # No source blocks ⇒ the section STILL renders (always-on, mirrors render_operating_envelope);
+    # every MEASURED clause degrades to its qualitative form (never a guessed number), and all four
+    # static bullets are present.
+    out = render.render_what_this_means(_matrix_results([]))
+    assert "## What this means for you" in out
+    # Clause 1/2/3 degraded (qualitative, no measured figure).
+    assert "a new sandbox is ready quickly" in out
+    assert "A warm-pool hit is much faster than starting cold." in out
+    assert "Big simultaneous bursts still work, but they are the pool-overflow regime" in out
+    # The measured phrasings must be ABSENT when nothing is measured.
+    assert "ready in ~" not in out
+    assert "faster than starting cold (" not in out
+    assert "asked for at once settled in" not in out
+    # Static bullets always present (rule-of-thumb + product-shape posture).
+    assert "Rule of thumb for pool size" in out
+    assert "Pick gVisor for now." in out
+    assert "Do not design around suspend/resume yet." in out
+    assert "is unmeasured, not bad." in out
+
+
+def test_what_this_means_renders_measured_numbers():
+    # Full fixture ⇒ every measured clause carries the render-derived number from the SAME cleaner
+    # the tables use (warm p50/p95 from the matrix warm scenario; speedup+runtime from warm_vs_cold;
+    # the many-at-once wait from the warm concurrent-burst leg).
+    out = render.render_what_this_means(
+        _matrix_results(_full_gvisor_scenarios(), warm_vs_cold=_wc(), concurrent_burst=_cb()))
+    # Clause 1 — warmpool_cold_start ttfe_p50_ms=600 ⇒ ~0.6s, p95=900 ⇒ ~0.9s.
+    assert "a new sandbox is ready in ~0.6s (~0.9s at the p95)." in out
+    # Clause 2 — _wc() cold_ms/warm_p50_ms = 3000/300 = 10 ⇒ "about 10× faster ... (gVisor)".
+    assert "A warm-pool hit is about 10× faster than starting cold (gVisor)." in out
+    # Clause 3 — warm concurrent-burst leg n=300, ttfe_p50_ms=6874.3 ⇒ ~6.9s.
+    assert "300 sandboxes asked for at once settled in ~6.9s." in out
+
+
+def test_what_this_means_no_double_hedge_on_wait_figures():
+    # _fmt_wait already prefixes "~"; the prose must not add "about" in front of a ~-value
+    # (would read "about ~0.6s"). Speedup keeps "about" because that figure carries no "~".
+    out = render.render_what_this_means(
+        _matrix_results(_full_gvisor_scenarios(), warm_vs_cold=_wc(), concurrent_burst=_cb()))
+    assert "about ~" not in out
+
+
+def test_what_this_means_warm_clause_degrades_when_scenario_not_pass():
+    # A non-PASS warmpool_cold_start ⇒ clause 1 degrades even though burst/speedup are measured.
+    scen = [{"name": "warmpool_cold_start", "outcome": "pending", "n": 200,
+             "sla_metrics": {"ttfe_p50_ms": 600, "ttfe_p95_ms": 900}}]
+    out = render.render_what_this_means(
+        _matrix_results(scen, warm_vs_cold=_wc(), concurrent_burst=_cb()))
+    assert "a new sandbox is ready quickly" in out
+    assert "ready in ~" not in out
+    # The other two clauses still render their measured numbers.
+    assert "about 10× faster" in out
+    assert "settled in ~6.9s" in out
+
+
+def test_what_this_means_speedup_clause_degrades_and_no_runtime_leak():
+    # An out-of-enum runtime_class fails the warm_vs_cold block CLOSED ⇒ clause 2 degrades and the
+    # bogus runtime string never reaches the page.
+    out = render.render_what_this_means(
+        _matrix_results(_full_gvisor_scenarios(), warm_vs_cold=_wc(runtime_class="trust-me-vm")))
+    assert "A warm-pool hit is much faster than starting cold." in out
+    assert "trust-me-vm" not in out
+    assert "faster than starting cold (" not in out  # the "(runtime)" paren only rides the measured form
+
+
+def test_what_this_means_burst_clause_degrades_when_burst_absent():
+    # No concurrent_burst ⇒ clause 3 degrades; the measured "N sandboxes ... settled in" is absent.
+    out = render.render_what_this_means(
+        _matrix_results(_full_gvisor_scenarios(), warm_vs_cold=_wc()))
+    assert "Big simultaneous bursts still work, but they are the pool-overflow regime" in out
+    assert "asked for at once settled in" not in out
+
+
+def test_what_this_means_public_safe_no_internal_names():
+    # PII fence: static prose + public runtime labels only — no internal cluster names / project-ids.
+    out = render.render_what_this_means(
+        _matrix_results(_full_gvisor_scenarios(), warm_vs_cold=_wc(), concurrent_burst=_cb()))
+    for forbidden in ("sandbox-scenarios-cluster", "substrate-demo-cluster",
+                      "alexbu-gke-dev-d", "postgres-obs-0"):
+        assert forbidden not in out
+
+
+def test_what_this_means_in_full_readme_between_speedup_and_scale():
+    from generate import build_readme
+    readme = build_readme()
+    wtm_at = readme.find("## What this means for you")
+    assert wtm_at != -1
+    assert readme.index("## Warm-vs-Cold Speedup") < wtm_at
+    assert wtm_at < readme.index("## Does it hold at cluster scale?")
+
+
 def test_recipe_renders_h2_and_is_static():
     # #4021: render_recipe is product-agnostic static prose (no results arg) and always renders.
     out = render.render_recipe()

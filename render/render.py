@@ -1042,6 +1042,103 @@ def render_operating_envelope(results):
     return "\n".join(lines)
 
 
+def render_what_this_means(results):
+    """hb#134 plain-English synthesis for the non-infra reader (model-builders / agentic devs).
+
+    Reads the SAME closed-schema cleaners the tables above use, so every number here is the
+    render-derived measured value — never a hand-typed figure that could drift from the table it
+    summarizes. The section ALWAYS renders; each measured clause degrades to a qualitative
+    statement (never a guessed number) when its source block is absent/INERT, mirroring
+    render_operating_envelope. The product-shape and pool-sizing statements are static by nature
+    (a rule of thumb / a capability posture, not a measurement) and labelled as such so a reader
+    never mistakes them for one of the machine-rendered figures.
+    """
+    scen = _matrix_scenarios(results.get("scenarios"))
+    wc = _clean_warm_vs_cold(results)
+    burst = _envelope_warm_burst_leg(results)
+
+    lines = ["## What this means for you", ""]
+    lines.append(
+        "The tables above are the raw measurements. If you build *on* sandboxes but do not run "
+        "the cluster yourself, here is what they mean in practice:"
+    )
+    lines.append("")
+
+    # Clause 1 — the everyday wait when the warm pool keeps up (matrix warm scenario p50/p95).
+    sc = scen.get("warmpool_cold_start")
+    if sc and sc.get("outcome") == "PASS" and "ttfe_p50_ms" in sc["metrics"]:
+        p50 = _fmt_wait(sc["metrics"]["ttfe_p50_ms"])
+        tail = (
+            f" ({_fmt_wait(sc['metrics']['ttfe_p95_ms'])} at the p95)"
+            if "ttfe_p95_ms" in sc["metrics"] else ""
+        )
+        lines.append(
+            f"- **Keep a warm pool sized to demand and a new sandbox is ready in {p50}"
+            f"{tail}.** That is fast enough to put a fresh sandbox directly in a user-facing "
+            "request path — no need to hide it behind a spinner or pre-allocate one per session."
+        )
+    else:
+        lines.append(
+            "- **Keep a warm pool sized to demand and a new sandbox is ready quickly** — a claim "
+            "against a ready pool skips the fresh-node startup path. The exact wait to budget is "
+            "in the operating envelope above once that measurement lands."
+        )
+
+    # Clause 2 — warm pools pay off (warm_vs_cold speedup + runtime).
+    if wc:
+        speedup = _fmt_num(round(wc["cold_ms"] / wc["warm_p50_ms"], 1))
+        rt = RUNTIME_LABELS[wc["runtime_class"]]
+        lines.append(
+            f"- **A warm-pool hit is about {speedup}× faster than starting cold ({rt}).** If "
+            "start-up latency matters to you, the warm pool is the single biggest lever — size it "
+            "for your steady demand and most claims never pay the cold path."
+        )
+    else:
+        lines.append(
+            "- **A warm-pool hit is much faster than starting cold.** If start-up latency matters "
+            "to you, the warm pool is the single biggest lever — size it for your steady demand "
+            "and most claims never pay the cold path."
+        )
+
+    # Clause 3 — bursts work but are the overflow regime (warm concurrent-burst leg).
+    if burst:
+        n = _fmt_num(burst["n"])
+        bw = _fmt_wait(burst["ttfe_p50_ms"])
+        lines.append(
+            f"- **Big simultaneous bursts still work — {n} sandboxes asked for at once settled in "
+            f"{bw}.** But that is the pool-overflow regime: the wait climbs toward the "
+            "cold-start number as claims outrun ready slots, so plan the pool around your steady "
+            "rate, not your worst spike."
+        )
+    else:
+        lines.append(
+            "- **Big simultaneous bursts still work, but they are the pool-overflow regime** — the "
+            "wait climbs toward the cold-start number as claims outrun ready slots, so plan the "
+            "pool around your steady rate, not your worst spike."
+        )
+
+    # Static planning heuristic + product-shape posture (NOT measurements — labelled as such).
+    lines.append(
+        "- **Rule of thumb for pool size:** start near your typical concurrent demand (≈0.75× of "
+        "it) and tune from there. This is a planning heuristic, not one of the measured numbers "
+        "above."
+    )
+    lines.append(
+        "- **Pick gVisor for now.** It is the only runtime measured end-to-end here; the "
+        "Kata + microVM rows are structural placeholders, not a recommendation."
+    )
+    lines.append(
+        "- **Do not design around suspend/resume yet.** It is blocked upstream on both runtimes, "
+        "so treat it as unavailable until those cells show real numbers."
+    )
+    lines.append(
+        "- **A cell marked `pending` is unmeasured, not bad.** It means that measurement has not "
+        "run yet (or is blocked upstream) — never that the platform failed it."
+    )
+    lines.append("")
+    return "\n".join(lines)
+
+
 def _clean_burst_corroboration(scenarios):
     """Find burst_create and closed-schema-clean its corroboration metrics (#3954).
 
