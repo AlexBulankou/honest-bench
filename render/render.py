@@ -883,6 +883,81 @@ def render_matrix(results, kata_results=None):
     return "\n".join(lines)
 
 
+# --- #4162: North-Star scorecard (render-derived; zero emit-key change) --------------------
+# The long-term target for a warm-pool hit is TTFE p95 < 500ms — the SAME 500ms "North Star"
+# band the step-up curve's verdict already uses (schema.py stepup vocabulary: max_flat_rate =
+# highest sustained rate under it, reported in DETAILS). The matrix's 5s/1s throughput bars are
+# today's operating envelope; this block prints the measured GAP to the stricter target instead
+# of leaving it implied. It is derived entirely from the already-emitted warm-hit ttfe_p95_ms —
+# no new emit key, so the locked emitter⇄renderer schema contract is untouched.
+NORTH_STAR_TTFE_P95_MS = 500.0
+
+
+def render_north_star(results, kata_results=None):
+    """Headline scorecard: measured warm-pool-hit TTFE p95 vs the 500ms North-Star bar.
+
+    Same per-runtime sourcing as the matrix (the primary results claim their measured
+    runtime; kata_results may fill the kata-microvm slot; primary wins on conflict). A
+    runtime with no measured warm-hit p95 renders `pending` — never a guess (a pending
+    warm scenario's suppressed metrics fall through to `pending` here too). A met bar
+    renders ✅ with the measured headroom; a missed bar renders an honest ❌ with the
+    measured gap. Low-N p95 cells inherit the matrix's small-sample dagger.
+    """
+    product = results.get("product")
+    if product not in PRODUCTS:
+        return ""
+    prov = _clean_provenance(results.get("provenance"))
+    measured_runtime = prov.get("runtime") or "gvisor"
+    sources = {measured_runtime: _matrix_scenarios(results.get("scenarios"))}
+    if (
+        isinstance(kata_results, dict)
+        and kata_results.get("product") == "sandbox-kata"
+        and "kata-microvm" not in sources
+    ):
+        kp = _clean_provenance(kata_results.get("provenance"))
+        if kp.get("runtime") == "kata-microvm":
+            sources["kata-microvm"] = _matrix_scenarios(kata_results.get("scenarios"))
+
+    bar = _fmt_secs(NORTH_STAR_TTFE_P95_MS)
+    lines = [f"## North-Star check — warm-pool TTFE p95 < {bar}", ""]
+    lines.append(
+        f"The long-term target for a warm-pool hit is a TTFE p95 under {bar} — a stricter bar "
+        "than the 5s/1s throughput bars in the matrix above (those are today's operating "
+        "envelope). This scorecard prints the measured distance to that target rather than "
+        "leaving it implied. It is the same bar the step-up curve's North-Star verdict uses — "
+        "the highest sustained creation rate holding p95 under it is reported in "
+        "[DETAILS.md](DETAILS.md)."
+    )
+    lines.append("")
+    lines.append(f"| Runtime | Warm-pool-hit TTFE p95 (measured) | North Star (p95 < {bar}) |")
+    lines.append("|---|---|---|")
+    for rt in MATRIX_RUNTIMES:
+        rt_scen = sources.get(rt)
+        sc = rt_scen.get("warmpool_cold_start") if rt_scen is not None else None
+        p95 = sc["metrics"].get("ttfe_p95_ms") if sc else None
+        if p95 is None:
+            lines.append(f"| {RUNTIME_LABELS[rt]} | {_PENDING} | {_PENDING} |")
+            continue
+        p95_cell = _fmt_secs(p95)
+        n_val = sc["n"] if sc["n"] > 0 else None
+        if n_val is not None and n_val < TTFE_COMPARABILITY_MIN_N:
+            p95_cell += f" {_LOW_N_MARK}"
+        if p95 < NORTH_STAR_TTFE_P95_MS:
+            verdict = f"✅ met ({_fmt_secs(NORTH_STAR_TTFE_P95_MS - p95)} headroom)"
+        else:
+            verdict = f"❌ not met ({_fmt_secs(p95 - NORTH_STAR_TTFE_P95_MS)} above the bar)"
+        lines.append(f"| {RUNTIME_LABELS[rt]} | {p95_cell} | {verdict} |")
+    lines.append("")
+    lines.append(
+        "_An honest ❌ beats an implied pass: the page prints the measured distance to the "
+        "target it misses, and a met bar prints its measured headroom. An unmeasured runtime "
+        f"reads `pending` — never a guess. {_LOW_N_MARK} marks a p95 measured over fewer than "
+        f"N={TTFE_COMPARABILITY_MIN_N} samples (a single observation, not a distribution)._"
+    )
+    lines.append("")
+    return "\n".join(lines)
+
+
 # --- hb#134: operating-envelope headline table -------------------------------------------
 # The single "given MY load, what wait do I budget?" table — the reader's only real question.
 # It does NOT re-measure anything: it reconciles the warm/wait numbers already measured across

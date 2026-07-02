@@ -2915,6 +2915,100 @@ def test_recipe_in_full_readme_after_data_sections():
         assert recipe_at > contention_at
 
 
+# --- #4162 Option A: North-Star scorecard (warm-hit p95 vs the 500ms bar) --------------------
+
+
+def test_north_star_gvisor_miss_prints_measured_gap():
+    out = render.render_north_star(_matrix_results(_full_gvisor_scenarios()))
+    assert "## North-Star check — warm-pool TTFE p95 < 0.5s" in out
+    # 900ms warm-hit p95 misses the 500ms bar by exactly 0.4s — the gap is printed, not implied.
+    assert "| gVisor | 0.9s | ❌ not met (0.4s above the bar) |" in out
+
+
+def test_north_star_met_bar_prints_headroom():
+    scen = [{
+        "name": "warmpool_cold_start", "outcome": "PASS", "n": 200,
+        "sla_metrics": {"ttfe_p95_ms": 400},
+    }]
+    out = render.render_north_star(_matrix_results(scen))
+    assert "| gVisor | 0.4s | ✅ met (0.1s headroom) |" in out
+
+
+def test_north_star_exact_bar_is_not_met():
+    # Strict `<`: p95 == 500ms does NOT meet a "< 500ms" bar (never round toward the claim).
+    scen = [{
+        "name": "warmpool_cold_start", "outcome": "PASS", "n": 200,
+        "sla_metrics": {"ttfe_p95_ms": 500},
+    }]
+    out = render.render_north_star(_matrix_results(scen))
+    assert "❌ not met (0s above the bar)" in out
+
+
+def test_north_star_low_n_dagger_on_p95_cell():
+    scen = [{
+        "name": "warmpool_cold_start", "outcome": "PASS", "n": 5,
+        "sla_metrics": {"ttfe_p95_ms": 900},
+    }]
+    out = render.render_north_star(_matrix_results(scen))
+    assert "| gVisor | 0.9s † | ❌ not met (0.4s above the bar) |" in out
+
+
+def test_north_star_unmeasured_runtime_pends():
+    # No kata companion artifact ⇒ the kata row pends on both cells — never a guess.
+    out = render.render_north_star(_matrix_results(_full_gvisor_scenarios()))
+    assert "| Kata + microVM | pending | pending |" in out
+
+
+def test_north_star_kata_pending_warm_scenario_falls_through_to_pending():
+    # The default kata fixture's warm-pool scenario is pending (pool-topology-constrained):
+    # its suppressed metrics must fall through to `pending`, not leak a number.
+    out = render.render_north_star(
+        _matrix_results(_full_gvisor_scenarios()), kata_results=_kata_results()
+    )
+    assert "| Kata + microVM | pending | pending |" in out
+
+
+def test_north_star_kata_results_fills_kata_row():
+    kata_scen = [{
+        "name": "warmpool_cold_start", "outcome": "PASS", "n": 30,
+        "sla_metrics": {"ttfe_p95_ms": 986.7},
+    }]
+    out = render.render_north_star(
+        _matrix_results(_full_gvisor_scenarios()),
+        kata_results=_kata_results(scenarios=kata_scen),
+    )
+    assert "| Kata + microVM | 0.9867s | ❌ not met (0.4867s above the bar) |" in out
+    # gVisor row unchanged by the companion artifact.
+    assert "| gVisor | 0.9s | ❌ not met (0.4s above the bar) |" in out
+
+
+def test_north_star_kata_results_wrong_product_or_runtime_ignored():
+    kata_scen = [{
+        "name": "warmpool_cold_start", "outcome": "PASS", "n": 30,
+        "sla_metrics": {"ttfe_p95_ms": 400},
+    }]
+    for kr in (
+        _kata_results(scenarios=kata_scen, product="sandbox"),
+        _kata_results(scenarios=kata_scen, provenance={"runtime": "gvisor"}),
+    ):
+        out = render.render_north_star(_matrix_results(_full_gvisor_scenarios()), kata_results=kr)
+        assert "| Kata + microVM | pending | pending |" in out
+
+
+def test_north_star_unknown_product_renders_nothing():
+    out = render.render_north_star({"product": "not-a-product", "scenarios": []})
+    assert out == ""
+
+
+def test_north_star_in_full_readme_between_matrix_and_envelope():
+    from generate import build_readme
+    readme = build_readme()
+    ns_at = readme.find("## North-Star check")
+    assert ns_at != -1
+    assert readme.index("## Agent Sandbox — Core Metrics") < ns_at
+    assert ns_at < readme.index("## Operating Envelope")
+
+
 def _run_all():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:
