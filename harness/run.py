@@ -619,8 +619,29 @@ def maybe_warm_vs_cold(product: str, raw: list):
     return result or None
 
 
-def build_provenance(substrate: str) -> dict:
+def _matrix_runtime_for(product: str) -> str:
+    """Derive provenance.runtime for the sandbox matrix (#3942/#830).
+
+    render's render_matrix selects the measured runtime column from
+    provenance.runtime; the emit path derives it product-side (sandbox->gvisor,
+    sandbox-kata->kata-microvm) with a BENCH_MATRIX_RUNTIME override for a fire that
+    pins a runtimeClassName off the product default. Returns "" for products with
+    no matrix runtime (substrate), so build_provenance omits the key and never
+    carries a meaningless runtime onto a non-matrix product. An out-of-enum
+    override is NOT validated here — the emitter's _coerce_provenance fails closed
+    on it (single source of truth), mirroring the cold_start_mode pattern.
+    """
+    override = os.environ.get("BENCH_MATRIX_RUNTIME", "").strip()
+    if override:
+        return override
     return {
+        "sandbox": "gvisor",
+        "sandbox-kata": "kata-microvm",
+    }.get(product, "")
+
+
+def build_provenance(substrate: str, product: str = results_schema.DEFAULT_PRODUCT) -> dict:
+    prov = {
         "cluster_substrate": substrate,
         "controller_image": os.environ.get("BENCH_CONTROLLER_IMAGE", ""),
         "controller_digest": os.environ.get("BENCH_CONTROLLER_DIGEST", ""),
@@ -637,6 +658,12 @@ def build_provenance(substrate: str) -> dict:
             "BENCH_NATIVE_DIGEST_COLD_MODE", "cold-provision"
         ),
     }
+    # Matrix runtime column (#3942/#830): emitted only for sandbox-family products
+    # so render flips that runtime's rows to measured and the other to pending.
+    runtime = _matrix_runtime_for(product)
+    if runtime:
+        prov["runtime"] = runtime
+    return prov
 
 
 def main(argv=None) -> int:
@@ -727,7 +754,7 @@ def main(argv=None) -> int:
         None, prior_at_scale_contention, generated_at=generated_at
     )
     results = results_schema.build_results(
-        raw, build_provenance(substrate), generated_at=generated_at, product=args.product,
+        raw, build_provenance(substrate, args.product), generated_at=generated_at, product=args.product,
         scale_proof=scale_proof, stepup=stepup, warm_vs_cold=warm_vs_cold_obj,
         kata_activation=kata_activation, concurrent_burst=concurrent_burst,
         warm_pool_acquisition=warm_pool_acquisition,

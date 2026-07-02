@@ -225,6 +225,25 @@ def test_warm_regime_enum_only():
     _check("regime" not in r["provenance"], "absent regime dropped")
 
 
+def test_matrix_runtime_enum_only():
+    # #3942/#830: provenance.runtime is a CLOSED enum (render's matrix selects the
+    # measured runtime column from it). A valid value is kept; an out-of-set value
+    # fails closed (a typo'd BENCH_MATRIX_RUNTIME must never publish a wrong measured
+    # column); absent is simply dropped (optional — a substrate fire carries none).
+    for runtime in rs.MATRIX_RUNTIME_ENUM:
+        r = rs.build_results([], _prov(runtime=runtime), GEN_AT)
+        _check(r["provenance"]["runtime"] == runtime, f"{runtime} kept")
+    try:
+        rs.build_results([], _prov(runtime="kata-lie"), GEN_AT)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("non-enum runtime must raise (fail-closed)")
+    # absent -> dropped, not an error (the base _prov() carries no runtime)
+    r = rs.build_results([], _prov(), GEN_AT)
+    _check("runtime" not in r["provenance"], "absent runtime dropped")
+
+
 def test_product_enum_only():
     # #3868: product is a CLOSED enum. The default is sandbox (so existing callers
     # are unchanged); substrate is accepted; a non-enum product fails closed (a

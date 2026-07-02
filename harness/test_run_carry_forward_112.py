@@ -233,6 +233,43 @@ def test_build_results_absent_omits_all_four_keys():
         _check(key not in out, f"{key} omitted when not supplied")
 
 
+def test_build_provenance_runtime_product_derived():
+    # #3942/#830: build_provenance derives provenance.runtime product-side so
+    # render's matrix flips that runtime's rows to measured. sandbox -> gvisor,
+    # sandbox-kata -> kata-microvm, substrate -> omitted (no matrix runtime).
+    saved = _os.environ.pop("BENCH_MATRIX_RUNTIME", None)
+    try:
+        _check(run.build_provenance("kind", "sandbox")["runtime"] == "gvisor",
+               "sandbox derives gvisor")
+        _check(run.build_provenance("gke-kata", "sandbox-kata")["runtime"] == "kata-microvm",
+               "sandbox-kata derives kata-microvm")
+        _check("runtime" not in run.build_provenance("kind", "substrate"),
+               "substrate carries no matrix runtime")
+        # env override wins over the product default (a fire that pins a
+        # runtimeClassName off the product default).
+        _os.environ["BENCH_MATRIX_RUNTIME"] = "kata-microvm"
+        _check(run.build_provenance("kind", "sandbox")["runtime"] == "kata-microvm",
+               "BENCH_MATRIX_RUNTIME override wins")
+    finally:
+        _os.environ.pop("BENCH_MATRIX_RUNTIME", None)
+        if saved is not None:
+            _os.environ["BENCH_MATRIX_RUNTIME"] = saved
+
+
+def test_build_provenance_runtime_round_trips_through_emitter():
+    # The derived runtime must survive _coerce_provenance (it is in PROVENANCE_FIELDS
+    # + passes the closed enum guard), so the emitted results carry it end-to-end.
+    saved = _os.environ.pop("BENCH_MATRIX_RUNTIME", None)
+    try:
+        prov = run.build_provenance("gke-kata", "sandbox-kata")
+        r = rs.build_results([], prov, _GEN_AT, product="sandbox-kata")
+        _check(r["provenance"]["runtime"] == "kata-microvm",
+               "kata runtime survives the emitter coercion")
+    finally:
+        if saved is not None:
+            _os.environ["BENCH_MATRIX_RUNTIME"] = saved
+
+
 def _all_tests():
     return [v for k, v in sorted(globals().items())
             if k.startswith("test_") and callable(v)]
