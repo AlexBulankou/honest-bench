@@ -160,6 +160,16 @@ _NODE_COUNT = max(1, _opt_int("BENCH_NODE_COUNT") or 1)
 _DENSITY_MAX_CONCURRENT = _opt_int("BENCH_DENSITY_MAX_CONCURRENT")
 _DENSITY_ALLOC_VCPU = _opt_float("BENCH_DENSITY_ALLOCATABLE_VCPU_PER_NODE")
 
+# Per-cluster throughput node count (hb#132 dual matrix cells). OPT-IN, unset by
+# default: pass ONLY on a genuine cluster-saturation fire (offered load held
+# at/above the cluster's saturation point at this node count). When set, the
+# metrics core emits the coupled triple thpt_under_{5s,1s}_per_cluster +
+# thpt_cluster_node_count — measured from THIS fire's samples, never per-node x N
+# extrapolation. On a non-saturating fire the per-cluster halves would report
+# offered load, not capacity, so leaving it unset keeps the cluster cells
+# honestly `pending (cluster-fire)`.
+_CLUSTER_NODE_COUNT = _opt_int("BENCH_CLUSTER_NODE_COUNT")
+
 # Timeouts. Pool warmup: 180s for 5 replicas (pull + schedule + start).
 # Per-claim bind: 180s — cold-path claims can take 30-90s on a fresh node.
 #
@@ -557,6 +567,7 @@ def _assemble_ttfe_metrics(
     allocatable_sandbox_vcpu_per_node: float | None,
     bind_ms_samples: list[float] | None = None,
     exec_ms_samples: list[float] | None = None,
+    cluster_node_count: int | None = None,
 ) -> dict:
     """Assemble the warmpool TTFE sla_metrics dict (delegates to the pure core).
 
@@ -583,6 +594,7 @@ def _assemble_ttfe_metrics(
         allocatable_sandbox_vcpu_per_node=allocatable_sandbox_vcpu_per_node,
         bind_ms_samples=bind_ms_samples,
         exec_ms_samples=exec_ms_samples,
+        cluster_node_count=cluster_node_count,
     )
     m["n"] = len(exec_oks)
     return m
@@ -932,6 +944,7 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
                 allocatable_sandbox_vcpu_per_node=_DENSITY_ALLOC_VCPU,
                 bind_ms_samples=bind_ms_samples,
                 exec_ms_samples=exec_ms_samples,
+                cluster_node_count=_CLUSTER_NODE_COUNT,
             )
         else:
             sla_metrics = (
