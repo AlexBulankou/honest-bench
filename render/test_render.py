@@ -844,6 +844,63 @@ def test_matrix_density_sourced_from_warmpool_not_stale_burst_create():
     assert "1.88" not in out and "0.45" not in out and "Max Density" not in out
 
 
+def test_sample_sizes_surfaces_per_row_n_dropped_from_matrix():
+    # hb#134 fast-follow: the headline matrix dropped its Samples-N column, so N is invisible
+    # for any 100%-exec row on the front page. render_sample_sizes restores the receipt in
+    # DETAILS: one row per (runtime, activation-mode), keyed by the same per-scenario n. The
+    # gVisor warm/cold rows carry their real N; the front-page matrix carries none of them.
+    out = render.render_sample_sizes(_matrix_results(_full_gvisor_scenarios()))
+    assert "## Sample Sizes (N per Core Metrics row)" in out
+    assert "| gVisor | Warm-pool hit (Base image) | 200 |" in out
+    assert "| gVisor | Unique-image cold (RL reality) | 200 |" in out
+    assert "| gVisor | Resume-from-suspend | 1376 |" in out
+    # the receipt is a DETAILS-only surface — the headline matrix still carries no N column
+    matrix = render.render_matrix(_matrix_results(_full_gvisor_scenarios()))
+    assert "Samples (N)" not in matrix
+
+
+def test_sample_sizes_low_n_row_marked_and_captioned():
+    # A row below the comparability floor carries the same small-sample dagger the matrix TTFE
+    # cells wear, so the receipt itself flags which rows are not distributions.
+    scen = _full_gvisor_scenarios()
+    scen[1]["n"] = 3  # native cold below TTFE_COMPARABILITY_MIN_N
+    out = render.render_sample_sizes(_matrix_results(scen))
+    assert f"| gVisor | Unique-image cold (RL reality) | 3 {render._LOW_N_MARK} |" in out
+    # the high-N warm row stays unmarked
+    assert "| gVisor | Warm-pool hit (Base image) | 200 |" in out
+    assert render._LOW_N_MARK in out and str(render.TTFE_COMPARABILITY_MIN_N) in out
+
+
+def test_sample_sizes_pending_row_carries_reason_and_resume_kata_na():
+    # A pending row renders `pending (<reason>)` (not a not-yet-run bare pending), matching the
+    # matrix; resume-from-suspend on Kata is N/A by construction (CRIU does not transfer).
+    scen = _full_gvisor_scenarios()
+    scen[2] = {
+        "name": "suspend_resume", "outcome": "pending",
+        "pending_reason": "upstream-blocked", "n": 1,
+    }
+    out = render.render_sample_sizes(_matrix_results(scen))
+    assert "| gVisor | Resume-from-suspend | pending (upstream-blocked) |" in out
+    assert "| Kata + microVM | Resume-from-suspend | N/A |" in out
+    # unmeasured kata warm/cold rows render bare pending
+    assert "| Kata + microVM | Warm-pool hit (Base image) | pending |" in out
+
+
+def test_sample_sizes_kata_results_fills_kata_rows():
+    # the companion sandbox-kata artifact fills the kata rows' N exactly as it fills the matrix.
+    out = render.render_sample_sizes(
+        _matrix_results(_full_gvisor_scenarios()), kata_results=_kata_results()
+    )
+    assert f"| Kata + microVM | Unique-image cold (RL reality) | 5 {render._LOW_N_MARK} |" in out
+    # the pending kata warm row keeps its reason
+    assert "| Kata + microVM | Warm-pool hit (Base image) | pending (pool-topology-constrained) |" in out
+
+
+def test_sample_sizes_inert_for_unknown_product():
+    # closed-schema: an unknown product renders "" (INERT), never a guessed skeleton.
+    assert render.render_sample_sizes({"product": "not-a-product", "scenarios": []}) == ""
+
+
 def test_matrix_kata_warm_cold_rows_pending():
     # on an unmeasured kata runtime, the warm-pool + cold rows render pending (not-yet-measured);
     # the resume row is N/A-by-design and is asserted separately below.

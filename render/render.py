@@ -496,6 +496,73 @@ def render_density_detail(results, kata_results=None):
     return "\n".join(lines) + "\n"
 
 
+def render_sample_sizes(results, kata_results=None):
+    """DETAILS.md deep-dive: the sample size (N) behind every Core Metrics matrix row.
+
+    hb#134 dropped the "Samples (N)" column from the headline matrix (page-friendliness pass),
+    but N is the receipt behind every TTFE p50/p95 — without it a reader cannot tell a warm-pool
+    p50 over hundreds of samples from a cold p50 over one. This block restores that receipt in
+    the appendix: the same runtime x activation-mode rows as the matrix, keyed by the same
+    per-scenario n, so the front page stays scannable while the number stays inspectable. Rows
+    below the cross-row comparability floor (N < TTFE_COMPARABILITY_MIN_N) are exactly the rows
+    marked _LOW_N_MARK on the matrix TTFE cells — the caption ties the two together. Same
+    per-runtime source + pending-reason discipline as the matrix: primary results claim their
+    measured runtime, kata_results may fill the kata-microvm slot, a pending row renders
+    `pending (<reason>)`, and resume x Kata is N/A by construction. Returns "" (INERT) only for
+    an unknown product; otherwise it always renders the runtime x mode skeleton, cells pending
+    individually, mirroring the matrix's honest-skeleton behaviour."""
+    product = results.get("product")
+    if product not in PRODUCTS:
+        return ""
+    prov = _clean_provenance(results.get("provenance"))
+    measured_runtime = prov.get("runtime") or "gvisor"
+    sources = {measured_runtime: _matrix_scenarios(results.get("scenarios"))}
+    if (
+        isinstance(kata_results, dict)
+        and kata_results.get("product") == "sandbox-kata"
+        and "kata-microvm" not in sources
+    ):
+        kp = _clean_provenance(kata_results.get("provenance"))
+        if kp.get("runtime") == "kata-microvm":
+            sources["kata-microvm"] = _matrix_scenarios(kata_results.get("scenarios"))
+    lines = ["## Sample Sizes (N per Core Metrics row)", ""]
+    lines.append(
+        "The receipt behind the Core Metrics table: the N each row's TTFE p50/p95 was measured "
+        f"over. Rows with N < {TTFE_COMPARABILITY_MIN_N} are exactly the ones marked "
+        f"{_LOW_N_MARK} on the matrix TTFE cells — a single-sample p50 is not a distribution, so "
+        "do not rank a low-N row against a high-N one. An unmeasured or not-yet-graduated row "
+        "renders `pending`; resume-from-suspend on Kata is N/A by construction."
+    )
+    lines.append("")
+    lines.append("| Runtime | Activation Mode | Samples (N) |")
+    lines.append("|---|---|---|")
+    for rt in MATRIX_RUNTIMES:
+        rt_label = RUNTIME_LABELS[rt]
+        rt_scen = sources.get(rt)
+        measured = rt_scen is not None
+        for scen_name, mode_label in ACTIVATION_MODE_ROWS:
+            if scen_name == "suspend_resume" and rt == "kata-microvm":
+                lines.append(f"| {rt_label} | {mode_label} | {_NA} |")
+                continue
+            sc = rt_scen.get(scen_name) if measured else None
+            sc_pending = bool(sc) and sc.get("outcome") == "pending"
+            pending_tok = _PENDING
+            if sc_pending:
+                reason = sc.get("pending_reason")
+                if reason:
+                    pending_tok = f"{_PENDING} ({reason})"
+            n_val = sc["n"] if (sc and sc["n"] > 0 and not sc_pending) else None
+            if n_val is None:
+                cell = pending_tok
+            elif n_val < TTFE_COMPARABILITY_MIN_N:
+                cell = f"{n_val} {_LOW_N_MARK}"
+            else:
+                cell = str(n_val)
+            lines.append(f"| {rt_label} | {mode_label} | {cell} |")
+    lines.append("")
+    return "\n".join(lines) + "\n"
+
+
 def _landed_cluster_x(m):
     """A metrics dict's landed, valid thpt_cluster_node_count as int — None if absent/invalid.
 
@@ -1937,8 +2004,11 @@ def render_at_scale_contention(results, detail=False):
     heading = ("## At Scale Under Contention — where sub-second warm activation breaks"
                if detail else "## Where it breaks today (honest limits)")
     lines = [heading, ""]
+    # hb#134 (a4s1 nit): the Concurrent Burst table lives on the headline README, so "above" is
+    # correct on the page path but dangles in the DETAILS detail-path (nothing is above it there).
+    burst_locator = "on the headline page" if detail else "above"
     caption = (
-        "The Concurrent Burst legs above are **1:1** — N ready sandboxes hit with N claims. This "
+        f"The Concurrent Burst legs {burst_locator} are **1:1** — N ready sandboxes hit with N claims. This "
         "is the deliberate **retraction**: the operating point where the pool is "
         "**over-subscribed** (more concurrent claims than ready pool members), and warm activation "
         f"**stops being sub-second**. Measured on **{label}**: a pool of **{_fmt_num(pool)}** ready "
