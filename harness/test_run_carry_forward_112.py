@@ -1,6 +1,7 @@
-"""Offline tests for the #112 daily-refresh carry-forward of the five producer-less
+"""Offline tests for the #112 daily-refresh carry-forward of the six producer-less
 blocks — kata_activation (#3942), concurrent_burst (#4021), warm_pool_acquisition
-(#4083), at_scale_contention (#810), cluster_saturation (hb#132). No cluster, no I/O
+(#4083), at_scale_contention (#810), cluster_saturation (hb#132),
+provisioning_rate_sweep (#4086). No cluster, no I/O
 beyond self-managed tempfiles.
 
 Run with bare python3 (the auto-refresh GH-runner needs nothing extra):
@@ -122,6 +123,20 @@ _PRIOR_CS = {
     "machine_type": "n2-standard-16",
     "measured_at": "2026-07-02",
 }
+_PRIOR_PRS = {
+    "runtime_class": "gvisor",
+    "ceiling_low_per_s": 100,
+    "ceiling_high_per_s": 150,
+    "rate_points": [
+        {"offered_rate_per_s": 100, "warmpool_size": 1500, "converged": True,
+         "ready_pct": 100.0, "elapsed_s": 301.0},
+        {"offered_rate_per_s": 150, "warmpool_size": 2250, "converged": False,
+         "ready_pct": 42.0, "timeout_s": 1125.0},
+        {"offered_rate_per_s": 200, "warmpool_size": 3000, "converged": False,
+         "ready_pct": 21.0, "timeout_s": 1880.0},
+    ],
+    "measured_at": "2026-07-01",
+}
 
 _BLOCKS = (
     ("kata_activation", run.carry_prior_kata_activation,
@@ -134,6 +149,8 @@ _BLOCKS = (
      run._read_prior_at_scale_contention, _PRIOR_ASC),
     ("cluster_saturation", run.carry_prior_cluster_saturation,
      run._read_prior_cluster_saturation, _PRIOR_CS),
+    ("provisioning_rate_sweep", run.carry_prior_provisioning_rate_sweep,
+     run._read_prior_provisioning_rate_sweep, _PRIOR_PRS),
 )
 
 
@@ -228,33 +245,32 @@ def test_read_prior_non_dict_block_is_none():
                f"{key}: non-dict block value ⇒ None")
 
 
-# --- build_results wiring: the daily-refresh write must EMIT all four carried blocks ---
+# --- build_results wiring: the daily-refresh write must EMIT all six carried blocks ---
 
 def _prov():
     return {"cluster_substrate": "gke-sandbox", "commit": "abc1234", "runner": "test"}
 
 
-def test_build_results_emits_all_four_carried_blocks():
-    # The #112 regression lock: a wholesale build_results write with all four blocks passed
-    # must EMIT all four top-level keys (before #112 they were silently dropped).
+def test_build_results_emits_all_six_carried_blocks():
+    # The #112 regression lock: a wholesale build_results write with all six blocks passed
+    # must EMIT all six top-level keys (before #112 they were silently dropped).
     out = rs.build_results(
         [], _prov(), _GEN_AT, product="sandbox",
         kata_activation=_PRIOR_KATA,
         concurrent_burst=_PRIOR_CB,
         warm_pool_acquisition=_PRIOR_WPA,
         at_scale_contention=_PRIOR_ASC,
+        cluster_saturation=_PRIOR_CS,
+        provisioning_rate_sweep=_PRIOR_PRS,
     )
-    _check("kata_activation" in out, "kata_activation emitted")
-    _check("concurrent_burst" in out, "concurrent_burst emitted")
-    _check("warm_pool_acquisition" in out, "warm_pool_acquisition emitted")
-    _check("at_scale_contention" in out, "at_scale_contention emitted")
+    for key, _carry, _read, _prior in _BLOCKS:
+        _check(key in out, f"{key} emitted")
 
 
-def test_build_results_absent_omits_all_four_keys():
+def test_build_results_absent_omits_all_six_keys():
     # Default callers (a first-ever run with no priors) pass None ⇒ no keys, no fabrication.
     out = rs.build_results([], _prov(), _GEN_AT, product="sandbox")
-    for key in ("kata_activation", "concurrent_burst", "warm_pool_acquisition",
-                "at_scale_contention"):
+    for key, _carry, _read, _prior in _BLOCKS:
         _check(key not in out, f"{key} omitted when not supplied")
 
 
