@@ -2927,25 +2927,20 @@ def render_stepup(results):
 _RECIPE = """\
 ## Reproduce it
 
-Every number above comes from a *vanilla* GKE architecture you can provision yourself — no
-private tuning. The **runnable** version (exact commands, pinned installs, dispatch-only CI)
-lives in [`recipe/REPRODUCE.md`](recipe/REPRODUCE.md); the load-bearing cluster shape is:
-
-- **Cluster** — a regional GKE Standard cluster on **Kubernetes ≥ 1.31** with a **gVisor**-enabled
-  node pool (`--enable-sandbox=type=gvisor`, which installs the `gvisor` `RuntimeClass` the burst
-  pins to) on a **16-vCPU** machine type (e.g. `e2-standard-16`). Set the pool's autoscaling max
-  to the node count the headline needs *before* the fire, on a **`/16`** pod CIDR, so the burst
-  tops out on the sandbox path — not the autoscaler or IP exhaustion.
-- **Warm pool** — size the `SandboxWarmPool` so a ready slot waits for each claim (replicas ≈
-  active-concurrency × 0.75, replenished at the claim rate); otherwise a sustained burst drains
-  into the cold-overflow path partway through. When a drained-regime fire is on the page, the
-  Warm-Pool decomposition (in [DETAILS.md](DETAILS.md)) names the scaling term directly.
-- **Zero-cold-start** — run an image pre-pull **`DaemonSet`** (`recipe/prepull-daemonset.yaml`) so
-  a node that joins mid-burst adds no image-pull tax to the first sandbox scheduled onto it.
+Every number above comes from a *vanilla* GKE cluster you can provision yourself — no private
+tuning. Full runnable steps (commands, pinned installs, dispatch-only CI) are in
+[`recipe/REPRODUCE.md`](recipe/REPRODUCE.md). The one rule worth copying into your own setup:
+**size the warm pool to your peak** — keep a ready slot waiting for each claim (replicas ≈
+**0.75 × peak concurrency**, replenished at the claim rate), or a sustained burst drains into the
+slow cold-start path partway through. The cluster shape it needs (a **gVisor** node pool on a
+16-vCPU machine like `e2-standard-16`, the `gvisor` `RuntimeClass` the burst pins to, a `/16` pod
+CIDR, and a pre-pull `DaemonSet` for nodes that join mid-burst) is spelled out there too.
+When a drained-regime fire is on the page, the Warm-Pool decomposition in
+[DETAILS.md](DETAILS.md) names the scaling term directly.
 
 **Honesty:** a row marked `pending` is not-yet-measured — never a provisional number dressed as a
 result. The **sub-1s @ 300/s warm headline is not yet published**; the honest published-today
-figures are exactly the measured cells above (Core Metrics + **Concurrent Burst**) plus the
+figures are the measured cells above (Core Metrics + **Concurrent Burst**) plus the
 **Warm-Pool Acquisition** decomposition in [DETAILS.md](DETAILS.md) — the recipe points at those
 cells rather than restate a number that could drift out of sync. TRUE-TTFE (webhook-stamped
 first-instruction) stays `pending` until the upstream stamper lands.
