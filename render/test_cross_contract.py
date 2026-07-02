@@ -260,13 +260,22 @@ def test_emit_to_render_matrix_convergence_gvisor_doc_rows():
     }
     out = render.render_matrix(results)
 
-    # (b) the three gVisor rows render EXACTLY the spec doc's target numbers.
-    assert "| gVisor | Warm-pool hit (Base image) | 4 | 4 | 0.6s | 0.9s | 200 | 1.88 | 100% |" in out
-    assert "| gVisor | Unique-image cold (RL reality) | 4 | 0 | 1.2s | 1.56s | 200 | 1.88 | 100% |" in out
+    # (b) the three gVisor rows render EXACTLY the spec doc's target numbers. hb#132: the
+    # throughput cells are dual `<node> /node · <cluster>`; with no per-cluster field emitted the
+    # cluster half pends `pending (cluster-fire)` while the per-node half matches the spec.
+    cf = "pending (cluster-fire)"
     assert (
-        "| gVisor | Resume-from-suspend | 4 | 0 | 3.5s | 5s | 1376 | N/A | 92.8% (1277/1376) ⚠️ |"
-        in out
-    )
+        f"| gVisor | Warm-pool hit (Base image) | 4 /node · {cf} | 4 /node · {cf} "
+        "| 0.6s | 0.9s | 200 | 1.88 | 100% |"
+    ) in out
+    assert (
+        f"| gVisor | Unique-image cold (RL reality) | 4 /node · {cf} | 0 /node · {cf} "
+        "| 1.2s | 1.56s | 200 | 1.88 | 100% |"
+    ) in out
+    assert (
+        f"| gVisor | Resume-from-suspend | 4 /node · {cf} | 0 /node · {cf} "
+        "| 3.5s | 5s | 1376 | N/A | 92.8% (1277/1376) ⚠️ |"
+    ) in out
     # the unmeasured runtime stays honest-pending (never a guess) on its measurable rows.
     assert "| Kata + microVM | Warm-pool hit (Base image) | pending | pending | pending | pending | pending | pending | pending |" in out
     # resume × Kata is N/A-by-construction (CRIU does not transfer to the Kata VM model), never

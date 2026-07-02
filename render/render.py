@@ -325,6 +325,16 @@ _LOW_N_MARK = "†"
 # the Kata VM model, so that cell can never be measured — na-by-design, not not-yet-measured.
 _NA = "N/A"
 
+# hb#132 dual-throughput. Each throughput cell carries TWO numbers: `<node> /node · <cluster>`.
+# The per-node half is the engineering rate (comparable across runtimes); the cluster half is a
+# MEASURED saturation rate at X nodes — never a per-node × N extrapolation (that fiction breaks
+# above the controller reconcile ceiling). The cluster half pends `pending (cluster-fire)` until
+# OUR own schema-validated saturation fire carries thpt_*_per_cluster. A landed cluster figure
+# below the sizing target renders with ⚠️ (honest under-target signal); the target itself is the
+# test-sizing floor and is NEVER printed as a value.
+_CLUSTER_FIRE = "cluster-fire"
+CLUSTER_THROUGHPUT_TARGET = 300
+
 
 def _fmt_num(v):
     """Compact numeric (no trailing zeros): 4.0 -> 4, 1.86 -> 1.86."""
@@ -436,6 +446,21 @@ def _runtime_density(scen_by_name):
     return None
 
 
+def _resolve_cluster_x(sources):
+    """hb#132: the X in the `@X nodes` cluster-throughput caption — the node count the per-cluster
+    figures were MEASURED at. Resolved from the first landed thpt_cluster_node_count across all
+    runtime sources; None ⇒ no cluster figure has landed yet (caption says cluster halves pend)."""
+    for rt_scen in sources.values():
+        if not rt_scen:
+            continue
+        for sc in rt_scen.values():
+            m = (sc or {}).get("metrics") or {}
+            x = m.get("thpt_cluster_node_count")
+            if isinstance(x, (int, float)) and not isinstance(x, bool) and x > 0:
+                return int(x)
+    return None
+
+
 def render_matrix(results, kata_results=None):
     """Render the doc's 9-column Core Metrics Table (primary results + optional kata results).
 
@@ -477,8 +502,8 @@ def render_matrix(results, kata_results=None):
     header = [
         "Runtime",
         "Activation Mode",
-        "Throughput @ <5s TTFE (sb/s/node)",
-        "Throughput @ <1s TTFE (sb/s/node)",
+        "Throughput @ <5s TTFE (sb/s — node · cluster)",
+        "Throughput @ <1s TTFE (sb/s — node · cluster)",
         "TTFE p50",
         "TTFE p95",
         "Samples (N)",
@@ -493,6 +518,26 @@ def render_matrix(results, kata_results=None):
         f"only meaningful between rows with similar N. Rows below N={TTFE_COMPARABILITY_MIN_N} "
         f"are marked {_LOW_N_MARK} on their TTFE cells."
     )
+    lines.append("")
+    # hb#132: throughput cells are dual (`per-node · per-cluster`). Pin the cluster measurement
+    # size (X nodes) in ONE caption above the table, not per-cell. X is resolved from the landed
+    # thpt_cluster_node_count; absent it, the cluster halves render `pending (cluster-fire)`.
+    cluster_x = _resolve_cluster_x(sources)
+    if cluster_x is not None:
+        lines.append(
+            "**Throughput is dual — `per-node · per-cluster`.** The per-node figure is the "
+            "engineering rate (comparable across runtimes); the per-cluster figure is a MEASURED "
+            f"cluster saturation rate at {cluster_x} nodes — never a per-node × N extrapolation "
+            "(that fiction breaks above the controller reconcile ceiling). A per-cluster figure "
+            "below the cluster sizing target renders with ⚠️."
+        )
+    else:
+        lines.append(
+            "**Throughput is dual — `per-node · per-cluster`.** The per-node figure is the "
+            "engineering rate (comparable across runtimes); the per-cluster figure is a MEASURED "
+            "cluster saturation rate (never a per-node × N extrapolation). Cluster halves render "
+            "`pending (cluster-fire)` until our own schema-validated saturation fire lands them."
+        )
     lines.append("")
     lines.append("| " + " | ".join(header) + " |")
     lines.append("|" + "|".join(["---"] * len(header)) + "|")
@@ -548,8 +593,25 @@ def render_matrix(results, kata_results=None):
                 v = cell(key, _fmt_secs)
                 return f"{v} {_LOW_N_MARK}" if (v != _PENDING and low_n_ttfe) else v
 
-            thpt5 = cell("thpt_under_5s_per_node", _fmt_num)
-            thpt1 = cell("thpt_under_1s_per_node", _fmt_num)
+            # hb#132 dual cell: `<node> /node · <cluster>`. The per-node half preserves the prior
+            # single-figure behavior (absent ⇒ the whole cell is pending, incl. `pending
+            # (<reason>)` for a pending scenario since m is empty). The cluster half pends
+            # `pending (cluster-fire)` until the schema-validated fire carries the per-cluster
+            # field; a landed cluster figure below the sizing target carries ⚠️.
+            def thpt_dual_cell(node_key, cluster_key):
+                if node_key not in m:
+                    return pending_tok
+                node_half = f"{_fmt_num(m[node_key])} /node"
+                if cluster_key in m:
+                    cluster_half = f"{_fmt_num(m[cluster_key])} /cluster"
+                    if m[cluster_key] < CLUSTER_THROUGHPUT_TARGET:
+                        cluster_half += " ⚠️"
+                else:
+                    cluster_half = f"{_PENDING} ({_CLUSTER_FIRE})"
+                return f"{node_half} · {cluster_half}"
+
+            thpt5 = thpt_dual_cell("thpt_under_5s_per_node", "thpt_under_5s_per_cluster")
+            thpt1 = thpt_dual_cell("thpt_under_1s_per_node", "thpt_under_1s_per_cluster")
             p50 = ttfe_cell("ttfe_p50_ms")
             p95 = ttfe_cell("ttfe_p95_ms")
             if "exec_success_rate" in m:
@@ -580,6 +642,13 @@ def render_matrix(results, kata_results=None):
     lines.append(
         "_Throughput @ <1s renders the harness-emitted `0` when the p95 misses the 1s bar "
         "(we print a zero rather than round up)._"
+    )
+    lines.append(
+        "_Throughput cells are dual — `per-node · per-cluster`. The per-node figure is the "
+        "engineering rate; the per-cluster figure is a MEASURED cluster saturation rate, never a "
+        "per-node × N extrapolation. The cluster half renders `pending (cluster-fire)` until our "
+        "own schema-validated saturation fire lands it; a landed figure below the cluster sizing "
+        "target carries ⚠️._"
     )
     lines.append(
         "_Max Density is sandboxes per node-allocatable sandbox-schedulable vCPU (the "
