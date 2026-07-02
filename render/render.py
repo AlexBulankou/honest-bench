@@ -37,6 +37,7 @@ from schema import (
     RUNTIME_LABELS,
     SCALE_PROOF_FIELDS,
     SCENARIO_LABELS,
+    SESSION_TURNOVER_FIELDS,
     STEPUP_PARETO_FIELDS,
     TTFE_COMPARABILITY_MIN_N,
     WARM_BIND_FIELDS,
@@ -1242,6 +1243,89 @@ def render_warm_bind_decomposition(results):
         caveat += _WARM_SCALING_TERM_CLAUSE.get(scaling_term, "")
         lines.append("")
         lines.append(caveat)
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _clean_session_turnover(scenarios):
+    """Find session_turnover and closed-schema-clean its refill-latency metrics, or None.
+
+    session_turnover measures the full claim → use → release → reclaim loop: after each claim is
+    released the controller must REPLENISH the warm pool, and the scenario reports how long that
+    refill takes under sustained cycling. refill_latency_ms (the median) is the REQUIRED spine —
+    its presence is the INERT gate, so today's pre-fire data (no session_turnover cell, or a cell
+    whose pool never refilled and emitted {}) renders nothing. refill_p90_ms (the tail) is
+    OPTIONAL. n (completed-cycle count, for the sample-size footnote) is read from the scenario's
+    TOP-LEVEL "n" field, NOT from sla_metrics — run.py lifts the reserved "n" key out of
+    sla_metrics into a top-level scenario field before coercion (mirrors _clean_burst_corroboration).
+    Any sla_metrics key not in SESSION_TURNOVER_FIELDS, or failing its predicate, is dropped
+    (closed schema).
+    """
+    if not isinstance(scenarios, list):
+        return None
+    for s in scenarios:
+        if not isinstance(s, dict) or s.get("name") != "session_turnover":
+            continue
+        metrics = s.get("sla_metrics")
+        if not isinstance(metrics, dict):
+            return None
+        clean = {}
+        for key, ok in SESSION_TURNOVER_FIELDS.items():
+            if key in metrics:
+                try:
+                    if ok(metrics[key]):
+                        clean[key] = metrics[key]
+                except (TypeError, ValueError):
+                    pass
+        if "refill_latency_ms" not in clean:
+            return None
+        n = s.get("n")
+        n = n if isinstance(n, int) and not isinstance(n, bool) and n >= 0 else None
+        return {
+            "refill_p50": clean["refill_latency_ms"],
+            "refill_p90": clean.get("refill_p90_ms"),
+            "n": n,
+        }
+    return None
+
+
+def render_session_turnover(results):
+    """Render the warm-pool session-turnover refill-latency block, or "" when INERT.
+
+    The headline page measures the CLAIM side of the agentic lifecycle (warm-pool acquisition +
+    warm-vs-cold). This block measures the RECLAIM side: after a claim is released, how fast does
+    the controller replenish the warm pool so the next claim is still a warm hit? Under sustained
+    claim/release churn (the most-asked agentic pattern — a fleet cycling sandboxes continuously)
+    a slow refill silently demotes later claims from warm to cold. Rendered ONLY when a fire emits
+    a measured median refill (see _clean_session_turnover), so the public page is byte-unchanged
+    until a session_turnover fire lands. Diagnostic-only — adds a block, changes no existing cell.
+    """
+    turn = _clean_session_turnover(results.get("scenarios"))
+    if not turn:
+        return ""
+    lines = ["## Warm-Pool Turnover — Sustained-Churn Refill Latency", ""]
+    lines.append(
+        "The matrix measures the **claim** side (a warm hit is sub-second). This block measures "
+        "the **reclaim** side: after a claim is released, how long the controller takes to "
+        "**replenish** the warm pool under sustained claim/release churn. A slow refill silently "
+        "demotes later claims from warm to cold — the failure mode a fleet cycling sandboxes "
+        "continuously actually hits."
+    )
+    lines.append("")
+    n = turn["n"]
+    n_note = f" (over {_fmt_num(n)} cycles)" if n is not None else ""
+    header = ["Refill latency", "Value"]
+    lines.append("| " + " | ".join(header) + " |")
+    lines.append("|" + "|".join(["---"] * len(header)) + "|")
+    lines.append(f"| Median (p50){n_note} | {_fmt_secs(turn['refill_p50'])} |")
+    if turn["refill_p90"] is not None:
+        lines.append(f"| Tail (p90) | {_fmt_secs(turn['refill_p90'])} |")
+    lines.append("")
+    lines.append(
+        "_Refill latency is measured per-cycle as the wall-clock from a claim release to the warm "
+        "pool returning to full readiness; the median and tail are percentiles of the completed-"
+        "cycle distribution._"
+    )
     lines.append("")
     return "\n".join(lines)
 

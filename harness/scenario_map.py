@@ -56,6 +56,15 @@ SANDBOX_CELLS = (
     Cell("warmpool_cold_start"),
     Cell("native_digest_cold"),
     Cell("suspend_resume"),
+    # --- warm-pool turnover: the RECLAIM side of the agentic lifecycle (#3868) ---
+    # session_turnover measures warm-pool refill latency under sustained claim/release churn —
+    # the claim-use-release-reclaim loop the matrix's claim-side cells do not cover. It is a
+    # DETAILS-only block (render_session_turnover), NOT a matrix row, so it does not appear in the
+    # Core Metrics matrix. requires_substrate=None → it MEASURES for real on the kind auto-refresh
+    # runner (an honest runc refill number); a gVisor-isolated number comes from a later
+    # gke-sandbox fire with SESSION_TURNOVER_RUNTIME_CLASS=gvisor. INERT-first: the render block
+    # stays "" until a fire emits a measured refill median.
+    Cell("session_turnover"),
     # --- isolation badges (need gVisor; pending on vanilla kind) ---
     Cell(
         "gvisor_canary",

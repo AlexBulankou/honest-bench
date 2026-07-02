@@ -50,6 +50,7 @@ def _load_render():
         mod.render_at_scale_contention,
         mod.render_cluster_saturation,
         mod.render_provisioning_rate_sweep,
+        mod.render_session_turnover,
         mod.render_density_detail,
         mod.render_recipe,
     )
@@ -59,8 +60,8 @@ def _load_render():
  render_warm_bind_decomposition, render_cold_bind_decomposition, render_warm_vs_cold,
  render_scale_proof, render_cluster_scale, render_stepup, render_kata_activation,
  render_concurrent_burst, render_warm_pool_acquisition, render_at_scale_contention,
- render_cluster_saturation, render_provisioning_rate_sweep, render_density_detail,
- render_recipe) = _load_render()
+ render_cluster_saturation, render_provisioning_rate_sweep, render_session_turnover,
+ render_density_detail, render_recipe) = _load_render()
 
 # Product -> results path, relative to the repo root (parent of render/).
 # The PUBLIC customer page is SANDBOX-ONLY (alex 2026-06-28): substrate demotes from a
@@ -231,6 +232,13 @@ def build_details(root=None):
         rate_sweep = render_provisioning_rate_sweep(results)
         if rate_sweep.strip():
             sections.append(rate_sweep.rstrip())
+        # #3868: warm-pool session-turnover refill latency — the RECLAIM side of the agentic
+        # lifecycle (the matrix + warm_pool_acquisition measure the claim side). INERT-first:
+        # renders nothing until a session_turnover fire emits a measured refill median. DETAILS-only
+        # for now; headline promotion tracked as a follow-up (mirrors render_provisioning_rate_sweep).
+        turnover = render_session_turnover(results)
+        if turnover.strip():
+            sections.append(turnover.rstrip())
     return "\n\n".join(sections) + "\n"
 
 
