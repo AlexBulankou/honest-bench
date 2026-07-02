@@ -2542,6 +2542,38 @@ def test_operating_envelope_row1_pends_when_scenario_not_pass():
     assert "| Bursty — pool oversubscribed 2:1 (60 claims / 30 ready) | ~1.7s | full start → first result |" in out
 
 
+def test_operating_envelope_row1_pend_inherits_pending_reason():
+    # hb#134 (a4s1 nit): a genuinely-pending row-1 inherits the matrix scenario's pending_reason
+    # so a known upstream/cluster gap reads `pending (<reason>)` here exactly as the matrix does —
+    # NOT a bare `pending` a reader could mistake for not-yet-run.
+    scen = _full_gvisor_scenarios()
+    for s in scen:
+        if s["name"] == "warmpool_cold_start":
+            s["outcome"] = "pending"
+            s["pending_reason"] = "upstream-blocked"
+    out = render.render_operating_envelope(
+        _matrix_results(scen, at_scale_contention=_asc(),
+                        concurrent_burst=_cb(), warm_pool_acquisition=_wpa()))
+    assert ("| Steady trickle — warm pool keeps up with demand | "
+            "pending (upstream-blocked) | full start → first result |") in out
+
+
+def test_operating_envelope_row1_missing_ttfe_pass_is_bare_pending():
+    # Reason decorates only a genuinely-pending scenario: a PASS warm scenario missing ttfe_p50_ms
+    # (no publishable figure) falls back to bare `pending`, never a spurious `(reason)`.
+    scen = _full_gvisor_scenarios()
+    for s in scen:
+        if s["name"] == "warmpool_cold_start":
+            s["outcome"] = "PASS"
+            s["pending_reason"] = "upstream-blocked"  # must NOT leak onto a non-pending row
+            s.get("sla_metrics", {}).pop("ttfe_p50_ms", None)
+    out = render.render_operating_envelope(
+        _matrix_results(scen, at_scale_contention=_asc(),
+                        concurrent_burst=_cb(), warm_pool_acquisition=_wpa()))
+    assert "| Steady trickle — warm pool keeps up with demand | pending | full start → first result |" in out
+    assert "pending (upstream-blocked)" not in out
+
+
 def test_operating_envelope_row2_pends_when_contention_absent():
     # INERT at_scale_contention (absent) ⇒ row 2 inherits its pending semantics.
     out = render.render_operating_envelope(

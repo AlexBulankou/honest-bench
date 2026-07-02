@@ -848,7 +848,17 @@ def render_operating_envelope(results):
     if sc and sc.get("outcome") == "PASS" and "ttfe_p50_ms" in sc["metrics"]:
         rows.append((label1, _fmt_wait(sc["metrics"]["ttfe_p50_ms"]), _ENVELOPE_FULL_TTFE))
     else:
-        rows.append((label1, _PENDING, _ENVELOPE_FULL_TTFE))
+        # hb#134 (a4s1 nit): a row-1 pend inherits the matrix scenario's pending_reason so a
+        # known upstream/cluster gap reads `pending (<reason>)` here exactly as it does in the
+        # matrix, not a bare `pending` that looks not-yet-run. The reason decorates only a
+        # genuinely pending scenario (mirrors the matrix pending_tok logic at ~653); a
+        # missing-ttfe PASS or an absent scenario falls back to bare `pending`.
+        pending_tok = _PENDING
+        if sc is not None and sc.get("outcome") == "pending":
+            reason = sc.get("pending_reason")
+            if reason:
+                pending_tok = f"{_PENDING} ({reason})"
+        rows.append((label1, pending_tok, _ENVELOPE_FULL_TTFE))
 
     # Row 2 — bursty, pool oversubscribed (full TTFE, from the contention retraction point).
     if asc:
