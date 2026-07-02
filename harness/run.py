@@ -671,6 +671,15 @@ _CLUSTER_TRIPLE_KEYS = (
     "thpt_cluster_node_count",
 )
 
+# Products whose runs carry a matrix cluster half to fill (hb#149 / Path A). BOTH
+# gVisor (product "sandbox") and Kata microVM (product "sandbox-kata") own a
+# warm-row cluster cell in render_matrix (the kata slot fills from kata_results),
+# so a kata run's SLO sweep must merge its triple too. Deliberately WIDER than the
+# gVisor-only gate on maybe_stepup / maybe_scale_proof / maybe_warm_vs_cold: those
+# produce gVisor-page-only artifacts, whereas the cluster triple is a per-runtime
+# matrix cell that both runtimes render.
+_SLO_SWEEP_PRODUCTS = ("sandbox", "sandbox-kata")
+
 
 def slo_sweep_env_var(scenario: str) -> str:
     """Env var holding the nested sweep-record path for one activation mode."""
@@ -686,15 +695,19 @@ def merge_slo_sweeps(raw: list, product: str) -> None:
     non-empty derivation merges into that scenario's raw sla_metrics, then flows
     through the closed emitter (_coerce_sla_metrics) like any measured key.
 
-    Fail-closed, mirroring maybe_stepup: non-sandbox product, unset/blank env,
+    Fail-closed, mirroring maybe_stepup: a product outside the sandbox family
+    (_SLO_SWEEP_PRODUCTS = sandbox / sandbox-kata), unset/blank env,
     unreadable/malformed file, or an underivable record (no compliant rung, no
     valid node_count) merge NOTHING — the cell keeps pending, never a fabricated
     0. A sweep-derived triple OVERWRITES a direct-emit triple on the same cell:
     the sweep derivation is the preferred producer (see the cluster_node_count
     caller contract in metrics.ttfe_sla_metrics). Mutates raw in place; a
     scenario absent from this run (or with a non-dict sla_metrics) is skipped.
+    Runs for BOTH runtimes: a kata run's warm-row cluster half fills from its own
+    sweep, merged into the sandbox-kata scenario cell that render_matrix reads via
+    kata_results.
     """
-    if product != "sandbox":
+    if product not in _SLO_SWEEP_PRODUCTS:
         return
     for name in SLO_SWEEP_SCENARIOS:
         path = os.environ.get(slo_sweep_env_var(name), "").strip()
