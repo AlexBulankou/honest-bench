@@ -38,15 +38,26 @@ OWNER="AlexBulankou"
 REPO="honest-bench"
 
 echo "==> [1/3] unit-tests PR gate (fires on PRs targeting main; FAIL-CLOSED merge gate)"
-# COMMENTS_DISABLED is REQUIRED — `update github` with --pull-request-pattern
-# silently defaults to COMMENTS_ENABLED, gating every build behind /gcbrun.
-gcloud builds triggers update github hb-unit-tests \
+# COMMENTS_DISABLED is REQUIRED — the `github` subcommand with --pull-request-pattern
+# silently defaults to COMMENTS_ENABLED, gating every build behind /gcbrun. The flag
+# is identical on create and update, so it survives the re-bake path below.
+# create-or-update: `create` on a fresh repo (no trigger yet — bare `update` would fail
+# with "trigger not found"); `update` re-bakes the inline-config on every re-run (the
+# trusted-ref boundary — repo file and live trigger share one source, cannot drift).
+gcloud builds triggers create github hb-unit-tests \
   --inline-config=cloudbuild-unit-tests.yaml \
   --repo-owner="$OWNER" --repo-name="$REPO" \
   --pull-request-pattern='^main$' \
   --comment-control=COMMENTS_DISABLED \
   --service-account="$CLOUDBUILD_SA" \
-  --project="$PROJECT"
+  --project="$PROJECT" \
+  || gcloud builds triggers update github hb-unit-tests \
+    --inline-config=cloudbuild-unit-tests.yaml \
+    --repo-owner="$OWNER" --repo-name="$REPO" \
+    --pull-request-pattern='^main$' \
+    --comment-control=COMMENTS_DISABLED \
+    --service-account="$CLOUDBUILD_SA" \
+    --project="$PROJECT"
 
 echo "==> [2/3] unit-tests post-merge gate (fires on push to main)"
 # Gates post-merge main so a bad merge is caught even if branch protection is not
