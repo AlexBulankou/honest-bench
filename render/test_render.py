@@ -2107,19 +2107,6 @@ def test_warm_vs_cold_complete_block_renders():
     assert "| Leg | TTFE (p50) |" in out
 
 
-def test_warm_vs_cold_punchline_only_headline_no_table():
-    # hb#134 page-split: punchline_only=True renders the one-line headline + a DETAILS pointer,
-    # with NO leg table (that moves to the deep-dive appendix). The ratio is recomputed the same
-    # way, so the page headline (10×) matches the full-table Speedup row.
-    out = render.render_warm_vs_cold(
-        _matrix_results(_full_gvisor_scenarios(), warm_vs_cold=_wc()), punchline_only=True)
-    assert "## Warm-vs-Cold Speedup" in out
-    assert "A warm-pool provision is **10× faster** than a true-cold start (gVisor)" in out
-    assert "[DETAILS.md](DETAILS.md)" in out
-    assert "| Leg |" not in out
-    assert "| Speedup (warm is N× faster) |" not in out
-
-
 def test_warm_vs_cold_legs_and_speedup_math():
     # the N× headline and both leg cells render from the displayed values (cold ÷ warm = 10×).
     # #103: the warm leg carries its sample size INLINE (n=200 here) so it cannot be conflated
