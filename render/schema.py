@@ -213,6 +213,12 @@ METRIC_LABELS = {
     # can reproduce and beat, not a best-case headline. Inert until the scenario fires.
     "refill_latency_ms": "Refill latency (ms)",
     "refill_p90_ms": "Refill p90 (ms)",
+    # suspend_resume administrative-suspend latency axis (#3868): median suspend latency +
+    # p90 tail. Measures the operatingMode=Suspended patch → terminal-Suspended cost — an
+    # ADMINISTRATIVE (operator-driven) suspend, NOT an idle/auto-suspend (upstream has none).
+    # Inert until the scenario emits a completed suspend leg.
+    "suspend_latency_ms": "Suspend latency (ms)",
+    "suspend_p90_ms": "Suspend p90 (ms)",
 }
 
 # The goal-column set. They render "(non-public)" by construction whenever the internal
@@ -783,6 +789,24 @@ WARM_POOL_ACQUISITION_FIELDS = {
 SESSION_TURNOVER_FIELDS = {
     "refill_latency_ms": _nonneg,
     "refill_p90_ms": _nonneg,
+}
+
+# Administrative-suspend latency block — SCENARIO cell `suspend_resume`. Measures the wall-clock
+# cost of a DELIBERATE administrative suspend: the operatingMode=Suspended patch return → terminal
+# Suspended state (backing Pod released + the Suspended condition observed). This is the real
+# response time of the cost-lever an operator pulls to reclaim a Sandbox's compute. It is NOT an
+# idle/auto-suspend latency — upstream agent-sandbox has NO idle-timeout / activity-reclaim path;
+# operatingMode is the closed Running;Suspended enum, toggled only by an explicit patch. The render
+# side carries that capability note as a static line so nobody reads an auto-suspend into the number.
+# suspend_latency_ms (median) is the REQUIRED spine — the INERT gate — so the block renders nothing
+# until a real fire emits a completed suspend leg; suspend_p90_ms (the tail) is OPTIONAL (emitted
+# only when the fire ran n>=2 cycles). Every value is a GENUINELY-MEASURED latency from the
+# scenario's per-cycle suspend samples — no fabricated 0, no note without a fire behind the number.
+# Same closed-schema discipline: only these keys render, each validated; anything else in sla_metrics
+# (the resume TTFE pair, pending_reason, n) is dropped on read of THIS block.
+SUSPEND_LATENCY_FIELDS = {
+    "suspend_latency_ms": _nonneg,
+    "suspend_p90_ms": _nonneg,
 }
 
 # --- at-scale-under-contention RETRACTION block (TOP-LEVEL at_scale_contention object) -------

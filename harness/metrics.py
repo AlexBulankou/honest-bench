@@ -429,3 +429,39 @@ def multi_sample_ttfe_point(
         metrics["ttfe_p50_ms"] = round(percentile(present, 50), 1)
         metrics["ttfe_p95_ms"] = round(percentile(present, 95), 1)
     return metrics
+
+
+def suspend_latency_point(
+    suspend_ms_samples: Sequence[Optional[Real]],
+) -> dict[str, float]:
+    """Administrative-suspend latency point for the suspend_resume cell.
+
+    Measures the wall-clock cost of an ADMINISTRATIVE suspend: the
+    operatingMode=Suspended patch return -> terminal Suspended state (backing Pod
+    released + the Suspended condition observed). This is NOT an idle/auto-suspend
+    latency -- upstream agent-sandbox has no idle-timeout or activity-reclaim path;
+    operatingMode is the closed Running;Suspended enum, toggled only by a deliberate
+    operator/user patch. The metric quantifies the response time of that
+    administrative cost-lever, not any automatic reclamation.
+
+    The suspend leg runs on EVERY suspend_resume cycle (unlike the TTFE-gated resume
+    probe), so N cycles yield N samples. Emits:
+      - suspend_latency_ms = median (p50) over the present samples -- the headline,
+        robust to a single slow release; the REQUIRED spine (its presence is the
+        render-side INERT gate for the whole block).
+      - suspend_p90_ms = the p90 tail, emitted ONLY when n>=2 (a p90 over a single
+        sample is just that sample, so it carries no tail information).
+
+    Returns {} when no sample is present (a suspend leg that never reached terminal
+    contributes None and is excluded) -- no fabricated number, mirroring the
+    session_turnover / multi_sample_ttfe_point empty-emit discipline.
+    """
+    present = [float(t) for t in suspend_ms_samples if t is not None]
+    if not present:
+        return {}
+    point: dict[str, float] = {
+        "suspend_latency_ms": round(percentile(present, 50), 1),
+    }
+    if len(present) >= 2:
+        point["suspend_p90_ms"] = round(percentile(present, 90), 1)
+    return point

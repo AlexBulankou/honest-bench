@@ -536,6 +536,50 @@ def test_ttfe_sla_metrics_cluster_survives_results_schema_coerce():
         _check(k in coerced, f"{k} survives coerce")
 
 
+# ------------------------------------------- #3868 administrative-suspend latency
+def test_suspend_latency_point_empty_returns_blank():
+    # no suspend sample captured -> {} (the INERT gate: renderer stays dark).
+    _check(m.suspend_latency_point([]) == {}, "empty suspend samples -> {}")
+    _check(m.suspend_latency_point([None, None]) == {}, "all-None suspend samples -> {}")
+
+
+def test_suspend_latency_point_single_median_only():
+    # n=1: emit only the median spine; a p90 over one sample is just the sample (no honest tail).
+    out = m.suspend_latency_point([4200.0])
+    _check(out == {"suspend_latency_ms": 4200.0}, "single sample -> median only, no p90")
+    _check("suspend_p90_ms" not in out, "single sample omits p90 tail")
+
+
+def test_suspend_latency_point_multi_median_and_tail():
+    samples = [100.0, 300.0, 200.0]
+    out = m.suspend_latency_point(samples)
+    _check(_close(out["suspend_latency_ms"], m.percentile(samples, 50)),
+           "multi median matches percentile p50")
+    _check(_close(out["suspend_p90_ms"], m.percentile(samples, 90)),
+           "multi p90 matches percentile p90")
+
+
+def test_suspend_latency_point_excludes_none_samples():
+    # None (a cycle where suspend latency was not measured) is dropped from the distribution.
+    out = m.suspend_latency_point([100.0, None, 300.0])
+    _check(_close(out["suspend_latency_ms"], m.percentile([100.0, 300.0], 50)),
+           "median over present samples only")
+
+
+def test_suspend_latency_point_no_reserved_n_key():
+    # deliberately does NOT emit "n" (reserved by the TTFE point + lifted by run.py).
+    out = m.suspend_latency_point([100.0, 300.0])
+    _check("n" not in out, "suspend point never emits reserved n key")
+
+
+def test_suspend_latency_point_survives_results_schema_coerce():
+    # convergence: the generic allow-list keeps the suspend pair through the emit-time guard.
+    out = m.suspend_latency_point([100.0, 300.0, 200.0])
+    coerced = rs._coerce_sla_metrics(out)
+    _check("suspend_latency_ms" in coerced, "suspend_latency_ms survives coerce")
+    _check("suspend_p90_ms" in coerced, "suspend_p90_ms survives coerce")
+
+
 def _run_all():
     tests = [v for k, v in sorted(globals().items())
              if k.startswith("test_") and callable(v)]

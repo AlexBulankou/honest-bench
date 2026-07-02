@@ -51,6 +51,7 @@ def _load_render():
         mod.render_cluster_saturation,
         mod.render_provisioning_rate_sweep,
         mod.render_session_turnover,
+        mod.render_suspend_latency,
         mod.render_density_detail,
         mod.render_vcpu_footprint,
         mod.render_recipe,
@@ -62,7 +63,8 @@ def _load_render():
  render_scale_proof, render_cluster_scale, render_stepup, render_kata_activation,
  render_concurrent_burst, render_warm_pool_acquisition, render_at_scale_contention,
  render_cluster_saturation, render_provisioning_rate_sweep, render_session_turnover,
- render_density_detail, render_vcpu_footprint, render_recipe) = _load_render()
+ render_suspend_latency, render_density_detail, render_vcpu_footprint,
+ render_recipe) = _load_render()
 
 # Product -> results path, relative to the repo root (parent of render/).
 # The PUBLIC customer page is SANDBOX-ONLY (alex 2026-06-28): substrate demotes from a
@@ -247,6 +249,14 @@ def build_details(root=None):
         turnover = render_session_turnover(results)
         if turnover.strip():
             sections.append(turnover.rstrip())
+        # #3868: administrative-suspend latency — the cost-lever response time for reclaiming a
+        # sandbox's compute (operatingMode=Suspended patch -> terminal Suspended). Carries a static
+        # capability note that upstream has NO idle/auto-suspend (operatingMode is Running;Suspended
+        # only). INERT-first: renders nothing until a suspend_resume fire emits a measured suspend
+        # median. DETAILS-only for now; headline promotion tracked as a follow-up.
+        suspend = render_suspend_latency(results)
+        if suspend.strip():
+            sections.append(suspend.rstrip())
     return "\n\n".join(sections) + "\n"
 
 

@@ -1801,6 +1801,79 @@ def test_emit_to_render_session_turnover_convergence():
     assert "cycles)" not in out_no_n, "the '(over N cycles)' footnote must be absent when n is absent"
 
 
+def test_emit_to_render_suspend_latency_convergence():
+    """Convergence guard for the administrative-suspend-latency block (#3868).
+
+    Like session_turnover this is a SCENARIO-CELL axis, but the emit is produced by a shared
+    metrics helper (metrics.suspend_latency_point) whose output the suspend_resume scenario merges
+    into its sla_metrics; run.py writes it to results["scenarios"], and the render side allow-lists
+    it via schema.SUSPEND_LATENCY_FIELDS. The two vocabularies are INDEPENDENT — a drift would
+    silently return the block to INERT (page byte-unchanged). This test pins the contract with the
+    REAL producer: (1) the helper's emitted keys are allow-listed by render, (2) they survive the
+    SAME _coerce_sla_metrics run.py applies and pass the independent render predicate, and (3) the
+    full path renders the table while the INERT gate (missing suspend_latency_ms spine, empty {},
+    or a suspend_resume cell carrying only resume-TTFE keys) renders "".
+    """
+    import schema
+
+    m = _load_metrics()
+    if m is None:
+        print("  (skip: harness metrics core not in-tree / not importable)")
+        return
+
+    # (0) the REAL producer's emitted keys must be in the render allow-list (n>=2 -> both keys).
+    emitted = m.suspend_latency_point([100.0, 300.0, 200.0])
+    assert set(emitted) <= set(schema.SUSPEND_LATENCY_FIELDS), (
+        f"emit/render DRIFT: helper emits {set(emitted)} but render SUSPEND_LATENCY_FIELDS "
+        f"allow-lists {set(schema.SUSPEND_LATENCY_FIELDS)} — a stray key would be silently dropped."
+    )
+    for k in ("suspend_latency_ms", "suspend_p90_ms"):
+        assert k in emitted, f"n>=2 producer must emit {k!r}: {emitted}"
+
+    # (1) the emitted sla dict survives the SAME closed coercion run.py writes to latest.json,
+    # and every survivor passes the independent render predicate.
+    coerced = _rs._coerce_sla_metrics(emitted)
+    for k in ("suspend_latency_ms", "suspend_p90_ms"):
+        assert k in coerced, (
+            f"emit/render schema DRIFT on suspend_latency: closed coerce dropped {k!r} — the block "
+            f"would go INERT.\nemitted={emitted}\ncoerced={coerced}"
+        )
+        assert schema.SUSPEND_LATENCY_FIELDS[k](coerced[k]), (
+            f"render SUSPEND_LATENCY_FIELDS[{k!r}] rejects coerced value {coerced[k]!r} — "
+            "the block would render nothing."
+        )
+
+    # (2) full path: a suspend_resume cell that ALSO carries the resume-TTFE pair (the real shape)
+    # renders the suspend table, and the closed schema drops the foreign resume keys.
+    def _results(sla):
+        return {
+            "product": "sandbox",
+            "generated_at": "2026-07-02T03:00:00Z",
+            "provenance": {"runtime": "runc", "cluster_substrate": "kind", "node_count": 1},
+            "scenarios": [{"name": "suspend_resume", "outcome": "PASS", "n": 3, "sla_metrics": sla}],
+        }
+
+    live_sla = {**coerced, "ttfe_p50_ms": 3500.0, "ttfe_p95_ms": 5000.0}
+    out = render.render_suspend_latency(_results(live_sla))
+    assert "## Administrative Suspend Latency" in out
+    assert "| Median (p50) | 0.2s |" in out, f"median row must render:\n{out}"
+    assert "| Tail (p90) | 0.28s |" in out, f"the optional p90 tail row must render:\n{out}"
+    assert "3.5s" not in out and "5s" not in out, "resume-TTFE keys must not leak into this block"
+    # the capability note guards the reader against inferring an auto/idle-suspend capability.
+    assert "no idle-timeout, activity-reclaim, or auto-suspend" in out
+
+    # (3) INERT gates: single-sample helper output (median only, no tail), an empty {}, and a cell
+    # carrying only the resume-TTFE keys all behave correctly.
+    single = m.suspend_latency_point([4200.0])
+    assert "suspend_p90_ms" not in single, "n=1 emits no honest tail"
+    out_single = render.render_suspend_latency(_results(_rs._coerce_sla_metrics(single)))
+    assert "| Median (p50) | 4.2s |" in out_single and "Tail (p90)" not in out_single
+    assert render.render_suspend_latency(_results({})) == "", "empty sla_metrics -> INERT"
+    assert render.render_suspend_latency(
+        _results({"ttfe_p50_ms": 3500.0, "ttfe_p95_ms": 5000.0})
+    ) == "", "a cell with only resume-TTFE keys (no suspend spine) -> INERT"
+
+
 def test_emit_to_render_vcpu_footprint_convergence():
     """Convergence guard for the vCPU-footprint provenance axis (#3868).
 
