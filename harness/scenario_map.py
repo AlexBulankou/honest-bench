@@ -122,11 +122,13 @@ SANDBOX_KATA_CELLS = (
         requires_substrate="gke-kata",
         pending_reason="requires-kata-runtime",
     ),
-    Cell(
-        "suspend_resume",
-        requires_substrate="gke-kata",
-        pending_reason="requires-kata-runtime",
-    ),
+    # NOTE: suspend_resume is deliberately NOT a kata cell. Resume-from-suspend ×
+    # Kata + microVM is N/A by construction — CRIU checkpoint/restore does not
+    # transfer to the Kata VM isolation model — so render.py hardcodes that cell to
+    # `N/A` regardless of what is emitted (render.py render_matrix, the is_resume +
+    # kata-microvm branch). Running it here would only emit a misleading FAIL into
+    # sandbox-kata/results/latest.json that render discards anyway; excluding it keeps
+    # the raw results honest and matches the render N/A-by-construction contract.
 )
 
 # Per-product cell suites. Only a registered product is runnable; an empty/absent
