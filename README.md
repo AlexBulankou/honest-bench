@@ -94,19 +94,19 @@ _Each row is an independently-measured percentile of its own per-claim distribut
 
 ## Warm-vs-Cold Speedup
 
-A warm-pool provision is **11.5608× faster** than a true-cold start (gVisor). The warm pool keeps a ready slot so a claim skips the fresh-node image-pull path a cold start pays in full. Both legs are measured the same way (TTFE (executed first-instruction)); the ratio is the portable headline you can reproduce on your own cluster.
+A warm-pool provision is **7.28251× faster** than a true-cold start (gVisor). The warm pool keeps a ready slot so a claim skips the fresh-node image-pull path a cold start pays in full. Both legs are measured the same way (TTFE (executed first-instruction)); the ratio is the portable headline you can reproduce on your own cluster.
 
 | Leg | TTFE (p50) |
 |---|---|
-| Warm-pool hit (gVisor, n=10) | 0.3909s |
-| True-cold (unique-image) | 4.5191s |
-| Speedup (warm is N× faster) | 11.5608× |
+| Warm-pool hit (gVisor, n=30) | 0.7005s |
+| True-cold (unique-image) | 5.1014s |
+| Speedup (warm is N× faster) | 7.28251× |
 
-_Speedup = cold ÷ warm, computed from the displayed values over n=10 warm claims; the warm leg is the p50 so half of warm claims beat it._
+_Speedup = cold ÷ warm, computed from the displayed values over n=30 warm claims; the warm leg is the p50 so half of warm claims beat it._
 
 _This warm-vs-cold pair is a standalone point-in-time run; its warm-pool leg is a separate measurement from the Core Metrics matrix "Warm-pool hit" row (a different sample size and operating point). Read each block on its own terms — the two warm p50s are not directly comparable._
 
-_Measured 2026-07-01 — warm-vs-cold speedup (point-in-time; refreshed on the next TTFE fire)._
+_Measured 2026-07-02 — warm-vs-cold speedup (point-in-time; refreshed on the next TTFE fire)._
 
 ## Scale Proof (Linearity Check)
 
