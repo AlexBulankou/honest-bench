@@ -1330,6 +1330,77 @@ def render_session_turnover(results):
     return "\n".join(lines)
 
 
+def _footprint_from_provenance(prov):
+    """Return (cpu_m, mem_mib) from a cleaned provenance dict, or None when either is absent.
+
+    Both fields are required — a half-stated footprint is not a reproducible qualifier, so a
+    provenance carrying only one renders pending (same all-or-nothing gate the decomposition
+    blocks use). `_clean_provenance` has already dropped any value failing its schema predicate,
+    so a present key here is a valid non-negative int."""
+    if not isinstance(prov, dict):
+        return None
+    cpu = prov.get("sandbox_cpu_request_m")
+    mem = prov.get("sandbox_mem_request_mib")
+    if cpu is None or mem is None:
+        return None
+    return cpu, mem
+
+
+def render_vcpu_footprint(results, kata_results=None):
+    """DETAILS.md deep-dive: the per-sandbox DECLARED cpu/mem request each runtime's density
+    was measured under. This is NOT an independent measurement — it is the reproducibility
+    qualifier for Max Density: gVisor's tiny footprint and Kata's guest-sane microVM floor are
+    an order of magnitude apart, so a sandboxes-per-vCPU figure is only reproducible with the
+    footprint it was measured under stated alongside. Same per-runtime source logic as
+    render_density_detail: the primary results claim their measured runtime; kata_results (the
+    sandbox-kata product) may fill the kata-microvm slot. Returns "" (INERT) until at least one
+    runtime carries a footprint in its provenance, so the public page is byte-unchanged until a
+    fire emits it. Diagnostic-only — adds a block, changes no existing cell."""
+    product = results.get("product")
+    if product not in PRODUCTS:
+        return ""
+    prov = _clean_provenance(results.get("provenance"))
+    measured_runtime = prov.get("runtime") or "gvisor"
+    footprints = {}
+    fp = _footprint_from_provenance(prov)
+    if fp is not None:
+        footprints[measured_runtime] = fp
+    if (
+        isinstance(kata_results, dict)
+        and kata_results.get("product") == "sandbox-kata"
+        and "kata-microvm" not in footprints
+    ):
+        kp = _clean_provenance(kata_results.get("provenance"))
+        if kp.get("runtime") == "kata-microvm":
+            kfp = _footprint_from_provenance(kp)
+            if kfp is not None:
+                footprints["kata-microvm"] = kfp
+    if not footprints:
+        return ""
+    lines = ["## Per-Sandbox Footprint (declared request)", ""]
+    lines.append(
+        "The declared per-sandbox cpu/memory **request** each runtime's Max Density was measured "
+        "under — the reproducibility qualifier for the density figures, not an independent "
+        "measurement. gVisor's tiny footprint and Kata's guest-sane microVM floor differ by an "
+        "order of magnitude, so a sandboxes-per-vCPU figure is only comparable across runtimes "
+        "with the footprint it was measured under stated alongside it. A runtime with no measured "
+        "run renders `pending`."
+    )
+    lines.append("")
+    lines.append("| Runtime | CPU request | Memory request |")
+    lines.append("|---|---|---|")
+    for rt in MATRIX_RUNTIMES:
+        rt_fp = footprints.get(rt)
+        if rt_fp is None:
+            cpu_cell = mem_cell = _PENDING
+        else:
+            cpu_cell = f"{rt_fp[0]}m"
+            mem_cell = f"{rt_fp[1]}Mi"
+        lines.append(f"| {RUNTIME_LABELS[rt]} | {cpu_cell} | {mem_cell} |")
+    lines.append("")
+    return "\n".join(lines) + "\n"
+
+
 def _clean_cold_bind_decomposition(scenarios):
     """Find native_digest_cold and closed-schema-clean its TTFE decomposition (inch #2).
 

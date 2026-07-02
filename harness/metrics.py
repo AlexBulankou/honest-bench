@@ -179,6 +179,56 @@ def density_per_vcpu(
     return round(max_concurrent_sandboxes / allocatable_sandbox_vcpu_per_node, 2)
 
 
+def parse_cpu_millicores(q: str) -> int:
+    """Kubernetes CPU quantity -> integer millicores ("10m" -> 10, "1" -> 1000).
+
+    The per-sandbox DECLARED cpu request is a whole-millicore config value, not a
+    denominator measurement, so it rounds to int millicores (density's vCPU float
+    is parse_cpu_quantity's job). Handles the n/u/m SI suffixes the API serializes;
+    raises ValueError on empty/unparseable — a declared footprint is never guessed.
+    """
+    s = (q or "").strip()
+    if not s:
+        raise ValueError("empty CPU quantity")
+    scale = 1.0
+    if s.endswith("n"):
+        scale, s = 1e-9, s[:-1]
+    elif s.endswith("u"):
+        scale, s = 1e-6, s[:-1]
+    elif s.endswith("m"):
+        scale, s = 1e-3, s[:-1]
+    return round(float(s) * scale * 1000)
+
+
+_MEM_BINARY = {"Ki": 2**10, "Mi": 2**20, "Gi": 2**30, "Ti": 2**40, "Pi": 2**50}
+_MEM_DECIMAL = {"k": 10**3, "M": 10**6, "G": 10**9, "T": 10**12, "P": 10**15}
+
+
+def parse_mem_mib(q: str) -> int:
+    """Kubernetes memory quantity -> integer MiB ("16Mi" -> 16, "1Gi" -> 1024).
+
+    Handles the binary (Ki/Mi/Gi/Ti/Pi) + decimal (k/M/G/T/P) suffixes plus a
+    bare byte count, normalizing every form to whole MiB (rounded). The per-sandbox
+    declared mem request is a config value; raises ValueError on empty/unparseable.
+    """
+    s = (q or "").strip()
+    if not s:
+        raise ValueError("empty memory quantity")
+    bytes_val: float
+    for suf, mult in _MEM_BINARY.items():
+        if s.endswith(suf):
+            bytes_val = float(s[: -len(suf)]) * mult
+            break
+    else:
+        for suf, mult in _MEM_DECIMAL.items():
+            if s.endswith(suf):
+                bytes_val = float(s[: -len(suf)]) * mult
+                break
+        else:
+            bytes_val = float(s)  # bare bytes
+    return round(bytes_val / (2**20))
+
+
 def retention(value_at_base: float, value_at_max_scale: float) -> float:
     """Scale-proof linearity ratio: per-node value retained at max scale vs 1-node base.
 

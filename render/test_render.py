@@ -1322,6 +1322,71 @@ def test_session_turnover_bad_median_dropped_then_inert():
         assert out == "", f"bad median {bad!r} must render INERT"
 
 
+# --- #3868 vCPU-footprint axis -------------------------------------------------
+
+def test_vcpu_footprint_inert_when_no_footprint_fields():
+    # pre-fire artifacts carry runtime but no footprint keys ⇒ INERT (byte-unchanged page).
+    out = render.render_vcpu_footprint(
+        _matrix_results(_full_gvisor_scenarios(), provenance={"runtime": "gvisor"})
+    )
+    assert out == ""
+
+
+def test_vcpu_footprint_inert_on_unknown_product():
+    out = render.render_vcpu_footprint(
+        {"product": "not-a-product", "provenance": {
+            "runtime": "gvisor", "sandbox_cpu_request_m": 10, "sandbox_mem_request_mib": 16}}
+    )
+    assert out == ""
+
+
+def test_vcpu_footprint_inert_when_only_cpu_present():
+    # a half-stated footprint is not a reproducible qualifier ⇒ INERT (all-or-nothing).
+    out = render.render_vcpu_footprint(
+        _matrix_results(_full_gvisor_scenarios(),
+                        provenance={"runtime": "gvisor", "sandbox_cpu_request_m": 10})
+    )
+    assert out == ""
+
+
+def test_vcpu_footprint_gvisor_measured_kata_pends():
+    prov = {"runtime": "gvisor", "sandbox_cpu_request_m": 10, "sandbox_mem_request_mib": 16}
+    out = render.render_vcpu_footprint(_matrix_results(_full_gvisor_scenarios(), provenance=prov))
+    assert "## Per-Sandbox Footprint (declared request)" in out
+    assert "| gVisor | 10m | 16Mi |" in out
+    assert "| Kata + microVM | pending | pending |" in out
+
+
+def test_vcpu_footprint_kata_fills_from_companion_artifact():
+    prov = {"runtime": "gvisor", "sandbox_cpu_request_m": 10, "sandbox_mem_request_mib": 16}
+    kr = _kata_results(provenance={
+        "runtime": "kata-microvm", "sandbox_cpu_request_m": 500, "sandbox_mem_request_mib": 512})
+    out = render.render_vcpu_footprint(
+        _matrix_results(_full_gvisor_scenarios(), provenance=prov), kata_results=kr)
+    assert "| gVisor | 10m | 16Mi |" in out
+    assert "| Kata + microVM | 500m | 512Mi |" in out
+
+
+def test_vcpu_footprint_negative_value_dropped_by_schema_then_inert():
+    # a negative request fails the nonneg-int predicate ⇒ dropped by _clean_provenance ⇒
+    # only mem survives ⇒ half-stated ⇒ INERT.
+    out = render.render_vcpu_footprint(
+        _matrix_results(_full_gvisor_scenarios(), provenance={
+            "runtime": "gvisor", "sandbox_cpu_request_m": -10, "sandbox_mem_request_mib": 16})
+    )
+    assert out == ""
+
+
+def test_vcpu_footprint_kata_companion_wrong_product_ignored():
+    # kata_results only fills the kata slot when its product is sandbox-kata (guard mirrors density).
+    prov = {"runtime": "gvisor", "sandbox_cpu_request_m": 10, "sandbox_mem_request_mib": 16}
+    kr = {"product": "sandbox", "provenance": {
+        "runtime": "kata-microvm", "sandbox_cpu_request_m": 500, "sandbox_mem_request_mib": 512}}
+    out = render.render_vcpu_footprint(
+        _matrix_results(_full_gvisor_scenarios(), provenance=prov), kata_results=kr)
+    assert "| Kata + microVM | pending | pending |" in out
+
+
 def _warmpool_scenario(metrics, n=30):
     return {"name": "warmpool_cold_start", "outcome": "PASS", "n": n, "sla_metrics": metrics}
 

@@ -155,6 +155,14 @@ PROVENANCE_FIELDS = {
     # build banner's explicit key list does not include it, so the primary banner is
     # unchanged by this addition.
     "machine_type": lambda v: isinstance(v, str) and bool(_MACHINE_TYPE.match(v)),
+    # vCPU-footprint axis (#3868): the per-sandbox DECLARED cpu/mem request (millicores +
+    # MiB, whole non-negative ints) the density figures were measured under — a run-level
+    # property of the runtime, not a per-scenario measurement. Rendered only where explicitly
+    # listed (the vCPU-footprint DETAILS section), like machine_type — so the main banner is
+    # unchanged. `bool` is excluded because bool is an int subclass (True would pass an int
+    # predicate); a footprint is a count, never a flag.
+    "sandbox_cpu_request_m": lambda v: isinstance(v, int) and not isinstance(v, bool) and v >= 0,
+    "sandbox_mem_request_mib": lambda v: isinstance(v, int) and not isinstance(v, bool) and v >= 0,
 }
 
 # scenario internal-name -> public display label. A scenario whose name is not in this
