@@ -95,6 +95,19 @@ _Each row is an independently-measured percentile of its own per-claim distribut
 
 > ⚠️ **Regime caveat:** this warm tier was measured on a **drained, low-contention cluster** (single fire, small claim count). A green warm tier here is honest for THIS fire but is **not yet a sustained North-Star claim** — it wants corroboration under representative load before sub-1s warm is treated as durable.
 
+## Burst Create — TTFE Corroboration
+
+The headline burst count is **pod-Ready** — but a pod can report Ready before it can run your code. TTFE is the stronger claim: the sandbox *executed its first instruction and returned a result*. This block corroborates the two; the **gap** is sandboxes that reported Ready but had not yet run code.
+
+| Signal | Count |
+|---|---|
+| Pod-Ready <1s (weaker claim) | 10 |
+| Executed first-instruction <1s (TTFE, stronger claim) | 10 |
+| Ready-but-not-yet-run (gap) | 0 |
+| Execution success (Honesty Check) | 100% |
+
+_Pod-Ready ≥ executed-TTFE by construction; the gap is the over-claim a pod-Ready headline would hide._
+
 ## Warm-vs-Cold Speedup
 
 A warm-pool provision is **7.28251× faster** than a true-cold start (gVisor). The warm pool keeps a ready slot so a claim skips the fresh-node image-pull path a cold start pays in full. Both legs are measured the same way (TTFE (executed first-instruction)); the ratio is the portable headline you can reproduce on your own cluster.
