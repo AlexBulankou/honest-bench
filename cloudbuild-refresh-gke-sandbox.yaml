@@ -142,6 +142,16 @@ steps:
         git checkout -B "$BRANCH"
         git add sandbox/results/latest.json README.md DETAILS.md
         git commit -m "data: auto-refresh benchmark results (substrate=gke-sandbox, gVisor)"
+
+        # A fresh CB clone fetches only main, so it has no remote-tracking ref for
+        # origin/$BRANCH — and `--force-with-lease` with no explicit expected value
+        # uses refs/remotes/origin/$BRANCH as its lease baseline. Without it, the 2nd
+        # refresh onward is rejected ("stale info") because git has no baseline to
+        # compare. Establish the ref first: force-update the remote-tracking ref to the
+        # current remote tip so the lease is accurate. Tolerated no-op on the very first
+        # refresh (branch does not yet exist remotely). Preserves the force-with-lease
+        # safety semantics (still refuses to clobber an unseen concurrent update).
+        git fetch origin "+$BRANCH:refs/remotes/origin/$BRANCH" 2>/dev/null || true
         git push --force-with-lease origin "$BRANCH"
 
         # Open the PR (idempotent: if one is already open for this head, the push
