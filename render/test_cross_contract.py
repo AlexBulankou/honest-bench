@@ -1686,7 +1686,7 @@ def test_emit_to_render_slo_sweep_convergence():
     # 5s half fills (28.4 < the 300 cluster sizing target => ⚠️); 1s half keeps pending.
     assert (
         "| gVisor | Warm-pool hit (Base image) | 4 /node · 28.4 /cluster ⚠️ "
-        "| 4 /node · pending (cluster-fire) | 0.6s | 0.9s | 100% |"
+        "| 4 /node · pending (cluster-fire) | 0.6s (count=200) | 0.9s (count=200) | 100% |"
     ) in out, f"matrix row did not render the independent per-bar fill:\n{out}"
     # the caption pins the X the cluster figure was measured at.
     assert "per-activation-mode cluster rate at 40 nodes" in out, (
