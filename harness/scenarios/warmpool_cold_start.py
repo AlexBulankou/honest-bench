@@ -222,10 +222,7 @@ def _build_template_manifest(template_name: str) -> dict:
                 "image": _SANDBOX_IMAGE,
                 "imagePullPolicy": "IfNotPresent",
                 "command": ["sh", "-c", "sleep 600"],
-                "resources": {
-                    "requests": {"cpu": "10m", "memory": "16Mi"},
-                    "limits": {"cpu": "100m", "memory": "64Mi"},
-                },
+                "resources": rc.container_resources_from_env(_RUNTIME_CLASS),
             },
         ],
         "restartPolicy": "Never",

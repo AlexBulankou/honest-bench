@@ -487,6 +487,98 @@ def test_verify_wrong_runtime_not_retried_fails_fast():
     assert core.calls == 1  # wrong runtime is terminal — no settle retry burned
 
 
+# ---- container_resources: runtime-family-aware pod resource floor (#3942) ----
+
+def test_container_resources_kata_family_gets_guest_sane_floor():
+    # kata sizes the microVM from Pod cpu+memory — a tiny box SIGKILLs (137) the
+    # in-guest container despite Ready. Both kata dialects normalize to the kata floor.
+    for rcls in ("kata-clh", "kata-qemu", "kata"):
+        res = rc.container_resources(rcls)
+        assert res == {
+            "requests": {"cpu": "500m", "memory": "512Mi"},
+            "limits": {"cpu": "1", "memory": "1Gi"},
+        }, rcls
+
+
+def test_container_resources_gvisor_and_unset_are_byte_identical_tiny():
+    tiny = {
+        "requests": {"cpu": "10m", "memory": "16Mi"},
+        "limits": {"cpu": "100m", "memory": "64Mi"},
+    }
+    # gVisor, an unset class, and an unknown class all fall to the canonical tiny
+    # footprint — a vanilla-kind / gVisor manifest is unchanged from its pre-#3942 shape.
+    for rcls in ("gvisor", "gvisor-experimental", "", "runc", "bogus"):
+        assert rc.container_resources(rcls) == tiny, rcls
+
+
+def test_container_resources_per_field_override():
+    # Each of the four fields overrides independently; None keeps the family default.
+    res = rc.container_resources("kata-clh", cpu_request="2", mem_limit="4Gi")
+    assert res["requests"]["cpu"] == "2"          # overridden
+    assert res["requests"]["memory"] == "512Mi"   # kata default kept
+    assert res["limits"]["cpu"] == "1"            # kata default kept
+    assert res["limits"]["memory"] == "4Gi"       # overridden
+
+
+def test_container_resources_returns_fresh_dict_no_registry_mutation():
+    r1 = rc.container_resources("kata-clh")
+    r1["requests"]["cpu"] = "999"
+    r2 = rc.container_resources("kata-clh")
+    assert r2["requests"]["cpu"] == "500m"  # registry not corrupted by caller mutation
+
+
+def _with_env(overrides, fn):
+    import os
+    saved = {k: os.environ.get(k) for k in overrides}
+    try:
+        for k, v in overrides.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        return fn()
+    finally:
+        for k, v in saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+
+def test_container_resources_from_env_unset_uses_family_default():
+    res = _with_env(
+        {"BENCH_POD_CPU_REQUEST": None, "BENCH_POD_MEM_REQUEST": None,
+         "BENCH_POD_CPU_LIMIT": None, "BENCH_POD_MEM_LIMIT": None},
+        lambda: rc.container_resources_from_env("kata-clh"),
+    )
+    assert res == {
+        "requests": {"cpu": "500m", "memory": "512Mi"},
+        "limits": {"cpu": "1", "memory": "1Gi"},
+    }
+
+
+def test_container_resources_from_env_knobs_override():
+    res = _with_env(
+        {"BENCH_POD_CPU_REQUEST": "250m", "BENCH_POD_MEM_REQUEST": "1Gi",
+         "BENCH_POD_CPU_LIMIT": "2", "BENCH_POD_MEM_LIMIT": "2Gi"},
+        lambda: rc.container_resources_from_env("gvisor"),
+    )
+    assert res == {
+        "requests": {"cpu": "250m", "memory": "1Gi"},
+        "limits": {"cpu": "2", "memory": "2Gi"},
+    }
+
+
+def test_container_resources_from_env_blank_knob_is_family_default():
+    # A knob set to whitespace-only strips to None -> family default (not "").
+    res = _with_env(
+        {"BENCH_POD_CPU_REQUEST": "  ", "BENCH_POD_MEM_REQUEST": None,
+         "BENCH_POD_CPU_LIMIT": None, "BENCH_POD_MEM_LIMIT": None},
+        lambda: rc.container_resources_from_env("kata-clh"),
+    )
+    assert res["requests"]["cpu"] == "500m"
+
+
 def _run_all():
     fns = [v for k, v in sorted(globals().items())
            if k.startswith("test_") and callable(v)]

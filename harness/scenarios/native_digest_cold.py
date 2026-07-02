@@ -177,10 +177,7 @@ def _build_sandbox_manifest(sandbox_name: str) -> dict:
                 "image": _SANDBOX_IMAGE,
                 "imagePullPolicy": "Always",
                 "command": ["sh", "-c", "sleep 600"],
-                "resources": {
-                    "requests": {"cpu": "10m", "memory": "16Mi"},
-                    "limits": {"cpu": "100m", "memory": "64Mi"},
-                },
+                "resources": rc.container_resources_from_env(_RUNTIME_CLASS),
             },
         ],
         "restartPolicy": "Never",
