@@ -60,34 +60,6 @@ _Kata + microVM rows are measured in a separate run on the kata node pool: clust
 _build: cluster_substrate=gke-sandbox · run_id=dc1dd343fee74008a2f75ccdfed39eb9 · node_count=1_
 _generated-at: 2026-07-01T07:23:08Z_
 
-## North-Star check — warm-pool TTFE p95 < 0.5s
-
-The long-term target for a warm-pool hit is a TTFE p95 under 0.5s — a stricter bar than the 5s/1s throughput bars in the matrix above (those are today's operating envelope). This scorecard prints the measured distance to that target rather than leaving it implied. It is the same bar the step-up curve's North-Star verdict uses — the highest sustained creation rate holding p95 under it is reported in [DETAILS.md](DETAILS.md).
-
-| Runtime | Warm-pool-hit TTFE p95 (measured) | North Star (p95 < 0.5s) |
-|---|---|---|
-| gVisor | 0.9454s (count=30) | ❌ not met (0.4454s above the bar) |
-| Kata + microVM | 0.9867s (count=30) | ❌ not met (0.4867s above the bar) |
-
-_An honest ❌ beats an implied pass: the page prints the measured distance to the target it misses, and a met bar prints its measured headroom. An unmeasured runtime reads `pending` — never a guess. † marks a p95 measured over fewer than N=30 samples (a single observation, not a distribution)._
-
-## Operating Envelope — what wait should I budget?
-
-Find the row closest to **your** load; the p50 is the wait to plan around. The **Scope** column is load-bearing: the first three rows are the **full** start→first-result wait (TTFE), directly comparable to one another; the last row is only the **pool hand-off** sub-phase (it stops the moment you hold a ready sandbox, before your code runs), so do **not** rank its number against the full-TTFE rows above it. Every number is measured, not modelled — an unmeasured row reads `pending`, never a guess.
-
-| Your load pattern | Wait to budget (p50) | Scope |
-|---|---|---|
-| Steady trickle — warm pool keeps up with demand | ~0.6s | full start → first result |
-| Bursty — pool oversubscribed 2:1 (60 claims / 30 ready) | ~1.7s | full start → first result |
-| 300 sandboxes requested at once (1:1 pool) | ~6.9s | full start → first result |
-| Sustained 300/sec churn | ~2.9s | pool hand-off only (before exec) |
-
-## Warm-vs-Cold Speedup
-
-A warm-pool provision is **7.28251× faster** than a true-cold start (gVisor) — both legs measured the same way (TTFE (executed first-instruction)). Full leg-by-leg table and the cross-block caveats are in the deep-dive appendix, [DETAILS.md](DETAILS.md).
-
-_Measured 2026-07-02 — warm-vs-cold speedup (point-in-time; refreshed on the next TTFE fire)._
-
 ## What this means for you
 
 The tables above are the raw measurements. If you build *on* sandboxes but do not run the cluster yourself, here is what they mean in practice:
@@ -100,9 +72,31 @@ The tables above are the raw measurements. If you build *on* sandboxes but do no
 - **Do not design around suspend/resume yet.** gVisor resume is blocked upstream, and Kata resume is `N/A` by construction (checkpoint-restore does not transfer to the VM model) — treat it as unavailable until the gVisor cells show real numbers.
 - **A cell marked `pending` is unmeasured, not bad.** It means that measurement has not run yet (or is blocked upstream) — never that the platform failed it.
 
+### What wait should I budget?
+
+Find the row closest to **your** load; the p50 is the wait to plan around. The **Scope** column is load-bearing: the first three rows are the **full** start→first-result wait (TTFE), directly comparable to one another; the last row is only the **pool hand-off** sub-phase (it stops the moment you hold a ready sandbox, before your code runs), so do **not** rank its number against the full-TTFE rows above it. Every number is measured, not modelled — an unmeasured row reads `pending`, never a guess.
+
+| Your load pattern | Wait to budget (p50) | Scope |
+|---|---|---|
+| Steady trickle — warm pool keeps up with demand | ~0.6s | full start → first result |
+| Bursty — pool oversubscribed 2:1 (60 claims / 30 ready) | ~1.7s | full start → first result |
+| 300 sandboxes requested at once (1:1 pool) | ~6.9s | full start → first result |
+| Sustained 300/sec churn | ~2.9s | pool hand-off only (before exec) |
+
+### How close to the North Star?
+
+The long-term target for a warm-pool hit is a TTFE p95 under 0.5s — a stricter bar than the 5s/1s throughput bars in the matrix above (those are today's operating envelope). This scorecard prints the measured distance to that target rather than leaving it implied. It is the same bar the step-up curve's North-Star verdict uses — the highest sustained creation rate holding p95 under it is reported in [DETAILS.md](DETAILS.md).
+
+| Runtime | Warm-pool-hit TTFE p95 (measured) | North Star (p95 < 0.5s) |
+|---|---|---|
+| gVisor | 0.9454s (count=30) | ❌ not met (0.4454s above the bar) |
+| Kata + microVM | 0.9867s (count=30) | ❌ not met (0.4867s above the bar) |
+
+_An honest ❌ beats an implied pass: the page prints the measured distance to the target it misses, and a met bar prints its measured headroom. An unmeasured runtime reads `pending` — never a guess. † marks a p95 measured over fewer than N=30 samples (a single observation, not a distribution)._
+
 ## Does it hold at cluster scale?
 
-Three questions a bigger cluster raises: does throughput stay flat as you add nodes (**linearity**), what does a single all-at-once burst of N claims cost (**concurrency**), and where does the whole-cluster warm hand-out rate saturate (**ceiling**)? All below, on the same TTFE spine as the headline matrix.
+Four questions a bigger cluster raises: does throughput stay flat as you add nodes (**linearity**), what does a single all-at-once burst of N claims cost (**concurrency**), where does the whole-cluster warm hand-out rate saturate (**ceiling**), and what happens when the pool is over-subscribed (**contention**)? All below, on the same TTFE spine as the headline matrix.
 
 ### Linearity — throughput and density hold flat as nodes grow
 
@@ -139,7 +133,7 @@ _SLA ceiling: **not met** at this operating point — this row is the honest sat
 
 _Measured 2026-07-02 — whole-cluster saturation ceiling (point-in-time)._
 
-## Where it breaks today (honest limits)
+### Where it breaks — an over-subscribed pool
 
 The Concurrent Burst legs above are **1:1** — N ready sandboxes hit with N claims. This is the deliberate **retraction**: the operating point where the pool is **over-subscribed** (more concurrent claims than ready pool members), and warm activation **stops being sub-second**. Measured on **gVisor**: a pool of **30** ready sandboxes hit with **60** simultaneous claims (**2:1 contention**). Every claim still binds, but the over-subscription serializes the bind path — so the "warm hit is <1s" claim from the Core Metrics matrix does **not** hold here. Cluster shape: node_count=1, `e2-standard-16`.
 

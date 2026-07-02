@@ -160,32 +160,29 @@ def build_readme(root=None):
             results = json.load(fh)
         kr = kata_results if product == "sandbox" else None
         sections.append(render_matrix(results, kata_results=kr).rstrip())
+        # hb#134 H2-fold: the reader-facing interpretation is ONE top-level block. The
+        # plain-English "What this means for you" synthesis leads, then the two supporting
+        # scorecards fold UNDER it as `###` sub-blocks — "what wait should I budget?" (operating
+        # envelope) and "how close to the North Star?" (the p95-vs-bar scorecard). This collapses
+        # three former H2s into one, so the page skims as: matrix → what-it-means → does-it-scale.
+        sections.append(render_what_this_means(results).rstrip())
+        sections.append(render_operating_envelope(
+            results, heading="### What wait should I budget?").rstrip())
         # #4162 Option A: North-Star scorecard — render-derived from the matrix's measured
         # warm-hit p95 (zero emit-key change; the locked schema contract untouched).
-        north_star = render_north_star(results, kata_results=kr)
+        north_star = render_north_star(
+            results, kata_results=kr, heading="### How close to the North Star?")
         if north_star.strip():
             sections.append(north_star.rstrip())
-        # hb#134: the operating-envelope headline table sits directly under the matrix — it is
-        # the "what wait do I budget?" answer, always rendered (rows pend individually).
-        sections.append(render_operating_envelope(results).rstrip())
-        speedup = render_warm_vs_cold(results, punchline_only=True)
-        if speedup.strip():
-            sections.append(speedup.rstrip())
-        # hb#134: plain-English "What this means for you" synthesis — the non-infra reader lens.
-        # Always rendered (each measured clause degrades to a qualitative statement when its
-        # source block is absent); sits after the headline numbers, before the scale deep-dive.
-        sections.append(render_what_this_means(results).rstrip())
-        # hb#134: Scale-Proof + Concurrent-Burst merge into ONE user-facing "Does it hold at
-        # cluster scale?" section (render_cluster_scale demotes each to a ### sub-block).
+        # hb#134: Scale-Proof + Concurrent-Burst + Saturation + at-scale Contention merge into ONE
+        # user-facing "Does it hold at cluster scale?" section (render_cluster_scale demotes each
+        # to a ### sub-block, including the honest over-subscription retraction as the 4th).
         cluster_scale = render_cluster_scale(results)
         if cluster_scale.strip():
             sections.append(cluster_scale.rstrip())
         stepup = render_stepup(results)  # INERT today; standalone ## when a stepup object emits
         if stepup.strip():
             sections.append(stepup.rstrip())
-        contention = render_at_scale_contention(results)  # page: retraction posture only
-        if contention.strip():
-            sections.append(contention.rstrip())
     # #4021: the Reproducibility Recipe is product-agnostic architecture prose, so it renders
     # ONCE after the per-product loop — the preamble forward-refs "the recipe at the bottom".
     sections.append(render_recipe().rstrip())

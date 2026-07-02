@@ -849,7 +849,7 @@ def render_matrix(results, kata_results=None):
 NORTH_STAR_TTFE_P95_MS = 500.0
 
 
-def render_north_star(results, kata_results=None):
+def render_north_star(results, kata_results=None, heading=None):
     """Headline scorecard: measured warm-pool-hit TTFE p95 vs the 500ms North-Star bar.
 
     Same per-runtime sourcing as the matrix (the primary results claim their measured
@@ -875,7 +875,8 @@ def render_north_star(results, kata_results=None):
             sources["kata-microvm"] = _matrix_scenarios(kata_results.get("scenarios"))
 
     bar = _fmt_secs(NORTH_STAR_TTFE_P95_MS)
-    lines = [f"## North-Star check — warm-pool TTFE p95 < {bar}", ""]
+    heading = heading or f"## North-Star check — warm-pool TTFE p95 < {bar}"
+    lines = [heading, ""]
     lines.append(
         f"The long-term target for a warm-pool hit is a TTFE p95 under {bar} — a stricter bar "
         "than the 5s/1s throughput bars in the matrix above (those are today's operating "
@@ -956,7 +957,7 @@ def _envelope_warm_burst_leg(results):
     return max(warm, key=lambda leg: leg["n"])
 
 
-def render_operating_envelope(results):
+def render_operating_envelope(results, heading=None):
     """Render the hb#134 operating-envelope headline table (always renders; rows pend individually).
 
     Answers the one question a model-builder / agentic-dev actually has: *given my load pattern,
@@ -1026,7 +1027,8 @@ def render_operating_envelope(results):
     else:
         rows.append(("Sustained high-rate churn", _PENDING, _ENVELOPE_ACQ_ONLY))
 
-    lines = ["## Operating Envelope — what wait should I budget?", ""]
+    heading = heading or "## Operating Envelope — what wait should I budget?"
+    lines = [heading, ""]
     lines.append(
         "Find the row closest to **your** load; the p50 is the wait to plan around. The **Scope** "
         "column is load-bearing: the first three rows are the **full** start→first-result wait "
@@ -1084,7 +1086,7 @@ def render_what_this_means(results):
         lines.append(
             "- **Keep a warm pool sized to demand and a new sandbox is ready quickly** — a claim "
             "against a ready pool skips the fresh-node startup path. The exact wait to budget is "
-            "in the operating envelope above once that measurement lands."
+            "in the operating envelope below once that measurement lands."
         )
 
     # Clause 2 — warm pools pay off (warm_vs_cold speedup + runtime).
@@ -2251,14 +2253,18 @@ def render_cluster_scale(results):
         results, heading="### Concurrent burst — TTFE at N simultaneous claims")
     saturation = render_cluster_saturation(
         results, heading="### Saturation — the whole-cluster warm-hand-out ceiling")
-    if not scale.strip() and not burst.strip() and not saturation.strip():
+    contention = render_at_scale_contention(
+        results, page_heading="### Where it breaks — an over-subscribed pool")
+    if (not scale.strip() and not burst.strip() and not saturation.strip()
+            and not contention.strip()):
         return ""
     lines = ["## Does it hold at cluster scale?", ""]
     lines.append(
-        "Three questions a bigger cluster raises: does throughput stay flat as you add nodes "
+        "Four questions a bigger cluster raises: does throughput stay flat as you add nodes "
         "(**linearity**), what does a single all-at-once burst of N claims cost (**concurrency**), "
-        "and where does the whole-cluster warm hand-out rate saturate (**ceiling**)? All below, on "
-        "the same TTFE spine as the headline matrix.")
+        "where does the whole-cluster warm hand-out rate saturate (**ceiling**), and what happens "
+        "when the pool is over-subscribed (**contention**)? All below, on the same TTFE spine as "
+        "the headline matrix.")
     lines.append("")
     if scale.strip():
         lines.append(scale.rstrip())
@@ -2268,6 +2274,9 @@ def render_cluster_scale(results):
         lines.append("")
     if saturation.strip():
         lines.append(saturation.rstrip())
+        lines.append("")
+    if contention.strip():
+        lines.append(contention.rstrip())
     return "\n".join(lines).rstrip()
 
 
@@ -2388,7 +2397,7 @@ def _clean_at_scale_contention(results):
     return clean
 
 
-def render_at_scale_contention(results, detail=False):
+def render_at_scale_contention(results, detail=False, page_heading=None):
     """Render the at-scale-under-contention RETRACTION block, or "" when INERT.
 
     The deliberate counter-point to the flattering 1:1 warm bursts: a single measured operating
@@ -2412,7 +2421,7 @@ def render_at_scale_contention(results, detail=False):
     pool, claims = asc["pool_size"], asc["claim_count"]
     ratio = f"{_fmt_ratio(claims / pool)}:1" if pool else "—"
     heading = ("## At Scale Under Contention — where sub-second warm activation breaks"
-               if detail else "## Where it breaks today (honest limits)")
+               if detail else (page_heading or "## Where it breaks today (honest limits)"))
     lines = [heading, ""]
     # hb#134 (a4s1 nit): the Concurrent Burst table lives on the headline README, so "above" is
     # correct on the page path but dangles in the DETAILS detail-path (nothing is above it there).
