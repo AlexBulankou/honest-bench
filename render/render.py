@@ -1197,15 +1197,16 @@ def render_warm_vs_cold(results):
         "is the p50 so half of warm claims beat it._")
     lines.append("")
     # Cross-block coherence caveat (#103 / a4s1): this warm-vs-cold pair is its own
-    # point-in-time run at its own operating point and sample size — NOT the same measurement
-    # as the Core Metrics matrix "Warm-pool hit" row. A reader comparing the two warm p50s
-    # across blocks must not read a divergence as a contradiction. Static prose (no numbers) so
-    # it can never rot against either block's independent refresh cadence.
+    # point-in-time run at its own operating point — NOT the same measurement as the
+    # Core Metrics matrix "Warm-pool hit" row. A reader comparing the two warm p50s
+    # across blocks must not read a divergence as a contradiction. Static prose (no numbers,
+    # no sample-size comparison) so it can never rot against either block's independent
+    # refresh cadence or either block's n.
     lines.append(
         "_This warm-vs-cold pair is a standalone point-in-time run; its warm-pool leg is a "
-        "separate measurement from the Core Metrics matrix \"Warm-pool hit\" row (a different "
-        "sample size and operating point). Read each block on its own terms — the two warm "
-        "p50s are not directly comparable._")
+        "separate measurement from the Core Metrics matrix \"Warm-pool hit\" row (an "
+        "independent run at its own operating point, refreshed on its own cadence). Read "
+        "each block on its own terms — the two warm p50s are not directly comparable._")
     lines.append("")
     # Dated subline (mirrors scale_proof #3952): the warm-vs-cold pair is a point-in-time
     # measurement carried forward across the daily refresh, so it carries its own measured

@@ -104,7 +104,7 @@ A warm-pool provision is **7.28251× faster** than a true-cold start (gVisor). T
 
 _Speedup = cold ÷ warm, computed from the displayed values over n=30 warm claims; the warm leg is the p50 so half of warm claims beat it._
 
-_This warm-vs-cold pair is a standalone point-in-time run; its warm-pool leg is a separate measurement from the Core Metrics matrix "Warm-pool hit" row (a different sample size and operating point). Read each block on its own terms — the two warm p50s are not directly comparable._
+_This warm-vs-cold pair is a standalone point-in-time run; its warm-pool leg is a separate measurement from the Core Metrics matrix "Warm-pool hit" row (an independent run at its own operating point, refreshed on its own cadence). Read each block on its own terms — the two warm p50s are not directly comparable._
 
 _Measured 2026-07-02 — warm-vs-cold speedup (point-in-time; refreshed on the next TTFE fire)._
 
