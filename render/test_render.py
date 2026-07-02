@@ -554,17 +554,18 @@ def test_matrix_renders_doc_exact_gvisor_rows():
     # hb#132: throughput cells are dual `<node> /node · <cluster>`; with no per-cluster field
     # landed, the cluster half pends `pending (cluster-fire)` while the per-node half is exact.
     cf = f"pending ({render._CLUSTER_FIRE})"
+    # hb#142: each TTFE cell carries its sample count inline as `value (count=N)`.
     assert (
         f"| gVisor | Warm-pool hit (Base image) | 4 /node · {cf} | 4 /node · {cf} "
-        "| 0.6s | 0.9s | 100% |"
+        "| 0.6s (count=200) | 0.9s (count=200) | 100% |"
     ) in out
     assert (
         f"| gVisor | Unique-image cold (RL reality) | 4 /node · {cf} | 0 /node · {cf} "
-        "| 1.2s | 1.56s | 100% |"
+        "| 1.2s (count=200) | 1.56s (count=200) | 100% |"
     ) in out
     assert (
         f"| gVisor | Resume-from-suspend | 4 /node · {cf} | 0 /node · {cf} "
-        "| 3.5s | 5s | 92.8% (1277/1376) ⚠️ |"
+        "| 3.5s (count=1376) | 5s (count=1376) | 92.8% (1277/1376) ⚠️ |"
     ) in out
 
 
@@ -577,8 +578,9 @@ def test_matrix_low_n_ttfe_cells_marked():
     out = render.render_matrix(_matrix_results(scen))
     cold_line = [l for l in out.splitlines() if "Unique-image cold" in l][0]
     cells = [c.strip() for c in cold_line.strip("|").split("|")]
-    assert cells[4] == f"1.2s {render._LOW_N_MARK}"  # TTFE p50 marked
-    assert cells[5] == f"1.56s {render._LOW_N_MARK}"  # TTFE p95 marked
+    # hb#142: inline count precedes the low-N dagger — `value (count=N) †`.
+    assert cells[4] == f"1.2s (count=1) {render._LOW_N_MARK}"  # TTFE p50 marked
+    assert cells[5] == f"1.56s (count=1) {render._LOW_N_MARK}"  # TTFE p95 marked
     # the high-N warm-pool row is NOT marked
     warm_line = [l for l in out.splitlines() if "Warm-pool hit" in l][0]
     assert render._LOW_N_MARK not in warm_line
@@ -600,8 +602,8 @@ def test_matrix_at_floor_n_not_marked():
     out = render.render_matrix(_matrix_results(scen))
     cold_line = [l for l in out.splitlines() if "Unique-image cold" in l][0]
     cells = [c.strip() for c in cold_line.strip("|").split("|")]
-    assert cells[4] == "1.2s"  # no marker at the floor
-    assert cells[5] == "1.56s"
+    assert cells[4] == "1.2s (count=30)"  # inline count, no marker at the floor
+    assert cells[5] == "1.56s (count=30)"
 
 
 def test_matrix_pending_ttfe_never_marked_even_low_n():
@@ -819,7 +821,8 @@ def test_matrix_pass_scenario_still_shows_metrics_after_pending_guard():
     out = render.render_matrix(_matrix_results(scen))
     resume_line = [l for l in out.splitlines() if "Resume-from-suspend" in l and "gVisor" in l][0]
     cells = [c.strip() for c in resume_line.strip("|").split("|")]
-    assert cells[4] == "3.5s" and cells[5] == "5s"  # real TTFE p50/p95 survive
+    # hb#142: real TTFE p50/p95 survive, now with inline count.
+    assert cells[4] == "3.5s (count=1376)" and cells[5] == "5s (count=1376)"
     # N=1376 (>= floor) means no low-N dagger on the TTFE cells
     assert render._LOW_N_MARK not in resume_line
     assert "pending" not in [cells[4], cells[5]]
@@ -843,63 +846,6 @@ def test_matrix_density_sourced_from_warmpool_not_stale_burst_create():
     # and the headline matrix no longer carries any density cell at all
     out = render.render_matrix(_matrix_results(scen))
     assert "1.88" not in out and "0.45" not in out and "Max Density" not in out
-
-
-def test_sample_sizes_surfaces_per_row_n_dropped_from_matrix():
-    # hb#134 fast-follow: the headline matrix dropped its Samples-N column, so N is invisible
-    # for any 100%-exec row on the front page. render_sample_sizes restores the receipt in
-    # DETAILS: one row per (runtime, activation-mode), keyed by the same per-scenario n. The
-    # gVisor warm/cold rows carry their real N; the front-page matrix carries none of them.
-    out = render.render_sample_sizes(_matrix_results(_full_gvisor_scenarios()))
-    assert "## Sample Sizes (N per Core Metrics row)" in out
-    assert "| gVisor | Warm-pool hit (Base image) | 200 |" in out
-    assert "| gVisor | Unique-image cold (RL reality) | 200 |" in out
-    assert "| gVisor | Resume-from-suspend | 1376 |" in out
-    # the receipt is a DETAILS-only surface — the headline matrix still carries no N column
-    matrix = render.render_matrix(_matrix_results(_full_gvisor_scenarios()))
-    assert "Samples (N)" not in matrix
-
-
-def test_sample_sizes_low_n_row_marked_and_captioned():
-    # A row below the comparability floor carries the same small-sample dagger the matrix TTFE
-    # cells wear, so the receipt itself flags which rows are not distributions.
-    scen = _full_gvisor_scenarios()
-    scen[1]["n"] = 3  # native cold below TTFE_COMPARABILITY_MIN_N
-    out = render.render_sample_sizes(_matrix_results(scen))
-    assert f"| gVisor | Unique-image cold (RL reality) | 3 {render._LOW_N_MARK} |" in out
-    # the high-N warm row stays unmarked
-    assert "| gVisor | Warm-pool hit (Base image) | 200 |" in out
-    assert render._LOW_N_MARK in out and str(render.TTFE_COMPARABILITY_MIN_N) in out
-
-
-def test_sample_sizes_pending_row_carries_reason_and_resume_kata_na():
-    # A pending row renders `pending (<reason>)` (not a not-yet-run bare pending), matching the
-    # matrix; resume-from-suspend on Kata is N/A by construction (CRIU does not transfer).
-    scen = _full_gvisor_scenarios()
-    scen[2] = {
-        "name": "suspend_resume", "outcome": "pending",
-        "pending_reason": "upstream-blocked", "n": 1,
-    }
-    out = render.render_sample_sizes(_matrix_results(scen))
-    assert "| gVisor | Resume-from-suspend | pending (upstream-blocked) |" in out
-    assert "| Kata + microVM | Resume-from-suspend | N/A |" in out
-    # unmeasured kata warm/cold rows render bare pending
-    assert "| Kata + microVM | Warm-pool hit (Base image) | pending |" in out
-
-
-def test_sample_sizes_kata_results_fills_kata_rows():
-    # the companion sandbox-kata artifact fills the kata rows' N exactly as it fills the matrix.
-    out = render.render_sample_sizes(
-        _matrix_results(_full_gvisor_scenarios()), kata_results=_kata_results()
-    )
-    assert f"| Kata + microVM | Unique-image cold (RL reality) | 5 {render._LOW_N_MARK} |" in out
-    # the pending kata warm row keeps its reason
-    assert "| Kata + microVM | Warm-pool hit (Base image) | pending (pool-topology-constrained) |" in out
-
-
-def test_sample_sizes_inert_for_unknown_product():
-    # closed-schema: an unknown product renders "" (INERT), never a guessed skeleton.
-    assert render.render_sample_sizes({"product": "not-a-product", "scenarios": []}) == ""
 
 
 def test_matrix_kata_warm_cold_rows_pending():
@@ -1044,7 +990,7 @@ def test_matrix_invalid_runtime_provenance_dropped_defaults_gvisor():
     assert "trust-me-vm" not in out
     assert (
         "| gVisor | Warm-pool hit (Base image) | 4 /node · pending (cluster-fire) "
-        "| 4 /node · pending (cluster-fire) | 0.6s | 0.9s | 100% |"
+        "| 4 /node · pending (cluster-fire) | 0.6s (count=200) | 0.9s (count=200) | 100% |"
     ) in out
 
 
@@ -1114,15 +1060,15 @@ def test_matrix_kata_results_fills_kata_rows_gvisor_unchanged():
     )
     assert (
         "| gVisor | Warm-pool hit (Base image) | 4 /node · pending (cluster-fire) "
-        "| 4 /node · pending (cluster-fire) | 0.6s | 0.9s | 100% |"
+        "| 4 /node · pending (cluster-fire) | 0.6s (count=200) | 0.9s (count=200) | 100% |"
     ) in out
     kata_cold = [l for l in out.splitlines()
                  if l.startswith("| Kata + microVM | Unique-image cold")][0]
     cells = [c.strip() for c in kata_cold.strip("|").split("|")]
     # n=5 is below the TTFE comparability floor, so the dagger rides along — the low-N
     # honesty marker applies to kata_results rows exactly as it does to primary rows.
-    assert cells[4] == f"4.362s {render._LOW_N_MARK}"
-    assert cells[5] == f"5s {render._LOW_N_MARK}"
+    assert cells[4] == f"4.362s (count=5) {render._LOW_N_MARK}"
+    assert cells[5] == f"5s (count=5) {render._LOW_N_MARK}"
     assert "100%" in cells[6]
 
 
@@ -2923,7 +2869,7 @@ def test_north_star_gvisor_miss_prints_measured_gap():
     out = render.render_north_star(_matrix_results(_full_gvisor_scenarios()))
     assert "## North-Star check — warm-pool TTFE p95 < 0.5s" in out
     # 900ms warm-hit p95 misses the 500ms bar by exactly 0.4s — the gap is printed, not implied.
-    assert "| gVisor | 0.9s | ❌ not met (0.4s above the bar) |" in out
+    assert "| gVisor | 0.9s (count=200) | ❌ not met (0.4s above the bar) |" in out
 
 
 def test_north_star_met_bar_prints_headroom():
@@ -2932,7 +2878,7 @@ def test_north_star_met_bar_prints_headroom():
         "sla_metrics": {"ttfe_p95_ms": 400},
     }]
     out = render.render_north_star(_matrix_results(scen))
-    assert "| gVisor | 0.4s | ✅ met (0.1s headroom) |" in out
+    assert "| gVisor | 0.4s (count=200) | ✅ met (0.1s headroom) |" in out
 
 
 def test_north_star_exact_bar_is_not_met():
@@ -2951,7 +2897,7 @@ def test_north_star_low_n_dagger_on_p95_cell():
         "sla_metrics": {"ttfe_p95_ms": 900},
     }]
     out = render.render_north_star(_matrix_results(scen))
-    assert "| gVisor | 0.9s † | ❌ not met (0.4s above the bar) |" in out
+    assert "| gVisor | 0.9s (count=5) † | ❌ not met (0.4s above the bar) |" in out
 
 
 def test_north_star_unmeasured_runtime_pends():
@@ -2978,9 +2924,9 @@ def test_north_star_kata_results_fills_kata_row():
         _matrix_results(_full_gvisor_scenarios()),
         kata_results=_kata_results(scenarios=kata_scen),
     )
-    assert "| Kata + microVM | 0.9867s | ❌ not met (0.4867s above the bar) |" in out
+    assert "| Kata + microVM | 0.9867s (count=30) | ❌ not met (0.4867s above the bar) |" in out
     # gVisor row unchanged by the companion artifact.
-    assert "| gVisor | 0.9s | ❌ not met (0.4s above the bar) |" in out
+    assert "| gVisor | 0.9s (count=200) | ❌ not met (0.4s above the bar) |" in out
 
 
 def test_north_star_kata_results_wrong_product_or_runtime_ignored():

@@ -83,19 +83,6 @@ Max Density is sandboxes per node-allocatable sandbox-schedulable vCPU (the per-
 | gVisor | 5.98 |
 | Kata + microVM | pending |
 
-## Sample Sizes (N per Core Metrics row)
-
-The receipt behind the Core Metrics table: the N each row's TTFE p50/p95 was measured over. Rows with N < 30 are exactly the ones marked † on the matrix TTFE cells — a single-sample p50 is not a distribution, so do not rank a low-N row against a high-N one. An unmeasured or not-yet-graduated row renders `pending`; resume-from-suspend on Kata is N/A by construction.
-
-| Runtime | Activation Mode | Samples (N) |
-|---|---|---|
-| gVisor | Warm-pool hit (Base image) | 30 |
-| gVisor | Unique-image cold (RL reality) | 1 † |
-| gVisor | Resume-from-suspend | pending (upstream-blocked) |
-| Kata + microVM | Warm-pool hit (Base image) | 30 |
-| Kata + microVM | Unique-image cold (RL reality) | 1 † |
-| Kata + microVM | Resume-from-suspend | N/A |
-
 ## At Scale Under Contention — where sub-second warm activation breaks
 
 The Concurrent Burst legs on the headline page are **1:1** — N ready sandboxes hit with N claims. This is the deliberate **retraction**: the operating point where the pool is **over-subscribed** (more concurrent claims than ready pool members), and warm activation **stops being sub-second**. Measured on **gVisor**: a pool of **30** ready sandboxes hit with **60** simultaneous claims (**2:1 contention**). Every claim still binds, but the over-subscription serializes the bind path — so the "warm hit is <1s" claim from the Core Metrics matrix does **not** hold here. Cluster shape: node_count=1, `e2-standard-16`.
