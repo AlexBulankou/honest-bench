@@ -43,6 +43,17 @@ _A bare `pending` cell awaits its TTFE-instrumented run. A `pending (upstream-bl
 _build: cluster_substrate=gke-sandbox · run_id=dc1dd343fee74008a2f75ccdfed39eb9 · node_count=1_
 _generated-at: 2026-07-01T07:23:08Z_
 
+## North-Star check — warm-pool TTFE p95 < 0.5s
+
+The long-term target for a warm-pool hit is a TTFE p95 under 0.5s — a stricter bar than the 5s/1s throughput bars in the matrix above (those are today's operating envelope). This scorecard prints the measured distance to that target rather than leaving it implied. It is the same bar the step-up curve's North-Star verdict uses — the highest sustained creation rate holding p95 under it is reported in [DETAILS.md](DETAILS.md).
+
+| Runtime | Warm-pool-hit TTFE p95 (measured) | North Star (p95 < 0.5s) |
+|---|---|---|
+| gVisor | 0.9454s | ❌ not met (0.4454s above the bar) |
+| Kata + microVM | 0.9867s | ❌ not met (0.4867s above the bar) |
+
+_An honest ❌ beats an implied pass: the page prints the measured distance to the target it misses, and a met bar prints its measured headroom. An unmeasured runtime reads `pending` — never a guess. † marks a p95 measured over fewer than N=30 samples (a single observation, not a distribution)._
+
 ## Operating Envelope — what wait should I budget?
 
 Find the row closest to **your** load; the p50 is the wait to plan around. The **Scope** column is load-bearing: the first three rows are the **full** start→first-result wait (TTFE), directly comparable to one another; the last row is only the **pool hand-off** sub-phase (it stops the moment you hold a ready sandbox, before your code runs), so do **not** rank its number against the full-TTFE rows above it. Every number is measured, not modelled — an unmeasured row reads `pending`, never a guess.

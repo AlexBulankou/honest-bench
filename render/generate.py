@@ -35,6 +35,7 @@ def _load_render():
     spec.loader.exec_module(mod)
     return (
         mod.render_matrix,
+        mod.render_north_star,
         mod.render_operating_envelope,
         mod.render_burst_corroboration,
         mod.render_warm_bind_decomposition,
@@ -55,7 +56,7 @@ def _load_render():
     )
 
 
-(render_matrix, render_operating_envelope, render_burst_corroboration,
+(render_matrix, render_north_star, render_operating_envelope, render_burst_corroboration,
  render_warm_bind_decomposition, render_cold_bind_decomposition, render_warm_vs_cold,
  render_scale_proof, render_cluster_scale, render_stepup, render_kata_activation,
  render_concurrent_burst, render_warm_pool_acquisition, render_at_scale_contention,
@@ -143,6 +144,11 @@ def build_readme(root=None):
             results = json.load(fh)
         kr = kata_results if product == "sandbox" else None
         sections.append(render_matrix(results, kata_results=kr).rstrip())
+        # #4162 Option A: North-Star scorecard — render-derived from the matrix's measured
+        # warm-hit p95 (zero emit-key change; the locked schema contract untouched).
+        north_star = render_north_star(results, kata_results=kr)
+        if north_star.strip():
+            sections.append(north_star.rstrip())
         # hb#134: the operating-envelope headline table sits directly under the matrix — it is
         # the "what wait do I budget?" answer, always rendered (rows pend individually).
         sections.append(render_operating_envelope(results).rstrip())
