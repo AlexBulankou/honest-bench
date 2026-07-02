@@ -2620,7 +2620,7 @@ def test_operating_envelope_excludes_speedup_leg():
 def test_recipe_renders_h2_and_is_static():
     # #4021: render_recipe is product-agnostic static prose (no results arg) and always renders.
     out = render.render_recipe()
-    assert out.startswith("## Reproducibility Recipe")
+    assert out.startswith("## Reproduce it")
     assert render.render_recipe() == out  # deterministic / no hidden state
 
 
@@ -2665,8 +2665,8 @@ def test_recipe_in_full_readme_after_data_sections():
     # Note-1 placement: the recipe renders ONCE, after the data sections (it forward-refs "above").
     from generate import build_readme
     readme = build_readme()
-    assert readme.count("## Reproducibility Recipe") == 1
-    recipe_at = readme.index("## Reproducibility Recipe")
+    assert readme.count("## Reproduce it") == 1
+    recipe_at = readme.index("## Reproduce it")
     contention_at = readme.find("## At Scale Under Contention")
     if contention_at != -1:
         assert recipe_at > contention_at

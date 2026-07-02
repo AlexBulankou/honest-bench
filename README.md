@@ -107,63 +107,27 @@ Under this contention, TTFE degrades to **1.6589s p50** / **2.0169s p95** — bu
 
 _Measured 2026-07-01 — warm-pool at-scale contention ceiling (point-in-time)._
 
-## Reproducibility Recipe
+## Reproduce it
 
-The numbers above come from a fixed, publishable cluster shape — a *vanilla* GKE architecture
-any user can provision, not a private tuning. This section is the **load-bearing shape** a
-reader needs to reproduce the warm/cold TTFE and scale regime the tables report. The
-**runnable** version — exact commands, pinned installs, and the dispatch-only CI workflows —
-lives in [`recipe/REPRODUCE.md`](recipe/REPRODUCE.md), so it is not duplicated here.
+Every number above comes from a *vanilla* GKE architecture you can provision yourself — no
+private tuning. The **runnable** version (exact commands, pinned installs, dispatch-only CI)
+lives in [`recipe/REPRODUCE.md`](recipe/REPRODUCE.md); the load-bearing cluster shape is:
 
-**Cluster**
+- **Cluster** — a regional GKE Standard cluster on **Kubernetes ≥ 1.31** with a **gVisor**-enabled
+  node pool (`--enable-sandbox=type=gvisor`, which installs the `gvisor` `RuntimeClass` the burst
+  pins to) on a **16-vCPU** machine type (e.g. `e2-standard-16`). Set the pool's autoscaling max
+  to the node count the headline needs *before* the fire, on a **`/16`** pod CIDR, so the burst
+  tops out on the sandbox path — not the autoscaler or IP exhaustion.
+- **Warm pool** — size the `SandboxWarmPool` so a ready slot waits for each claim (replicas ≈
+  active-concurrency × 0.75, replenished at the claim rate); otherwise a sustained burst drains
+  into the cold-overflow path partway through. When a drained-regime fire is on the page, the
+  Warm-Pool decomposition (in [DETAILS.md](DETAILS.md)) names the scaling term directly.
+- **Zero-cold-start** — run an image pre-pull **`DaemonSet`** (`recipe/prepull-daemonset.yaml`) so
+  a node that joins mid-burst adds no image-pull tax to the first sandbox scheduled onto it.
 
-- A **regional** GKE Standard cluster on **Kubernetes >= 1.31** — regional so the control
-  plane is not a single-zone SPOF under a burst of simultaneous claim writes, and >= 1.31
-  because that is the floor where the sandbox CRDs and the gVisor `RuntimeClass` admission path
-  are both stable.
-- A **gVisor-enabled** node pool (`--enable-sandbox=type=gvisor`, which installs the `gvisor`
-  `RuntimeClass` the burst pins to) on a **16-vCPU** machine type (e.g. `e2-standard-16`).
-- Size the pool's autoscaling **maximum to the node count the headline needs *before* the
-  fire** — a warm burst that has to wait on node autoscaling is measuring the autoscaler, not
-  the sandbox path. The gate on that ceiling is **per-machine-family CPU quota**, not the
-  generic CPU quota; `recipe/REPRODUCE.md` has the family-quota math.
-- A **pod CIDR wide enough that node-count × pods-per-node does not exhaust the range** — a
-  **`/16`** cluster pod range comfortably addresses a several-hundred-node pool, so the burst
-  tops out on the sandbox path rather than silently on IP exhaustion.
-
-**Warm-pool sizing**
-
-- Size the `SandboxWarmPool` so a ready slot is waiting when each claim arrives: **replicas ≈
-  active-concurrency × 0.75, replenished at the claim rate.** The 0.75 factor keeps a
-  steady-state buffer of ready slots without over-provisioning idle capacity; replenishing at
-  the claim rate refills a drained slot as fast as claims consume them, so a sustained arrival
-  rate is served warm rather than draining into the cold-overflow path partway through a burst.
-- The warm-hit distribution widens at higher concurrency because the **bind (provisioning) side
-  grows with claim-count while exec stays flat** — so the warm number is a function of
-  pool-replenish-rate vs claim-rate, not a fixed constant.
-  When a drained-regime fire is on the page, the Warm-Pool decomposition caveat above names this
-  scaling term directly.
-
-**Zero-cold-start image pre-pull**
-
-- Run an image **pre-pull `DaemonSet`** (`recipe/prepull-daemonset.yaml`) that pins the sandbox
-  base image on every node before the fire, so a scale-out node that joins mid-burst does not
-  add an image-pull tax to the first sandbox scheduled onto it. It matters most on the **cold
-  leg and under warm-pool overflow** — a fully pre-filled pool already resident-izes the image
-  during warm-up. Without it, cold TTFE on a freshly-autoscaled node is dominated by pull
-  latency, not create latency — an artifact of the test setup, not the runtime.
-
-**Honesty caveats (these stay on the published recipe)**
-
-- The **sub-1s @ 300/s warm headline is not yet published.** It needs (a) the per-claim
-  acquisition watch-timer at 300/s and (b) a clean burst fire. The honest published-today
-  numbers are exactly the measured cells above — read the **Warm-Pool Acquisition** and
-  **Concurrent Burst** rows for the current p50/p95 at the offered rate and pool size named in
-  each caption. The page prints the real figure rather than the aspiration, so the recipe
-  points at those cells instead of restating a number that could drift out of sync with them.
-- **TRUE-TTFE** — first instruction actually executes, webhook-stamped — is gated on the
-  upstream webhook-stamper and renders `pending` until it lands. The executed-first-instruction
-  TTFE the tables report today is the honest bridge that proves create → first-instruction
-  wallclock without the stamp.
-- Rows marked `pending` are exactly that — **not-yet-measured, never a provisional number
-  dressed as a result.**
+**Honesty:** a row marked `pending` is not-yet-measured — never a provisional number dressed as a
+result. The **sub-1s @ 300/s warm headline is not yet published**; the honest published-today
+figures are exactly the measured cells above (Core Metrics + **Concurrent Burst**) plus the
+**Warm-Pool Acquisition** decomposition in [DETAILS.md](DETAILS.md) — the recipe points at those
+cells rather than restate a number that could drift out of sync. TRUE-TTFE (webhook-stamped
+first-instruction) stays `pending` until the upstream stamper lands.
