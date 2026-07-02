@@ -79,8 +79,8 @@ The tables above are the raw measurements. If you build *on* sandboxes but do no
 - **A warm-pool hit is about 7.3× faster than starting cold (gVisor).** If start-up latency matters to you, the warm pool is the single biggest lever — size it for your steady demand and most claims never pay the cold path.
 - **Big simultaneous bursts still work — 300 sandboxes asked for at once settled in ~6.9s.** But that is the pool-overflow regime: the wait climbs toward the cold-start number as claims outrun ready slots, so plan the pool around your steady rate, not your worst spike.
 - **Rule of thumb for pool size:** start near your typical concurrent demand (≈0.75× of it) and tune from there. This is a planning heuristic, not one of the measured numbers above.
-- **Pick gVisor for now.** It is the only runtime measured end-to-end here; the Kata + microVM rows are structural placeholders, not a recommendation.
-- **Do not design around suspend/resume yet.** It is blocked upstream on both runtimes, so treat it as unavailable until those cells show real numbers.
+- **Both runtimes are measured — choose by isolation need.** In the measurements above, warm-pool latency is comparable between them; gVisor delivers the higher per-node throughput, while Kata + microVM puts each sandbox in its own VM for hardware-grade isolation. If unsure, start with gVisor and move only the workloads that need a VM boundary to Kata.
+- **Do not design around suspend/resume yet.** gVisor resume is blocked upstream, and Kata resume is `N/A` by construction (checkpoint-restore does not transfer to the VM model) — treat it as unavailable until the gVisor cells show real numbers.
 - **A cell marked `pending` is unmeasured, not bad.** It means that measurement has not run yet (or is blocked upstream) — never that the platform failed it.
 
 ## Does it hold at cluster scale?

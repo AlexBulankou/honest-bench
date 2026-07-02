@@ -3066,7 +3066,7 @@ def test_what_this_means_always_renders_skeleton_all_clauses_degrade():
     assert "asked for at once settled in" not in out
     # Static bullets always present (rule-of-thumb + product-shape posture).
     assert "Rule of thumb for pool size" in out
-    assert "Pick gVisor for now." in out
+    assert "Both runtimes are measured — choose by isolation need." in out
     assert "Do not design around suspend/resume yet." in out
     assert "is unmeasured, not bad." in out
 
