@@ -1,6 +1,7 @@
-"""Offline tests for the #112 daily-refresh carry-forward of the four producer-less
+"""Offline tests for the #112 daily-refresh carry-forward of the five producer-less
 blocks — kata_activation (#3942), concurrent_burst (#4021), warm_pool_acquisition
-(#4083), at_scale_contention (#810). No cluster, no I/O beyond self-managed tempfiles.
+(#4083), at_scale_contention (#810), cluster_saturation (hb#132). No cluster, no I/O
+beyond self-managed tempfiles.
 
 Run with bare python3 (the auto-refresh GH-runner needs nothing extra):
   python3 -m harness.test_run_carry_forward_112
@@ -99,6 +100,28 @@ _PRIOR_ASC = {
     "machine_type": "e2-standard-16",
     "measured_at": "2026-07-01",
 }
+_PRIOR_CS = {
+    "runtime_class": "gvisor",
+    "pool_size": 600,
+    "claim_count": 600,
+    "node_count": 40,
+    "ttfe_p50_ms": 8630.8,
+    "ttfe_p95_ms": 12610.3,
+    "bind_p50_ms": 8191.6,
+    "bind_p95_ms": 12137.2,
+    "exec_p50_ms": 467.0,
+    "exec_p95_ms": 608.0,
+    "exec_success_rate": 1.0,
+    "thpt_under_5s_per_node": 0.064,
+    "thpt_under_1s_per_node": 0.0,
+    "thpt_under_5s_per_cluster": 2.558,
+    "thpt_under_1s_per_cluster": 0.0,
+    "thpt_cluster_node_count": 40,
+    "outcome": "FAIL",
+    "run_id": "c50e1c51a4c441f3a0705a2426a9a93c",
+    "machine_type": "n2-standard-16",
+    "measured_at": "2026-07-02",
+}
 
 _BLOCKS = (
     ("kata_activation", run.carry_prior_kata_activation,
@@ -109,6 +132,8 @@ _BLOCKS = (
      run._read_prior_warm_pool_acquisition, _PRIOR_WPA),
     ("at_scale_contention", run.carry_prior_at_scale_contention,
      run._read_prior_at_scale_contention, _PRIOR_ASC),
+    ("cluster_saturation", run.carry_prior_cluster_saturation,
+     run._read_prior_cluster_saturation, _PRIOR_CS),
 )
 
 

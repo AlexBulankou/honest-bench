@@ -94,3 +94,17 @@ The Concurrent Burst legs above are **1:1** — N ready sandboxes hit with N cla
 _Not directly comparable to the 1:1 Concurrent Burst legs: this point ran at node_count=1 with an over-subscribed pool — a distinct operating point. Latency is node-count-independent (so the TTFE columns DO compare to the matrix/burst TTFE), but the per-node throughput axis is omitted here as non-comparable to the node_count=20 bursts._
 
 _Measured 2026-07-01 — warm-pool at-scale contention ceiling (point-in-time)._
+
+## Cluster Saturation — the whole-cluster warm-hand-out ceiling
+
+The Concurrent Burst legs above are small 1:1 warm bursts. This is the **saturation** ceiling: a **1:1 all-warm** fire — a pool of **600** ready sandboxes hit with **600** simultaneous claims (**not** over-subscribed), spread across **40** nodes on **gVisor**. Every claim has a ready warm pool member, yet at this scale the bind path itself saturates — so the whole-cluster warm hand-out rate collapses far below the per-node engineering rate, and the "warm hit is <1s" claim from the Core Metrics matrix does **not** hold here. Cluster shape: `n2-standard-16`.
+
+| Pool | Claims | Nodes | TTFE p50 | TTFE p95 | Throughput @ <5s | Throughput @ <1s | Bind p50 | Bind p95 | Execution Success |
+|---|---|---|---|---|---|---|---|---|---|
+| 600 | 600 | 40 | 8.6308s | 12.6103s | 0.064 /node · 2.558 /cluster | 0 /node · 0 /cluster | 8.1916s | 12.1372s | 100% |
+
+_Per-cluster throughput MEASURED at **40 nodes** — never a per-node × N extrapolation (that fiction breaks above the controller reconcile ceiling). This is a **1:1 all-warm** operating point (pool == claim, not over-subscribed), distinct from the over-subscribed contention ceiling: the collapse here is the bind path saturating at cluster scale, not pool exhaustion. Latency is node-count-independent (so the TTFE columns DO compare to the matrix/burst TTFE)._
+
+_SLA ceiling: **not met** at this operating point — the honest saturation limit. Execution success confirms every claim still bound and executed; the FAIL is the throughput collapse against the sizing floor, not a correctness failure._
+
+_Measured 2026-07-02 — whole-cluster saturation ceiling (point-in-time)._

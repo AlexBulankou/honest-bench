@@ -19,6 +19,7 @@ from schema import (
     BADGE_CONSTRUCTIONS,
     BADGE_SCOPES,
     BURST_CORROBORATION_FIELDS,
+    CLUSTER_SATURATION_FIELDS,
     CONCURRENT_BURST_FIELDS,
     DENSITY_SOURCE_SCENARIOS,
     GOAL_COLUMNS,
@@ -1771,19 +1772,25 @@ def render_cluster_scale(results):
         results, heading="### Linearity — throughput and density hold flat as nodes grow")
     burst = render_concurrent_burst(
         results, heading="### Concurrent burst — TTFE at N simultaneous claims")
-    if not scale.strip() and not burst.strip():
+    saturation = render_cluster_saturation(
+        results, heading="### Saturation — the whole-cluster warm-hand-out ceiling")
+    if not scale.strip() and not burst.strip() and not saturation.strip():
         return ""
     lines = ["## Does it hold at cluster scale?", ""]
     lines.append(
-        "Two questions a bigger cluster raises: does throughput stay flat as you add nodes "
-        "(**linearity**), and what does a single all-at-once burst of N claims cost "
-        "(**concurrency**)? Both below, on the same TTFE spine as the headline matrix.")
+        "Three questions a bigger cluster raises: does throughput stay flat as you add nodes "
+        "(**linearity**), what does a single all-at-once burst of N claims cost (**concurrency**), "
+        "and where does the whole-cluster warm hand-out rate saturate (**ceiling**)? All below, on "
+        "the same TTFE spine as the headline matrix.")
     lines.append("")
     if scale.strip():
         lines.append(scale.rstrip())
         lines.append("")
     if burst.strip():
         lines.append(burst.rstrip())
+        lines.append("")
+    if saturation.strip():
+        lines.append(saturation.rstrip())
     return "\n".join(lines).rstrip()
 
 
@@ -1992,6 +1999,158 @@ def render_at_scale_contention(results, detail=False):
     lines.append("")
     if asc.get("measured_at"):
         lines.append(f"_Measured {asc['measured_at'][:10]} — warm-pool at-scale contention ceiling (point-in-time)._")
+        lines.append("")
+    return "\n".join(lines)
+
+
+# --- cluster-scale SATURATION render ------------------------------------------------------
+def _clean_cluster_saturation(results):
+    """Closed-schema-validate the TOP-LEVEL cluster_saturation object. None ⇒ INERT.
+
+    Returns the cleaned dict ONLY when the REQUIRED spine is present and each field passes its
+    predicate: runtime_class, pool_size, claim_count, node_count, ttfe_p50_ms, ttfe_p95_ms, AND the
+    measured per-cluster throughput triple (thpt_under_5s_per_cluster, thpt_under_1s_per_cluster,
+    thpt_cluster_node_count) — the coupled-triple rule the matrix uses, so a per-cluster figure
+    never renders without the node count it was measured at. Optional per-node halves, bind/exec
+    decomposition, outcome, and provenance render only when valid; a present-but-invalid one is
+    dropped on read, never fabricated. runtime_class validates against the PUBLIC RUNTIME_LABELS
+    enum, so an out-of-enum runtime fails closed and drops the whole block.
+    """
+    cs = results.get("cluster_saturation")
+    if not isinstance(cs, dict):
+        return None
+    clean = {}
+    for key, ok in CLUSTER_SATURATION_FIELDS.items():
+        if key in cs:
+            try:
+                if ok(cs[key]):
+                    clean[key] = cs[key]
+            except (TypeError, ValueError):
+                pass
+    required = (
+        "runtime_class", "pool_size", "claim_count", "node_count",
+        "ttfe_p50_ms", "ttfe_p95_ms",
+        "thpt_under_5s_per_cluster", "thpt_under_1s_per_cluster", "thpt_cluster_node_count",
+    )
+    if not all(k in clean for k in required):
+        return None
+    return clean
+
+
+def render_cluster_saturation(results, heading="### Saturation — the whole-cluster warm-hand-out ceiling", detail=False):
+    """Render the cluster-scale SATURATION block, or "" when INERT.
+
+    The third cluster-scale question, distinct from Linearity and Concurrent Burst above it and from
+    the at-scale-contention retraction: a 1:1 ALL-WARM fire (pool == claim, NOT over-subscribed)
+    driven to CLUSTER saturation — a large claim burst spread across many nodes where the bind path
+    saturates even though every claim has a ready warm pool member. This is the honest ceiling for
+    "how fast can the whole cluster hand out warm sandboxes at once": the per-cluster throughput
+    (MEASURED at node_count, never a per-node × N extrapolation) collapses far below the per-node
+    engineering rate, and the sub-second warm hit the Core Metrics matrix reports does NOT hold at
+    this scale. outcome=FAIL is headlined as the honest SLA-not-met ceiling, not softened.
+
+    hb#134 page-split: the DEFAULT (page) path renders under a demoted `###` sub-heading (it is the
+    third sub-block of the "Does it hold at cluster scale?" section, render_cluster_scale) — the
+    prose + the headline per-cluster throughput + TTFE the reader needs, with a pointer to the full
+    per-node/per-cluster + bind/exec decomposition table in DETAILS.md. `detail=True` renders that
+    full table under a standalone `##` heading (deep-dive appendix). The ceiling posture NEVER
+    leaves the headline page — only the decomposition working moves.
+    """
+    cs = _clean_cluster_saturation(results)
+    if not cs:
+        return ""
+    label = RUNTIME_LABELS[cs["runtime_class"]]
+    pool, claims, nodes = cs["pool_size"], cs["claim_count"], cs["node_count"]
+    x = _landed_cluster_x(cs)
+    if detail:
+        heading = "## Cluster Saturation — the whole-cluster warm-hand-out ceiling"
+    lines = [heading, ""]
+    caption = (
+        "The Concurrent Burst legs above are small 1:1 warm bursts. This is the **saturation** "
+        f"ceiling: a **1:1 all-warm** fire — a pool of **{_fmt_num(pool)}** ready sandboxes hit "
+        f"with **{_fmt_num(claims)}** simultaneous claims (**not** over-subscribed), spread across "
+        f"**{_fmt_num(nodes)}** nodes on **{label}**. Every claim has a ready warm pool member, yet "
+        "at this scale the bind path itself saturates — so the whole-cluster warm hand-out rate "
+        "collapses far below the per-node engineering rate, and the \"warm hit is <1s\" claim from "
+        "the Core Metrics matrix does **not** hold here."
+    )
+    if cs.get("machine_type"):
+        caption += f" Cluster shape: `{cs['machine_type']}`."
+    lines.append(caption)
+    lines.append("")
+    if not detail:
+        # Page path: surface the collapsed per-cluster throughput + worst-case TTFE inline (so the
+        # ceiling is self-contained without the table) + point to the full decomposition in DETAILS.
+        lines.append(
+            f"At **{_fmt_num(x)} nodes** the cluster sustains only "
+            f"**{_fmt_num(cs['thpt_under_5s_per_cluster'])} claims/sec under 5s** "
+            f"(**{_fmt_num(cs['thpt_under_1s_per_cluster'])}/sec under 1s**) across the whole "
+            f"cluster, and TTFE degrades to **{_fmt_secs(cs['ttfe_p50_ms'])} p50** / "
+            f"**{_fmt_secs(cs['ttfe_p95_ms'])} p95**. This is the honest per-cluster hand-out "
+            "ceiling — budget for it when your claim rate can outrun the bind path, not for the "
+            "sub-second per-node warm hit. Full per-node/per-cluster and bind/exec decomposition is "
+            "in the deep-dive appendix, [DETAILS.md](DETAILS.md).")
+        lines.append("")
+        if cs.get("outcome") == "FAIL":
+            lines.append(
+                "_SLA ceiling: **not met** at this operating point — this row is the honest "
+                "saturation limit, not a warm-hit guarantee. Every claim still bound and executed; "
+                "the FAIL is the throughput collapse against the sizing floor, not a correctness "
+                "failure._")
+            lines.append("")
+        if cs.get("measured_at"):
+            lines.append(f"_Measured {cs['measured_at'][:10]} — whole-cluster saturation ceiling (point-in-time)._")
+            lines.append("")
+        return "\n".join(lines)
+    # Detail path: the full per-node + per-cluster throughput triple + bind/exec decomposition.
+    header = ["Pool", "Claims", "Nodes", "TTFE p50", "TTFE p95",
+              "Throughput @ <5s", "Throughput @ <1s"]
+    have_bind = "bind_p50_ms" in cs and "bind_p95_ms" in cs
+    if have_bind:
+        header += ["Bind p50", "Bind p95"]
+    have_exec = "exec_success_rate" in cs
+    if have_exec:
+        header.append("Execution Success")
+    lines.append("| " + " | ".join(header) + " |")
+    lines.append("|" + "|".join(["---"] * len(header)) + "|")
+
+    def _triple(node_key, cluster_key):
+        cluster_half = f"{_fmt_num(cs[cluster_key])} /cluster"
+        if node_key in cs:
+            return f"{_fmt_num(cs[node_key])} /node · {cluster_half}"
+        return cluster_half
+
+    row = [
+        _fmt_num(pool),
+        _fmt_num(claims),
+        _fmt_num(nodes),
+        _fmt_secs(cs["ttfe_p50_ms"]),
+        _fmt_secs(cs["ttfe_p95_ms"]),
+        _triple("thpt_under_5s_per_node", "thpt_under_5s_per_cluster"),
+        _triple("thpt_under_1s_per_node", "thpt_under_1s_per_cluster"),
+    ]
+    if have_bind:
+        row += [_fmt_secs(cs["bind_p50_ms"]), _fmt_secs(cs["bind_p95_ms"])]
+    if have_exec:
+        row.append(_exec_cell(cs["exec_success_rate"], claims))
+    lines.append("| " + " | ".join(row) + " |")
+    lines.append("")
+    lines.append(
+        f"_Per-cluster throughput MEASURED at **{_fmt_num(x)} nodes** — never a per-node × N "
+        "extrapolation (that fiction breaks above the controller reconcile ceiling). This is a "
+        "**1:1 all-warm** operating point (pool == claim, not over-subscribed), distinct from the "
+        "over-subscribed contention ceiling: the collapse here is the bind path saturating at "
+        "cluster scale, not pool exhaustion. Latency is node-count-independent (so the TTFE columns "
+        "DO compare to the matrix/burst TTFE)._")
+    lines.append("")
+    if cs.get("outcome") == "FAIL":
+        lines.append(
+            "_SLA ceiling: **not met** at this operating point — the honest saturation limit. "
+            "Execution success confirms every claim still bound and executed; the FAIL is the "
+            "throughput collapse against the sizing floor, not a correctness failure._")
+        lines.append("")
+    if cs.get("measured_at"):
+        lines.append(f"_Measured {cs['measured_at'][:10]} — whole-cluster saturation ceiling (point-in-time)._")
         lines.append("")
     return "\n".join(lines)
 

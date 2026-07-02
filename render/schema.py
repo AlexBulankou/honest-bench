@@ -794,3 +794,46 @@ AT_SCALE_CONTENTION_FIELDS = {
     "machine_type": lambda v: isinstance(v, str) and bool(_MACHINE_TYPE.match(v)),
     "measured_at": lambda v: isinstance(v, str) and bool(v),
 }
+
+# --- cluster-scale SATURATION block (TOP-LEVEL cluster_saturation object) --------------------
+# The third cluster-scale question, distinct from the two above. concurrent_burst reports 1:1
+# warm bursts at small N; at_scale_contention reports the OVER-subscribed (claims > pool) ceiling
+# at node_count=1. This block reports a 1:1 ALL-WARM fire (pool == claim, NOT over-subscribed)
+# driven to CLUSTER SATURATION — a large claim burst spread across many nodes, where the bind path
+# saturates even though every claim has a ready warm pool member. It is the honest ceiling for
+# "how fast can the whole cluster hand out warm sandboxes at once", carrying the MEASURED
+# per-cluster throughput triple (never a per-node × N extrapolation, which is fiction above the
+# controller reconcile ceiling): thpt_under_{5s,1s}_per_cluster are gated on thpt_cluster_node_count
+# in the SAME object (the coupled-triple rule the matrix uses — a per-cluster figure with no
+# measurement size to disclose is meaningless). node_count is REQUIRED here (unlike
+# at_scale_contention's node_count=1 point) because a per-cluster throughput is only meaningful
+# against the node count it was measured at. ttfe_p50/p95_ms are the latency spine
+# (node-count-INDEPENDENT, so comparable to the matrix/burst TTFE columns). outcome is carried so
+# the FAIL ceiling is headlined honestly, not softened into a green number. runtime_class validates
+# against the PUBLIC RUNTIME_LABELS enum (fail-closed). Same closed-schema discipline as every
+# block above: only these field-names render, each validated by its predicate; anything else is
+# dropped on read.
+CLUSTER_SATURATION_FIELDS = {
+    # REQUIRED spine: the saturation operating point + its measured per-cluster throughput triple.
+    "runtime_class": lambda v: v in RUNTIME_LABELS,
+    "pool_size": _pos_int,
+    "claim_count": _pos_int,
+    "node_count": lambda v: isinstance(v, int) and not isinstance(v, bool) and 0 < v < 10000,
+    "ttfe_p50_ms": _nonneg,
+    "ttfe_p95_ms": _nonneg,
+    "thpt_under_5s_per_cluster": _nonneg,
+    "thpt_under_1s_per_cluster": _nonneg,
+    "thpt_cluster_node_count": _nonneg,
+    # OPTIONAL — per-node throughput halves, bind/exec decomposition, outcome + provenance.
+    "thpt_under_5s_per_node": _nonneg,
+    "thpt_under_1s_per_node": _nonneg,
+    "bind_p50_ms": _nonneg,
+    "bind_p95_ms": _nonneg,
+    "exec_p50_ms": _nonneg,
+    "exec_p95_ms": _nonneg,
+    "exec_success_rate": lambda v: isinstance(v, (int, float)) and not isinstance(v, bool) and 0.0 <= v <= 1.0,
+    "outcome": lambda v: v in OUTCOMES,
+    "run_id": lambda v: isinstance(v, str) and bool(_RUNID.match(v)),
+    "machine_type": lambda v: isinstance(v, str) and bool(_MACHINE_TYPE.match(v)),
+    "measured_at": lambda v: isinstance(v, str) and bool(v),
+}

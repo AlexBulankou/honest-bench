@@ -62,7 +62,7 @@ _Measured 2026-07-02 — warm-vs-cold speedup (point-in-time; refreshed on the n
 
 ## Does it hold at cluster scale?
 
-Two questions a bigger cluster raises: does throughput stay flat as you add nodes (**linearity**), and what does a single all-at-once burst of N claims cost (**concurrency**)? Both below, on the same TTFE spine as the headline matrix.
+Three questions a bigger cluster raises: does throughput stay flat as you add nodes (**linearity**), what does a single all-at-once burst of N claims cost (**concurrency**), and where does the whole-cluster warm hand-out rate saturate (**ceiling**)? All below, on the same TTFE spine as the headline matrix.
 
 ### Linearity — throughput and density hold flat as nodes grow
 
@@ -86,6 +86,16 @@ Each row is a **single all-at-once burst of N concurrent claims** (not a ramped 
 | 500 | Cold provision | 97.3988s | 99.8002s | 0 | 0 | 100% |
 
 _Measured 2026-06-30 — concurrent-burst TTFE (point-in-time)._
+
+### Saturation — the whole-cluster warm-hand-out ceiling
+
+The Concurrent Burst legs above are small 1:1 warm bursts. This is the **saturation** ceiling: a **1:1 all-warm** fire — a pool of **600** ready sandboxes hit with **600** simultaneous claims (**not** over-subscribed), spread across **40** nodes on **gVisor**. Every claim has a ready warm pool member, yet at this scale the bind path itself saturates — so the whole-cluster warm hand-out rate collapses far below the per-node engineering rate, and the "warm hit is <1s" claim from the Core Metrics matrix does **not** hold here. Cluster shape: `n2-standard-16`.
+
+At **40 nodes** the cluster sustains only **2.558 claims/sec under 5s** (**0/sec under 1s**) across the whole cluster, and TTFE degrades to **8.6308s p50** / **12.6103s p95**. This is the honest per-cluster hand-out ceiling — budget for it when your claim rate can outrun the bind path, not for the sub-second per-node warm hit. Full per-node/per-cluster and bind/exec decomposition is in the deep-dive appendix, [DETAILS.md](DETAILS.md).
+
+_SLA ceiling: **not met** at this operating point — this row is the honest saturation limit, not a warm-hit guarantee. Every claim still bound and executed; the FAIL is the throughput collapse against the sizing floor, not a correctness failure._
+
+_Measured 2026-07-02 — whole-cluster saturation ceiling (point-in-time)._
 
 ## Where it breaks today (honest limits)
 

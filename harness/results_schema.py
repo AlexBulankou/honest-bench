@@ -196,6 +196,11 @@ _MACHINE_TYPE_RE = re.compile(
     r"^[a-z][a-z0-9]*-(standard|highmem|highcpu|micro|small|medium)(-[0-9]+)?$"
 )
 
+# run-id shape — emitter-side mirror of render/schema.py's _RUNID. A run id is an opaque
+# provenance token (a UUID/hex/slug); we bound the shape so a free-text value can never ride
+# the cluster_saturation run_id field into the public page. Present-but-non-matching ⇒ dropped.
+_RUN_ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
+
 
 def _coerce_sla_metrics(raw) -> dict:
     """Keep only {safe-key: finite-number}; drop everything else.
@@ -977,6 +982,110 @@ def _coerce_at_scale_contention(raw):
     return out
 
 
+def _coerce_cluster_saturation(raw):
+    """Keep the closed top-level cluster-saturation ceiling shape (hb#132); None ⇒ omit the key.
+
+    The hb#132 block is the third cluster-scale question: a 1:1 ALL-WARM fire (pool == claim, NOT
+    over-subscribed) driven to CLUSTER SATURATION across many nodes, where the bind path saturates
+    even though every claim has a ready warm pool member. Distinct from at_scale_contention (the
+    OVER-subscribed ceiling at node_count=1) and concurrent_burst (small-N 1:1 bursts). It renders
+    from a TOP-LEVEL `cluster_saturation` object. This coercer mirrors render/schema.py's
+    CLUSTER_SATURATION_FIELDS exactly so emitter and renderer share one contract (a drift is caught
+    by the cross-contract test).
+
+    REQUIRED spine: runtime_class (enum-validated, fail-closed), pool_size + claim_count (pos int),
+    node_count (int 0<v<10000 — REQUIRED here, unlike at_scale_contention, because a per-cluster
+    throughput is only meaningful against the node count it was measured at), ttfe_p50_ms +
+    ttfe_p95_ms (nonneg), and the measured per-cluster throughput triple thpt_under_5s_per_cluster +
+    thpt_under_1s_per_cluster + thpt_cluster_node_count (nonneg — the coupled-triple rule: a
+    per-cluster figure with no measurement size to disclose is meaningless). Any missing/invalid
+    required field returns None (the block renders nothing rather than a partial lie). OPTIONAL:
+    per-node throughput halves, bind/exec decomposition (nonneg), exec_success_rate (0..1), outcome
+    (canonicalized to the closed enum so the FAIL ceiling headlines honestly), run_id (bounded
+    shape), machine_type (bounded GCP shape), measured_at (ISO-8601). A present-but-invalid optional
+    value is DROPPED (mirrors the render cleaner's per-field drop), never fail-closed.
+    """
+    if not isinstance(raw, dict):
+        return None
+
+    def _clean_nonneg(x):
+        if isinstance(x, bool) or not isinstance(x, Real):
+            return None
+        fx = float(x)
+        if fx != fx or fx in (float("inf"), float("-inf")) or fx < 0:
+            return None
+        return fx
+
+    runtime_class = raw.get("runtime_class")
+    if runtime_class not in WARM_VS_COLD_RUNTIME_CLASS_ENUM:
+        return None
+    pool_size = raw.get("pool_size")
+    if isinstance(pool_size, bool) or not isinstance(pool_size, int) or not (0 < pool_size < 100000):
+        return None
+    claim_count = raw.get("claim_count")
+    if isinstance(claim_count, bool) or not isinstance(claim_count, int) or not (0 < claim_count < 100000):
+        return None
+    node_count = raw.get("node_count")
+    if isinstance(node_count, bool) or not isinstance(node_count, int) or not (0 < node_count < 10000):
+        return None
+    ttfe_p50 = _clean_nonneg(raw.get("ttfe_p50_ms"))
+    if ttfe_p50 is None:
+        return None
+    ttfe_p95 = _clean_nonneg(raw.get("ttfe_p95_ms"))
+    if ttfe_p95 is None:
+        return None
+    thpt_5s_cluster = _clean_nonneg(raw.get("thpt_under_5s_per_cluster"))
+    if thpt_5s_cluster is None:
+        return None
+    thpt_1s_cluster = _clean_nonneg(raw.get("thpt_under_1s_per_cluster"))
+    if thpt_1s_cluster is None:
+        return None
+    thpt_cluster_nc = _clean_nonneg(raw.get("thpt_cluster_node_count"))
+    if thpt_cluster_nc is None:
+        return None
+
+    out = {
+        "runtime_class": runtime_class,
+        "pool_size": pool_size,
+        "claim_count": claim_count,
+        "node_count": node_count,
+        "ttfe_p50_ms": ttfe_p50,
+        "ttfe_p95_ms": ttfe_p95,
+        "thpt_under_5s_per_cluster": thpt_5s_cluster,
+        "thpt_under_1s_per_cluster": thpt_1s_cluster,
+        "thpt_cluster_node_count": thpt_cluster_nc,
+    }
+
+    # OPTIONAL — a present-but-invalid value is DROPPED per-field (mirrors the render cleaner),
+    # never fabricated, so a partial fire renders a partial-but-honest block.
+    for opt in (
+        "thpt_under_5s_per_node", "thpt_under_1s_per_node",
+        "bind_p50_ms", "bind_p95_ms", "exec_p50_ms", "exec_p95_ms",
+    ):
+        if opt in raw:
+            ov = _clean_nonneg(raw[opt])
+            if ov is not None:
+                out[opt] = ov
+    esr = raw.get("exec_success_rate")
+    if not isinstance(esr, bool) and isinstance(esr, Real) and 0.0 <= float(esr) <= 1.0:
+        out["exec_success_rate"] = esr
+    outcome = raw.get("outcome")
+    if isinstance(outcome, str):
+        outcome = _OUTCOME_CANON.get(outcome.lower(), outcome)
+        if outcome in OUTCOME_ENUM:
+            out["outcome"] = outcome
+    rid = raw.get("run_id")
+    if isinstance(rid, str) and _RUN_ID_RE.match(rid):
+        out["run_id"] = rid
+    mt = raw.get("machine_type")
+    if isinstance(mt, str) and _MACHINE_TYPE_RE.match(mt):
+        out["machine_type"] = mt
+    ma = raw.get("measured_at")
+    if isinstance(ma, str) and ma:
+        out["measured_at"] = ma
+    return out
+
+
 def _coerce_provenance(raw: dict) -> dict:
     if not isinstance(raw, dict):
         raise TypeError("provenance must be a dict")
@@ -1047,7 +1156,7 @@ def build_results(scenario_outcomes, provenance, generated_at: str,
                   product: str = DEFAULT_PRODUCT, scale_proof=None,
                   stepup=None, warm_vs_cold=None, kata_activation=None,
                   concurrent_burst=None, warm_pool_acquisition=None,
-                  at_scale_contention=None) -> dict:
+                  at_scale_contention=None, cluster_saturation=None) -> dict:
     """Assemble the closed-schema results dict.
 
     `scenario_outcomes` is the loop's per-scenario dicts (any extra keys dropped);
@@ -1117,4 +1226,7 @@ def build_results(scenario_outcomes, provenance, generated_at: str,
     cleaned_at_scale_contention = _coerce_at_scale_contention(at_scale_contention)
     if cleaned_at_scale_contention is not None:
         out["at_scale_contention"] = cleaned_at_scale_contention
+    cleaned_cluster_saturation = _coerce_cluster_saturation(cluster_saturation)
+    if cleaned_cluster_saturation is not None:
+        out["cluster_saturation"] = cleaned_cluster_saturation
     return out
