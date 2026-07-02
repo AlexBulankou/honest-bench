@@ -761,6 +761,22 @@ WARM_POOL_ACQUISITION_FIELDS = {
     "measured_at": lambda v: isinstance(v, str) and bool(v),
 }
 
+# Session-turnover (warm-pool refill under sustained churn) block — SCENARIO cell
+# `session_turnover`. Measures the full claim → use → release → reclaim loop: after each claim is
+# released the controller must REPLENISH the warm pool, and this block reports how long that refill
+# takes under sustained cycling. refill_latency_ms (median) is the REQUIRED spine — the INERT gate —
+# so the block renders nothing until a real fire emits a completed-cycle measurement; refill_p90_ms
+# (the tail) is OPTIONAL. Every value is a GENUINELY-MEASURED latency from the scenario's per-cycle
+# refill samples — no fabricated 0, no recommendation without a fire behind it. Same closed-schema
+# discipline: only these keys render, each validated; anything else in sla_metrics is dropped on read.
+# NOTE: the cycle count `n` is NOT here — the scenario emits it under the reserved "n" key, which the
+# run loop LIFTS out of sla_metrics to the top-level scenario field (harness/run.py) before coercion,
+# so the renderer reads it from the scenario dict's top-level `n`, not from sla_metrics.
+SESSION_TURNOVER_FIELDS = {
+    "refill_latency_ms": _nonneg,
+    "refill_p90_ms": _nonneg,
+}
+
 # --- at-scale-under-contention RETRACTION block (TOP-LEVEL at_scale_contention object) -------
 # The concurrent_burst block above reports 1:1 warm bursts (N ready sandboxes hit with N
 # claims). This block is the deliberate COUNTER-POINT: a single measured operating point where

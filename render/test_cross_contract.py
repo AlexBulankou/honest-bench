@@ -1694,6 +1694,113 @@ def test_emit_to_render_slo_sweep_convergence():
     )
 
 
+def test_emit_to_render_session_turnover_convergence():
+    """Convergence guard for the session-turnover refill-latency block (#3868).
+
+    session_turnover is a SCENARIO CELL (not a top-level carry_prior object): the scenario body
+    (harness/scenarios/session_turnover.py) returns sla_metrics that run.py writes to
+    results["scenarios"], and the render side allow-lists them via schema.SESSION_TURNOVER_FIELDS.
+    The two vocabularies are INDEPENDENT, so a drift would silently return the block to INERT (page
+    byte-unchanged). This test pins the contract three ways: (1) the scenario's own emit-key
+    constants agree with the render allow-list, (2) the emitted sla keys survive the SAME
+    _coerce_sla_metrics run.py applies before latest.json, and every survivor passes the independent
+    render predicate, and (3) the full path renders the table with the top-level-`n` footnote —
+    while the INERT gate (missing refill_latency_ms, or an empty {} from a pool that never refilled)
+    renders "".
+
+    The load-bearing subtlety: the scenario emits the reserved "n" key INSIDE sla_metrics, but
+    run.py POPS it to a TOP-LEVEL scenario field before coercion (and _coerce_sla_metrics coerces
+    every surviving value to float), so `n` is NEVER an sla_metrics key in results — the renderer
+    reads it from the scenario's top-level "n". This test proves the block sources n from there
+    (renders "(over N cycles)") and not from a float-coerced sla value.
+    """
+    import schema
+
+    # (0) pin the scenario's OWN emit-key constants against the render allow-list — the TRUE emit
+    # vocabulary, imported from the scenario module, not hand-shaped strings. The scenario has
+    # sibling imports (harness/scenarios/_apiversion etc.), so its dir must be on sys.path for a
+    # plain import to resolve them — spec_from_file_location alone would fail on the siblings.
+    scen_dir = os.path.join(_ROOT, "harness", "scenarios")
+    if not os.path.exists(os.path.join(scen_dir, "session_turnover.py")):
+        print("  (skip: session_turnover scenario not in-tree yet)")
+        return
+    if scen_dir not in sys.path:
+        sys.path.insert(0, scen_dir)
+    try:
+        import session_turnover as scen  # noqa: E402
+    except Exception as exc:  # pragma: no cover - scenario has its own deps
+        print(f"  (skip: session_turnover scenario not importable in isolation: {exc})")
+        return
+    for emit_key in (scen._KEY_REFILL, scen._KEY_REFILL_P90):
+        assert emit_key in schema.SESSION_TURNOVER_FIELDS, (
+            f"emit/render DRIFT: scenario emits {emit_key!r} but render SESSION_TURNOVER_FIELDS "
+            f"does not allow-list it — render_session_turnover would silently drop it."
+        )
+
+    # (1) the emitted sla dict (as the scenario builds it on a completed run) survives the SAME
+    # closed coercion run.py writes to latest.json; every survivor passes the render predicate.
+    # `n` is stripped here exactly as run.py lifts the reserved key to a top-level scenario field.
+    emitted_sla = {scen._KEY_REFILL: 4200.0, scen._KEY_REFILL_P90: 7800.0, "n": 5}
+    sla = {k: v for k, v in emitted_sla.items() if k != "n"}
+    coerced = _rs._coerce_sla_metrics(sla)
+    for k in (scen._KEY_REFILL, scen._KEY_REFILL_P90):
+        assert k in coerced, (
+            f"emit/render schema DRIFT on session_turnover: closed coerce dropped {k!r} — "
+            f"the block would go INERT.\nemitted={sla}\ncoerced={coerced}"
+        )
+        assert schema.SESSION_TURNOVER_FIELDS[k](coerced[k]), (
+            f"render SESSION_TURNOVER_FIELDS[{k!r}] rejects coerced emitter value {coerced[k]!r} — "
+            "the block would render nothing."
+        )
+
+    # (2) full path: the scenario cell (top-level n, coerced sla) renders the table + n-footnote.
+    results = {
+        "product": "sandbox",
+        "generated_at": "2026-07-02T03:00:00Z",
+        "provenance": {"runtime": "runc", "cluster_substrate": "kind", "node_count": 1},
+        "scenarios": [
+            {"name": "session_turnover", "outcome": "PASS", "n": 5, "sla_metrics": coerced},
+        ],
+    }
+    out = render.render_session_turnover(results)
+    assert "## Warm-Pool Turnover — Sustained-Churn Refill Latency" in out
+    assert "| Median (p50) (over 5 cycles) | 4.2s |" in out, (
+        f"median row must render the top-level-n footnote:\n{out}"
+    )
+    assert "| Tail (p90) | 7.8s |" in out, f"the optional p90 tail row must render:\n{out}"
+
+    # (3) INERT gates: a cell whose pool never refilled ({}) and a missing spine both render "".
+    for inert_metrics in ({}, {scen._KEY_REFILL_P90: 7800.0}):
+        inert = {
+            "product": "sandbox",
+            "generated_at": "2026-07-02T03:00:00Z",
+            "provenance": {"runtime": "runc", "cluster_substrate": "kind", "node_count": 1},
+            "scenarios": [
+                {"name": "session_turnover", "outcome": "FAIL", "n": 0,
+                 "sla_metrics": inert_metrics},
+            ],
+        }
+        assert render.render_session_turnover(inert) == "", (
+            f"missing refill_latency_ms spine must render INERT (''): {inert_metrics!r}"
+        )
+
+    # (4) a completed cell with median but NO n still renders (footnote just omitted) — n is a
+    # best-effort footnote, not a spine.
+    no_n = {
+        "product": "sandbox",
+        "generated_at": "2026-07-02T03:00:00Z",
+        "provenance": {"runtime": "runc", "cluster_substrate": "kind", "node_count": 1},
+        "scenarios": [
+            {"name": "session_turnover", "outcome": "PASS", "sla_metrics": {scen._KEY_REFILL: 4200.0}},
+        ],
+    }
+    out_no_n = render.render_session_turnover(no_n)
+    assert "| Median (p50) | 4.2s |" in out_no_n, (
+        f"a median-only cell must render without the n-footnote:\n{out_no_n}"
+    )
+    assert "cycles)" not in out_no_n, "the '(over N cycles)' footnote must be absent when n is absent"
+
+
 def _run_all():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:

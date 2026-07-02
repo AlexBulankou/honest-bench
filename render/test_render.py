@@ -1257,6 +1257,71 @@ def test_burst_corroboration_bad_exec_value_dropped_then_inert():
     assert out == ""
 
 
+def _turnover_scenario(metrics, n=None, outcome="PASS"):
+    s = {"name": "session_turnover", "outcome": outcome, "sla_metrics": metrics}
+    if n is not None:
+        s["n"] = n
+    return s
+
+
+def test_session_turnover_inert_when_no_scenario():
+    # #3868: pre-fire suites have no session_turnover cell at all ⇒ INERT.
+    out = render.render_session_turnover(_matrix_results(_full_gvisor_scenarios()))
+    assert out == ""
+
+
+def test_session_turnover_inert_when_refill_absent():
+    # a completed cell that emitted only the p90 tail (no median spine) ⇒ INERT (no partial lie).
+    scen = _full_gvisor_scenarios() + [_turnover_scenario({"refill_p90_ms": 7800.0}, n=5)]
+    out = render.render_session_turnover(_matrix_results(scen))
+    assert out == ""
+
+
+def test_session_turnover_inert_when_pool_never_refilled():
+    # the scenario emits {} when the pool never refilled (INERT honesty) ⇒ renders "".
+    scen = _full_gvisor_scenarios() + [_turnover_scenario({}, n=0, outcome="FAIL")]
+    out = render.render_session_turnover(_matrix_results(scen))
+    assert out == ""
+
+
+def test_session_turnover_renders_median_with_n_footnote():
+    scen = _full_gvisor_scenarios() + [
+        _turnover_scenario({"refill_latency_ms": 4200.0, "refill_p90_ms": 7800.0}, n=5)
+    ]
+    out = render.render_session_turnover(_matrix_results(scen))
+    assert "## Warm-Pool Turnover — Sustained-Churn Refill Latency" in out
+    assert "| Median (p50) (over 5 cycles) | 4.2s |" in out
+    assert "| Tail (p90) | 7.8s |" in out
+
+
+def test_session_turnover_median_only_no_footnote_no_tail():
+    # median present, no p90, no top-level n ⇒ renders the median row, omits footnote + tail row.
+    scen = _full_gvisor_scenarios() + [_turnover_scenario({"refill_latency_ms": 4200.0})]
+    out = render.render_session_turnover(_matrix_results(scen))
+    assert "| Median (p50) | 4.2s |" in out
+    assert "cycles)" not in out  # the "(over N cycles)" footnote must be absent
+    assert "Tail (p90)" not in out
+
+
+def test_session_turnover_n_from_sla_metrics_ignored():
+    # the reserved "n" run.py POPS to a top-level field — a stray sla_metrics "n" must NOT be read
+    # as the footnote source (it is dropped by the closed SESSION_TURNOVER_FIELDS allow-list anyway).
+    scen = _full_gvisor_scenarios() + [
+        _turnover_scenario({"refill_latency_ms": 4200.0, "n": 999})  # no top-level n
+    ]
+    out = render.render_session_turnover(_matrix_results(scen))
+    assert "| Median (p50) | 4.2s |" in out
+    assert "999" not in out and "cycles)" not in out
+
+
+def test_session_turnover_bad_median_dropped_then_inert():
+    # a non-numeric / negative median fails the nonneg predicate ⇒ dropped ⇒ INERT (no lie row).
+    for bad in ("soon", -1.0):
+        scen = _full_gvisor_scenarios() + [_turnover_scenario({"refill_latency_ms": bad}, n=5)]
+        out = render.render_session_turnover(_matrix_results(scen))
+        assert out == "", f"bad median {bad!r} must render INERT"
+
+
 def _warmpool_scenario(metrics, n=30):
     return {"name": "warmpool_cold_start", "outcome": "PASS", "n": n, "sla_metrics": metrics}
 
