@@ -1086,6 +1086,85 @@ def _coerce_cluster_saturation(raw):
     return out
 
 
+def _coerce_provisioning_rate_sweep(raw):
+    """Keep the closed top-level provisioning_rate_sweep shape (#4086); None ⇒ omit the key.
+
+    The #4086 block is the honest reconcile-throughput ceiling: for each offered warm-pool
+    provisioning rate (sandboxes/sec) it publishes what fraction of the pool reached Ready
+    WITHIN pool_warm_timeout. It renders from a TOP-LEVEL `provisioning_rate_sweep` object
+    (mirrors scale_proof — a list-bearing top-level block, which cannot ride sla_metrics). This
+    coercer mirrors render/schema.py's PROVISIONING_RATE_SWEEP_FIELDS exactly so emitter and
+    renderer share one contract (a drift is caught by the cross-contract test).
+
+    REQUIRED spine: rate_points (non-empty list; each point needs offered_rate_per_s pos int +
+    ready_pct 0..100). Any missing/invalid required field returns None (the block renders nothing
+    rather than a partial lie). OPTIONAL per-point color: warmpool_size (pos int), elapsed_s /
+    timeout_s (nonneg), converged (bool). OPTIONAL top-level: runtime_class (enum-validated,
+    fail-closed like at_scale_contention), ceiling_low_per_s / ceiling_high_per_s (nonneg),
+    measured_at (ISO-8601, carried across the daily refresh like scale_proof). A present-but-invalid
+    per-point value fails the WHOLE block closed (a bad point is never rendered as a partial row);
+    a present-but-invalid OPTIONAL top-level value is dropped per-field (partial-but-honest).
+    """
+    if not isinstance(raw, dict):
+        return None
+
+    def _clean_nonneg(x):
+        if isinstance(x, bool) or not isinstance(x, Real):
+            return None
+        fx = float(x)
+        if fx != fx or fx in (float("inf"), float("-inf")) or fx < 0:
+            return None
+        return fx
+
+    points = raw.get("rate_points")
+    if not isinstance(points, list) or not points:
+        return None
+    clean_points = []
+    for p in points:
+        if not isinstance(p, dict):
+            return None
+        rate = p.get("offered_rate_per_s")
+        if isinstance(rate, bool) or not isinstance(rate, int) or not (0 < rate < 100000):
+            return None
+        pct = p.get("ready_pct")
+        if isinstance(pct, bool) or not isinstance(pct, Real):
+            return None
+        fpct = float(pct)
+        if fpct != fpct or fpct in (float("inf"), float("-inf")) or not (0.0 <= fpct <= 100.0):
+            return None
+        cp = {"offered_rate_per_s": rate, "ready_pct": fpct}
+        wps = p.get("warmpool_size")
+        if wps is not None:
+            if isinstance(wps, bool) or not isinstance(wps, int) or not (0 < wps < 100000000):
+                return None
+            cp["warmpool_size"] = wps
+        for k in ("elapsed_s", "timeout_s"):
+            if k in p:
+                kv = _clean_nonneg(p[k])
+                if kv is None:
+                    return None
+                cp[k] = kv
+        conv = p.get("converged")
+        if conv is not None:
+            if not isinstance(conv, bool):
+                return None
+            cp["converged"] = conv
+        clean_points.append(cp)
+
+    out = {"rate_points": clean_points}
+    rc = raw.get("runtime_class")
+    if rc in WARM_VS_COLD_RUNTIME_CLASS_ENUM:
+        out["runtime_class"] = rc
+    for key in ("ceiling_low_per_s", "ceiling_high_per_s"):
+        kv = _clean_nonneg(raw.get(key))
+        if kv is not None:
+            out[key] = kv
+    ma = raw.get("measured_at")
+    if isinstance(ma, str) and ma:
+        out["measured_at"] = ma
+    return out
+
+
 def _coerce_provenance(raw: dict) -> dict:
     if not isinstance(raw, dict):
         raise TypeError("provenance must be a dict")
@@ -1156,7 +1235,8 @@ def build_results(scenario_outcomes, provenance, generated_at: str,
                   product: str = DEFAULT_PRODUCT, scale_proof=None,
                   stepup=None, warm_vs_cold=None, kata_activation=None,
                   concurrent_burst=None, warm_pool_acquisition=None,
-                  at_scale_contention=None, cluster_saturation=None) -> dict:
+                  at_scale_contention=None, cluster_saturation=None,
+                  provisioning_rate_sweep=None) -> dict:
     """Assemble the closed-schema results dict.
 
     `scenario_outcomes` is the loop's per-scenario dicts (any extra keys dropped);
@@ -1229,4 +1309,7 @@ def build_results(scenario_outcomes, provenance, generated_at: str,
     cleaned_cluster_saturation = _coerce_cluster_saturation(cluster_saturation)
     if cleaned_cluster_saturation is not None:
         out["cluster_saturation"] = cleaned_cluster_saturation
+    cleaned_provisioning_rate_sweep = _coerce_provisioning_rate_sweep(provisioning_rate_sweep)
+    if cleaned_provisioning_rate_sweep is not None:
+        out["provisioning_rate_sweep"] = cleaned_provisioning_rate_sweep
     return out

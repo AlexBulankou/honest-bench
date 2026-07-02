@@ -14,6 +14,28 @@
     "ttfe_p50_ms": 1658.9,
     "ttfe_p95_ms": 2016.9
   },
+  "cluster_saturation": {
+    "bind_p50_ms": 8191.6,
+    "bind_p95_ms": 12137.2,
+    "claim_count": 600,
+    "exec_p50_ms": 467.0,
+    "exec_p95_ms": 608.0,
+    "exec_success_rate": 1.0,
+    "machine_type": "n2-standard-16",
+    "measured_at": "2026-07-02",
+    "node_count": 40,
+    "outcome": "FAIL",
+    "pool_size": 600,
+    "run_id": "c50e1c51a4c441f3a0705a2426a9a93c",
+    "runtime_class": "gvisor",
+    "thpt_cluster_node_count": 40,
+    "thpt_under_1s_per_cluster": 0.0,
+    "thpt_under_1s_per_node": 0.0,
+    "thpt_under_5s_per_cluster": 2.558,
+    "thpt_under_5s_per_node": 0.064,
+    "ttfe_p50_ms": 8630.8,
+    "ttfe_p95_ms": 12610.3
+  },
   "concurrent_burst": {
     "legs": [
       {
@@ -57,28 +79,6 @@
     "measured_at": "2026-06-30",
     "node_count": 20
   },
-  "cluster_saturation": {
-    "bind_p50_ms": 8191.6,
-    "bind_p95_ms": 12137.2,
-    "claim_count": 600,
-    "exec_p50_ms": 467.0,
-    "exec_p95_ms": 608.0,
-    "exec_success_rate": 1.0,
-    "machine_type": "n2-standard-16",
-    "measured_at": "2026-07-02",
-    "node_count": 40,
-    "outcome": "FAIL",
-    "pool_size": 600,
-    "run_id": "c50e1c51a4c441f3a0705a2426a9a93c",
-    "runtime_class": "gvisor",
-    "thpt_cluster_node_count": 40,
-    "thpt_under_1s_per_cluster": 0.0,
-    "thpt_under_1s_per_node": 0.0,
-    "thpt_under_5s_per_cluster": 2.558,
-    "thpt_under_5s_per_node": 0.064,
-    "ttfe_p50_ms": 8630.8,
-    "ttfe_p95_ms": 12610.3
-  },
   "generated_at": "2026-07-01T07:23:08Z",
   "kata_activation": {
     "cold_ready": [
@@ -112,6 +112,35 @@
     "node_count": 1,
     "regime": "drained",
     "run_id": "dc1dd343fee74008a2f75ccdfed39eb9"
+  },
+  "provisioning_rate_sweep": {
+    "ceiling_high_per_s": 150,
+    "ceiling_low_per_s": 100,
+    "measured_at": "2026-07-01",
+    "rate_points": [
+      {
+        "converged": true,
+        "elapsed_s": 301.0,
+        "offered_rate_per_s": 100,
+        "ready_pct": 100.0,
+        "warmpool_size": 1500
+      },
+      {
+        "converged": false,
+        "offered_rate_per_s": 150,
+        "ready_pct": 42.0,
+        "timeout_s": 1125.0,
+        "warmpool_size": 2250
+      },
+      {
+        "converged": false,
+        "offered_rate_per_s": 200,
+        "ready_pct": 21.0,
+        "timeout_s": 1880.0,
+        "warmpool_size": 3000
+      }
+    ],
+    "runtime_class": "gvisor"
   },
   "scale_proof": {
     "density_retention": 1.0,

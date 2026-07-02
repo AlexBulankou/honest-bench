@@ -33,6 +33,7 @@ from schema import (
     PENDING_REASONS,
     PRODUCTS,
     PROVENANCE_FIELDS,
+    PROVISIONING_RATE_SWEEP_FIELDS,
     RUNTIME_LABELS,
     SCALE_PROOF_FIELDS,
     SCENARIO_LABELS,
@@ -2221,6 +2222,122 @@ def render_cluster_saturation(results, heading="### Saturation — the whole-clu
         lines.append("")
     if cs.get("measured_at"):
         lines.append(f"_Measured {cs['measured_at'][:10]} — whole-cluster saturation ceiling (point-in-time)._")
+        lines.append("")
+    return "\n".join(lines)
+
+
+# --- #4086: Provisioning rate sweep (reconcile-bound warm-pool convergence) ---------------
+# A THIRD distinct axis, deliberately NOT folded into stepup's TTFE Pareto or the
+# at_scale_contention claim:pool ratio: this measures warm-pool PROVISIONING convergence
+# (Ready% within pool_warm_timeout) as a function of the OFFERED reconcile RATE. Folding it
+# into either of those would falsely imply a same-regime measurement — an honesty violation.
+
+
+def _clean_provisioning_rate_sweep(results):
+    """Closed-schema-validate the TOP-LEVEL provisioning_rate_sweep object. None ⇒ INERT.
+
+    Requires a non-empty rate_points list (each point validated by _rate_points_ok). Optional
+    runtime_class / ceiling_low_per_s / ceiling_high_per_s / measured_at render only when valid;
+    a present-but-invalid optional is dropped on read, never fabricated. runtime_class validates
+    against the PUBLIC RUNTIME_LABELS enum, so an out-of-enum runtime fails closed.
+    """
+    prs = results.get("provisioning_rate_sweep")
+    if not isinstance(prs, dict):
+        return None
+    clean = {}
+    for key, ok in PROVISIONING_RATE_SWEEP_FIELDS.items():
+        if key in prs:
+            try:
+                if ok(prs[key]):
+                    clean[key] = prs[key]
+            except (TypeError, ValueError):
+                pass
+    if "rate_points" not in clean:
+        return None
+    clean["rate_points"] = sorted(clean["rate_points"], key=lambda p: p["offered_rate_per_s"])
+    return clean
+
+
+def _rate_verdict_cell(point):
+    """One provisioning-rate row's outcome cell: ✅ when the pool converged (Ready% hit target
+    within the warm timeout), ❌ when it timed out under-provisioned. The measured Ready% is
+    always shown so a partial fill reads honestly, never rounded up to a pass/fail bit."""
+    pct = point["ready_pct"]
+    converged = point.get("converged")
+    if converged is None:
+        converged = pct >= 100.0
+    mark = "✅" if converged else "❌"
+    cell = f"{mark} {_fmt_num(round(pct, 1))}%"
+    el, to = point.get("elapsed_s"), point.get("timeout_s")
+    if converged and el is not None:
+        cell += f" (converged ~{_fmt_num(round(el))}s)"
+    elif not converged and to is not None:
+        cell += f" (timeout {_fmt_num(round(to))}s)"
+    return cell
+
+
+def render_provisioning_rate_sweep(results):
+    """Render the provisioning rate-sweep block (#4086), or "" when INERT.
+
+    Warm-pool provisioning convergence vs OFFERED reconcile rate: at each offered rate the harness
+    drives a warm-pool target and measures whether the pool reaches Ready within pool_warm_timeout.
+    Monotonic degradation past a rate ceiling reads reconcile-bound (the controller reconcile path
+    is the ceiling), NOT node/quota-bound. INERT until the harness emits a closed-schema-clean
+    provisioning_rate_sweep object.
+    """
+    prs = _clean_provisioning_rate_sweep(results)
+    if not prs:
+        return ""
+    label = RUNTIME_LABELS.get(prs.get("runtime_class"))
+    lines = ["## Provisioning Rate Sweep — where warm-pool fill goes reconcile-bound", ""]
+    caption = (
+        "The warm-pool numbers elsewhere assume the pool is **already Ready**. This block measures "
+        "the step before that: how fast the pool can be **provisioned** as a function of the "
+        "**offered reconcile rate** (sandboxes requested per second). At each rate the pool is "
+        "driven to a target size and we measure whether it reaches Ready **within the warm "
+        "timeout**."
+    )
+    if label:
+        caption += f" Measured on **{label}**."
+    lines.append(caption)
+    lines.append("")
+    header = ["Offered reconcile rate", "Warm-pool target", "Ready within timeout"]
+    lines.append("| " + " | ".join(header) + " |")
+    lines.append("|" + "|".join(["---"] * len(header)) + "|")
+    for p in prs["rate_points"]:
+        wps = p.get("warmpool_size")
+        lines.append(
+            "| "
+            + " | ".join(
+                [
+                    f"{_fmt_num(p['offered_rate_per_s'])} sb/s",
+                    _fmt_num(wps) if wps is not None else "—",
+                    _rate_verdict_cell(p),
+                ]
+            )
+            + " |"
+        )
+    lines.append("")
+    lo, hi = prs.get("ceiling_low_per_s"), prs.get("ceiling_high_per_s")
+    if lo is not None and hi is not None:
+        lines.append(
+            f"**Provisioning converges at ~{_fmt_num(lo)} sb/s; over-subscribed beyond "
+            f"~({_fmt_num(lo)}, {_fmt_num(hi)}) sb/s** — monotonic degradation past the ceiling is "
+            "**reconcile-bound** (the controller reconcile path is the ceiling), not node- or "
+            "quota-bound."
+        )
+        lines.append("")
+    lines.append(
+        "_A distinct axis from the Concurrent Burst (claim:pool ratio) and Step-up (creation-rate "
+        "TTFE) blocks: this measures provisioning **offered-rate** convergence, a separate regime — "
+        "not directly comparable to those latency/throughput points._"
+    )
+    lines.append("")
+    if prs.get("measured_at"):
+        lines.append(
+            f"_Measured {prs['measured_at'][:10]} — warm-pool provisioning rate sweep "
+            "(point-in-time; refreshed on the next rate sweep)._"
+        )
         lines.append("")
     return "\n".join(lines)
 

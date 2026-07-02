@@ -121,3 +121,19 @@ _Per-cluster throughput MEASURED at **40 nodes** — never a per-node × N extra
 _SLA ceiling: **not met** at this operating point — the honest saturation limit. Execution success confirms every claim still bound and executed; the FAIL is the throughput collapse against the sizing floor, not a correctness failure._
 
 _Measured 2026-07-02 — whole-cluster saturation ceiling (point-in-time)._
+
+## Provisioning Rate Sweep — where warm-pool fill goes reconcile-bound
+
+The warm-pool numbers elsewhere assume the pool is **already Ready**. This block measures the step before that: how fast the pool can be **provisioned** as a function of the **offered reconcile rate** (sandboxes requested per second). At each rate the pool is driven to a target size and we measure whether it reaches Ready **within the warm timeout**. Measured on **gVisor**.
+
+| Offered reconcile rate | Warm-pool target | Ready within timeout |
+|---|---|---|
+| 100 sb/s | 1500 | ✅ 100% (converged ~301s) |
+| 150 sb/s | 2250 | ❌ 42% (timeout 1125s) |
+| 200 sb/s | 3000 | ❌ 21% (timeout 1880s) |
+
+**Provisioning converges at ~100 sb/s; over-subscribed beyond ~(100, 150) sb/s** — monotonic degradation past the ceiling is **reconcile-bound** (the controller reconcile path is the ceiling), not node- or quota-bound.
+
+_A distinct axis from the Concurrent Burst (claim:pool ratio) and Step-up (creation-rate TTFE) blocks: this measures provisioning **offered-rate** convergence, a separate regime — not directly comparable to those latency/throughput points._
+
+_Measured 2026-07-01 — warm-pool provisioning rate sweep (point-in-time; refreshed on the next rate sweep)._
