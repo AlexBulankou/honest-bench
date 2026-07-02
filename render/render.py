@@ -806,9 +806,12 @@ def render_matrix(results, kata_results=None):
     )
     lines.append(
         "_A throughput cell renders an honest `0` when the measured TTFE p95 misses that cell's "
-        "bar (we print a zero rather than round up). This holds even before a throughput fire "
-        "runs: if p95 already exceeds the bar, no sandboxes meet it, so the rate is a derived `0` "
-        "at every scale — both `/node` and `/cluster`._"
+        "bar (we print a zero rather than round up). The cell is an SLO-gated rate — the sustained "
+        "creation rate at which p95 TTFE stays within the bar — so this holds even before a "
+        "throughput fire runs: if the measured p95 already exceeds the bar, the p95-SLO is unmet at "
+        "the tested point and the SLO-compliant rate is a derived `0` at every scale, both `/node` "
+        "and `/cluster`. A derived `0` inherits the sample basis of the p95 it reads: where that "
+        "p95 carries the single-sample † dagger, so does the `0`._"
     )
     lines.append(
         "_Throughput cells are dual — `per-node · per-cluster`. The per-node figure is the "
