@@ -245,33 +245,32 @@ def test_read_prior_non_dict_block_is_none():
                f"{key}: non-dict block value ⇒ None")
 
 
-# --- build_results wiring: the daily-refresh write must EMIT all four carried blocks ---
+# --- build_results wiring: the daily-refresh write must EMIT all six carried blocks ---
 
 def _prov():
     return {"cluster_substrate": "gke-sandbox", "commit": "abc1234", "runner": "test"}
 
 
-def test_build_results_emits_all_four_carried_blocks():
-    # The #112 regression lock: a wholesale build_results write with all four blocks passed
-    # must EMIT all four top-level keys (before #112 they were silently dropped).
+def test_build_results_emits_all_six_carried_blocks():
+    # The #112 regression lock: a wholesale build_results write with all six blocks passed
+    # must EMIT all six top-level keys (before #112 they were silently dropped).
     out = rs.build_results(
         [], _prov(), _GEN_AT, product="sandbox",
         kata_activation=_PRIOR_KATA,
         concurrent_burst=_PRIOR_CB,
         warm_pool_acquisition=_PRIOR_WPA,
         at_scale_contention=_PRIOR_ASC,
+        cluster_saturation=_PRIOR_CS,
+        provisioning_rate_sweep=_PRIOR_PRS,
     )
-    _check("kata_activation" in out, "kata_activation emitted")
-    _check("concurrent_burst" in out, "concurrent_burst emitted")
-    _check("warm_pool_acquisition" in out, "warm_pool_acquisition emitted")
-    _check("at_scale_contention" in out, "at_scale_contention emitted")
+    for key, _carry, _read, _prior in _BLOCKS:
+        _check(key in out, f"{key} emitted")
 
 
-def test_build_results_absent_omits_all_four_keys():
+def test_build_results_absent_omits_all_six_keys():
     # Default callers (a first-ever run with no priors) pass None ⇒ no keys, no fabrication.
     out = rs.build_results([], _prov(), _GEN_AT, product="sandbox")
-    for key in ("kata_activation", "concurrent_burst", "warm_pool_acquisition",
-                "at_scale_contention"):
+    for key, _carry, _read, _prior in _BLOCKS:
         _check(key not in out, f"{key} omitted when not supplied")
 
 
