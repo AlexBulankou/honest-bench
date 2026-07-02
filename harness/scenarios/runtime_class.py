@@ -225,6 +225,88 @@ def apply_runtime_class(pod_spec: dict, runtime_class: str) -> dict:
     return pod_spec
 
 
+# Per-runtime-FAMILY default container resources (#3942/#830). gVisor and the node-default
+# runtime run the workload as an ordinary (heavily over-committable) container, so the
+# canonical tiny footprint is correct and keeps a vanilla-kind / gVisor manifest
+# byte-identical to its pre-#3942 shape. Kata sizes the GUEST microVM from the Pod's
+# cpu+memory, so a tiny request SIGKILLs (137) the in-guest container the instant it starts
+# despite the sandbox reaching Ready (confirmed kata-clh + kata-qemu, #3942) — the kata
+# family therefore needs a guest-sane floor. Keyed by FAMILY (resolve via runtime_family
+# so kata-clh / kata-qemu both find the kata floor); an absent family falls back to tiny.
+_TINY_RESOURCES: dict = {
+    "requests": {"cpu": "10m", "memory": "16Mi"},
+    "limits": {"cpu": "100m", "memory": "64Mi"},
+}
+_KATA_RESOURCES: dict = {
+    "requests": {"cpu": "500m", "memory": "512Mi"},
+    "limits": {"cpu": "1", "memory": "1Gi"},
+}
+_RUNTIME_RESOURCES: dict[str, dict] = {KATA: _KATA_RESOURCES}
+
+
+def container_resources(
+    runtime_class: str,
+    *,
+    cpu_request: Optional[str] = None,
+    mem_request: Optional[str] = None,
+    cpu_limit: Optional[str] = None,
+    mem_limit: Optional[str] = None,
+) -> dict:
+    """Return the container ``resources`` dict for ``runtime_class`` (pure).
+
+    Runtime-family-aware defaults: the kata family (kata-clh / kata-qemu, resolved via
+    ``runtime_family``) gets a guest-sane floor because kata sizes the microVM from the
+    Pod's cpu+memory — a tiny request SIGKILLs (137) the in-guest container despite Ready
+    (#3942). Every other family (gVisor, and the node-default runtime for an unset/unknown
+    class) gets the canonical tiny footprint, so a vanilla-kind / gVisor manifest is
+    byte-identical to its pre-#3942 shape. Each of the four fields is independently
+    overridable (a fire that needs a different box passes the value); an override of
+    ``None`` keeps the family default. Returns a fresh nested dict so a caller mutating the
+    result never corrupts the registry.
+    """
+    base = _RUNTIME_RESOURCES.get(runtime_family(runtime_class), _TINY_RESOURCES)
+    resources = {
+        "requests": dict(base["requests"]),
+        "limits": dict(base["limits"]),
+    }
+    if cpu_request is not None:
+        resources["requests"]["cpu"] = cpu_request
+    if mem_request is not None:
+        resources["requests"]["memory"] = mem_request
+    if cpu_limit is not None:
+        resources["limits"]["cpu"] = cpu_limit
+    if mem_limit is not None:
+        resources["limits"]["memory"] = mem_limit
+    return resources
+
+
+def container_resources_from_env(runtime_class: str) -> dict:
+    """Thin env wrapper over ``container_resources`` — the shared matrix-scenario entry.
+
+    Reads the four shared, un-prefixed ``BENCH_POD_*`` knobs (same names across every
+    matrix scenario, because the resource floor is a property of the RUNTIME, not the
+    scenario) and delegates to the pure core. An unset knob -> ``None`` -> the
+    runtime-family default, so a fire that just sets its ``*_RUNTIME_CLASS=kata-clh``
+    automatically gets the kata floor with no extra env, while a fire that needs a bigger
+    box tunes any field. The only env-reading function in the module (mirrors the
+    pure-core / thin-I/O split above); ``os`` is imported locally to keep module load
+    free of it.
+    """
+    import os
+
+    def _opt(name: str) -> Optional[str]:
+        v = os.environ.get(name, "").strip()
+        return v or None
+
+    return container_resources(
+        runtime_class,
+        cpu_request=_opt("BENCH_POD_CPU_REQUEST"),
+        mem_request=_opt("BENCH_POD_MEM_REQUEST"),
+        cpu_limit=_opt("BENCH_POD_CPU_LIMIT"),
+        mem_limit=_opt("BENCH_POD_MEM_LIMIT"),
+    )
+
+
 def assert_substrate_runtime_consistency(
     substrate: str, runtime_class: str,
 ) -> None:
