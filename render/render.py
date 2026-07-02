@@ -778,10 +778,10 @@ def render_matrix(results, kata_results=None):
     lines.append(
         "- **Throughput `x /node · y /cluster`** — per-node is the engineering rate (comparable "
         "across runtimes); per-cluster is a MEASURED per-activation-mode rate at the node count "
-        "named above the table, never a per-node × N extrapolation."
+        "named in the build line below the table, never a per-node × N extrapolation."
     )
     lines.append(
-        "- **honest `0`** — the cell ran and could not hold the bar: the measured TTFE p95 misses "
+        "- **honest `0`** — the measurement ran and could not hold the bar: the measured TTFE p95 misses "
         "that cell's SLO, so the SLO-compliant throughput is a real `0` (we print it rather than "
         "round up) — not \"zero activity\". A derived `0` inherits the sample basis of the p95 it "
         f"reads, so a single-sample p95 yields a single-sample `0` carrying {_LOW_N_MARK}."
