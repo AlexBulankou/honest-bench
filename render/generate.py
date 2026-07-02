@@ -79,43 +79,28 @@ _KATA_RESULTS_REL = "sandbox-kata/results/latest.json"
 _PREAMBLE = """\
 # Honest benchmarks — GKE agent sandbox
 
-Most sandbox benchmarks are marketing: a best-case number, measured once, on a tuned
-cluster nobody will hand you, with no way to check it. This page is the opposite. **Every
-number is machine-rendered from a real harness run and reproducible from the recipe at the
-bottom** — no cell is ever typed by hand. Each value traces to a schema-validated field of
-an actual run; anything the schema does not declare is dropped before it can reach the page.
-We publish only what we measured on the cluster named in the build banner, so a `kind` run
-is labelled `kind` and a local number is never dressed up as a production SLA.
+Most sandbox benchmarks are marketing — one best-case number, measured once, on a cluster
+you will never get, with no way to check it. This page is the opposite: **every number is
+machine-rendered from a real harness run and reproducible from the recipe at the bottom.** No
+cell is ever typed by hand, and anything the schema does not declare is dropped before it can
+reach the page.
 
-The table is keyed on the metric a user actually feels: **TTFE — Time-To-First-Instruction**,
-the wall-clock from the create request to the moment the sandbox *ran its first instruction
-and returned a result*. TTFE is not pod-Ready — a pod can report Ready seconds before it can
-run your code — so we measure the wait, not the checkbox. Throughput is reported per node at
-two TTFE bars (`<5s` and `<1s`), and the **Execution Success (Honesty Check)** column is the
-fraction of those first instructions that actually succeeded.
+We measure the one thing you actually feel — **TTFE (Time-To-First-Instruction)**: the
+wall-clock from "create this sandbox" to "it ran my first instruction and returned a result."
+Not pod-Ready — a pod can look ready seconds before it can run your code — but the real wait.
 
-The page is built to print the truth even when the truth is unflattering:
+Every number is a **reproducible floor, not a ceiling**: what a *vanilla* OSS build delivers
+today (upstream controller from `main`, default runtime, no tuning). A bigger pool or denser
+nodes should beat it. And the page prints the truth when it is unflattering — an unmeasured
+cell reads `pending` (never a guess), a throughput that misses its bar prints an honest `0`,
+and any execution failures show as a ⚠️ fraction instead of being quietly dropped.
 
-- A cell we have not yet measured renders `pending` — never a guess, never a placeholder
-  number.
-- A throughput whose p95 misses the bar prints an honest **`0`** — we do not round up to
-  make the row look better.
-- An execution-success rate below 100% prints the succeeded/total fraction and a ⚠️ flag,
-  instead of quietly dropping the failures.
-
-And every measured number is a **reproducible floor, not a ceiling.** It is what a *vanilla*
-OSS build delivers today — the upstream controller from `main`, default runtime, no tuning,
-the cluster shape named in the build banner. A bigger pool, denser nodes, or a tuned runtime
-should *beat* it; the value here is the honest lower bound you can reproduce and then improve
-on. We publish the floor we can stand behind, not the best number we could cherry-pick.
-
-So don't take our word for it — reproduce any row, then beat it. The suite is honest by
-construction:
+Don't take our word for it — reproduce any row, then beat it:
 
 ```
 bash recipe/install-controller-from-main.sh   # OSS controller from upstream main
 python3 -m harness.run                        # run the portable suite (cluster=kind)
-python3 -m render.generate                    # regenerate this table
+python3 -m render.generate                    # regenerate this page
 bash scripts/check-public-safety.sh           # fail-closed public-safety scan
 ```
 """
