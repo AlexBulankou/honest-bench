@@ -91,6 +91,14 @@ PENDING_REASONS = {
     # Render-only seed footnote token (no harness emit path), distinct from the
     # requires-kata-runtime EMIT-cell pend above.
     "requires-kata-microvm",
+    # A cell whose run DID land but whose number is a node-pool topology artifact, not a
+    # runtime property: N concurrent microVM boots contend for the single pool node's
+    # vCPUs, stalling the marginal replica (same root-cause class as the burst_create
+    # kata exclusion in harness/scenario_map.py). A representative number needs a pool
+    # sized for N concurrent warms — a deliberate spend action, not a re-run. Render-only
+    # (committed-artifact reclassification path, PR-documented + peer-reviewed); no
+    # harness emit path.
+    "pool-topology-constrained",
 }
 
 # provenance: only these keys render, each validated by the predicate below.
@@ -135,6 +143,11 @@ PROVENANCE_FIELDS = {
     # the matrix's Runtime column; absent ⇒ the renderer defaults to gvisor (today's only
     # live runtime — the gke-sandbox/runsc path).
     "runtime": lambda v: v in RUNTIME_LABELS,
+    # Node machine shape (same tight GCP-shape regex the per-block provenance uses).
+    # Rendered only where explicitly listed (the kata separate-run footnote) — the main
+    # build banner's explicit key list does not include it, so the primary banner is
+    # unchanged by this addition.
+    "machine_type": lambda v: isinstance(v, str) and bool(_MACHINE_TYPE.match(v)),
 }
 
 # scenario internal-name -> public display label. A scenario whose name is not in this

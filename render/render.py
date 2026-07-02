@@ -436,13 +436,19 @@ def _runtime_density(scen_by_name):
     return None
 
 
-def render_matrix(results):
-    """Render the doc's 9-column Core Metrics Table for one results.json (one runtime measured).
+def render_matrix(results, kata_results=None):
+    """Render the doc's 9-column Core Metrics Table (primary results + optional kata results).
 
     A single run measures ONE runtime (provenance.runtime, default gvisor); that runtime's rows
-    fill from the measured scenarios, the other runtime's rows render `pending`. Per-metric cells
-    render `pending` until the TTFE-instrumented harness emits them, so the page degrades to an
-    honest skeleton rather than a blank or a guess.
+    fill from the measured scenarios. The Kata + microVM rows can fill from a SECOND results
+    file (`kata_results`, the sandbox-kata product) measured in a separate run on the kata pool
+    — the run split exists because `run --product sandbox-kata` writes its own latest.json and
+    can never overwrite the gVisor artifact (harness/scenario_map.py). kata_results is used
+    ONLY when its product is "sandbox-kata" AND its cleaned provenance.runtime is kata-microvm;
+    the primary results win on conflict (a kata-measured primary run ignores kata_results).
+    Unmeasured runtime rows render `pending`. Per-metric cells render `pending` until the
+    TTFE-instrumented harness emits them, so the page degrades to an honest skeleton rather
+    than a blank or a guess.
     """
     product = results.get("product")
     if product not in PRODUCTS:
@@ -450,7 +456,23 @@ def render_matrix(results):
 
     prov = _clean_provenance(results.get("provenance"))
     measured_runtime = prov.get("runtime") or "gvisor"
-    scen_by_name = _matrix_scenarios(results.get("scenarios"))
+    # Per-runtime scenario sources. The primary results claim their measured runtime first;
+    # kata_results may ONLY fill the kata-microvm slot if still empty (primary wins).
+    sources = {measured_runtime: _matrix_scenarios(results.get("scenarios"))}
+    kata_prov = None
+    kata_gen = None
+    if (
+        isinstance(kata_results, dict)
+        and kata_results.get("product") == "sandbox-kata"
+        and "kata-microvm" not in sources
+    ):
+        kp = _clean_provenance(kata_results.get("provenance"))
+        if kp.get("runtime") == "kata-microvm":
+            sources["kata-microvm"] = _matrix_scenarios(kata_results.get("scenarios"))
+            kata_prov = kp
+            g = kata_results.get("generated_at")
+            if isinstance(g, str) and _ISO.match(g):
+                kata_gen = g
 
     header = [
         "Runtime",
@@ -477,8 +499,9 @@ def render_matrix(results):
 
     for rt in MATRIX_RUNTIMES:
         rt_label = RUNTIME_LABELS[rt]
-        measured = rt == measured_runtime
-        density = _runtime_density(scen_by_name) if measured else None
+        rt_scen = sources.get(rt)
+        measured = rt_scen is not None
+        density = _runtime_density(rt_scen) if measured else None
         for scen_name, mode_label in ACTIVATION_MODE_ROWS:
             is_resume = scen_name == "suspend_resume"
             # Resume-from-suspend × Kata+microVM is N/A by construction: CRIU
@@ -490,7 +513,7 @@ def render_matrix(results):
             if is_resume and rt == "kata-microvm":
                 lines.append("| " + " | ".join([rt_label, mode_label] + [_NA] * 7) + " |")
                 continue
-            sc = scen_by_name.get(scen_name) if measured else None
+            sc = rt_scen.get(scen_name) if measured else None
             sc_pending = bool(sc) and sc.get("outcome") == "pending"
             m = sc["metrics"] if sc else {}
 
@@ -571,7 +594,26 @@ def render_matrix(results):
         "samples — read it as a single observation, not a distribution, and do not rank it "
         "against a high-N row._"
     )
-    lines.append("_Kata + microVM rows are not-yet-measured (requires-kata-microvm)._")
+    if "kata-microvm" not in sources:
+        lines.append("_Kata + microVM rows are not-yet-measured (requires-kata-microvm)._")
+    elif kata_prov is not None:
+        # The kata rows fill from a SEPARATE run (the sandbox-kata product) on the kata
+        # node pool — a different cluster substrate + machine shape than the build banner
+        # below, so disclose that run's own provenance rather than letting the gVisor
+        # banner silently cover both. Same closed-schema fields as the banner; no
+        # free-text can ride this line.
+        kata_banner = [
+            f"{k}={kata_prov[k]}"
+            for k in ("cluster_substrate", "machine_type", "node_count")
+            if k in kata_prov
+        ]
+        if kata_gen:
+            kata_banner.append(f"generated-at={kata_gen}")
+        lines.append(
+            "_Kata + microVM rows are measured in a separate run on the kata node pool"
+            + (": " + " · ".join(kata_banner) if kata_banner else "")
+            + "._"
+        )
     lines.append(
         "_Resume-from-suspend × Kata + microVM renders `N/A` by construction — CRIU "
         "checkpoint/restore does not transfer to the Kata VM isolation model, so that cell "

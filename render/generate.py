@@ -64,6 +64,15 @@ _PRODUCTS = (
     ("sandbox", "sandbox/results/latest.json"),
 )
 
+# Optional companion artifact for the sandbox matrix: the sandbox-kata product's results,
+# measured in a SEPARATE run on the kata node pool (`run --product sandbox-kata` writes its
+# own latest.json by construction — harness/scenario_map.py — so it can never overwrite the
+# gVisor artifact). When present it fills the Kata + microVM rows of the ONE sandbox matrix
+# via render_matrix(results, kata_results=...); it is deliberately NOT a _PRODUCTS entry —
+# that would render a duplicate full matrix + conditional blocks instead of merging rows.
+# Absent file ⇒ kata rows render pending (graceful degradation, README unchanged).
+_KATA_RESULTS_REL = "sandbox-kata/results/latest.json"
+
 # Fixed, reviewed-once customer preamble. No measured numbers here — every number on the
 # page comes from render_product, so this constant carries zero PII risk.
 _PREAMBLE = """\
@@ -125,6 +134,11 @@ def build_readme(root=None):
     when a scale_proof object is present, the Scale Proof (Linearity Check) table.
     """
     root = root or _repo_root()
+    kata_results = None
+    kata_path = os.path.join(root, _KATA_RESULTS_REL)
+    if os.path.exists(kata_path):
+        with open(kata_path) as fh:
+            kata_results = json.load(fh)
     sections = [_PREAMBLE.rstrip()]
     for product, rel in _PRODUCTS:
         path = os.path.join(root, rel)
@@ -132,7 +146,8 @@ def build_readme(root=None):
             continue
         with open(path) as fh:
             results = json.load(fh)
-        sections.append(render_matrix(results).rstrip())
+        kr = kata_results if product == "sandbox" else None
+        sections.append(render_matrix(results, kata_results=kr).rstrip())
         corr = render_burst_corroboration(results)
         if corr.strip():
             sections.append(corr.rstrip())
