@@ -2328,9 +2328,27 @@ def test_at_scale_contention_missing_spine_inert():
         _matrix_results(_full_gvisor_scenarios(), at_scale_contention=asc)) == ""
 
 
-def test_at_scale_contention_renders_table():
+def test_at_scale_contention_page_retraction_posture_no_table():
+    # hb#134 page-split: the DEFAULT (page) path renders the honest-limits retraction posture —
+    # the friendlier heading, the retraction prose, the worst-case TTFE inline, and a DETAILS
+    # pointer — with NO decomposition table (that moves to the appendix).
     out = render.render_at_scale_contention(
         _matrix_results(_full_gvisor_scenarios(), at_scale_contention=_asc()))
+    assert "## Where it breaks today (honest limits)" in out
+    assert "retraction" in out
+    assert "does **not** hold here" in out
+    assert "**2:1 contention**" in out
+    # worst-case TTFE surfaced inline so the retraction is self-contained without the table.
+    assert "**1.6589s p50** / **2.0169s p95**" in out
+    assert "[DETAILS.md](DETAILS.md)" in out
+    # the decomposition table itself does NOT render on the page path.
+    assert "| Pool | Claims | Contention |" not in out
+    assert "Bind p50" not in out
+
+
+def test_at_scale_contention_renders_table():
+    out = render.render_at_scale_contention(
+        _matrix_results(_full_gvisor_scenarios(), at_scale_contention=_asc()), detail=True)
     assert "## At Scale Under Contention — where sub-second warm activation breaks" in out
     # It is framed explicitly as a retraction of the sub-second-at-scale claim.
     assert "retraction" in out
@@ -2351,7 +2369,7 @@ def test_at_scale_contention_bind_columns_em_dash_when_absent():
     del asc["bind_p50_ms"]
     del asc["bind_p95_ms"]
     out = render.render_at_scale_contention(
-        _matrix_results(_full_gvisor_scenarios(), at_scale_contention=asc))
+        _matrix_results(_full_gvisor_scenarios(), at_scale_contention=asc), detail=True)
     assert "Bind p50" not in out
     assert "| 30 | 60 | 2:1 | 1.6589s | 2.0169s | 100% |" in out
 
@@ -2361,7 +2379,7 @@ def test_at_scale_contention_no_exec_column_when_absent():
     asc = _asc()
     del asc["exec_success_rate"]
     out = render.render_at_scale_contention(
-        _matrix_results(_full_gvisor_scenarios(), at_scale_contention=asc))
+        _matrix_results(_full_gvisor_scenarios(), at_scale_contention=asc), detail=True)
     assert "Execution Success" not in out
     assert "| 30 | 60 | 2:1 | 1.6589s | 2.0169s | 1.384s | 1.7001s |" in out
 
@@ -2377,7 +2395,8 @@ def test_at_scale_contention_invalid_machine_type_dropped_spine_renders():
     # still renders (provenance is best-effort, never fabricated, never blocks the table).
     out = render.render_at_scale_contention(
         _matrix_results(_full_gvisor_scenarios(),
-                        at_scale_contention=_asc(machine_type="us-central1-docker.pkg.dev/proj/img:1")))
+                        at_scale_contention=_asc(machine_type="us-central1-docker.pkg.dev/proj/img:1")),
+        detail=True)
     assert "## At Scale Under Contention — where sub-second warm activation breaks" in out
     assert "| 30 | 60 | 2:1 | 1.6589s | 2.0169s | 1.384s | 1.7001s | 100% |" in out
     assert "docker.pkg.dev" not in out  # internal registry path never reaches the page
@@ -2386,7 +2405,8 @@ def test_at_scale_contention_invalid_machine_type_dropped_spine_renders():
 def test_at_scale_contention_sub_100_exec_flags_warn():
     # A <100% exec rate prints the succeeded/total fraction + ⚠️, never quietly dropped.
     out = render.render_at_scale_contention(
-        _matrix_results(_full_gvisor_scenarios(), at_scale_contention=_asc(exec_success_rate=0.95)))
+        _matrix_results(_full_gvisor_scenarios(), at_scale_contention=_asc(exec_success_rate=0.95)),
+        detail=True)
     assert "⚠️" in out
     assert "95%" in out
 

@@ -1857,7 +1857,7 @@ def _clean_at_scale_contention(results):
     return clean
 
 
-def render_at_scale_contention(results):
+def render_at_scale_contention(results, detail=False):
     """Render the at-scale-under-contention RETRACTION block, or "" when INERT.
 
     The deliberate counter-point to the flattering 1:1 warm bursts: a single measured operating
@@ -1867,6 +1867,12 @@ def render_at_scale_contention(results):
     Concurrent Burst TTFE columns; the per-node throughput axis is DELIBERATELY absent (this point
     ran at node_count=1, non-comparable to the node_count=20 bursts). INERT until the harness emits
     a closed-schema-clean at_scale_contention object.
+
+    hb#134 page-split: the DEFAULT (page) path renders the honest-limits retraction posture — the
+    prose + the headline TTFE p50/p95 the reader needs to budget for the worst case — under the
+    friendlier "Where it breaks today" heading, with a pointer to the full bind/exec decomposition
+    table in DETAILS.md. `detail=True` renders that full table (deep-dive appendix). The retraction
+    NEVER leaves the headline page — only the decomposition working moves.
     """
     asc = _clean_at_scale_contention(results)
     if not asc:
@@ -1874,10 +1880,12 @@ def render_at_scale_contention(results):
     label = RUNTIME_LABELS[asc["runtime_class"]]
     pool, claims = asc["pool_size"], asc["claim_count"]
     ratio = f"{_fmt_ratio(claims / pool)}:1" if pool else "—"
-    lines = ["## At Scale Under Contention — where sub-second warm activation breaks", ""]
+    heading = ("## At Scale Under Contention — where sub-second warm activation breaks"
+               if detail else "## Where it breaks today (honest limits)")
+    lines = [heading, ""]
     caption = (
         "The Concurrent Burst legs above are **1:1** — N ready sandboxes hit with N claims. This "
-        "row is the deliberate **retraction**: the operating point where the pool is "
+        "is the deliberate **retraction**: the operating point where the pool is "
         "**over-subscribed** (more concurrent claims than ready pool members), and warm activation "
         f"**stops being sub-second**. Measured on **{label}**: a pool of **{_fmt_num(pool)}** ready "
         f"sandboxes hit with **{_fmt_num(claims)}** simultaneous claims (**{ratio} contention**). "
@@ -1893,6 +1901,19 @@ def render_at_scale_contention(results):
         caption += f" Cluster shape: {', '.join(shape)}."
     lines.append(caption)
     lines.append("")
+    if not detail:
+        # Page path: surface the worst-case TTFE inline (so the retraction is self-contained
+        # without the table) + point to the full bind/exec decomposition in the appendix.
+        lines.append(
+            f"Under this contention, TTFE degrades to **{_fmt_secs(asc['ttfe_p50_ms'])} p50** / "
+            f"**{_fmt_secs(asc['ttfe_p95_ms'])} p95** — budget for that, not the sub-second warm "
+            "hit, when your claim rate can outrun your pool. Full bind/exec decomposition is in "
+            "the deep-dive appendix, [DETAILS.md](DETAILS.md).")
+        lines.append("")
+        if asc.get("measured_at"):
+            lines.append(f"_Measured {asc['measured_at'][:10]} — warm-pool at-scale contention ceiling (point-in-time)._")
+            lines.append("")
+        return "\n".join(lines)
     header = ["Pool", "Claims", "Contention", "TTFE p50", "TTFE p95"]
     have_bind = "bind_p50_ms" in asc and "bind_p95_ms" in asc
     if have_bind:

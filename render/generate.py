@@ -165,7 +165,7 @@ def build_readme(root=None):
         burst = render_concurrent_burst(results)
         if burst.strip():
             sections.append(burst.rstrip())
-        contention = render_at_scale_contention(results)
+        contention = render_at_scale_contention(results)  # page: retraction posture only
         if contention.strip():
             sections.append(contention.rstrip())
     # #4021: the Reproducibility Recipe is product-agnostic architecture prose, so it renders
@@ -217,6 +217,11 @@ def build_details(root=None):
         density = render_density_detail(results, kata_results=kr)
         if density.strip():
             sections.append(density.rstrip())
+        # hb#134: the honest-limits RETRACTION posture stays on the headline page; only the full
+        # bind/exec decomposition table + non-comparable caveat move here (detail=True).
+        contention_detail = render_at_scale_contention(results, detail=True)
+        if contention_detail.strip():
+            sections.append(contention_detail.rstrip())
     return "\n\n".join(sections) + "\n"
 
 
