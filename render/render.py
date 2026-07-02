@@ -351,6 +351,14 @@ def _fmt_secs(ms):
     return f"{ms / 1000.0:g}s"
 
 
+def _fmt_wait(ms):
+    """Operating-envelope budgeting figure: a friendly 1-dp APPROXIMATION with a `~` prefix
+    (631.7 -> ~0.6s, 2939.65 -> ~2.9s). Deliberately coarser than `_fmt_secs` — the envelope is
+    a plan-around-this summary for non-experts, and the exact measured value lives in the detail
+    table each row is sourced from. Still render-derived; only the display precision differs."""
+    return f"~{round(ms / 1000.0, 1):g}s"
+
+
 def _exec_cell(rate, n_total, n_succ=None):
     """Doc's exec-success ("Honesty Check") cell.
 
@@ -749,6 +757,123 @@ def render_matrix(results, kata_results=None):
     gen = results.get("generated_at")
     if isinstance(gen, str) and _ISO.match(gen):
         lines.append(f"_generated-at: {gen}_")
+    lines.append("")
+    return "\n".join(lines)
+
+
+# --- hb#134: operating-envelope headline table -------------------------------------------
+# The single "given MY load, what wait do I budget?" table — the reader's only real question.
+# It does NOT re-measure anything: it reconciles the warm/wait numbers already measured across
+# four INDEPENDENT blocks (the warmpool_cold_start scenario, at_scale_contention, the warm
+# concurrent_burst leg, and warm_pool_acquisition) into ONE reader-facing envelope. Every number
+# is READ live from the schema via the SAME closed-schema cleaners the source blocks use — no
+# hardcoded illustrative figures — and each row INHERITS its source block's pending semantics: an
+# INERT/absent source renders THAT row `pending` rather than dropping it (honest skeleton, same
+# discipline as the matrix). A `scope` column keeps a full-TTFE row from ever being silently
+# compared against the acquisition-only sub-phase. The warm-vs-cold speedup leg is deliberately
+# EXCLUDED — it is a ratio-context number, not a wait a reader budgets.
+_ENVELOPE_FULL_TTFE = "full start → first result"
+_ENVELOPE_ACQ_ONLY = "pool hand-off only (before exec)"
+
+
+def _envelope_warm_burst_leg(results):
+    """The representative "many at once" warm concurrent-burst leg for the envelope.
+
+    Prefer the n=300 warm leg (the agreed representative simultaneous-burst point); if absent,
+    fall back to the LARGEST-n warm leg so the row degrades to whatever simultaneous burst was
+    actually measured, labelled with its true N. None ⇒ no warm burst leg ⇒ that row pends.
+    """
+    cb = _clean_concurrent_burst(results)
+    if not cb:
+        return None
+    warm = [
+        leg for leg in cb["legs"]
+        if leg.get("mode") == "warm" and "ttfe_p50_ms" in leg
+        and isinstance(leg.get("n"), int) and not isinstance(leg.get("n"), bool)
+    ]
+    if not warm:
+        return None
+    for leg in warm:
+        if leg["n"] == 300:
+            return leg
+    return max(warm, key=lambda leg: leg["n"])
+
+
+def render_operating_envelope(results):
+    """Render the hb#134 operating-envelope headline table (always renders; rows pend individually).
+
+    Answers the one question a model-builder / agentic-dev actually has: *given my load pattern,
+    what wait do I budget?* Four load patterns, each with its measured p50 wait and a `scope`
+    column so the acquisition-only row is never mis-ranked against the full-TTFE rows. Numbers are
+    render-derived from the live schema; a source block that is absent/INERT pends its row.
+    """
+    scen = _matrix_scenarios(results.get("scenarios"))
+    asc = _clean_at_scale_contention(results)
+    burst = _envelope_warm_burst_leg(results)
+    wpa = _clean_warm_pool_acquisition(results)
+
+    rows = []
+
+    # Row 1 — steady trickle, warm pool keeps up (full TTFE, from the matrix warm scenario).
+    sc = scen.get("warmpool_cold_start")
+    label1 = "Steady trickle — warm pool keeps up with demand"
+    if sc and sc.get("outcome") == "PASS" and "ttfe_p50_ms" in sc["metrics"]:
+        rows.append((label1, _fmt_wait(sc["metrics"]["ttfe_p50_ms"]), _ENVELOPE_FULL_TTFE))
+    else:
+        rows.append((label1, _PENDING, _ENVELOPE_FULL_TTFE))
+
+    # Row 2 — bursty, pool oversubscribed (full TTFE, from the contention retraction point).
+    if asc:
+        pool, claims = asc["pool_size"], asc["claim_count"]
+        ratio = f"{_fmt_ratio(claims / pool)}:1" if pool else "?:1"
+        rows.append((
+            f"Bursty — pool oversubscribed {ratio} ({_fmt_num(claims)} claims / {_fmt_num(pool)} ready)",
+            _fmt_wait(asc["ttfe_p50_ms"]), _ENVELOPE_FULL_TTFE,
+        ))
+    else:
+        rows.append((
+            "Bursty — pool oversubscribed (more claims than ready pool)",
+            _PENDING, _ENVELOPE_FULL_TTFE,
+        ))
+
+    # Row 3 — many simultaneous @1:1 (full TTFE, from the warm concurrent-burst leg).
+    if burst:
+        rows.append((
+            f"{_fmt_num(burst['n'])} sandboxes requested at once (1:1 pool)",
+            _fmt_wait(burst["ttfe_p50_ms"]), _ENVELOPE_FULL_TTFE,
+        ))
+    else:
+        rows.append((
+            "Hundreds of sandboxes requested at once (1:1 pool)",
+            _PENDING, _ENVELOPE_FULL_TTFE,
+        ))
+
+    # Row 4 — sustained high-rate churn (acquisition-ONLY sub-phase — NOT comparable above).
+    if wpa:
+        rate = wpa.get("offered_rate_per_s")
+        label4 = (
+            f"Sustained {_fmt_num(rate)}/sec churn" if rate is not None
+            else "Sustained high-rate churn"
+        )
+        rows.append((label4, _fmt_wait(wpa["acq_p50_ms"]), _ENVELOPE_ACQ_ONLY))
+    else:
+        rows.append(("Sustained high-rate churn", _PENDING, _ENVELOPE_ACQ_ONLY))
+
+    lines = ["## Operating Envelope — what wait should I budget?", ""]
+    lines.append(
+        "Find the row closest to **your** load; the p50 is the wait to plan around. The **Scope** "
+        "column is load-bearing: the first three rows are the **full** start→first-result wait "
+        "(TTFE), directly comparable to one another; the last row is only the **pool hand-off** "
+        "sub-phase (it stops the moment you hold a ready sandbox, before your code runs), so do "
+        "**not** rank its number against the full-TTFE rows above it. Every number is measured, "
+        "not modelled — an unmeasured row reads `pending`, never a guess."
+    )
+    lines.append("")
+    header = ["Your load pattern", "Wait to budget (p50)", "Scope"]
+    lines.append("| " + " | ".join(header) + " |")
+    lines.append("|" + "|".join(["---"] * len(header)) + "|")
+    for label, wait, scope in rows:
+        lines.append(f"| {label} | {wait} | {scope} |")
     lines.append("")
     return "\n".join(lines)
 

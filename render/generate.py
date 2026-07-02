@@ -35,6 +35,7 @@ def _load_render():
     spec.loader.exec_module(mod)
     return (
         mod.render_matrix,
+        mod.render_operating_envelope,
         mod.render_burst_corroboration,
         mod.render_warm_bind_decomposition,
         mod.render_cold_bind_decomposition,
@@ -49,10 +50,10 @@ def _load_render():
     )
 
 
-(render_matrix, render_burst_corroboration, render_warm_bind_decomposition,
- render_cold_bind_decomposition, render_warm_vs_cold, render_scale_proof, render_stepup,
- render_kata_activation, render_concurrent_burst, render_warm_pool_acquisition,
- render_at_scale_contention, render_recipe) = _load_render()
+(render_matrix, render_operating_envelope, render_burst_corroboration,
+ render_warm_bind_decomposition, render_cold_bind_decomposition, render_warm_vs_cold,
+ render_scale_proof, render_stepup, render_kata_activation, render_concurrent_burst,
+ render_warm_pool_acquisition, render_at_scale_contention, render_recipe) = _load_render()
 
 # Product -> results path, relative to the repo root (parent of render/).
 # The PUBLIC customer page is SANDBOX-ONLY (alex 2026-06-28): substrate demotes from a
@@ -148,6 +149,9 @@ def build_readme(root=None):
             results = json.load(fh)
         kr = kata_results if product == "sandbox" else None
         sections.append(render_matrix(results, kata_results=kr).rstrip())
+        # hb#134: the operating-envelope headline table sits directly under the matrix — it is
+        # the "what wait do I budget?" answer, always rendered (rows pend individually).
+        sections.append(render_operating_envelope(results).rstrip())
         corr = render_burst_corroboration(results)
         if corr.strip():
             sections.append(corr.rstrip())
