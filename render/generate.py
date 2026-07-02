@@ -91,21 +91,32 @@ _KATA_RESULTS_REL = "sandbox-kata/results/latest.json"
 _PREAMBLE = """\
 # Honest benchmarks — GKE agent sandbox
 
-Most sandbox benchmarks are marketing: one best-case number, measured once, on a cluster you
-will never get. This page is the opposite — **every number is machine-rendered from a real
-harness run, and reproducible** (the exact steps are in **Reproduce it** at the bottom). No cell
-is typed by hand; anything the schema does not declare is dropped before it reaches the page.
+**How fast can your agent get a sandbox that has actually run its first instruction?** That is the
+only question this page answers. The metric is **TTFE (Time-To-First-Instruction)** — the wall-clock
+from "create this sandbox" to "it ran my first instruction and returned a result." Not pod-Ready (a
+pod can look ready seconds before it can run your code) — the real wait.
 
-We measure the one thing you actually feel — **TTFE (Time-To-First-Instruction)**: the wall-clock
-from "create this sandbox" to "it ran my first instruction and returned a result." Not pod-Ready
-(a pod can look ready seconds before it can run your code) — the real wait.
+**North Star:** a warm sandbox in **under 1 second at 300+ creations/sec**, on a stock GKE cluster
+you can provision yourself.
 
-Every number is a **reproducible floor, not a ceiling** — what a *vanilla* OSS build delivers
-today (upstream controller from `main`, default runtime, no tuning); a bigger pool or denser nodes
-should beat it. The page also prints the truth when it is unflattering: an unmeasured cell reads
-`pending` (never a guess), a throughput that misses its bar prints an honest `0`, and execution
-failures show as a ⚠️ fraction rather than being quietly dropped. The working behind these
-headline tables lives in the deep-dive appendix, [DETAILS.md](DETAILS.md).
+Two runtimes, two isolation trade-offs:
+- **gVisor** — a user-space kernel intercepting syscalls; near-container speed, strong isolation.
+- **Kata** — each sandbox in its own tiny VM; hardware-grade isolation, higher activation cost.
+
+Every number below is **machine-rendered from a real harness run and reproducible** — no cell is
+typed by hand, and each is a **floor, not a ceiling** (what a *vanilla* OSS build delivers today;
+a bigger pool or denser nodes should beat it). Reproduce the whole page in four commands:
+
+```bash
+kind create cluster                                # 0. portable path — a free local cluster
+bash recipe/install-controller-from-main.sh        # 1. the OSS controller, built from upstream main
+python3 -m harness.run                             # 2. run the suite -> sandbox/results/latest.json
+python3 -m render.generate && git diff README.md   # 3. re-render this page + diff the result
+```
+
+First run `pip install -r harness/requirements.txt`; the gVisor/Kata rows need a matching GKE node
+pool — full recipe in [`recipe/REPRODUCE.md`](recipe/REPRODUCE.md), deep-dive tables in
+[DETAILS.md](DETAILS.md).
 """
 
 # Deep-dive appendix header. Same no-measured-numbers-here rule as _PREAMBLE: every
