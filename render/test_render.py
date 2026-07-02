@@ -551,9 +551,21 @@ def _full_gvisor_scenarios():
 
 def test_matrix_renders_doc_exact_gvisor_rows():
     out = render.render_matrix(_matrix_results(_full_gvisor_scenarios()))
-    assert "| gVisor | Warm-pool hit (Base image) | 4 | 4 | 0.6s | 0.9s | 200 | 1.88 | 100% |" in out
-    assert "| gVisor | Unique-image cold (RL reality) | 4 | 0 | 1.2s | 1.56s | 200 | 1.88 | 100% |" in out
-    assert "| gVisor | Resume-from-suspend | 4 | 0 | 3.5s | 5s | 1376 | N/A | 92.8% (1277/1376) ⚠️ |" in out
+    # hb#132: throughput cells are dual `<node> /node · <cluster>`; with no per-cluster field
+    # landed, the cluster half pends `pending (cluster-fire)` while the per-node half is exact.
+    cf = f"pending ({render._CLUSTER_FIRE})"
+    assert (
+        f"| gVisor | Warm-pool hit (Base image) | 4 /node · {cf} | 4 /node · {cf} "
+        "| 0.6s | 0.9s | 200 | 1.88 | 100% |"
+    ) in out
+    assert (
+        f"| gVisor | Unique-image cold (RL reality) | 4 /node · {cf} | 0 /node · {cf} "
+        "| 1.2s | 1.56s | 200 | 1.88 | 100% |"
+    ) in out
+    assert (
+        f"| gVisor | Resume-from-suspend | 4 /node · {cf} | 0 /node · {cf} "
+        "| 3.5s | 5s | 1376 | N/A | 92.8% (1277/1376) ⚠️ |"
+    ) in out
 
 
 def test_matrix_low_n_ttfe_cells_marked():
@@ -609,10 +621,70 @@ def test_matrix_pending_ttfe_never_marked_even_low_n():
 def test_matrix_honest_zero_throughput_not_rounded():
     # the cold + resume rows print a literal 0 for throughput@<1s (p95 misses the bar).
     out = render.render_matrix(_matrix_results(_full_gvisor_scenarios()))
-    # the <1s column on the cold row is exactly "0", never "pending" or a rounded-up value
+    # the per-node half of the <1s cell is exactly "0", never "pending" or a rounded-up value.
     cold_line = [l for l in out.splitlines() if "Unique-image cold" in l][0]
     cells = [c.strip() for c in cold_line.strip("|").split("|")]
-    assert cells[3] == "0"  # Throughput @ <1s TTFE column
+    assert cells[3] == f"0 /node · pending ({render._CLUSTER_FIRE})"  # Throughput @ <1s TTFE
+
+
+def test_matrix_dual_throughput_cluster_figure_above_target_clean():
+    # hb#132: when OUR schema-validated fire lands per-cluster figures at/above the sizing target,
+    # the cluster half renders `<X> /cluster` with NO ⚠️, and the @X-nodes caption resolves.
+    scen = _full_gvisor_scenarios()
+    scen[0]["sla_metrics"].update(
+        {
+            "thpt_under_5s_per_cluster": 350,
+            "thpt_under_1s_per_cluster": 320,
+            "thpt_cluster_node_count": 40,
+        }
+    )
+    out = render.render_matrix(_matrix_results(scen))
+    warm_line = [l for l in out.splitlines() if "Warm-pool hit" in l][0]
+    cells = [c.strip() for c in warm_line.strip("|").split("|")]
+    assert cells[2] == "4 /node · 350 /cluster"
+    assert cells[3] == "4 /node · 320 /cluster"
+    assert "⚠️" not in cells[2] and "⚠️" not in cells[3]
+    assert "at 40 nodes" in out  # X caption resolved from thpt_cluster_node_count
+
+
+def test_matrix_dual_throughput_cluster_figure_below_target_flagged():
+    # hb#132: a landed per-cluster figure BELOW the sizing target is printed REAL (never zeroed or
+    # hidden) and carries ⚠️ — the honest under-target signal for the Phase-1 controller-limited cut.
+    scen = _full_gvisor_scenarios()
+    scen[0]["sla_metrics"].update(
+        {
+            "thpt_under_5s_per_cluster": 148,
+            "thpt_under_1s_per_cluster": 148,
+            "thpt_cluster_node_count": 40,
+        }
+    )
+    out = render.render_matrix(_matrix_results(scen))
+    warm_line = [l for l in out.splitlines() if "Warm-pool hit" in l][0]
+    cells = [c.strip() for c in warm_line.strip("|").split("|")]
+    assert cells[2] == "4 /node · 148 /cluster ⚠️"
+    assert cells[3] == "4 /node · 148 /cluster ⚠️"
+
+
+def test_matrix_dual_throughput_at_target_not_flagged():
+    # boundary: a per-cluster figure EXACTLY at the target is clean (⚠️ fires strictly below).
+    scen = _full_gvisor_scenarios()
+    scen[0]["sla_metrics"].update(
+        {"thpt_under_5s_per_cluster": render.CLUSTER_THROUGHPUT_TARGET, "thpt_cluster_node_count": 40}
+    )
+    out = render.render_matrix(_matrix_results(scen))
+    warm_line = [l for l in out.splitlines() if "Warm-pool hit" in l][0]
+    cells = [c.strip() for c in warm_line.strip("|").split("|")]
+    assert cells[2] == f"4 /node · {render.CLUSTER_THROUGHPUT_TARGET} /cluster"
+    assert "⚠️" not in cells[2]
+
+
+def test_matrix_dual_throughput_caption_pending_without_cluster_fire():
+    # with no per-cluster field landed, the dual caption renders the pending-branch text and the
+    # cluster halves pend — no @X-nodes figure is invented.
+    out = render.render_matrix(_matrix_results(_full_gvisor_scenarios()))
+    assert "Throughput is dual" in out
+    assert f"pending ({render._CLUSTER_FIRE})" in out
+    assert "at 40 nodes" not in out  # no fabricated X without a landed node count
 
 
 def test_matrix_exec_success_n_emitted_preferred_over_derived():
@@ -692,8 +764,14 @@ def test_matrix_density_sourced_from_warmpool_not_stale_burst_create():
         }
     ]
     out = render.render_matrix(_matrix_results(scen))
-    assert "| gVisor | Warm-pool hit (Base image) | 4 | 4 | 0.6s | 0.9s | 200 | 1.88 | 100% |" in out
-    assert "| gVisor | Unique-image cold (RL reality) | 4 | 0 | 1.2s | 1.56s | 200 | 1.88 | 100% |" in out
+    assert (
+        "| gVisor | Warm-pool hit (Base image) | 4 /node · pending (cluster-fire) "
+        "| 4 /node · pending (cluster-fire) | 0.6s | 0.9s | 200 | 1.88 | 100% |"
+    ) in out
+    assert (
+        "| gVisor | Unique-image cold (RL reality) | 4 /node · pending (cluster-fire) "
+        "| 0 /node · pending (cluster-fire) | 1.2s | 1.56s | 200 | 1.88 | 100% |"
+    ) in out
     assert "0.45" not in out
 
 
@@ -839,7 +917,10 @@ def test_matrix_invalid_runtime_provenance_dropped_defaults_gvisor():
     scen = _full_gvisor_scenarios()
     out = render.render_matrix(_matrix_results(scen, provenance={"runtime": "trust-me-vm"}))
     assert "trust-me-vm" not in out
-    assert "| gVisor | Warm-pool hit (Base image) | 4 | 4 | 0.6s | 0.9s | 200 | 1.88 | 100% |" in out
+    assert (
+        "| gVisor | Warm-pool hit (Base image) | 4 /node · pending (cluster-fire) "
+        "| 4 /node · pending (cluster-fire) | 0.6s | 0.9s | 200 | 1.88 | 100% |"
+    ) in out
 
 
 def test_matrix_empty_metrics_renders_pending_skeleton():
@@ -907,7 +988,10 @@ def test_matrix_kata_results_fills_kata_rows_gvisor_unchanged():
         _matrix_results(_full_gvisor_scenarios()),
         kata_results=_kata_results(generated_at="2026-07-02T02:53:00Z"),
     )
-    assert "| gVisor | Warm-pool hit (Base image) | 4 | 4 | 0.6s | 0.9s | 200 | 1.88 | 100% |" in out
+    assert (
+        "| gVisor | Warm-pool hit (Base image) | 4 /node · pending (cluster-fire) "
+        "| 4 /node · pending (cluster-fire) | 0.6s | 0.9s | 200 | 1.88 | 100% |"
+    ) in out
     kata_cold = [l for l in out.splitlines()
                  if l.startswith("| Kata + microVM | Unique-image cold")][0]
     cells = [c.strip() for c in kata_cold.strip("|").split("|")]

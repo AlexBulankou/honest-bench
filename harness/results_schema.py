@@ -39,6 +39,13 @@ PENDING_REASON_ENUM = (
     "requires-gke",
     "not-yet-measured",
     "upstream-blocked",
+    # hb#132 dual-throughput: a cell's per-node throughput half has landed but the
+    # validated per-cluster@X figure awaits its own schema-validated saturation fire.
+    # Render pends the cluster half here today; the harness carries the enum so a
+    # future below-bar / in-progress cluster leg can EMIT it. Kept in sync with
+    # render/schema.py PENDING_REASONS (cross-contract subset test in
+    # test_scenario_portability.py).
+    "cluster-fire",
 )
 # Cold-start image-cache posture (#3885). A CLOSED enum, not free text, so the
 # render page can honestly label which cold start the published cold_start_ms

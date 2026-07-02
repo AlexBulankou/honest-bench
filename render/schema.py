@@ -99,6 +99,13 @@ PENDING_REASONS = {
     # (committed-artifact reclassification path, PR-documented + peer-reviewed); no
     # harness emit path.
     "pool-topology-constrained",
+    # hb#132 dual-throughput: the per-node throughput half of a cell has landed, but the
+    # validated per-cluster@X figure awaits OUR own schema-validated saturation fire. The
+    # cluster half renders `pending (cluster-fire)` until that fire carries the
+    # thpt_*_per_cluster fields. Added to the harness PENDING_REASON_ENUM too (so a future
+    # below-bar / in-progress cluster leg can EMIT it), guarded by the cross-contract subset
+    # test in harness/test_scenario_portability.py.
+    "cluster-fire",
 }
 
 # provenance: only these keys render, each validated by the predicate below.
@@ -291,6 +298,14 @@ MATRIX_METRIC_FIELDS = {
     "ttfe_p99_ms": _nonneg,
     "thpt_under_5s_per_node": _nonneg,
     "thpt_under_1s_per_node": _nonneg,
+    # hb#132 dual-throughput: the validated per-cluster@X companions to the per-node figures.
+    # OPTIONAL — a cell whose per-node half has landed renders `<node> /node · pending
+    # (cluster-fire)` until OUR schema-validated saturation fire carries these. INERT until
+    # then (no matrix cell shows a cluster number without them). thpt_cluster_node_count is the
+    # X in the "@X nodes" caption; a MEASURED per-cluster figure, never a node×X extrapolation.
+    "thpt_under_5s_per_cluster": _nonneg,
+    "thpt_under_1s_per_cluster": _nonneg,
+    "thpt_cluster_node_count": _nonneg,
     "exec_success_rate": lambda v: isinstance(v, (int, float))
     and not isinstance(v, bool)
     and 0.0 <= v <= 1.0,
