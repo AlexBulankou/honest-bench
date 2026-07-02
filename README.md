@@ -43,14 +43,21 @@ pool — full recipe in [`recipe/REPRODUCE.md`](recipe/REPRODUCE.md), deep-dive 
 | Kata + microVM | Unique-image cold (RL reality) | pending | 0 /node · 0 /cluster | 4.8274s (count=1) † | 4.8274s (count=1) † | 100% |
 | Kata + microVM | Resume-from-suspend | N/A | N/A | N/A | N/A | N/A |
 
-_TTFE = Time-To-First-Instruction: the sandbox executed its first instruction and returned a result — not merely pod-Ready._
-_A throughput cell renders an honest `0` when the measured TTFE p95 misses that cell's bar (we print a zero rather than round up). The cell is an SLO-gated rate — the sustained creation rate at which p95 TTFE stays within the bar — so this holds even before a throughput fire runs: if the measured p95 already exceeds the bar, the p95-SLO is unmet at the tested point and the SLO-compliant rate is a derived `0` at every scale, both `/node` and `/cluster`. A derived `0` inherits the sample basis of the p95 it reads: where that p95 carries the single-sample † dagger, so does the `0`._
-_Throughput cells are dual — `per-node · per-cluster`. The per-node figure is the engineering rate; the per-cluster figure is a MEASURED per-activation-mode cluster rate, never a per-node × N extrapolation. It renders `pending (cluster-fire)` until a schema-validated per-mode cluster-throughput fire lands it (distinct from the standalone whole-cluster Saturation ceiling reported separately in DETAILS — that fire measures the aggregate ceiling, not these per-mode cells); a landed figure below the cluster sizing target carries ⚠️._
-_Execution Success is the Honesty Check: <100% prints the succeeded/total fraction and a ⚠️ flag._
-_† marks a TTFE measured over fewer than N=30 samples — read it as a single observation, not a distribution, and do not rank it against a high-N row._
+**How to read the cells**
+
+- **TTFE** — Time-To-First-Instruction: wall-clock from asking for a sandbox until your agent's first instruction has run and returned a result — not merely pod-Ready.
+- **p50 / p95** — median / worst-in-20; plan UX around p95. Read TTFE *down* a column, not across rows — activation-mode rows differ in sample size by orders of magnitude (each cell shows its own `(count=N)`), so only rows with similar N are comparable.
+- **Warm-pool hit vs. Unique-image cold (RL reality)** — a warm-pool hit is served from a pre-started idle pool (startup already paid); the unique-image-cold row is a fresh sandbox on a never-pulled image — image pull + cold start on the critical path, the worst case a reinforcement-learning training loop actually hits.
+- **Throughput `x /node · y /cluster`** — per-node is the engineering rate (comparable across runtimes); per-cluster is a MEASURED per-activation-mode rate at the node count named in the build line below the table, never a per-node × N extrapolation.
+- **honest `0`** — the measurement ran and could not hold the bar: the measured TTFE p95 misses that cell's SLO, so the SLO-compliant throughput is a real `0` (we print it rather than round up) — not "zero activity". A derived `0` inherits the sample basis of the p95 it reads, so a single-sample p95 yields a single-sample `0` carrying †.
+- **†** — measured over fewer than N=30 samples: read it as a single observation, not a distribution; do not rank it against a high-N row.
+- **⚠️** — a miss flag: on Execution Success it marks <100% (and prints the succeeded/total fraction); on a per-cluster throughput figure it marks a rate below the cluster sizing target.
+- **`pending`** — awaits its TTFE-instrumented run (a genuinely not-yet-run cell).
+- **`pending (upstream-blocked)`** — the run DID land, but an upstream controller gap (the resume path's Suspended condition never clears) holds it; it graduates to a real number the moment the upstream fix lands, not merely when a run is scheduled.
+- **`pending (cluster-fire)`** — the per-node figure is measured, but the per-cluster half awaits a schema-validated per-mode cluster-throughput fire (distinct from the whole-cluster Saturation ceiling in DETAILS, which measures the aggregate ceiling at overload, not these SLO-gated per-mode cells).
+- **`N/A`** — `N/A` by construction: Resume-from-suspend × Kata + microVM can never be measured — CRIU checkpoint/restore does not transfer to the Kata VM isolation model — distinct from `pending`, which awaits a run.
+
 _Kata + microVM rows are measured in a separate run on the kata node pool: cluster_substrate=gke-kata · node_count=2 · generated-at=2026-07-02T04:51:48Z._
-_Resume-from-suspend × Kata + microVM renders `N/A` by construction — CRIU checkpoint/restore does not transfer to the Kata VM isolation model, so that cell can never be measured (distinct from `pending`, which awaits a run)._
-_A bare `pending` cell awaits its TTFE-instrumented run. A `pending (upstream-blocked)` cell is different: that run DID land, but an upstream controller gap (the resume path's Suspended condition never clears) holds it — the cell graduates to a real number the moment the upstream fix lands, not merely when a run is scheduled._
 
 _build: cluster_substrate=gke-sandbox · run_id=dc1dd343fee74008a2f75ccdfed39eb9 · node_count=1_
 _generated-at: 2026-07-01T07:23:08Z_

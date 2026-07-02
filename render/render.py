@@ -752,46 +752,76 @@ def render_matrix(results, kata_results=None):
             )
     lines.append("")
 
-    # honesty / provenance footnotes (no internal refs — public PII fence).
+    # honesty / provenance legend (no internal refs — public PII fence). A compact
+    # "How to read the cells" glossary replaces the prior loose footnote stack: every honesty
+    # semantic (TTFE basis, honest-0, dual throughput, low-N †, ⚠️ miss-flag, the three pending
+    # flavors, N/A-by-construction) is one scannable line, plus a plain-English gloss for the
+    # warm-pool-hit vs unique-image-cold rows. The DYNAMIC Kata-provenance line stays a separate
+    # italic footnote below — it carries closed-schema run provenance the glossary cannot.
+    lines.append("**How to read the cells**")
+    lines.append("")
     lines.append(
-        "_TTFE = Time-To-First-Instruction: the sandbox executed its first instruction and "
-        "returned a result — not merely pod-Ready._"
+        "- **TTFE** — Time-To-First-Instruction: wall-clock from asking for a sandbox until your "
+        "agent's first instruction has run and returned a result — not merely pod-Ready."
     )
     lines.append(
-        "_A throughput cell renders an honest `0` when the measured TTFE p95 misses that cell's "
-        "bar (we print a zero rather than round up). The cell is an SLO-gated rate — the sustained "
-        "creation rate at which p95 TTFE stays within the bar — so this holds even before a "
-        "throughput fire runs: if the measured p95 already exceeds the bar, the p95-SLO is unmet at "
-        "the tested point and the SLO-compliant rate is a derived `0` at every scale, both `/node` "
-        "and `/cluster`. A derived `0` inherits the sample basis of the p95 it reads: where that "
-        "p95 carries the single-sample † dagger, so does the `0`._"
+        "- **p50 / p95** — median / worst-in-20; plan UX around p95. Read TTFE *down* a column, "
+        "not across rows — activation-mode rows differ in sample size by orders of magnitude "
+        "(each cell shows its own `(count=N)`), so only rows with similar N are comparable."
     )
     lines.append(
-        "_Throughput cells are dual — `per-node · per-cluster`. The per-node figure is the "
-        "engineering rate; the per-cluster figure is a MEASURED per-activation-mode cluster rate, "
-        "never a per-node × N extrapolation. It renders `pending (cluster-fire)` until a "
-        "schema-validated per-mode cluster-throughput fire lands it (distinct from the standalone "
-        "whole-cluster Saturation ceiling reported separately in DETAILS — that fire measures the "
-        "aggregate ceiling, not these per-mode cells); a landed figure below the cluster sizing "
-        "target carries ⚠️._"
+        "- **Warm-pool hit vs. Unique-image cold (RL reality)** — a warm-pool hit is served from "
+        "a pre-started idle pool (startup already paid); the unique-image-cold row is a fresh "
+        "sandbox on a never-pulled image — image pull + cold start on the critical path, the "
+        "worst case a reinforcement-learning training loop actually hits."
     )
     lines.append(
-        "_Execution Success is the Honesty Check: <100% prints the succeeded/total fraction "
-        "and a ⚠️ flag._"
+        "- **Throughput `x /node · y /cluster`** — per-node is the engineering rate (comparable "
+        "across runtimes); per-cluster is a MEASURED per-activation-mode rate at the node count "
+        "named in the build line below the table, never a per-node × N extrapolation."
     )
     lines.append(
-        f"_{_LOW_N_MARK} marks a TTFE measured over fewer than N={TTFE_COMPARABILITY_MIN_N} "
-        "samples — read it as a single observation, not a distribution, and do not rank it "
-        "against a high-N row._"
+        "- **honest `0`** — the measurement ran and could not hold the bar: the measured TTFE p95 misses "
+        "that cell's SLO, so the SLO-compliant throughput is a real `0` (we print it rather than "
+        "round up) — not \"zero activity\". A derived `0` inherits the sample basis of the p95 it "
+        f"reads, so a single-sample p95 yields a single-sample `0` carrying {_LOW_N_MARK}."
     )
+    lines.append(
+        f"- **{_LOW_N_MARK}** — measured over fewer than N={TTFE_COMPARABILITY_MIN_N} samples: "
+        "read it as a single observation, not a distribution; do not rank it against a high-N row."
+    )
+    lines.append(
+        "- **⚠️** — a miss flag: on Execution Success it marks <100% (and prints the "
+        "succeeded/total fraction); on a per-cluster throughput figure it marks a rate below the "
+        "cluster sizing target."
+    )
+    lines.append(
+        "- **`pending`** — awaits its TTFE-instrumented run (a genuinely not-yet-run cell)."
+    )
+    lines.append(
+        "- **`pending (upstream-blocked)`** — the run DID land, but an upstream controller gap "
+        "(the resume path's Suspended condition never clears) holds it; it graduates to a real "
+        "number the moment the upstream fix lands, not merely when a run is scheduled."
+    )
+    lines.append(
+        "- **`pending (cluster-fire)`** — the per-node figure is measured, but the per-cluster "
+        "half awaits a schema-validated per-mode cluster-throughput fire (distinct from the "
+        "whole-cluster Saturation ceiling in DETAILS, which measures the aggregate ceiling at "
+        "overload, not these SLO-gated per-mode cells)."
+    )
+    lines.append(
+        "- **`N/A`** — `N/A` by construction: Resume-from-suspend × Kata + microVM can never be "
+        "measured — CRIU checkpoint/restore does not transfer to the Kata VM isolation model — "
+        "distinct from `pending`, which awaits a run."
+    )
+    lines.append("")
+    # The Kata rows fill from a SEPARATE run (the sandbox-kata product) on the kata node pool —
+    # a different cluster substrate + machine shape than the build banner below — so disclose
+    # that run's own closed-schema provenance rather than letting the gVisor banner silently
+    # cover both. Same closed-schema fields as the banner; no free-text can ride this line.
     if "kata-microvm" not in sources:
         lines.append("_Kata + microVM rows are not-yet-measured (requires-kata-microvm)._")
     elif kata_prov is not None:
-        # The kata rows fill from a SEPARATE run (the sandbox-kata product) on the kata
-        # node pool — a different cluster substrate + machine shape than the build banner
-        # below, so disclose that run's own provenance rather than letting the gVisor
-        # banner silently cover both. Same closed-schema fields as the banner; no
-        # free-text can ride this line.
         kata_banner = [
             f"{k}={kata_prov[k]}"
             for k in ("cluster_substrate", "machine_type", "node_count")
@@ -804,17 +834,6 @@ def render_matrix(results, kata_results=None):
             + (": " + " · ".join(kata_banner) if kata_banner else "")
             + "._"
         )
-    lines.append(
-        "_Resume-from-suspend × Kata + microVM renders `N/A` by construction — CRIU "
-        "checkpoint/restore does not transfer to the Kata VM isolation model, so that cell "
-        "can never be measured (distinct from `pending`, which awaits a run)._"
-    )
-    lines.append(
-        "_A bare `pending` cell awaits its TTFE-instrumented run. A `pending (upstream-blocked)` "
-        "cell is different: that run DID land, but an upstream controller gap (the resume path's "
-        "Suspended condition never clears) holds it — the cell graduates to a real number the "
-        "moment the upstream fix lands, not merely when a run is scheduled._"
-    )
     lines.append("")
 
     banner_order = [
