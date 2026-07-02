@@ -2214,6 +2214,58 @@ def test_concurrent_burst_invalid_provenance_dropped_spine_renders():
     assert "docker.pkg.dev" not in out  # internal registry path never reaches the page
 
 
+def _scale_proof_obj():
+    return {
+        "scale_points": [
+            {"node_count": 1, "density": 1.88},
+            {"node_count": 2, "density": 1.86},
+            {"node_count": 4, "density": 1.85},
+        ],
+        "density_retention": 0.984,
+        "thpt_retention": 0.99,
+    }
+
+
+def test_cluster_scale_both_present_combined_section_demotes_subheadings():
+    # hb#134: with BOTH sub-blocks present the combined section renders one ## question, the
+    # intro, and the two tables DEMOTED to ### — the standalone ## headings must NOT appear.
+    results = _matrix_results(
+        _full_gvisor_scenarios(), scale_proof=_scale_proof_obj(), concurrent_burst=_cb())
+    out = render.render_cluster_scale(results)
+    assert "## Does it hold at cluster scale?" in out
+    assert "### Linearity — throughput and density hold flat as nodes grow" in out
+    assert "### Concurrent burst — TTFE at N simultaneous claims" in out
+    # the two blocks' standalone ## headings are gone (demoted, not duplicated).
+    assert "## Scale Proof (Linearity Check)" not in out
+    assert "## Concurrent Burst — TTFE at N simultaneous claims" not in out
+    # both tables' data still lands under the merged section.
+    assert "| 1 → 2 → 4 | ✅ Yes (1.88 → 1.86 → 1.85) | ✅ Yes |" in out
+    assert "| 300 | Warm pool | 6.8743s | 9.393s | 0.392 | 0 | 100% |" in out
+
+
+def test_cluster_scale_both_absent_inert():
+    # Neither sub-block present ⇒ the whole section is INERT (no empty header).
+    assert render.render_cluster_scale(_matrix_results(_full_gvisor_scenarios())) == ""
+
+
+def test_cluster_scale_only_burst_renders_wrapper_without_linearity():
+    # Only concurrent_burst present ⇒ wrapper + burst ###; NO linearity sub-block.
+    out = render.render_cluster_scale(
+        _matrix_results(_full_gvisor_scenarios(), concurrent_burst=_cb()))
+    assert "## Does it hold at cluster scale?" in out
+    assert "### Concurrent burst — TTFE at N simultaneous claims" in out
+    assert "### Linearity" not in out
+
+
+def test_cluster_scale_only_linearity_renders_wrapper_without_burst():
+    # Only scale_proof present ⇒ wrapper + linearity ###; NO concurrent-burst sub-block.
+    out = render.render_cluster_scale(
+        _matrix_results(_full_gvisor_scenarios(), scale_proof=_scale_proof_obj()))
+    assert "## Does it hold at cluster scale?" in out
+    assert "### Linearity — throughput and density hold flat as nodes grow" in out
+    assert "### Concurrent burst" not in out
+
+
 def _wpa(**over):
     base = {
         "runtime_class": "gvisor",

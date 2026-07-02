@@ -72,7 +72,11 @@ A warm-pool provision is **7.28251× faster** than a true-cold start (gVisor) �
 
 _Measured 2026-07-02 — warm-vs-cold speedup (point-in-time; refreshed on the next TTFE fire)._
 
-## Scale Proof (Linearity Check)
+## Does it hold at cluster scale?
+
+Two questions a bigger cluster raises: does throughput stay flat as you add nodes (**linearity**), and what does a single all-at-once burst of N claims cost (**concurrency**)? Both below, on the same TTFE spine as the headline matrix.
+
+### Linearity — throughput and density hold flat as nodes grow
 
 | Nodes Tested | Density Holds Flat? | Throughput Holds Flat? |
 |---|---|---|
@@ -82,7 +86,7 @@ _Per-step density retention: 1→2 ✅ 1 · 2→4 ✅ 1 · 4→8 ✅ 1 · 8→16
 
 _Measured 2026-06-29 — node-count linearity sweep (point-in-time; refreshed on the next multi-node sweep)._
 
-## Concurrent Burst — TTFE at N simultaneous claims
+### Concurrent burst — TTFE at N simultaneous claims
 
 Each row is a **single all-at-once burst of N concurrent claims** (not a ramped per-second rate). TTFE is the same metric the Core Metrics matrix reports (executed-first-instruction-and-returned-a-result), so these columns **are comparable to the matrix TTFE columns**. *Warm pool* fires against a pre-provisioned pool of N ready sandboxes; *cold provision* starts from an empty pool (node-autoscaler + image-pull in the critical path). Measured on node_count=20, `e2-standard-16`.
 

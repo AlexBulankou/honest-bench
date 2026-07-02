@@ -1341,12 +1341,15 @@ def _clean_scale_proof(results):
     }
 
 
-def render_scale_proof(results):
+def render_scale_proof(results, heading="## Scale Proof (Linearity Check)"):
     """Render the doc's Scale Proof (Linearity Check) table, or "" when no scale_proof present.
 
     Proof that per-node throughput + density hold flat as the cluster grows — the linearity the
     doc's second table asserts. Retention >= ~0.9 reads ✅ (flat or a superlinear beat); only a
     sag below ~0.9 reads ⚠️ (controller-is-ceiling). See _flat_verdict for the asymmetric framing.
+
+    hb#134: `heading` is overridable so the combined "Does it hold at cluster scale?" section
+    (render_cluster_scale) can demote this to a `###` sub-block; default keeps the standalone `##`.
     """
     sp = _clean_scale_proof(results)
     if not sp:
@@ -1359,7 +1362,7 @@ def render_scale_proof(results):
     thpt_verdict = _flat_verdict(sp["thpt_retention"])
 
     header = ["Nodes Tested", "Density Holds Flat?", "Throughput Holds Flat?"]
-    lines = ["## Scale Proof (Linearity Check)", ""]
+    lines = [heading, ""]
     lines.append("| " + " | ".join(header) + " |")
     lines.append("|" + "|".join(["---"] * len(header)) + "|")
     lines.append("| " + " | ".join([nodes, dens_verdict, thpt_verdict]) + " |")
@@ -1682,18 +1685,21 @@ def _cb_thpt_cell(leg, key):
     return "—"
 
 
-def render_concurrent_burst(results):
+def render_concurrent_burst(results, heading="## Concurrent Burst — TTFE at N simultaneous claims"):
     """Render the concurrent-burst sweep block (#4021), or "" when INERT.
 
     Publishes a single all-at-once burst of N concurrent claims (the complement to the per-second
     rate the matrix/step-up report), warm-pool vs cold-provision, on the SAME TTFE spine as the
     Core Metrics matrix — so the TTFE columns ARE comparable to the matrix. INERT until the harness
     emits a closed-schema-clean concurrent_burst object.
+
+    hb#134: `heading` is overridable so the combined "Does it hold at cluster scale?" section
+    (render_cluster_scale) can demote this to a `###` sub-block; default keeps the standalone `##`.
     """
     cb = _clean_concurrent_burst(results)
     if not cb:
         return ""
-    lines = ["## Concurrent Burst — TTFE at N simultaneous claims", ""]
+    lines = [heading, ""]
     caption = (
         "Each row is a **single all-at-once burst of N concurrent claims** (not a ramped "
         "per-second rate). TTFE is the same metric the Core Metrics matrix reports "
@@ -1738,6 +1744,37 @@ def render_concurrent_burst(results):
         lines.append(f"_Measured {cb['measured_at'][:10]} — concurrent-burst TTFE (point-in-time)._")
         lines.append("")
     return "\n".join(lines)
+
+
+def render_cluster_scale(results):
+    """hb#134: the combined "Does it hold at cluster scale?" headline section.
+
+    Merges the two cluster-scale questions a non-infra reader actually has — does per-node
+    throughput/density stay flat as nodes grow (linearity, render_scale_proof) and what does a
+    single all-at-once burst of N claims cost (concurrency, render_concurrent_burst) — under one
+    user-facing question, with the two tables demoted to `###` sub-blocks. Each sub-block stays
+    independently closed-schema INERT (an absent one simply doesn't render); the wrapper heading +
+    intro appear ONLY when at least one sub-block is present, so the section degrades to nothing
+    rather than an empty header. Same page-split discipline as render_warm_vs_cold/at_scale.
+    """
+    scale = render_scale_proof(
+        results, heading="### Linearity — throughput and density hold flat as nodes grow")
+    burst = render_concurrent_burst(
+        results, heading="### Concurrent burst — TTFE at N simultaneous claims")
+    if not scale.strip() and not burst.strip():
+        return ""
+    lines = ["## Does it hold at cluster scale?", ""]
+    lines.append(
+        "Two questions a bigger cluster raises: does throughput stay flat as you add nodes "
+        "(**linearity**), and what does a single all-at-once burst of N claims cost "
+        "(**concurrency**)? Both below, on the same TTFE spine as the headline matrix.")
+    lines.append("")
+    if scale.strip():
+        lines.append(scale.rstrip())
+        lines.append("")
+    if burst.strip():
+        lines.append(burst.rstrip())
+    return "\n".join(lines).rstrip()
 
 
 # --- #4083: warm-pool acquisition-latency render ------------------------------------------

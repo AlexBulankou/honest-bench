@@ -41,6 +41,7 @@ def _load_render():
         mod.render_cold_bind_decomposition,
         mod.render_warm_vs_cold,
         mod.render_scale_proof,
+        mod.render_cluster_scale,
         mod.render_stepup,
         mod.render_kata_activation,
         mod.render_concurrent_burst,
@@ -53,9 +54,9 @@ def _load_render():
 
 (render_matrix, render_operating_envelope, render_burst_corroboration,
  render_warm_bind_decomposition, render_cold_bind_decomposition, render_warm_vs_cold,
- render_scale_proof, render_stepup, render_kata_activation, render_concurrent_burst,
- render_warm_pool_acquisition, render_at_scale_contention, render_density_detail,
- render_recipe) = _load_render()
+ render_scale_proof, render_cluster_scale, render_stepup, render_kata_activation,
+ render_concurrent_burst, render_warm_pool_acquisition, render_at_scale_contention,
+ render_density_detail, render_recipe) = _load_render()
 
 # Product -> results path, relative to the repo root (parent of render/).
 # The PUBLIC customer page is SANDBOX-ONLY (alex 2026-06-28): substrate demotes from a
@@ -156,15 +157,14 @@ def build_readme(root=None):
         speedup = render_warm_vs_cold(results, punchline_only=True)
         if speedup.strip():
             sections.append(speedup.rstrip())
-        scale = render_scale_proof(results)
-        if scale.strip():
-            sections.append(scale.rstrip())
-        stepup = render_stepup(results)
+        # hb#134: Scale-Proof + Concurrent-Burst merge into ONE user-facing "Does it hold at
+        # cluster scale?" section (render_cluster_scale demotes each to a ### sub-block).
+        cluster_scale = render_cluster_scale(results)
+        if cluster_scale.strip():
+            sections.append(cluster_scale.rstrip())
+        stepup = render_stepup(results)  # INERT today; standalone ## when a stepup object emits
         if stepup.strip():
             sections.append(stepup.rstrip())
-        burst = render_concurrent_burst(results)
-        if burst.strip():
-            sections.append(burst.rstrip())
         contention = render_at_scale_contention(results)  # page: retraction posture only
         if contention.strip():
             sections.append(contention.rstrip())
