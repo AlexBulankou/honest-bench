@@ -1,6 +1,7 @@
-"""Offline tests for the #112 daily-refresh carry-forward of the five producer-less
+"""Offline tests for the #112 daily-refresh carry-forward of the six producer-less
 blocks — kata_activation (#3942), concurrent_burst (#4021), warm_pool_acquisition
-(#4083), at_scale_contention (#810), cluster_saturation (hb#132). No cluster, no I/O
+(#4083), at_scale_contention (#810), cluster_saturation (hb#132),
+provisioning_rate_sweep (#4086). No cluster, no I/O
 beyond self-managed tempfiles.
 
 Run with bare python3 (the auto-refresh GH-runner needs nothing extra):
@@ -122,6 +123,20 @@ _PRIOR_CS = {
     "machine_type": "n2-standard-16",
     "measured_at": "2026-07-02",
 }
+_PRIOR_PRS = {
+    "runtime_class": "gvisor",
+    "ceiling_low_per_s": 100,
+    "ceiling_high_per_s": 150,
+    "rate_points": [
+        {"offered_rate_per_s": 100, "warmpool_size": 1500, "converged": True,
+         "ready_pct": 100.0, "elapsed_s": 301.0},
+        {"offered_rate_per_s": 150, "warmpool_size": 2250, "converged": False,
+         "ready_pct": 42.0, "timeout_s": 1125.0},
+        {"offered_rate_per_s": 200, "warmpool_size": 3000, "converged": False,
+         "ready_pct": 21.0, "timeout_s": 1880.0},
+    ],
+    "measured_at": "2026-07-01",
+}
 
 _BLOCKS = (
     ("kata_activation", run.carry_prior_kata_activation,
@@ -134,6 +149,8 @@ _BLOCKS = (
      run._read_prior_at_scale_contention, _PRIOR_ASC),
     ("cluster_saturation", run.carry_prior_cluster_saturation,
      run._read_prior_cluster_saturation, _PRIOR_CS),
+    ("provisioning_rate_sweep", run.carry_prior_provisioning_rate_sweep,
+     run._read_prior_provisioning_rate_sweep, _PRIOR_PRS),
 )
 
 
