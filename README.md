@@ -71,6 +71,18 @@ A warm-pool provision is **7.28251× faster** than a true-cold start (gVisor) �
 
 _Measured 2026-07-02 — warm-vs-cold speedup (point-in-time; refreshed on the next TTFE fire)._
 
+## What this means for you
+
+The tables above are the raw measurements. If you build *on* sandboxes but do not run the cluster yourself, here is what they mean in practice:
+
+- **Keep a warm pool sized to demand and a new sandbox is ready in ~0.6s (~0.9s at the p95).** That is fast enough to put a fresh sandbox directly in a user-facing request path — no need to hide it behind a spinner or pre-allocate one per session.
+- **A warm-pool hit is about 7.3× faster than starting cold (gVisor).** If start-up latency matters to you, the warm pool is the single biggest lever — size it for your steady demand and most claims never pay the cold path.
+- **Big simultaneous bursts still work — 300 sandboxes asked for at once settled in ~6.9s.** But that is the pool-overflow regime: the wait climbs toward the cold-start number as claims outrun ready slots, so plan the pool around your steady rate, not your worst spike.
+- **Rule of thumb for pool size:** start near your typical concurrent demand (≈0.75× of it) and tune from there. This is a planning heuristic, not one of the measured numbers above.
+- **Pick gVisor for now.** It is the only runtime measured end-to-end here; the Kata + microVM rows are structural placeholders, not a recommendation.
+- **Do not design around suspend/resume yet.** It is blocked upstream on both runtimes, so treat it as unavailable until those cells show real numbers.
+- **A cell marked `pending` is unmeasured, not bad.** It means that measurement has not run yet (or is blocked upstream) — never that the platform failed it.
+
 ## Does it hold at cluster scale?
 
 Three questions a bigger cluster raises: does throughput stay flat as you add nodes (**linearity**), what does a single all-at-once burst of N claims cost (**concurrency**), and where does the whole-cluster warm hand-out rate saturate (**ceiling**)? All below, on the same TTFE spine as the headline matrix.
