@@ -250,6 +250,75 @@ Everything above is architecture-shape only; the achieved figures come from a re
 gke-sandbox fire and land in the build banner + the Core Metrics / Concurrent
 Burst tables on the published page, never hand-entered here.
 
+## The matrix cluster cell: per-mode SLO-gated cluster rate
+
+The Core Metrics matrix throughput cells carry two halves: a per-node rate and a
+**per-cluster rate at X nodes**. The cluster half is an **SLO-gated rate** — the
+sustained creation rate (sandboxes/sec across the whole cluster) at which the
+mode's **p95 TTFE stays inside the bar** (5s or 1s) — *not* saturation
+throughput. A saturation fire (push until the knee) answers "where does it
+fall over"; the matrix cell answers "how fast can you go while still meeting
+the latency bar". One number cannot serve both questions, so the cluster half
+is produced by a **per-mode step-up sweep**, derived per bar independently.
+
+**The fire (spend-gated — a real multi-node cluster at the published X).** For
+each activation-mode row you want to fill, run a step-up sweep *through that
+mode's activation path* (warm-pool hit, cold create, resume-from-suspend) at
+increasing offered rates, holding each rung long enough to measure a stable
+`ready_per_s` and `ttfe_p95_ms`. The CL2 step-up driver described in the
+headline section produces exactly this shape; the sweep record is the nested
+`BENCH_STEPUP_RESULT` form:
+
+```json
+{
+  "params": {"cluster_nodes": 40},
+  "pareto": [
+    {"offered_rate_per_s": 10,  "ready_per_s": 9.8,  "ttfe_p95_ms": 850.0},
+    {"offered_rate_per_s": 30,  "ready_per_s": 28.4, "ttfe_p95_ms": 3200.0},
+    {"offered_rate_per_s": 100, "ready_per_s": 41.0, "ttfe_p95_ms": 12610.3}
+  ]
+}
+```
+
+As with the concurrent-N driver, the caller exports `KUBECONFIG` first and the
+sweep writes a timestamped record file, **not** `sandbox/results/latest.json` —
+the fire is a measurement probe, decoupled from the published page.
+
+**The derivation (zero additional fire).** Point the harness at each mode's
+sweep record via `BENCH_SLO_SWEEP_<SCENARIO>` and re-run the suite step:
+
+```bash
+# one env var per matrix row; set only the ones you swept.
+BENCH_SLO_SWEEP_WARMPOOL_COLD_START=warm-sweep-40n.json \
+BENCH_SLO_SWEEP_NATIVE_DIGEST_COLD=cold-sweep-40n.json \
+BENCH_SLO_SWEEP_SUSPEND_RESUME=resume-sweep-40n.json \
+  python3 -m harness.run --product sandbox
+```
+
+For each bar (5s, 1s) independently, the derivation (`harness/slo_rate.py`)
+takes the **max measured `ready_per_s` among rungs whose own `ttfe_p95_ms` is
+within the bar** and merges the coupled triple —
+`thpt_under_5s_per_cluster` + `thpt_under_1s_per_cluster` +
+`thpt_cluster_node_count` — into that scenario's metrics. The honesty spine:
+
+- **Measured rate only** — `ready_per_s`, never the offered rate, is credited.
+- **Per-bar independent fill** — a sweep whose lowest rung clears 5s but not 1s
+  publishes the 5s half and leaves the 1s half `pending`; the two bars'
+  boundary rates generally differ, which is exactly why a single boundary fire
+  cannot honestly fill both (and why this sweep derivation is the preferred
+  producer over the direct-emit leg).
+- **No compliant rung ⇒ pending, never 0** — a sweep that never probed below
+  the boundary proves nothing about it.
+- **`cluster_nodes` required** — the render pins "at X nodes" from
+  `thpt_cluster_node_count`; a record without it pends the whole cell rather
+  than printing a rate the page cannot caption.
+- The env vars are read only under `--product sandbox` and are default-off:
+  with none set, the run's emit is byte-identical to today's.
+
+A previously-published triple is carried forward across later env-less runs
+(same do-not-auto-decay posture as the scale-proof block), so one reviewed
+sweep fire per mode keeps the cell filled until a fresh fire supersedes it.
+
 ## Reproduce in CI (no laptop required)
 
 The same two paths above also run as **dispatch-only** GitHub Actions, so you can

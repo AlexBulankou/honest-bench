@@ -121,11 +121,14 @@ def throughput_per_cluster(
 
     Same qualifying rule as throughput_per_node but WITHOUT the node divisor:
     qualifying / window_s. This is the hb#132 per-cluster half of the dual
-    matrix cell — a MEASURED rate from this fire's own samples, legitimate ONLY
-    for a genuine cluster-saturation fire (the caller contract on
-    ttfe_sla_metrics' cluster_node_count kwarg). It is NEVER per-node x N
-    extrapolation: the render forbids that, and this function cannot produce it
-    because it never sees a node count.
+    matrix cell — a MEASURED rate from this fire's own samples. Per the #149
+    per-mode contract, that figure equals the cell's defined quantity (the
+    SLO-gated sustained rate) only when the fire's offered load sits AT that
+    bar's SLO boundary — see the caller contract on ttfe_sla_metrics'
+    cluster_node_count kwarg for why a single fire cannot honestly serve both
+    bars and why the sweep derivation (harness/slo_rate.py) is the preferred
+    producer. It is NEVER per-node x N extrapolation: the render forbids that,
+    and this function cannot produce it because it never sees a node count.
 
     None samples (never reached first-execution) never qualify. Returns 0.0
     when no sample beats the threshold -- the honest "print 0".
@@ -234,13 +237,22 @@ def ttfe_sla_metrics(
 
     cluster_node_count (the hb#132 PER-CLUSTER emit leg, opt-in): when supplied,
     emit the COUPLED TRIPLE thpt_under_5s_per_cluster + thpt_under_1s_per_cluster
-    + thpt_cluster_node_count. CALLER CONTRACT — pass this ONLY for a genuine
-    cluster-saturation fire (offered load held at/above the cluster's saturation
-    point at that node count): the per-cluster halves are measured from THIS
-    fire's own samples (qualifying/window_s), so on a non-saturating fire they
-    would honestly report the offered load, not cluster capacity, and the render
-    would publish an under-read. The triple is all-or-nothing by construction
-    (never per_cluster without node_count — the render pins X from
+    + thpt_cluster_node_count. CALLER CONTRACT (amended per #149 — the matrix
+    cluster cell is an SLO-GATED RATE, the sustained creation rate at which p95
+    TTFE stays within the bar; NOT saturation/overload throughput): the
+    per-cluster halves are measured from THIS fire's own samples
+    (qualifying/window_s), so the figure equals the cell's defined quantity only
+    when the fire's offered load is pinned AT a bar's SLO boundary. Because this
+    triple couples BOTH bars, a single boundary fire cannot honestly serve both
+    (the 5s- and 1s-boundary rates generally differ — the off-boundary bar would
+    print an under-read). The PREFERRED producer of the matrix triple is
+    therefore the step-up sweep derivation (harness/slo_rate.py:
+    slo_sla_metrics_from_stepup), which fills each bar independently from its
+    own compliant rung and pends the rest. This direct emit leg remains for the
+    schema contract and for a fire that genuinely measures one bar's boundary
+    (accepting the other bar's under-read is NOT acceptable — route through the
+    sweep instead). The triple is all-or-nothing by construction here (never
+    per_cluster without node_count — the render pins X from
     thpt_cluster_node_count), and the default None leaves every existing fire's
     emit byte-identical. NEVER derived as per-node x N.
     """

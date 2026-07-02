@@ -1598,6 +1598,102 @@ def test_emit_to_render_provisioning_rate_sweep_convergence():
     )
 
 
+def test_emit_to_render_slo_sweep_convergence():
+    """Convergence guard for the per-mode SLO cluster-rate sweep leg (hb#132/#149).
+
+    The harness ingestion (run.merge_slo_sweeps -> slo_rate.slo_sla_metrics_from_stepup) mirrors
+    the render matrix's activation-mode rows as a LITERAL scenario tuple (the harness never
+    imports render — offline-portability discipline), so the two vocabularies can drift silently:
+    a renamed matrix row would leave its BENCH_SLO_SWEEP_* env var pointing at a scenario the
+    render side no longer knows, and the derived triple would merge into a cell the matrix never
+    renders. This test pins (a) name parity between run.SLO_SWEEP_SCENARIOS and
+    schema.ACTIVATION_MODE_ROWS, and (b) the full emit->render round-trip for the INDEPENDENT
+    per-bar fill — a sweep whose lowest rung clears only the 5s bar must fill the 5s cluster half
+    (with the @X-nodes caption) while the 1s half keeps `pending (cluster-fire)`, straight through
+    merge_slo_sweeps -> build_results (per-key sla_metrics coercion must keep the partial triple)
+    -> render_matrix. Loud first.
+    """
+    import tempfile
+
+    import schema
+
+    sys.path.insert(0, _ROOT)
+    try:
+        from harness import run as _run
+    except Exception as exc:  # pragma: no cover - harness has its own deps
+        print(f"  (skip: harness run not importable: {exc})")
+        return
+
+    # (a) scenario-name parity — order-sensitive (both sides are ordered row lists).
+    assert tuple(_run.SLO_SWEEP_SCENARIOS) == tuple(n for n, _ in schema.ACTIVATION_MODE_ROWS), (
+        "emit/render DRIFT: harness run.SLO_SWEEP_SCENARIOS "
+        f"{tuple(_run.SLO_SWEEP_SCENARIOS)} != render schema.ACTIVATION_MODE_ROWS names "
+        f"{tuple(n for n, _ in schema.ACTIVATION_MODE_ROWS)} — a sweep env var would merge its "
+        "derived triple into a scenario the matrix never renders (or vice versa)."
+    )
+
+    # (b) emit->render round-trip with an independent per-bar fill: the only compliant rung
+    # clears the 5s bar (p95 3.2s) but not the 1s bar; the top rung overloads past both.
+    nested = {
+        "params": {"cluster_nodes": 40},
+        "pareto": [
+            {"offered_rate_per_s": 30, "ready_per_s": 28.4, "ttfe_p95_ms": 3200.0},
+            {"offered_rate_per_s": 100, "ready_per_s": 41.0, "ttfe_p95_ms": 12610.3},
+        ],
+    }
+    raw = [{
+        "name": "warmpool_cold_start", "outcome": "PASS", "n": 200,
+        "sla_metrics": {"ttfe_p50_ms": 600.0, "ttfe_p95_ms": 900.0,
+                        "thpt_under_5s_per_node": 4.0, "thpt_under_1s_per_node": 4.0,
+                        "exec_success_rate": 1.0},
+    }]
+    var = _run.slo_sweep_env_var("warmpool_cold_start")
+    saved = os.environ.get(var)
+    fd, tmp = tempfile.mkstemp(suffix=".json")
+    try:
+        with os.fdopen(fd, "w") as fh:
+            json.dump(nested, fh)
+        os.environ[var] = tmp
+        _run.merge_slo_sweeps(raw, "sandbox")
+    finally:
+        if saved is None:
+            os.environ.pop(var, None)
+        else:
+            os.environ[var] = saved
+        os.unlink(tmp)
+
+    m = raw[0]["sla_metrics"]
+    assert m.get("thpt_under_5s_per_cluster") == 28.4 and m.get("thpt_cluster_node_count") == 40, (
+        f"merge_slo_sweeps must land the 5s bar + node_count, got {m!r}"
+    )
+    assert "thpt_under_1s_per_cluster" not in m, (
+        "the non-compliant 1s bar must stay OMITTED (pend), never a fabricated 0"
+    )
+
+    # Through the REAL emitter: the per-key sla_metrics coercion must keep the partial triple.
+    results = _run.results_schema.build_results(
+        raw, {"cluster_substrate": "gke-sandbox", "node_count": 40, "runtime": "gvisor"},
+        generated_at="2026-07-02T12:00:00Z",
+    )
+    sc = next(s for s in results["scenarios"] if s["name"] == "warmpool_cold_start")
+    for key in ("thpt_under_5s_per_cluster", "thpt_cluster_node_count"):
+        assert key in sc["sla_metrics"], (
+            f"emitter coercion dropped {key!r} — the partial (landed-bar) triple must survive "
+            "per-key; only the direct-emit metrics.py leg is all-or-nothing."
+        )
+
+    out = render.render_matrix(results)
+    # 5s half fills (28.4 < the 300 cluster sizing target => ⚠️); 1s half keeps pending.
+    assert (
+        "| gVisor | Warm-pool hit (Base image) | 4 /node · 28.4 /cluster ⚠️ "
+        "| 4 /node · pending (cluster-fire) | 0.6s | 0.9s | 100% |"
+    ) in out, f"matrix row did not render the independent per-bar fill:\n{out}"
+    # the caption pins the X the cluster figure was measured at.
+    assert "per-activation-mode cluster rate at 40 nodes" in out, (
+        "the @X-nodes caption must resolve from the landed thpt_cluster_node_count"
+    )
+
+
 def _run_all():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:
