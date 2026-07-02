@@ -312,8 +312,15 @@ within the bar** and merges the coupled triple —
 - **`cluster_nodes` required** — the render pins "at X nodes" from
   `thpt_cluster_node_count`; a record without it pends the whole cell rather
   than printing a rate the page cannot caption.
-- The env vars are read only under `--product sandbox` and are default-off:
-  with none set, the run's emit is byte-identical to today's.
+- The env vars are read under `--product sandbox` **and** `--product
+  sandbox-kata` (both own a matrix cluster half) and are default-off: with none
+  set, the run's emit is byte-identical to today's.
+- **One product per shell** — the `BENCH_SLO_SWEEP_*` namespace is shared
+  across products and a sweep record carries no runtime discriminator, so a
+  stale gVisor env var left set across a following `--product sandbox-kata` run
+  (or vice-versa) would silently cross-merge one runtime's rate into the
+  other's cell. Derive each runtime in a fresh shell, or `unset` the vars
+  between products.
 
 A previously-published triple is carried forward across later env-less runs
 (same do-not-auto-decay posture as the scale-proof block), so one reviewed
