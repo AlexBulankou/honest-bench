@@ -1124,12 +1124,16 @@ def render_what_this_means(results):
         "above."
     )
     lines.append(
-        "- **Pick gVisor for now.** It is the only runtime measured end-to-end here; the "
-        "Kata + microVM rows are structural placeholders, not a recommendation."
+        "- **Both runtimes are measured — choose by isolation need.** In the measurements above, "
+        "warm-pool latency is comparable between them; gVisor delivers the higher per-node "
+        "throughput, while Kata + microVM puts each sandbox in its own VM for hardware-grade "
+        "isolation. If unsure, start with gVisor and move only the workloads that need a VM "
+        "boundary to Kata."
     )
     lines.append(
-        "- **Do not design around suspend/resume yet.** It is blocked upstream on both runtimes, "
-        "so treat it as unavailable until those cells show real numbers."
+        "- **Do not design around suspend/resume yet.** gVisor resume is blocked upstream, and "
+        "Kata resume is `N/A` by construction (checkpoint-restore does not transfer to the VM "
+        "model) — treat it as unavailable until the gVisor cells show real numbers."
     )
     lines.append(
         "- **A cell marked `pending` is unmeasured, not bad.** It means that measurement has not "
