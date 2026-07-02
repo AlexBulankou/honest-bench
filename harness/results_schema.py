@@ -141,6 +141,16 @@ _KATA_VERSION_RE = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
 # registry/project path can never ride an image field.
 _KATA_IMAGE_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*:[A-Za-z0-9][A-Za-z0-9._-]*$")
 
+# #3942/#830 sandbox matrix runtime — the emitter's INDEPENDENT copy of render's
+# MATRIX_RUNTIMES closed vocabulary (== the keys of render's RUNTIME_LABELS). render's
+# render_matrix selects the measured runtime column from provenance.runtime; the emit
+# path derives it product-side (sandbox->gvisor, sandbox-kata->kata-microvm) with a
+# BENCH_MATRIX_RUNTIME override. A value outside this set is a misconfiguration (typo'd
+# override), so _coerce_provenance fails closed on it rather than dropping — a mislabeled
+# runtime must never publish a wrong measured column. A drift from render's set is caught
+# by the cross-contract test, not papered over by a shared import.
+MATRIX_RUNTIME_ENUM = ("gvisor", "kata-microvm")
+
 PROVENANCE_FIELDS = (
     "cluster_substrate",
     "controller_image",
@@ -152,6 +162,7 @@ PROVENANCE_FIELDS = (
     "cold_start_mode",
     "regime",
     "warm_scaling_term",
+    "runtime",
 )
 SCENARIO_FIELDS = (
     "name",
@@ -1007,6 +1018,17 @@ def _coerce_provenance(raw: dict) -> dict:
             if v not in WARM_SCALING_TERM_ENUM:
                 raise ValueError(
                     f"provenance.warm_scaling_term {v!r} not in {WARM_SCALING_TERM_ENUM}"
+                )
+            out[f] = v
+        elif f == "runtime":
+            # Closed-enum, fail-closed (mirrors cold_start_mode): render's matrix
+            # selects the measured runtime column from this field, so a non-enum
+            # value is a misconfiguration (typo'd BENCH_MATRIX_RUNTIME), not a
+            # leak — raise rather than drop so a mislabeled runtime never publishes
+            # a wrong measured column.
+            if v not in MATRIX_RUNTIME_ENUM:
+                raise ValueError(
+                    f"provenance.runtime {v!r} not in {MATRIX_RUNTIME_ENUM}"
                 )
             out[f] = v
         elif isinstance(v, str) and v:
