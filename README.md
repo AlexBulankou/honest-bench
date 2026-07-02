@@ -20,7 +20,7 @@ headline tables lives in the deep-dive appendix, [DETAILS.md](DETAILS.md).
 
 **Read TTFE down a column, not across rows.** Activation-mode rows differ in sample size by orders of magnitude, and a p50 over hundreds of samples and a p50 over one are not comparable: cross-row TTFE ranking is only meaningful between rows with similar sample counts. Rows measured over fewer than N=30 samples are marked † on their TTFE cells.
 
-**Throughput is dual — `per-node · per-cluster`.** The per-node figure is the engineering rate (comparable across runtimes); the per-cluster figure is a MEASURED cluster saturation rate (never a per-node × N extrapolation). Cluster halves render `pending (cluster-fire)` until our own schema-validated saturation fire lands them.
+**Throughput is dual — `per-node · per-cluster`.** The per-node figure is the engineering rate (comparable across runtimes); the per-cluster figure is a MEASURED per-activation-mode cluster rate (never a per-node × N extrapolation). Cluster halves render `pending (cluster-fire)` until a schema-validated per-mode cluster-throughput fire lands them — the standalone whole-cluster Saturation ceiling (DETAILS) measures the aggregate ceiling at overload, not these SLO-gated per-mode cells, so it never fills a matrix half.
 
 | Runtime | Activation Mode | Throughput @ <5s TTFE (sb/s — node · cluster) | Throughput @ <1s TTFE (sb/s — node · cluster) | TTFE p50 | TTFE p95 | Execution Success (Honesty Check) |
 |---|---|---|---|---|---|---|
