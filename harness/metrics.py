@@ -10,6 +10,9 @@ The locked emit keys this module produces (the a4s1/a4s2 schema contract):
   ttfe_p50_ms, ttfe_p95_ms           -- TTFE distribution (Time-To-First-Execution)
   thpt_under_5s_per_node             -- sustained throughput @ <5s TTFE (sb/sec/node)
   thpt_under_1s_per_node             -- sustained throughput @ <1s TTFE (sb/sec/node)
+  thpt_under_5s_per_cluster          -- opt-in MEASURED cluster rate (sb/sec), hb#132
+  thpt_under_1s_per_cluster          -- opt-in MEASURED cluster rate (sb/sec), hb#132
+  thpt_cluster_node_count            -- node count X the cluster rate was measured at
   exec_success_rate                  -- fraction of first-instructions that succeeded
   density_per_vcpu                   -- max concurrent sandboxes / per-node allocatable sandbox vCPU
   density_retention, thpt_retention  -- scale-proof linearity (value@max-nodes / value@1-node)
@@ -109,6 +112,37 @@ def throughput_per_node(
     return round(qualifying / window_s / node_count, 3)
 
 
+def throughput_per_cluster(
+    ttfe_ms_samples: Iterable[Optional[Real]],
+    threshold_ms: float,
+    window_s: float,
+) -> float:
+    """Sandboxes/sec across the WHOLE CLUSTER that beat threshold_ms.
+
+    Same qualifying rule as throughput_per_node but WITHOUT the node divisor:
+    qualifying / window_s. This is the hb#132 per-cluster half of the dual
+    matrix cell — a MEASURED rate from this fire's own samples, legitimate ONLY
+    for a genuine cluster-saturation fire (the caller contract on
+    ttfe_sla_metrics' cluster_node_count kwarg). It is NEVER per-node x N
+    extrapolation: the render forbids that, and this function cannot produce it
+    because it never sees a node count.
+
+    None samples (never reached first-execution) never qualify. Returns 0.0
+    when no sample beats the threshold -- the honest "print 0".
+    """
+    if window_s <= 0:
+        raise ValueError(f"window_s must be > 0: {window_s}")
+    qualifying = 0
+    for t in ttfe_ms_samples:
+        if t is None:
+            continue
+        if not isinstance(t, Real):
+            raise TypeError(f"non-numeric ttfe sample: {t!r}")
+        if float(t) <= threshold_ms:
+            qualifying += 1
+    return round(qualifying / window_s, 3)
+
+
 def exec_success_rate(exec_oks: Sequence[bool]) -> float:
     """Fraction of ATTEMPTED sandboxes whose first instruction succeeded.
 
@@ -165,6 +199,7 @@ def ttfe_sla_metrics(
     allocatable_sandbox_vcpu_per_node: Optional[float] = None,
     bind_ms_samples: Optional[Sequence[Optional[Real]]] = None,
     exec_ms_samples: Optional[Sequence[Optional[Real]]] = None,
+    cluster_node_count: Optional[int] = None,
 ) -> dict[str, float]:
     """Assemble the numeric sla_metrics dict a TTFE scenario emits.
 
@@ -196,6 +231,18 @@ def ttfe_sla_metrics(
     genuine, never p50(ttfe) - p50(bind). Diagnostic-only — adds keys, changes no
     existing number. Each pair is emitted only when >=1 sample of that kind is
     present (a run with no bound claim has no bind/exec distribution to report).
+
+    cluster_node_count (the hb#132 PER-CLUSTER emit leg, opt-in): when supplied,
+    emit the COUPLED TRIPLE thpt_under_5s_per_cluster + thpt_under_1s_per_cluster
+    + thpt_cluster_node_count. CALLER CONTRACT — pass this ONLY for a genuine
+    cluster-saturation fire (offered load held at/above the cluster's saturation
+    point at that node count): the per-cluster halves are measured from THIS
+    fire's own samples (qualifying/window_s), so on a non-saturating fire they
+    would honestly report the offered load, not cluster capacity, and the render
+    would publish an under-read. The triple is all-or-nothing by construction
+    (never per_cluster without node_count — the render pins X from
+    thpt_cluster_node_count), and the default None leaves every existing fire's
+    emit byte-identical. NEVER derived as per-node x N.
     """
     present = [float(t) for t in ttfe_ms_samples if t is not None]
     metrics: dict[str, float] = {
@@ -225,6 +272,16 @@ def ttfe_sla_metrics(
         metrics["density_per_vcpu"] = density_per_vcpu(
             max_concurrent_sandboxes, allocatable_sandbox_vcpu_per_node
         )
+    if cluster_node_count is not None:
+        if cluster_node_count < 1:
+            raise ValueError(f"cluster_node_count must be >= 1: {cluster_node_count}")
+        metrics["thpt_under_5s_per_cluster"] = throughput_per_cluster(
+            ttfe_ms_samples, THRESHOLD_5S_MS, window_s
+        )
+        metrics["thpt_under_1s_per_cluster"] = throughput_per_cluster(
+            ttfe_ms_samples, THRESHOLD_1S_MS, window_s
+        )
+        metrics["thpt_cluster_node_count"] = cluster_node_count
     return metrics
 
 

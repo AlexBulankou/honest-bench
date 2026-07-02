@@ -467,6 +467,75 @@ def test_multi_sample_merge_lifts_n_and_preserves_pending_reason():
     _check("n" not in sla, "n lifted out of sla_metrics")
 
 
+
+# ------------------------------------------------- per-cluster (hb#132 emit leg)
+def test_throughput_per_cluster_doc_validation():
+    # Same qualifying rule as per-node, WITHOUT the node divisor: 200 sandboxes
+    # all under 5s in a 50s window == 4.0 sb/sec across the cluster regardless
+    # of node count (the function never sees one).
+    _check(_close(m.throughput_per_cluster([1396.0] * 200, m.THRESHOLD_5S_MS, 50.0), 4.0),
+           "200@<5s / 50s == 4.0 per-cluster")
+
+
+def test_throughput_per_cluster_honest_zero_and_none():
+    # No sample beats the bar -> honest 0.0; None samples never qualify.
+    _check(m.throughput_per_cluster([2500.0, None, 3000.0], m.THRESHOLD_1S_MS, 50.0) == 0.0,
+           "no sub-1s sample -> 0.0, not blank")
+    _check(m.throughput_per_cluster([None] * 5, m.THRESHOLD_5S_MS, 50.0) == 0.0,
+           "all-None -> 0.0")
+
+
+def test_throughput_per_cluster_window_validation():
+    try:
+        m.throughput_per_cluster([100.0], m.THRESHOLD_5S_MS, 0.0)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("window_s=0 must raise")
+
+
+def test_ttfe_sla_metrics_inert_without_cluster_node_count():
+    # Default None -> byte-identical emit: none of the triple's keys appear.
+    out = m.ttfe_sla_metrics([1396.0] * 30, [True] * 30, 50.0, 1)
+    for k in ("thpt_under_5s_per_cluster", "thpt_under_1s_per_cluster",
+              "thpt_cluster_node_count"):
+        _check(k not in out, f"{k} absent when cluster_node_count unset")
+
+
+def test_ttfe_sla_metrics_cluster_coupled_triple():
+    # Opt-in emits ALL THREE keys together (never per_cluster without
+    # node_count), measured from the same fire's samples: qualifying/window.
+    out = m.ttfe_sla_metrics([800.0] * 100 + [3000.0] * 50 + [None] * 10,
+                             [True] * 160, 50.0, 40, cluster_node_count=40)
+    _check(_close(out["thpt_under_5s_per_cluster"], 150 / 50.0),
+           "per-cluster <5s == qualifying/window (no node divisor)")
+    _check(_close(out["thpt_under_1s_per_cluster"], 100 / 50.0),
+           "per-cluster <1s == qualifying/window")
+    _check(out["thpt_cluster_node_count"] == 40, "node_count rides the triple")
+    # coherence with the per-node halves emitted by the same call
+    _check(_close(out["thpt_under_5s_per_node"] * 40, out["thpt_under_5s_per_cluster"]),
+           "same-fire per-node and per-cluster agree up to the node divisor")
+
+
+def test_ttfe_sla_metrics_cluster_node_count_invalid_raises():
+    try:
+        m.ttfe_sla_metrics([1000.0], [True], 10.0, 1, cluster_node_count=0)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("cluster_node_count=0 must raise")
+
+
+def test_ttfe_sla_metrics_cluster_survives_results_schema_coerce():
+    # convergence: the triple must survive the closed-schema emitter guard.
+    out = m.ttfe_sla_metrics([900.0] * 30, [True] * 30, 30.0, 2,
+                             cluster_node_count=2)
+    coerced = rs._coerce_sla_metrics(out)
+    for k in ("thpt_under_5s_per_cluster", "thpt_under_1s_per_cluster",
+              "thpt_cluster_node_count"):
+        _check(k in coerced, f"{k} survives coerce")
+
+
 def _run_all():
     tests = [v for k, v in sorted(globals().items())
              if k.startswith("test_") and callable(v)]
