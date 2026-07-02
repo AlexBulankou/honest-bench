@@ -2266,6 +2266,160 @@ def test_cluster_scale_only_linearity_renders_wrapper_without_burst():
     assert "### Concurrent burst" not in out
 
 
+def test_cluster_scale_saturation_present_renders_third_subblock():
+    # hb#132: cluster_saturation present ⇒ the "Does it hold at cluster scale?" wrapper renders a
+    # THIRD demoted ### sub-block (Saturation), alongside the intro's "Three questions" framing.
+    out = render.render_cluster_scale(
+        _matrix_results(_full_gvisor_scenarios(), cluster_saturation=_cs()))
+    assert "## Does it hold at cluster scale?" in out
+    assert "Three questions a bigger cluster raises" in out
+    assert "### Saturation — the whole-cluster warm-hand-out ceiling" in out
+    # its standalone ## heading is DEMOTED, not duplicated, inside the combined section.
+    assert "## Cluster Saturation" not in out
+
+
+def test_cluster_scale_all_three_subblocks_present():
+    # All three cluster-scale questions present ⇒ one ## wrapper, all three ### sub-blocks, no
+    # standalone ## sub-headings leak through (each demoted).
+    results = _matrix_results(
+        _full_gvisor_scenarios(), scale_proof=_scale_proof_obj(),
+        concurrent_burst=_cb(), cluster_saturation=_cs())
+    out = render.render_cluster_scale(results)
+    assert "## Does it hold at cluster scale?" in out
+    assert "### Linearity — throughput and density hold flat as nodes grow" in out
+    assert "### Concurrent burst — TTFE at N simultaneous claims" in out
+    assert "### Saturation — the whole-cluster warm-hand-out ceiling" in out
+    assert "## Cluster Saturation" not in out
+
+
+def _cs(**over):
+    # A full cluster_saturation object — 1:1 all-warm N=600 saturation ceiling (pool==claim), the
+    # measured per-cluster throughput triple, bind/exec decomposition, FAIL outcome + provenance.
+    base = {
+        "runtime_class": "gvisor",
+        "pool_size": 600,
+        "claim_count": 600,
+        "node_count": 40,
+        "ttfe_p50_ms": 8630.8,
+        "ttfe_p95_ms": 12610.3,
+        "bind_p50_ms": 8191.6,
+        "bind_p95_ms": 12137.2,
+        "exec_p50_ms": 467.0,
+        "exec_p95_ms": 608.0,
+        "exec_success_rate": 1.0,
+        "thpt_under_5s_per_node": 0.064,
+        "thpt_under_1s_per_node": 0.0,
+        "thpt_under_5s_per_cluster": 2.558,
+        "thpt_under_1s_per_cluster": 0.0,
+        "thpt_cluster_node_count": 40,
+        "outcome": "FAIL",
+        "run_id": "c50e1c51a4c441f3a0705a2426a9a93c",
+        "machine_type": "n2-standard-16",
+        "measured_at": "2026-07-02",
+    }
+    base.update(over)
+    return base
+
+
+def test_cluster_saturation_absent_renders_nothing():
+    # No cluster_saturation object ⇒ INERT (byte-absent until the harness emits it).
+    assert render.render_cluster_saturation(_matrix_results(_full_gvisor_scenarios())) == ""
+
+
+def test_cluster_saturation_missing_spine_inert():
+    # Missing any REQUIRED spine field ⇒ INERT (no partial-lie block). The coupled per-cluster
+    # triple is part of the spine, so dropping the cluster node-count kills the whole block.
+    cs = _cs()
+    del cs["thpt_cluster_node_count"]
+    assert render.render_cluster_saturation(
+        _matrix_results(_full_gvisor_scenarios(), cluster_saturation=cs)) == ""
+
+
+def test_cluster_saturation_page_ceiling_posture_no_table():
+    # Page (default) path: the collapsed per-cluster throughput + worst-case TTFE inline + FAIL
+    # ceiling note + DETAILS pointer — with NO decomposition table (that moves to the appendix).
+    out = render.render_cluster_saturation(
+        _matrix_results(_full_gvisor_scenarios(), cluster_saturation=_cs()))
+    assert "### Saturation — the whole-cluster warm-hand-out ceiling" in out
+    # 1:1 all-warm framing (pool==claim, NOT over-subscribed) distinguishes it from contention.
+    assert "**1:1 all-warm**" in out
+    assert "**not** over-subscribed" in out
+    # collapsed per-cluster throughput + worst-case TTFE surfaced inline (self-contained).
+    assert "At **40 nodes** the cluster sustains only **2.558 claims/sec under 5s**" in out
+    assert "(**0/sec under 1s**)" in out
+    assert "TTFE degrades to **8.6308s p50** / **12.6103s p95**" in out
+    # FAIL headlined as an honest SLA ceiling, not softened.
+    assert "SLA ceiling: **not met**" in out
+    assert "not a correctness failure" in out
+    assert "[DETAILS.md](DETAILS.md)" in out
+    # the decomposition table itself does NOT render on the page path.
+    assert "| Pool | Claims | Nodes |" not in out
+    assert "Bind p50" not in out
+
+
+def test_cluster_saturation_renders_table():
+    out = render.render_cluster_saturation(
+        _matrix_results(_full_gvisor_scenarios(), cluster_saturation=_cs()), detail=True)
+    assert "## Cluster Saturation — the whole-cluster warm-hand-out ceiling" in out
+    assert "**1:1 all-warm**" in out
+    # full per-node · per-cluster throughput triple + bind/exec decomposition in one row.
+    assert ("| 600 | 600 | 40 | 8.6308s | 12.6103s | 0.064 /node · 2.558 /cluster | "
+            "0 /node · 0 /cluster | 8.1916s | 12.1372s | 100% |") in out
+    # per-cluster figure MEASURED at node_count, never a per-node × N extrapolation.
+    assert "MEASURED at **40 nodes**" in out
+    assert "never a per-node × N" in out
+    assert "_Measured 2026-07-02 — whole-cluster saturation ceiling (point-in-time)._" in out
+    assert "SLA ceiling: **not met**" in out
+
+
+def test_cluster_saturation_bind_columns_dropped_when_absent():
+    # bind_p50/p95 are optional — omitting them drops the Bind columns entirely (never fabricated).
+    cs = _cs()
+    del cs["bind_p50_ms"]
+    del cs["bind_p95_ms"]
+    out = render.render_cluster_saturation(
+        _matrix_results(_full_gvisor_scenarios(), cluster_saturation=cs), detail=True)
+    assert "Bind p50" not in out
+    # the spine still renders — bind is optional decomposition, not load-bearing.
+    assert "| 600 | 600 | 40 | 8.6308s | 12.6103s |" in out
+
+
+def test_cluster_saturation_cluster_only_when_per_node_absent():
+    # Per-node throughput halves are optional — when absent the cell renders cluster-only (never a
+    # fabricated per-node figure), so the coupled-triple honesty holds even on a partial object.
+    cs = _cs()
+    del cs["thpt_under_5s_per_node"]
+    del cs["thpt_under_1s_per_node"]
+    out = render.render_cluster_saturation(
+        _matrix_results(_full_gvisor_scenarios(), cluster_saturation=cs), detail=True)
+    assert "2.558 /cluster" in out
+    assert "/node ·" not in out
+
+
+def test_cluster_saturation_out_of_enum_runtime_inert():
+    # An out-of-enum runtime_class fails closed and drops the whole block (public RUNTIME_LABELS).
+    assert render.render_cluster_saturation(
+        _matrix_results(_full_gvisor_scenarios(), cluster_saturation=_cs(runtime_class="firecracker"))) == ""
+
+
+def test_cluster_saturation_invalid_machine_type_dropped_spine_renders():
+    # A registry-path-shaped machine_type is dropped (bounded GCP-shape), but a valid spine renders.
+    out = render.render_cluster_saturation(
+        _matrix_results(_full_gvisor_scenarios(),
+                        cluster_saturation=_cs(machine_type="us-central1-docker.pkg.dev/proj/img:1")),
+        detail=True)
+    assert "## Cluster Saturation" in out
+    assert "us-central1-docker.pkg.dev" not in out
+
+
+def test_cluster_saturation_non_fail_outcome_no_sla_note():
+    # outcome is optional — a non-FAIL (or absent) outcome renders NO SLA-ceiling note (the FAIL
+    # framing is data-gated, never free-text).
+    out = render.render_cluster_saturation(
+        _matrix_results(_full_gvisor_scenarios(), cluster_saturation=_cs(outcome="PASS")))
+    assert "SLA ceiling: **not met**" not in out
+
+
 def _wpa(**over):
     base = {
         "runtime_class": "gvisor",

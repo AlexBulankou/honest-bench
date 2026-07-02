@@ -57,6 +57,28 @@
     "measured_at": "2026-06-30",
     "node_count": 20
   },
+  "cluster_saturation": {
+    "bind_p50_ms": 8191.6,
+    "bind_p95_ms": 12137.2,
+    "claim_count": 600,
+    "exec_p50_ms": 467.0,
+    "exec_p95_ms": 608.0,
+    "exec_success_rate": 1.0,
+    "machine_type": "n2-standard-16",
+    "measured_at": "2026-07-02",
+    "node_count": 40,
+    "outcome": "FAIL",
+    "pool_size": 600,
+    "run_id": "c50e1c51a4c441f3a0705a2426a9a93c",
+    "runtime_class": "gvisor",
+    "thpt_cluster_node_count": 40,
+    "thpt_under_1s_per_cluster": 0.0,
+    "thpt_under_1s_per_node": 0.0,
+    "thpt_under_5s_per_cluster": 2.558,
+    "thpt_under_5s_per_node": 0.064,
+    "ttfe_p50_ms": 8630.8,
+    "ttfe_p95_ms": 12610.3
+  },
   "generated_at": "2026-07-01T07:23:08Z",
   "kata_activation": {
     "cold_ready": [

@@ -1289,6 +1289,153 @@ def test_emit_to_render_at_scale_contention_convergence():
     )
 
 
+def test_emit_to_render_cluster_saturation_convergence():
+    """Convergence guard for the cluster-scale SATURATION block (hb#132; carried across #112).
+
+    cluster_saturation is emitted by harness/results_schema.build_results(cluster_saturation=...)
+    (via _coerce_cluster_saturation) and allow-listed on the render side by
+    schema.CLUSTER_SATURATION_FIELDS. Like at_scale_contention it has NO in-process producer — the
+    daily `harness.run --product sandbox` refresh carries the prior committed block forward verbatim
+    (run.carry_prior_cluster_saturation), so this block MUST survive the emit→render round-trip or
+    the daily refresh would carry a block the renderer silently treats as INERT (the #112 "other
+    door" drop). Every field the EMITTER keeps on a real object must pass the INDEPENDENT render-side
+    predicate, the runtime_class enum must agree value-for-value across the two independent sets, the
+    emitter's fail-closed guard must drop an out-of-enum runtime_class / a negative ttfe / a missing
+    coupled-triple member, a registry-shaped machine_type is dropped while a valid spine survives,
+    and the coupled per-cluster throughput triple (per-cluster figure + its node count) holds on both
+    sides so a per-cluster rate never renders without the node count it was measured at. Loud first.
+    """
+    import importlib.util
+
+    import schema
+
+    emitter_path = os.path.join(_ROOT, "harness", "results_schema.py")
+    if not os.path.exists(emitter_path):
+        print("  (skip: harness emitter not in-tree yet)")
+        return
+    spec = importlib.util.spec_from_file_location("_bench_emitter_cs", emitter_path)
+    mod = importlib.util.module_from_spec(spec)
+    try:
+        spec.loader.exec_module(mod)
+    except Exception as exc:  # pragma: no cover - harness has its own deps
+        print(f"  (skip: harness emitter not importable in isolation: {exc})")
+        return
+
+    # The closed runtime vocabulary must agree value-for-value across the two independent sets.
+    assert set(mod.WARM_VS_COLD_RUNTIME_CLASS_ENUM) == set(schema.RUNTIME_LABELS), (
+        "emit/render DRIFT: harness WARM_VS_COLD_RUNTIME_CLASS_ENUM "
+        f"{set(mod.WARM_VS_COLD_RUNTIME_CLASS_ENUM)} != render RUNTIME_LABELS "
+        f"{set(schema.RUNTIME_LABELS)}"
+    )
+
+    # A full cluster_saturation object: every field populated so the convergence covers the whole
+    # optional decomposition + provenance surface, not just the required spine.
+    cs_in = {
+        "runtime_class": "gvisor",
+        "pool_size": 600,
+        "claim_count": 600,
+        "node_count": 40,
+        "ttfe_p50_ms": 8630.8,
+        "ttfe_p95_ms": 12610.3,
+        "bind_p50_ms": 8191.6,
+        "bind_p95_ms": 12137.2,
+        "exec_p50_ms": 467.0,
+        "exec_p95_ms": 608.0,
+        "exec_success_rate": 1.0,
+        "thpt_under_5s_per_node": 0.064,
+        "thpt_under_1s_per_node": 0.0,
+        "thpt_under_5s_per_cluster": 2.558,
+        "thpt_under_1s_per_cluster": 0.0,
+        "thpt_cluster_node_count": 40,
+        "outcome": "FAIL",
+        "run_id": "c50e1c51a4c441f3a0705a2426a9a93c",
+        "machine_type": "n2-standard-16",
+        "measured_at": "2026-07-02",
+    }
+    results = mod.build_results(
+        [], {"cluster_substrate": "gke-sandbox", "node_count": 1},
+        generated_at="2026-07-02T12:00:00Z", cluster_saturation=cs_in,
+    )
+    assert "cluster_saturation" in results, (
+        f"emitter dropped the whole cluster_saturation object — rejected a valid full object:\n{cs_in}"
+    )
+    cs = results["cluster_saturation"]
+
+    # (a) every top-level field the emitter KEPT passes the independent render allow-list.
+    for key, val in cs.items():
+        assert key in schema.CLUSTER_SATURATION_FIELDS, (
+            f"emit/render DRIFT: emitter kept key {key!r} absent from render "
+            "CLUSTER_SATURATION_FIELDS — render_cluster_saturation would silently drop it."
+        )
+        assert schema.CLUSTER_SATURATION_FIELDS[key](val), (
+            f"emit/render DRIFT: render CLUSTER_SATURATION_FIELDS[{key!r}] rejects emitter value "
+            f"{val!r} — the block would render nothing."
+        )
+
+    # (b) the required spine — incl. the coupled per-cluster triple — survives intact.
+    for spine in ("runtime_class", "pool_size", "claim_count", "node_count", "ttfe_p50_ms",
+                  "ttfe_p95_ms", "thpt_under_5s_per_cluster", "thpt_under_1s_per_cluster",
+                  "thpt_cluster_node_count"):
+        assert spine in cs, f"required spine field {spine!r} must survive a clean object"
+    assert cs["runtime_class"] == "gvisor" and cs["pool_size"] == 600 and cs["node_count"] == 40
+
+    # (c) an out-of-enum runtime_class drops the whole block (emitter fail-closed guard).
+    leak_rc = mod.build_results(
+        [], {"cluster_substrate": "gke-sandbox", "node_count": 1},
+        generated_at="2026-07-02T12:00:00Z",
+        cluster_saturation={"runtime_class": "firecracker", "pool_size": 600, "claim_count": 600,
+                            "node_count": 40, "ttfe_p50_ms": 100.0, "ttfe_p95_ms": 200.0,
+                            "thpt_under_5s_per_cluster": 1.0, "thpt_under_1s_per_cluster": 0.0,
+                            "thpt_cluster_node_count": 40},
+    )
+    assert "cluster_saturation" not in leak_rc, (
+        "out-of-enum runtime_class must drop the whole cluster_saturation block — fail-closed guard"
+    )
+
+    # (d) a negative ttfe drops the whole block (no partial-lie table).
+    leak_neg = mod.build_results(
+        [], {"cluster_substrate": "gke-sandbox", "node_count": 1},
+        generated_at="2026-07-02T12:00:00Z",
+        cluster_saturation={"runtime_class": "gvisor", "pool_size": 600, "claim_count": 600,
+                            "node_count": 40, "ttfe_p50_ms": -1.0, "ttfe_p95_ms": 200.0,
+                            "thpt_under_5s_per_cluster": 1.0, "thpt_under_1s_per_cluster": 0.0,
+                            "thpt_cluster_node_count": 40},
+    )
+    assert "cluster_saturation" not in leak_neg, (
+        "a negative ttfe_p50_ms must drop the whole block — closed-schema guard"
+    )
+
+    # (e) a missing coupled-triple member (the cluster node count) drops the whole block — a
+    # per-cluster throughput must never render without the node count it was measured at.
+    leak_triple = mod.build_results(
+        [], {"cluster_substrate": "gke-sandbox", "node_count": 1},
+        generated_at="2026-07-02T12:00:00Z",
+        cluster_saturation={"runtime_class": "gvisor", "pool_size": 600, "claim_count": 600,
+                            "node_count": 40, "ttfe_p50_ms": 100.0, "ttfe_p95_ms": 200.0,
+                            "thpt_under_5s_per_cluster": 1.0, "thpt_under_1s_per_cluster": 0.0},
+    )
+    assert "cluster_saturation" not in leak_triple, (
+        "a per-cluster throughput without thpt_cluster_node_count must drop the whole block — the "
+        "coupled-triple rule (no per-cluster figure without its measured node count)"
+    )
+
+    # (f) a registry-path-shaped machine_type is dropped (provenance scalar), but the block with a
+    # valid spine still renders — provenance is best-effort, the spine is load-bearing.
+    drop_mt = mod.build_results(
+        [], {"cluster_substrate": "gke-sandbox", "node_count": 1},
+        generated_at="2026-07-02T12:00:00Z",
+        cluster_saturation={"runtime_class": "gvisor", "pool_size": 600, "claim_count": 600,
+                            "node_count": 40, "ttfe_p50_ms": 100.0, "ttfe_p95_ms": 200.0,
+                            "thpt_under_5s_per_cluster": 1.0, "thpt_under_1s_per_cluster": 0.0,
+                            "thpt_cluster_node_count": 40,
+                            "machine_type": "us-central1-docker.pkg.dev/proj/img:1"},
+    )
+    assert "cluster_saturation" in drop_mt, "a valid spine must survive a dropped provenance scalar"
+    assert "machine_type" not in drop_mt["cluster_saturation"], (
+        "a registry-path-shaped machine_type must be dropped — bounded GCP-shape guard"
+    )
+
+
 def _run_all():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:
