@@ -454,6 +454,47 @@ def _runtime_density(scen_by_name):
     return None
 
 
+def render_density_detail(results, kata_results=None):
+    """DETAILS.md deep-dive: per-runtime Max-Density (sandboxes per node-allocatable
+    sandbox-schedulable vCPU). Relocated off the headline matrix (hb#134 page-friendliness
+    pass — a non-infra reader does not need it in the core table) but PRESERVED here so the
+    #133/#135 saturation measurement is not lost. Same per-runtime source logic as the
+    matrix: the primary results claim their measured runtime; kata_results (the sandbox-kata
+    product) may fill the kata-microvm slot. Unmeasured runtimes render `pending`. Returns ""
+    (INERT) only for an unknown product — otherwise it always renders the runtime skeleton,
+    rows pending individually, mirroring the matrix's honest-skeleton behaviour."""
+    product = results.get("product")
+    if product not in PRODUCTS:
+        return ""
+    prov = _clean_provenance(results.get("provenance"))
+    measured_runtime = prov.get("runtime") or "gvisor"
+    sources = {measured_runtime: _matrix_scenarios(results.get("scenarios"))}
+    if (
+        isinstance(kata_results, dict)
+        and kata_results.get("product") == "sandbox-kata"
+        and "kata-microvm" not in sources
+    ):
+        kp = _clean_provenance(kata_results.get("provenance"))
+        if kp.get("runtime") == "kata-microvm":
+            sources["kata-microvm"] = _matrix_scenarios(kata_results.get("scenarios"))
+    lines = ["## Max Density (sandboxes per vCPU)", ""]
+    lines.append(
+        "Max Density is sandboxes per node-allocatable sandbox-schedulable vCPU (the "
+        "per-node denominator), not per total-cluster vCPU. An unmeasured runtime "
+        "renders `pending`."
+    )
+    lines.append("")
+    lines.append("| Runtime | Max Density (sb/vCPU) |")
+    lines.append("|---|---|")
+    for rt in MATRIX_RUNTIMES:
+        rt_scen = sources.get(rt)
+        density = _runtime_density(rt_scen) if rt_scen is not None else None
+        cell = _fmt_num(density) if density is not None else _PENDING
+        lines.append(f"| {RUNTIME_LABELS[rt]} | {cell} |")
+    lines.append("")
+    return "\n".join(lines) + "\n"
+
+
 def _landed_cluster_x(m):
     """A metrics dict's landed, valid thpt_cluster_node_count as int — None if absent/invalid.
 
@@ -485,7 +526,7 @@ def _resolve_cluster_x(sources):
 
 
 def render_matrix(results, kata_results=None):
-    """Render the doc's 9-column Core Metrics Table (primary results + optional kata results).
+    """Render the doc's 7-column Core Metrics Table (primary results + optional kata results).
 
     A single run measures ONE runtime (provenance.runtime, default gvisor); that runtime's rows
     fill from the measured scenarios. The Kata + microVM rows can fill from a SECOND results
@@ -529,17 +570,15 @@ def render_matrix(results, kata_results=None):
         "Throughput @ <1s TTFE (sb/s — node · cluster)",
         "TTFE p50",
         "TTFE p95",
-        "Samples (N)",
-        "Max Density (sb/vCPU)",
         "Execution Success (Honesty Check)",
     ]
     lines = ["## Agent Sandbox — Core Metrics", ""]
     lines.append(
-        "**Read TTFE down a column, not across rows.** Each activation-mode row carries its own "
-        "sample size (the Samples (N) column) — they differ by orders of magnitude. A p50 over "
-        "hundreds of samples and a p50 over one are not comparable: cross-row TTFE ranking is "
-        f"only meaningful between rows with similar N. Rows below N={TTFE_COMPARABILITY_MIN_N} "
-        f"are marked {_LOW_N_MARK} on their TTFE cells."
+        "**Read TTFE down a column, not across rows.** Activation-mode rows differ in sample "
+        "size by orders of magnitude, and a p50 over hundreds of samples and a p50 over one are "
+        "not comparable: cross-row TTFE ranking is only meaningful between rows with similar "
+        f"sample counts. Rows measured over fewer than N={TTFE_COMPARABILITY_MIN_N} samples are "
+        f"marked {_LOW_N_MARK} on their TTFE cells."
     )
     lines.append("")
     # hb#132: throughput cells are dual (`per-node · per-cluster`). Pin the cluster measurement
@@ -588,7 +627,6 @@ def render_matrix(results, kata_results=None):
         rt_label = RUNTIME_LABELS[rt]
         rt_scen = sources.get(rt)
         measured = rt_scen is not None
-        density = _runtime_density(rt_scen) if measured else None
         for scen_name, mode_label in ACTIVATION_MODE_ROWS:
             is_resume = scen_name == "suspend_resume"
             # Resume-from-suspend × Kata+microVM is N/A by construction: CRIU
@@ -598,7 +636,7 @@ def render_matrix(results, kata_results=None):
             # future measurement that is structurally impossible. Holds regardless of
             # which runtime this run measured (a kata-measured run still N/As it).
             if is_resume and rt == "kata-microvm":
-                lines.append("| " + " | ".join([rt_label, mode_label] + [_NA] * 7) + " |")
+                lines.append("| " + " | ".join([rt_label, mode_label] + [_NA] * 5) + " |")
                 continue
             sc = rt_scen.get(scen_name) if measured else None
             sc_pending = bool(sc) and sc.get("outcome") == "pending"
@@ -664,17 +702,11 @@ def render_matrix(results, kata_results=None):
                 exec_cell = _exec_cell(m["exec_success_rate"], n_val, m.get("exec_success_n"))
             else:
                 exec_cell = pending_tok
-            if is_resume:
-                dens_cell = "N/A"
-            elif density is not None:
-                dens_cell = _fmt_num(density)
-            else:
-                dens_cell = _PENDING
 
             lines.append(
                 "| "
                 + " | ".join(
-                    [rt_label, mode_label, thpt5, thpt1, p50, p95, n_cell, dens_cell, exec_cell]
+                    [rt_label, mode_label, thpt5, thpt1, p50, p95, exec_cell]
                 )
                 + " |"
             )
@@ -695,10 +727,6 @@ def render_matrix(results, kata_results=None):
         "per-node × N extrapolation. The cluster half renders `pending (cluster-fire)` until our "
         "own schema-validated saturation fire lands it; a landed figure below the cluster sizing "
         "target carries ⚠️._"
-    )
-    lines.append(
-        "_Max Density is sandboxes per node-allocatable sandbox-schedulable vCPU (the "
-        "per-node denominator), not per total-cluster vCPU._"
     )
     lines.append(
         "_Execution Success is the Honesty Check: <100% prints the succeeded/total fraction "
@@ -820,7 +848,17 @@ def render_operating_envelope(results):
     if sc and sc.get("outcome") == "PASS" and "ttfe_p50_ms" in sc["metrics"]:
         rows.append((label1, _fmt_wait(sc["metrics"]["ttfe_p50_ms"]), _ENVELOPE_FULL_TTFE))
     else:
-        rows.append((label1, _PENDING, _ENVELOPE_FULL_TTFE))
+        # hb#134 (a4s1 nit): a row-1 pend inherits the matrix scenario's pending_reason so a
+        # known upstream/cluster gap reads `pending (<reason>)` here exactly as it does in the
+        # matrix, not a bare `pending` that looks not-yet-run. The reason decorates only a
+        # genuinely pending scenario (mirrors the matrix pending_tok logic at ~653); a
+        # missing-ttfe PASS or an absent scenario falls back to bare `pending`.
+        pending_tok = _PENDING
+        if sc is not None and sc.get("outcome") == "pending":
+            reason = sc.get("pending_reason")
+            if reason:
+                pending_tok = f"{_PENDING} ({reason})"
+        rows.append((label1, pending_tok, _ENVELOPE_FULL_TTFE))
 
     # Row 2 — bursty, pool oversubscribed (full TTFE, from the contention retraction point).
     if asc:
@@ -1313,12 +1351,15 @@ def _clean_scale_proof(results):
     }
 
 
-def render_scale_proof(results):
+def render_scale_proof(results, heading="## Scale Proof (Linearity Check)"):
     """Render the doc's Scale Proof (Linearity Check) table, or "" when no scale_proof present.
 
     Proof that per-node throughput + density hold flat as the cluster grows — the linearity the
     doc's second table asserts. Retention >= ~0.9 reads ✅ (flat or a superlinear beat); only a
     sag below ~0.9 reads ⚠️ (controller-is-ceiling). See _flat_verdict for the asymmetric framing.
+
+    hb#134: `heading` is overridable so the combined "Does it hold at cluster scale?" section
+    (render_cluster_scale) can demote this to a `###` sub-block; default keeps the standalone `##`.
     """
     sp = _clean_scale_proof(results)
     if not sp:
@@ -1331,7 +1372,7 @@ def render_scale_proof(results):
     thpt_verdict = _flat_verdict(sp["thpt_retention"])
 
     header = ["Nodes Tested", "Density Holds Flat?", "Throughput Holds Flat?"]
-    lines = ["## Scale Proof (Linearity Check)", ""]
+    lines = [heading, ""]
     lines.append("| " + " | ".join(header) + " |")
     lines.append("|" + "|".join(["---"] * len(header)) + "|")
     lines.append("| " + " | ".join([nodes, dens_verdict, thpt_verdict]) + " |")
@@ -1424,13 +1465,19 @@ _COLD_LEG = {
 _COLD_LEG_DEFAULT = _COLD_LEG["cold-pull"]
 
 
-def render_warm_vs_cold(results):
+def render_warm_vs_cold(results, punchline_only=False):
     """Render the warm-vs-cold speedup block (#3954 sibling), or "" when INERT.
 
     Composes the warm leg (warm-pool TTFx p50) and the true-cold leg (unique-image cold) into
     ONE honest headline a reader can quote: warm provisioning is N times faster than cold. INERT
     (returns "") until the harness emits a complete, closed-schema-clean warm_vs_cold object —
     the classifier itself fails closed if the two legs ever diverge in semantic or runtime class.
+
+    hb#134 page-split: `punchline_only=True` renders ONLY the one-line headline a non-infra
+    reader needs (kept on the headline page, right under the matrix), with a pointer to the
+    full leg-by-leg table + coherence caveats in DETAILS.md. The default (full) path renders
+    the table and moves to the deep-dive appendix. The ratio is recomputed identically in both
+    paths, so page and appendix can never disagree.
     """
     wc = _clean_warm_vs_cold(results)
     if not wc:
@@ -1444,6 +1491,20 @@ def render_warm_vs_cold(results):
     # always defined and positive — this also closes an emitter speedup<=0.
     speedup = _fmt_num(wc["cold_ms"] / wc["warm_p50_ms"])
     cold = _COLD_LEG.get(wc.get("cold_start_mode"), _COLD_LEG_DEFAULT)
+    if punchline_only:
+        pl = ["## Warm-vs-Cold Speedup", ""]
+        pl.append(
+            f"A warm-pool provision is **{speedup}× faster** than {cold['descriptor']} "
+            f"({rt_label}) — both legs measured the same way ({sem_label}). Full leg-by-leg "
+            "table and the cross-block caveats are in the deep-dive appendix, "
+            "[DETAILS.md](DETAILS.md).")
+        pl.append("")
+        if wc.get("measured_at"):
+            pl.append(
+                f"_Measured {wc['measured_at'][:10]} — warm-vs-cold speedup "
+                "(point-in-time; refreshed on the next TTFE fire)._")
+            pl.append("")
+        return "\n".join(pl)
     lines = ["## Warm-vs-Cold Speedup", ""]
     lines.append(
         f"A warm-pool provision is **{speedup}× faster** than {cold['descriptor']} "
@@ -1634,18 +1695,21 @@ def _cb_thpt_cell(leg, key):
     return "—"
 
 
-def render_concurrent_burst(results):
+def render_concurrent_burst(results, heading="## Concurrent Burst — TTFE at N simultaneous claims"):
     """Render the concurrent-burst sweep block (#4021), or "" when INERT.
 
     Publishes a single all-at-once burst of N concurrent claims (the complement to the per-second
     rate the matrix/step-up report), warm-pool vs cold-provision, on the SAME TTFE spine as the
     Core Metrics matrix — so the TTFE columns ARE comparable to the matrix. INERT until the harness
     emits a closed-schema-clean concurrent_burst object.
+
+    hb#134: `heading` is overridable so the combined "Does it hold at cluster scale?" section
+    (render_cluster_scale) can demote this to a `###` sub-block; default keeps the standalone `##`.
     """
     cb = _clean_concurrent_burst(results)
     if not cb:
         return ""
-    lines = ["## Concurrent Burst — TTFE at N simultaneous claims", ""]
+    lines = [heading, ""]
     caption = (
         "Each row is a **single all-at-once burst of N concurrent claims** (not a ramped "
         "per-second rate). TTFE is the same metric the Core Metrics matrix reports "
@@ -1690,6 +1754,37 @@ def render_concurrent_burst(results):
         lines.append(f"_Measured {cb['measured_at'][:10]} — concurrent-burst TTFE (point-in-time)._")
         lines.append("")
     return "\n".join(lines)
+
+
+def render_cluster_scale(results):
+    """hb#134: the combined "Does it hold at cluster scale?" headline section.
+
+    Merges the two cluster-scale questions a non-infra reader actually has — does per-node
+    throughput/density stay flat as nodes grow (linearity, render_scale_proof) and what does a
+    single all-at-once burst of N claims cost (concurrency, render_concurrent_burst) — under one
+    user-facing question, with the two tables demoted to `###` sub-blocks. Each sub-block stays
+    independently closed-schema INERT (an absent one simply doesn't render); the wrapper heading +
+    intro appear ONLY when at least one sub-block is present, so the section degrades to nothing
+    rather than an empty header. Same page-split discipline as render_warm_vs_cold/at_scale.
+    """
+    scale = render_scale_proof(
+        results, heading="### Linearity — throughput and density hold flat as nodes grow")
+    burst = render_concurrent_burst(
+        results, heading="### Concurrent burst — TTFE at N simultaneous claims")
+    if not scale.strip() and not burst.strip():
+        return ""
+    lines = ["## Does it hold at cluster scale?", ""]
+    lines.append(
+        "Two questions a bigger cluster raises: does throughput stay flat as you add nodes "
+        "(**linearity**), and what does a single all-at-once burst of N claims cost "
+        "(**concurrency**)? Both below, on the same TTFE spine as the headline matrix.")
+    lines.append("")
+    if scale.strip():
+        lines.append(scale.rstrip())
+        lines.append("")
+    if burst.strip():
+        lines.append(burst.rstrip())
+    return "\n".join(lines).rstrip()
 
 
 # --- #4083: warm-pool acquisition-latency render ------------------------------------------
@@ -1809,7 +1904,7 @@ def _clean_at_scale_contention(results):
     return clean
 
 
-def render_at_scale_contention(results):
+def render_at_scale_contention(results, detail=False):
     """Render the at-scale-under-contention RETRACTION block, or "" when INERT.
 
     The deliberate counter-point to the flattering 1:1 warm bursts: a single measured operating
@@ -1819,6 +1914,12 @@ def render_at_scale_contention(results):
     Concurrent Burst TTFE columns; the per-node throughput axis is DELIBERATELY absent (this point
     ran at node_count=1, non-comparable to the node_count=20 bursts). INERT until the harness emits
     a closed-schema-clean at_scale_contention object.
+
+    hb#134 page-split: the DEFAULT (page) path renders the honest-limits retraction posture — the
+    prose + the headline TTFE p50/p95 the reader needs to budget for the worst case — under the
+    friendlier "Where it breaks today" heading, with a pointer to the full bind/exec decomposition
+    table in DETAILS.md. `detail=True` renders that full table (deep-dive appendix). The retraction
+    NEVER leaves the headline page — only the decomposition working moves.
     """
     asc = _clean_at_scale_contention(results)
     if not asc:
@@ -1826,10 +1927,12 @@ def render_at_scale_contention(results):
     label = RUNTIME_LABELS[asc["runtime_class"]]
     pool, claims = asc["pool_size"], asc["claim_count"]
     ratio = f"{_fmt_ratio(claims / pool)}:1" if pool else "—"
-    lines = ["## At Scale Under Contention — where sub-second warm activation breaks", ""]
+    heading = ("## At Scale Under Contention — where sub-second warm activation breaks"
+               if detail else "## Where it breaks today (honest limits)")
+    lines = [heading, ""]
     caption = (
         "The Concurrent Burst legs above are **1:1** — N ready sandboxes hit with N claims. This "
-        "row is the deliberate **retraction**: the operating point where the pool is "
+        "is the deliberate **retraction**: the operating point where the pool is "
         "**over-subscribed** (more concurrent claims than ready pool members), and warm activation "
         f"**stops being sub-second**. Measured on **{label}**: a pool of **{_fmt_num(pool)}** ready "
         f"sandboxes hit with **{_fmt_num(claims)}** simultaneous claims (**{ratio} contention**). "
@@ -1845,6 +1948,19 @@ def render_at_scale_contention(results):
         caption += f" Cluster shape: {', '.join(shape)}."
     lines.append(caption)
     lines.append("")
+    if not detail:
+        # Page path: surface the worst-case TTFE inline (so the retraction is self-contained
+        # without the table) + point to the full bind/exec decomposition in the appendix.
+        lines.append(
+            f"Under this contention, TTFE degrades to **{_fmt_secs(asc['ttfe_p50_ms'])} p50** / "
+            f"**{_fmt_secs(asc['ttfe_p95_ms'])} p95** — budget for that, not the sub-second warm "
+            "hit, when your claim rate can outrun your pool. Full bind/exec decomposition is in "
+            "the deep-dive appendix, [DETAILS.md](DETAILS.md).")
+        lines.append("")
+        if asc.get("measured_at"):
+            lines.append(f"_Measured {asc['measured_at'][:10]} — warm-pool at-scale contention ceiling (point-in-time)._")
+            lines.append("")
+        return "\n".join(lines)
     header = ["Pool", "Claims", "Contention", "TTFE p50", "TTFE p95"]
     have_bind = "bind_p50_ms" in asc and "bind_p95_ms" in asc
     if have_bind:
@@ -2061,71 +2177,35 @@ def render_stepup(results):
 # contradict the machine-rendered tables above it, and no contested sub-1s@300/s headline can
 # be slipped in ahead of the measured cells.
 _RECIPE = """\
-## Reproducibility Recipe
+## Reproduce it
 
-The numbers above come from a fixed, publishable cluster shape — a *vanilla* GKE architecture
-any user can provision, not a private tuning. This section is the **load-bearing shape** a
-reader needs to reproduce the warm/cold TTFE and scale regime the tables report. The
-**runnable** version — exact commands, pinned installs, and the dispatch-only CI workflows —
-lives in [`recipe/REPRODUCE.md`](recipe/REPRODUCE.md), so it is not duplicated here.
+Every number above comes from a *vanilla* GKE architecture you can provision yourself — no
+private tuning. The **runnable** version (exact commands, pinned installs, dispatch-only CI)
+lives in [`recipe/REPRODUCE.md`](recipe/REPRODUCE.md); the load-bearing cluster shape is:
 
-**Cluster**
+- **Cluster** — a regional GKE Standard cluster on **Kubernetes ≥ 1.31** with a **gVisor**-enabled
+  node pool (`--enable-sandbox=type=gvisor`, which installs the `gvisor` `RuntimeClass` the burst
+  pins to) on a **16-vCPU** machine type (e.g. `e2-standard-16`). Set the pool's autoscaling max
+  to the node count the headline needs *before* the fire, on a **`/16`** pod CIDR, so the burst
+  tops out on the sandbox path — not the autoscaler or IP exhaustion.
+- **Warm pool** — size the `SandboxWarmPool` so a ready slot waits for each claim (replicas ≈
+  active-concurrency × 0.75, replenished at the claim rate); otherwise a sustained burst drains
+  into the cold-overflow path partway through. When a drained-regime fire is on the page, the
+  Warm-Pool decomposition (in [DETAILS.md](DETAILS.md)) names the scaling term directly.
+- **Zero-cold-start** — run an image pre-pull **`DaemonSet`** (`recipe/prepull-daemonset.yaml`) so
+  a node that joins mid-burst adds no image-pull tax to the first sandbox scheduled onto it.
 
-- A **regional** GKE Standard cluster on **Kubernetes >= 1.31** — regional so the control
-  plane is not a single-zone SPOF under a burst of simultaneous claim writes, and >= 1.31
-  because that is the floor where the sandbox CRDs and the gVisor `RuntimeClass` admission path
-  are both stable.
-- A **gVisor-enabled** node pool (`--enable-sandbox=type=gvisor`, which installs the `gvisor`
-  `RuntimeClass` the burst pins to) on a **16-vCPU** machine type (e.g. `e2-standard-16`).
-- Size the pool's autoscaling **maximum to the node count the headline needs *before* the
-  fire** — a warm burst that has to wait on node autoscaling is measuring the autoscaler, not
-  the sandbox path. The gate on that ceiling is **per-machine-family CPU quota**, not the
-  generic CPU quota; `recipe/REPRODUCE.md` has the family-quota math.
-- A **pod CIDR wide enough that node-count × pods-per-node does not exhaust the range** — a
-  **`/16`** cluster pod range comfortably addresses a several-hundred-node pool, so the burst
-  tops out on the sandbox path rather than silently on IP exhaustion.
-
-**Warm-pool sizing**
-
-- Size the `SandboxWarmPool` so a ready slot is waiting when each claim arrives: **replicas ≈
-  active-concurrency × 0.75, replenished at the claim rate.** The 0.75 factor keeps a
-  steady-state buffer of ready slots without over-provisioning idle capacity; replenishing at
-  the claim rate refills a drained slot as fast as claims consume them, so a sustained arrival
-  rate is served warm rather than draining into the cold-overflow path partway through a burst.
-- The warm-hit distribution widens at higher concurrency because the **bind (provisioning) side
-  grows with claim-count while exec stays flat** — so the warm number is a function of
-  pool-replenish-rate vs claim-rate, not a fixed constant.
-  When a drained-regime fire is on the page, the Warm-Pool decomposition caveat above names this
-  scaling term directly.
-
-**Zero-cold-start image pre-pull**
-
-- Run an image **pre-pull `DaemonSet`** (`recipe/prepull-daemonset.yaml`) that pins the sandbox
-  base image on every node before the fire, so a scale-out node that joins mid-burst does not
-  add an image-pull tax to the first sandbox scheduled onto it. It matters most on the **cold
-  leg and under warm-pool overflow** — a fully pre-filled pool already resident-izes the image
-  during warm-up. Without it, cold TTFE on a freshly-autoscaled node is dominated by pull
-  latency, not create latency — an artifact of the test setup, not the runtime.
-
-**Honesty caveats (these stay on the published recipe)**
-
-- The **sub-1s @ 300/s warm headline is not yet published.** It needs (a) the per-claim
-  acquisition watch-timer at 300/s and (b) a clean burst fire. The honest published-today
-  numbers are exactly the measured cells above — read the **Warm-Pool Acquisition** and
-  **Concurrent Burst** rows for the current p50/p95 at the offered rate and pool size named in
-  each caption. The page prints the real figure rather than the aspiration, so the recipe
-  points at those cells instead of restating a number that could drift out of sync with them.
-- **TRUE-TTFE** — first instruction actually executes, webhook-stamped — is gated on the
-  upstream webhook-stamper and renders `pending` until it lands. The executed-first-instruction
-  TTFE the tables report today is the honest bridge that proves create → first-instruction
-  wallclock without the stamp.
-- Rows marked `pending` are exactly that — **not-yet-measured, never a provisional number
-  dressed as a result.**
+**Honesty:** a row marked `pending` is not-yet-measured — never a provisional number dressed as a
+result. The **sub-1s @ 300/s warm headline is not yet published**; the honest published-today
+figures are exactly the measured cells above (Core Metrics + **Concurrent Burst**) plus the
+**Warm-Pool Acquisition** decomposition in [DETAILS.md](DETAILS.md) — the recipe points at those
+cells rather than restate a number that could drift out of sync. TRUE-TTFE (webhook-stamped
+first-instruction) stays `pending` until the upstream stamper lands.
 """
 
 
 def render_recipe():
-    """Render the static Reproducibility Recipe H2 block (#4021).
+    """Render the static "Reproduce it" H2 block (#4021; hb#134 page-pass trim + rename).
 
     Product-agnostic architecture-shape prose, always rendered (the preamble forward-refs it).
     No measured numbers — the honest-today latency is referenced by pointer to the live

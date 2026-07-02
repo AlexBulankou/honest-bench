@@ -15,11 +15,16 @@ construction discipline the matrix already aims for.
 import difflib
 import os
 
-from generate import build_readme, _repo_root
+from generate import build_readme, build_details, _repo_root
 
 
 def _committed_readme():
     with open(os.path.join(_repo_root(), "README.md")) as fh:
+        return fh.read()
+
+
+def _committed_details():
+    with open(os.path.join(_repo_root(), "DETAILS.md")) as fh:
         return fh.read()
 
 
@@ -40,6 +45,30 @@ def test_committed_readme_equals_full_generate_output():
             "committed README.md is STALE vs render/generate.py output — run "
             "`python3 -m render.generate` and commit the result.\n" + diff
         )
+
+
+def test_committed_details_equals_full_generate_output():
+    # hb#134 deep-dive appendix: same freshness guard as the README, for DETAILS.md.
+    committed = _committed_details()
+    generated = build_details()
+    if committed != generated:
+        diff = "\n".join(
+            difflib.unified_diff(
+                generated.splitlines(),
+                committed.splitlines(),
+                fromfile="render/generate.py build_details output",
+                tofile="committed DETAILS.md",
+                lineterm="",
+            )
+        )
+        raise AssertionError(
+            "committed DETAILS.md is STALE vs render/generate.py output — run "
+            "`python3 -m render.generate` and commit the result.\n" + diff
+        )
+
+
+def test_build_details_is_deterministic():
+    assert build_details() == build_details()
 
 
 def test_build_readme_is_deterministic():

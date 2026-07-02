@@ -556,15 +556,15 @@ def test_matrix_renders_doc_exact_gvisor_rows():
     cf = f"pending ({render._CLUSTER_FIRE})"
     assert (
         f"| gVisor | Warm-pool hit (Base image) | 4 /node · {cf} | 4 /node · {cf} "
-        "| 0.6s | 0.9s | 200 | 1.88 | 100% |"
+        "| 0.6s | 0.9s | 100% |"
     ) in out
     assert (
         f"| gVisor | Unique-image cold (RL reality) | 4 /node · {cf} | 0 /node · {cf} "
-        "| 1.2s | 1.56s | 200 | 1.88 | 100% |"
+        "| 1.2s | 1.56s | 100% |"
     ) in out
     assert (
         f"| gVisor | Resume-from-suspend | 4 /node · {cf} | 0 /node · {cf} "
-        "| 3.5s | 5s | 1376 | N/A | 92.8% (1277/1376) ⚠️ |"
+        "| 3.5s | 5s | 92.8% (1277/1376) ⚠️ |"
     ) in out
 
 
@@ -776,13 +776,6 @@ def test_matrix_exec_success_n_emitted_preferred_over_derived():
     assert "(1277/1376)" not in out
 
 
-def test_matrix_resume_density_is_na():
-    out = render.render_matrix(_matrix_results(_full_gvisor_scenarios()))
-    resume_line = [l for l in out.splitlines() if "Resume-from-suspend" in l and "gVisor" in l][0]
-    cells = [c.strip() for c in resume_line.strip("|").split("|")]
-    assert cells[7] == "N/A"  # Max Density column is N/A for resume (no steady-state pool)
-
-
 def test_matrix_pending_scenario_suppresses_leaked_metrics():
     # A scenario whose OUTCOME is `pending` carries provisional sla_metrics that are NOT a
     # publishable measurement — the upstream-blocked resume probe records its timeout
@@ -807,15 +800,12 @@ def test_matrix_pending_scenario_suppresses_leaked_metrics():
     out = render.render_matrix(_matrix_results(scen))
     resume_line = [l for l in out.splitlines() if "Resume-from-suspend" in l and "gVisor" in l][0]
     cells = [c.strip() for c in resume_line.strip("|").split("|")]
-    # columns 2..6 (thpt5, thpt1, p50, p95, n) all pending; density (7) N/A-by-design;
-    # exec (8) pending — none of the provisional values survive. Each pending cell carries
-    # the upstream-blocked reason.
+    # columns 2..6 (thpt5, thpt1, p50, p95, exec) all pending — none of the provisional
+    # values survive. Each pending cell carries the upstream-blocked reason.
     pend = "pending (upstream-blocked)"
     assert cells[2] == pend and cells[3] == pend
     assert cells[4] == pend and cells[5] == pend
     assert cells[6] == pend
-    assert cells[7] == "N/A"
-    assert cells[8] == pend
     # the leaked ceiling never appears anywhere in the row
     assert "34.8414" not in resume_line and "34841" not in resume_line
 
@@ -829,30 +819,29 @@ def test_matrix_pass_scenario_still_shows_metrics_after_pending_guard():
     resume_line = [l for l in out.splitlines() if "Resume-from-suspend" in l and "gVisor" in l][0]
     cells = [c.strip() for c in resume_line.strip("|").split("|")]
     assert cells[4] == "3.5s" and cells[5] == "5s"  # real TTFE p50/p95 survive
-    assert cells[6] == "1376"  # real N survives (>= floor, no dagger)
-    assert "pending" not in [cells[4], cells[5], cells[6]]
+    # N=1376 (>= floor) means no low-N dagger on the TTFE cells
+    assert render._LOW_N_MARK not in resume_line
+    assert "pending" not in [cells[4], cells[5]]
 
 
 def test_matrix_density_sourced_from_warmpool_not_stale_burst_create():
     # a4s2 Q3 lock (PR #28): DENSITY_SOURCE_SCENARIOS = (warmpool_cold_start,). A stale
     # burst_create row carrying the OLD cluster-wide-capacity 0.45 must NOT shadow warmpool's
-    # corrected per-node-allocatable 1.88 — the warm + cold rows source 1.88, never 0.45.
+    # corrected per-node-allocatable 1.88. hb#134 relocated Max Density off the headline
+    # matrix into render_density_detail (DETAILS.md), so the sourcing guard now asserts
+    # against that block: the gVisor row sources 1.88, never 0.45.
     scen = _full_gvisor_scenarios() + [
         {
             "name": "burst_create", "outcome": "PASS", "n": 10,
             "sla_metrics": {"density_per_vcpu": 0.45},
         }
     ]
+    detail = render.render_density_detail(_matrix_results(scen))
+    assert "| gVisor | 1.88 |" in detail
+    assert "0.45" not in detail
+    # and the headline matrix no longer carries any density cell at all
     out = render.render_matrix(_matrix_results(scen))
-    assert (
-        "| gVisor | Warm-pool hit (Base image) | 4 /node · pending (cluster-fire) "
-        "| 4 /node · pending (cluster-fire) | 0.6s | 0.9s | 200 | 1.88 | 100% |"
-    ) in out
-    assert (
-        "| gVisor | Unique-image cold (RL reality) | 4 /node · pending (cluster-fire) "
-        "| 0 /node · pending (cluster-fire) | 1.2s | 1.56s | 200 | 1.88 | 100% |"
-    ) in out
-    assert "0.45" not in out
+    assert "1.88" not in out and "0.45" not in out and "Max Density" not in out
 
 
 def test_matrix_kata_warm_cold_rows_pending():
@@ -883,8 +872,8 @@ def test_matrix_resume_kata_is_na_by_design_not_pending():
         ]
         assert len(resume_kata) == 1
         cells = [c.strip() for c in resume_kata[0].strip("|").split("|")]
-        # columns 2..8 are the 7 metric cells (thpt5, thpt1, p50, p95, n, density, exec)
-        assert all(c == "N/A" for c in cells[2:9]), cells
+        # columns 2..6 are the 5 metric cells (thpt5, thpt1, p50, p95, exec)
+        assert all(c == "N/A" for c in cells[2:7]), cells
         assert "pending" not in resume_kata[0]
     assert "N/A` by construction" in out
 
@@ -904,14 +893,12 @@ def test_matrix_gvisor_resume_pending_carries_upstream_blocked_reason():
     resume_line = [l for l in out.splitlines() if "Resume-from-suspend" in l and "gVisor" in l][0]
     cells = [c.strip() for c in resume_line.strip("|").split("|")]
     pend = "pending (upstream-blocked)"
-    # thpt5, thpt1, p50, p95, n, exec all carry the reason; density is N/A-by-design.
+    # thpt5, thpt1, p50, p95, exec all carry the reason.
     assert cells[2] == pend and cells[3] == pend
     assert cells[4] == pend and cells[5] == pend
     assert cells[6] == pend
-    assert cells[7] == "N/A"
-    assert cells[8] == pend
     # a bare `pending` never appears in this row (every pending cell is qualified)
-    for c in (cells[2], cells[3], cells[4], cells[5], cells[6], cells[8]):
+    for c in (cells[2], cells[3], cells[4], cells[5], cells[6]):
         assert c == pend
 
 
@@ -925,7 +912,7 @@ def test_matrix_bare_pending_no_reason_stays_bare():
     out = render.render_matrix(_matrix_results(scen))
     resume_line = [l for l in out.splitlines() if "Resume-from-suspend" in l and "gVisor" in l][0]
     cells = [c.strip() for c in resume_line.strip("|").split("|")]
-    assert cells[2] == "pending" and cells[4] == "pending" and cells[8] == "pending"
+    assert cells[2] == "pending" and cells[4] == "pending" and cells[6] == "pending"
     assert "(" not in resume_line.split("Resume-from-suspend")[1]  # no qualifier anywhere
 
 
@@ -999,7 +986,7 @@ def test_matrix_invalid_runtime_provenance_dropped_defaults_gvisor():
     assert "trust-me-vm" not in out
     assert (
         "| gVisor | Warm-pool hit (Base image) | 4 /node · pending (cluster-fire) "
-        "| 4 /node · pending (cluster-fire) | 0.6s | 0.9s | 200 | 1.88 | 100% |"
+        "| 4 /node · pending (cluster-fire) | 0.6s | 0.9s | 100% |"
     ) in out
 
 
@@ -1008,9 +995,8 @@ def test_matrix_empty_metrics_renders_pending_skeleton():
     out = render.render_matrix(_matrix_results(scen))
     warm = [l for l in out.splitlines() if l.startswith("| gVisor | Warm-pool hit")][0]
     cells = [c.strip() for c in warm.strip("|").split("|")]
-    assert cells[2] == "pending" and cells[4] == "pending" and cells[8] == "pending"
-    # N is still shown from the scenario count
-    assert cells[6] == "5"
+    # thpt5, p50, exec all pending when the metrics dict is empty
+    assert cells[2] == "pending" and cells[4] == "pending" and cells[6] == "pending"
 
 
 def test_matrix_unknown_product_raises():
@@ -1070,7 +1056,7 @@ def test_matrix_kata_results_fills_kata_rows_gvisor_unchanged():
     )
     assert (
         "| gVisor | Warm-pool hit (Base image) | 4 /node · pending (cluster-fire) "
-        "| 4 /node · pending (cluster-fire) | 0.6s | 0.9s | 200 | 1.88 | 100% |"
+        "| 4 /node · pending (cluster-fire) | 0.6s | 0.9s | 100% |"
     ) in out
     kata_cold = [l for l in out.splitlines()
                  if l.startswith("| Kata + microVM | Unique-image cold")][0]
@@ -1079,8 +1065,7 @@ def test_matrix_kata_results_fills_kata_rows_gvisor_unchanged():
     # honesty marker applies to kata_results rows exactly as it does to primary rows.
     assert cells[4] == f"4.362s {render._LOW_N_MARK}"
     assert cells[5] == f"5s {render._LOW_N_MARK}"
-    assert cells[6] == "5"
-    assert "100%" in cells[8]
+    assert "100%" in cells[6]
 
 
 def test_matrix_kata_results_warmpool_renders_pool_topology_constrained():
@@ -1095,7 +1080,7 @@ def test_matrix_kata_results_warmpool_renders_pool_topology_constrained():
     pend = "pending (pool-topology-constrained)"
     assert cells[2] == pend and cells[3] == pend
     assert cells[4] == pend and cells[5] == pend
-    assert cells[8] == pend
+    assert cells[6] == pend
 
 
 def test_matrix_kata_results_separate_run_footnote():
@@ -1875,6 +1860,19 @@ def test_warm_vs_cold_complete_block_renders():
     assert "| Leg | TTFE (p50) |" in out
 
 
+def test_warm_vs_cold_punchline_only_headline_no_table():
+    # hb#134 page-split: punchline_only=True renders the one-line headline + a DETAILS pointer,
+    # with NO leg table (that moves to the deep-dive appendix). The ratio is recomputed the same
+    # way, so the page headline (10×) matches the full-table Speedup row.
+    out = render.render_warm_vs_cold(
+        _matrix_results(_full_gvisor_scenarios(), warm_vs_cold=_wc()), punchline_only=True)
+    assert "## Warm-vs-Cold Speedup" in out
+    assert "A warm-pool provision is **10× faster** than a true-cold start (gVisor)" in out
+    assert "[DETAILS.md](DETAILS.md)" in out
+    assert "| Leg |" not in out
+    assert "| Speedup (warm is N× faster) |" not in out
+
+
 def test_warm_vs_cold_legs_and_speedup_math():
     # the N× headline and both leg cells render from the displayed values (cold ÷ warm = 10×).
     # #103: the warm leg carries its sample size INLINE (n=200 here) so it cannot be conflated
@@ -2216,6 +2214,58 @@ def test_concurrent_burst_invalid_provenance_dropped_spine_renders():
     assert "docker.pkg.dev" not in out  # internal registry path never reaches the page
 
 
+def _scale_proof_obj():
+    return {
+        "scale_points": [
+            {"node_count": 1, "density": 1.88},
+            {"node_count": 2, "density": 1.86},
+            {"node_count": 4, "density": 1.85},
+        ],
+        "density_retention": 0.984,
+        "thpt_retention": 0.99,
+    }
+
+
+def test_cluster_scale_both_present_combined_section_demotes_subheadings():
+    # hb#134: with BOTH sub-blocks present the combined section renders one ## question, the
+    # intro, and the two tables DEMOTED to ### — the standalone ## headings must NOT appear.
+    results = _matrix_results(
+        _full_gvisor_scenarios(), scale_proof=_scale_proof_obj(), concurrent_burst=_cb())
+    out = render.render_cluster_scale(results)
+    assert "## Does it hold at cluster scale?" in out
+    assert "### Linearity — throughput and density hold flat as nodes grow" in out
+    assert "### Concurrent burst — TTFE at N simultaneous claims" in out
+    # the two blocks' standalone ## headings are gone (demoted, not duplicated).
+    assert "## Scale Proof (Linearity Check)" not in out
+    assert "## Concurrent Burst — TTFE at N simultaneous claims" not in out
+    # both tables' data still lands under the merged section.
+    assert "| 1 → 2 → 4 | ✅ Yes (1.88 → 1.86 → 1.85) | ✅ Yes |" in out
+    assert "| 300 | Warm pool | 6.8743s | 9.393s | 0.392 | 0 | 100% |" in out
+
+
+def test_cluster_scale_both_absent_inert():
+    # Neither sub-block present ⇒ the whole section is INERT (no empty header).
+    assert render.render_cluster_scale(_matrix_results(_full_gvisor_scenarios())) == ""
+
+
+def test_cluster_scale_only_burst_renders_wrapper_without_linearity():
+    # Only concurrent_burst present ⇒ wrapper + burst ###; NO linearity sub-block.
+    out = render.render_cluster_scale(
+        _matrix_results(_full_gvisor_scenarios(), concurrent_burst=_cb()))
+    assert "## Does it hold at cluster scale?" in out
+    assert "### Concurrent burst — TTFE at N simultaneous claims" in out
+    assert "### Linearity" not in out
+
+
+def test_cluster_scale_only_linearity_renders_wrapper_without_burst():
+    # Only scale_proof present ⇒ wrapper + linearity ###; NO concurrent-burst sub-block.
+    out = render.render_cluster_scale(
+        _matrix_results(_full_gvisor_scenarios(), scale_proof=_scale_proof_obj()))
+    assert "## Does it hold at cluster scale?" in out
+    assert "### Linearity — throughput and density hold flat as nodes grow" in out
+    assert "### Concurrent burst" not in out
+
+
 def _wpa(**over):
     base = {
         "runtime_class": "gvisor",
@@ -2330,9 +2380,27 @@ def test_at_scale_contention_missing_spine_inert():
         _matrix_results(_full_gvisor_scenarios(), at_scale_contention=asc)) == ""
 
 
-def test_at_scale_contention_renders_table():
+def test_at_scale_contention_page_retraction_posture_no_table():
+    # hb#134 page-split: the DEFAULT (page) path renders the honest-limits retraction posture —
+    # the friendlier heading, the retraction prose, the worst-case TTFE inline, and a DETAILS
+    # pointer — with NO decomposition table (that moves to the appendix).
     out = render.render_at_scale_contention(
         _matrix_results(_full_gvisor_scenarios(), at_scale_contention=_asc()))
+    assert "## Where it breaks today (honest limits)" in out
+    assert "retraction" in out
+    assert "does **not** hold here" in out
+    assert "**2:1 contention**" in out
+    # worst-case TTFE surfaced inline so the retraction is self-contained without the table.
+    assert "**1.6589s p50** / **2.0169s p95**" in out
+    assert "[DETAILS.md](DETAILS.md)" in out
+    # the decomposition table itself does NOT render on the page path.
+    assert "| Pool | Claims | Contention |" not in out
+    assert "Bind p50" not in out
+
+
+def test_at_scale_contention_renders_table():
+    out = render.render_at_scale_contention(
+        _matrix_results(_full_gvisor_scenarios(), at_scale_contention=_asc()), detail=True)
     assert "## At Scale Under Contention — where sub-second warm activation breaks" in out
     # It is framed explicitly as a retraction of the sub-second-at-scale claim.
     assert "retraction" in out
@@ -2353,7 +2421,7 @@ def test_at_scale_contention_bind_columns_em_dash_when_absent():
     del asc["bind_p50_ms"]
     del asc["bind_p95_ms"]
     out = render.render_at_scale_contention(
-        _matrix_results(_full_gvisor_scenarios(), at_scale_contention=asc))
+        _matrix_results(_full_gvisor_scenarios(), at_scale_contention=asc), detail=True)
     assert "Bind p50" not in out
     assert "| 30 | 60 | 2:1 | 1.6589s | 2.0169s | 100% |" in out
 
@@ -2363,7 +2431,7 @@ def test_at_scale_contention_no_exec_column_when_absent():
     asc = _asc()
     del asc["exec_success_rate"]
     out = render.render_at_scale_contention(
-        _matrix_results(_full_gvisor_scenarios(), at_scale_contention=asc))
+        _matrix_results(_full_gvisor_scenarios(), at_scale_contention=asc), detail=True)
     assert "Execution Success" not in out
     assert "| 30 | 60 | 2:1 | 1.6589s | 2.0169s | 1.384s | 1.7001s |" in out
 
@@ -2379,7 +2447,8 @@ def test_at_scale_contention_invalid_machine_type_dropped_spine_renders():
     # still renders (provenance is best-effort, never fabricated, never blocks the table).
     out = render.render_at_scale_contention(
         _matrix_results(_full_gvisor_scenarios(),
-                        at_scale_contention=_asc(machine_type="us-central1-docker.pkg.dev/proj/img:1")))
+                        at_scale_contention=_asc(machine_type="us-central1-docker.pkg.dev/proj/img:1")),
+        detail=True)
     assert "## At Scale Under Contention — where sub-second warm activation breaks" in out
     assert "| 30 | 60 | 2:1 | 1.6589s | 2.0169s | 1.384s | 1.7001s | 100% |" in out
     assert "docker.pkg.dev" not in out  # internal registry path never reaches the page
@@ -2388,7 +2457,8 @@ def test_at_scale_contention_invalid_machine_type_dropped_spine_renders():
 def test_at_scale_contention_sub_100_exec_flags_warn():
     # A <100% exec rate prints the succeeded/total fraction + ⚠️, never quietly dropped.
     out = render.render_at_scale_contention(
-        _matrix_results(_full_gvisor_scenarios(), at_scale_contention=_asc(exec_success_rate=0.95)))
+        _matrix_results(_full_gvisor_scenarios(), at_scale_contention=_asc(exec_success_rate=0.95)),
+        detail=True)
     assert "⚠️" in out
     assert "95%" in out
 
@@ -2472,6 +2542,38 @@ def test_operating_envelope_row1_pends_when_scenario_not_pass():
     assert "| Bursty — pool oversubscribed 2:1 (60 claims / 30 ready) | ~1.7s | full start → first result |" in out
 
 
+def test_operating_envelope_row1_pend_inherits_pending_reason():
+    # hb#134 (a4s1 nit): a genuinely-pending row-1 inherits the matrix scenario's pending_reason
+    # so a known upstream/cluster gap reads `pending (<reason>)` here exactly as the matrix does —
+    # NOT a bare `pending` a reader could mistake for not-yet-run.
+    scen = _full_gvisor_scenarios()
+    for s in scen:
+        if s["name"] == "warmpool_cold_start":
+            s["outcome"] = "pending"
+            s["pending_reason"] = "upstream-blocked"
+    out = render.render_operating_envelope(
+        _matrix_results(scen, at_scale_contention=_asc(),
+                        concurrent_burst=_cb(), warm_pool_acquisition=_wpa()))
+    assert ("| Steady trickle — warm pool keeps up with demand | "
+            "pending (upstream-blocked) | full start → first result |") in out
+
+
+def test_operating_envelope_row1_missing_ttfe_pass_is_bare_pending():
+    # Reason decorates only a genuinely-pending scenario: a PASS warm scenario missing ttfe_p50_ms
+    # (no publishable figure) falls back to bare `pending`, never a spurious `(reason)`.
+    scen = _full_gvisor_scenarios()
+    for s in scen:
+        if s["name"] == "warmpool_cold_start":
+            s["outcome"] = "PASS"
+            s["pending_reason"] = "upstream-blocked"  # must NOT leak onto a non-pending row
+            s.get("sla_metrics", {}).pop("ttfe_p50_ms", None)
+    out = render.render_operating_envelope(
+        _matrix_results(scen, at_scale_contention=_asc(),
+                        concurrent_burst=_cb(), warm_pool_acquisition=_wpa()))
+    assert "| Steady trickle — warm pool keeps up with demand | pending | full start → first result |" in out
+    assert "pending (upstream-blocked)" not in out
+
+
 def test_operating_envelope_row2_pends_when_contention_absent():
     # INERT at_scale_contention (absent) ⇒ row 2 inherits its pending semantics.
     out = render.render_operating_envelope(
@@ -2550,7 +2652,7 @@ def test_operating_envelope_excludes_speedup_leg():
 def test_recipe_renders_h2_and_is_static():
     # #4021: render_recipe is product-agnostic static prose (no results arg) and always renders.
     out = render.render_recipe()
-    assert out.startswith("## Reproducibility Recipe")
+    assert out.startswith("## Reproduce it")
     assert render.render_recipe() == out  # deterministic / no hidden state
 
 
@@ -2595,8 +2697,8 @@ def test_recipe_in_full_readme_after_data_sections():
     # Note-1 placement: the recipe renders ONCE, after the data sections (it forward-refs "above").
     from generate import build_readme
     readme = build_readme()
-    assert readme.count("## Reproducibility Recipe") == 1
-    recipe_at = readme.index("## Reproducibility Recipe")
+    assert readme.count("## Reproduce it") == 1
+    recipe_at = readme.index("## Reproduce it")
     contention_at = readme.find("## At Scale Under Contention")
     if contention_at != -1:
         assert recipe_at > contention_at

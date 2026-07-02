@@ -41,19 +41,22 @@ def _load_render():
         mod.render_cold_bind_decomposition,
         mod.render_warm_vs_cold,
         mod.render_scale_proof,
+        mod.render_cluster_scale,
         mod.render_stepup,
         mod.render_kata_activation,
         mod.render_concurrent_burst,
         mod.render_warm_pool_acquisition,
         mod.render_at_scale_contention,
+        mod.render_density_detail,
         mod.render_recipe,
     )
 
 
 (render_matrix, render_operating_envelope, render_burst_corroboration,
  render_warm_bind_decomposition, render_cold_bind_decomposition, render_warm_vs_cold,
- render_scale_proof, render_stepup, render_kata_activation, render_concurrent_burst,
- render_warm_pool_acquisition, render_at_scale_contention, render_recipe) = _load_render()
+ render_scale_proof, render_cluster_scale, render_stepup, render_kata_activation,
+ render_concurrent_burst, render_warm_pool_acquisition, render_at_scale_contention,
+ render_density_detail, render_recipe) = _load_render()
 
 # Product -> results path, relative to the repo root (parent of render/).
 # The PUBLIC customer page is SANDBOX-ONLY (alex 2026-06-28): substrate demotes from a
@@ -79,45 +82,32 @@ _KATA_RESULTS_REL = "sandbox-kata/results/latest.json"
 _PREAMBLE = """\
 # Honest benchmarks — GKE agent sandbox
 
-Most sandbox benchmarks are marketing: a best-case number, measured once, on a tuned
-cluster nobody will hand you, with no way to check it. This page is the opposite. **Every
-number is machine-rendered from a real harness run and reproducible from the recipe at the
-bottom** — no cell is ever typed by hand. Each value traces to a schema-validated field of
-an actual run; anything the schema does not declare is dropped before it can reach the page.
-We publish only what we measured on the cluster named in the build banner, so a `kind` run
-is labelled `kind` and a local number is never dressed up as a production SLA.
+Most sandbox benchmarks are marketing: one best-case number, measured once, on a cluster you
+will never get. This page is the opposite — **every number is machine-rendered from a real
+harness run, and reproducible** (the exact steps are in **Reproduce it** at the bottom). No cell
+is typed by hand; anything the schema does not declare is dropped before it reaches the page.
 
-The table is keyed on the metric a user actually feels: **TTFE — Time-To-First-Instruction**,
-the wall-clock from the create request to the moment the sandbox *ran its first instruction
-and returned a result*. TTFE is not pod-Ready — a pod can report Ready seconds before it can
-run your code — so we measure the wait, not the checkbox. Throughput is reported per node at
-two TTFE bars (`<5s` and `<1s`), and the **Execution Success (Honesty Check)** column is the
-fraction of those first instructions that actually succeeded.
+We measure the one thing you actually feel — **TTFE (Time-To-First-Instruction)**: the wall-clock
+from "create this sandbox" to "it ran my first instruction and returned a result." Not pod-Ready
+(a pod can look ready seconds before it can run your code) — the real wait.
 
-The page is built to print the truth even when the truth is unflattering:
+Every number is a **reproducible floor, not a ceiling** — what a *vanilla* OSS build delivers
+today (upstream controller from `main`, default runtime, no tuning); a bigger pool or denser nodes
+should beat it. The page also prints the truth when it is unflattering: an unmeasured cell reads
+`pending` (never a guess), a throughput that misses its bar prints an honest `0`, and execution
+failures show as a ⚠️ fraction rather than being quietly dropped. The working behind these
+headline tables lives in the deep-dive appendix, [DETAILS.md](DETAILS.md).
+"""
 
-- A cell we have not yet measured renders `pending` — never a guess, never a placeholder
-  number.
-- A throughput whose p95 misses the bar prints an honest **`0`** — we do not round up to
-  make the row look better.
-- An execution-success rate below 100% prints the succeeded/total fraction and a ⚠️ flag,
-  instead of quietly dropping the failures.
+# Deep-dive appendix header. Same no-measured-numbers-here rule as _PREAMBLE: every
+# number in DETAILS.md comes from a render function, so this constant carries zero PII risk.
+_DETAILS_PREAMBLE = """\
+# Honest benchmarks — deep-dive appendix
 
-And every measured number is a **reproducible floor, not a ceiling.** It is what a *vanilla*
-OSS build delivers today — the upstream controller from `main`, default runtime, no tuning,
-the cluster shape named in the build banner. A bigger pool, denser nodes, or a tuned runtime
-should *beat* it; the value here is the honest lower bound you can reproduce and then improve
-on. We publish the floor we can stand behind, not the best number we could cherry-pick.
-
-So don't take our word for it — reproduce any row, then beat it. The suite is honest by
-construction:
-
-```
-bash recipe/install-controller-from-main.sh   # OSS controller from upstream main
-python3 -m harness.run                        # run the portable suite (cluster=kind)
-python3 -m render.generate                    # regenerate this table
-bash scripts/check-public-safety.sh           # fail-closed public-safety scan
-```
+The corroboration and decomposition tables behind the headline page
+([README.md](README.md)). Same rule: **every number is machine-rendered from a real
+harness run — nothing here is typed by hand.** Start with the headline page; come here
+when you want to see the working.
 """
 
 
@@ -152,39 +142,74 @@ def build_readme(root=None):
         # hb#134: the operating-envelope headline table sits directly under the matrix — it is
         # the "what wait do I budget?" answer, always rendered (rows pend individually).
         sections.append(render_operating_envelope(results).rstrip())
-        corr = render_burst_corroboration(results)
-        if corr.strip():
-            sections.append(corr.rstrip())
-        bind_dec = render_warm_bind_decomposition(results)
-        if bind_dec.strip():
-            sections.append(bind_dec.rstrip())
-        cold_dec = render_cold_bind_decomposition(results)
-        if cold_dec.strip():
-            sections.append(cold_dec.rstrip())
-        speedup = render_warm_vs_cold(results)
+        speedup = render_warm_vs_cold(results, punchline_only=True)
         if speedup.strip():
             sections.append(speedup.rstrip())
-        scale = render_scale_proof(results)
-        if scale.strip():
-            sections.append(scale.rstrip())
-        stepup = render_stepup(results)
+        # hb#134: Scale-Proof + Concurrent-Burst merge into ONE user-facing "Does it hold at
+        # cluster scale?" section (render_cluster_scale demotes each to a ### sub-block).
+        cluster_scale = render_cluster_scale(results)
+        if cluster_scale.strip():
+            sections.append(cluster_scale.rstrip())
+        stepup = render_stepup(results)  # INERT today; standalone ## when a stepup object emits
         if stepup.strip():
             sections.append(stepup.rstrip())
-        kata = render_kata_activation(results)
-        if kata.strip():
-            sections.append(kata.rstrip())
-        burst = render_concurrent_burst(results)
-        if burst.strip():
-            sections.append(burst.rstrip())
-        acq = render_warm_pool_acquisition(results)
-        if acq.strip():
-            sections.append(acq.rstrip())
-        contention = render_at_scale_contention(results)
+        contention = render_at_scale_contention(results)  # page: retraction posture only
         if contention.strip():
             sections.append(contention.rstrip())
     # #4021: the Reproducibility Recipe is product-agnostic architecture prose, so it renders
     # ONCE after the per-product loop — the preamble forward-refs "the recipe at the bottom".
     sections.append(render_recipe().rstrip())
+    return "\n\n".join(sections) + "\n"
+
+
+def build_details(root=None):
+    """Return the deep-dive appendix (DETAILS.md): corroboration + decomposition tables.
+
+    hb#134 page-friendliness split: the headline README carries the answer a non-infra
+    reader needs (matrix + operating envelope + scale + burst); the working behind those
+    numbers — burst-create corroboration, the bind-vs-exec decomposition (warm + cold),
+    the full warm-vs-cold leg table (only its punchline stays on the headline page),
+    the Kata pod-Ready table, the warm-pool acquisition breakdown, and the per-runtime
+    Max-Density table (relocated off the headline matrix in the same pass) — moves here so
+    the front page stays scannable. Same closed-schema render path as build_readme: each
+    block is INERT (returns "") unless its required fields are present, so DETAILS degrades
+    to an honest skeleton rather than a blank or a guess.
+    """
+    root = root or _repo_root()
+    kata_results = None
+    kata_path = os.path.join(root, _KATA_RESULTS_REL)
+    if os.path.exists(kata_path):
+        with open(kata_path) as fh:
+            kata_results = json.load(fh)
+    sections = [_DETAILS_PREAMBLE.rstrip()]
+    for product, rel in _PRODUCTS:
+        path = os.path.join(root, rel)
+        if not os.path.exists(path):
+            continue
+        with open(path) as fh:
+            results = json.load(fh)
+        for renderer in (
+            render_burst_corroboration,
+            render_warm_bind_decomposition,
+            render_cold_bind_decomposition,
+            render_warm_vs_cold,
+            render_kata_activation,
+            render_warm_pool_acquisition,
+        ):
+            block = renderer(results)
+            if block.strip():
+                sections.append(block.rstrip())
+        # Max-Density relocated here from the headline matrix (hb#134). kata_results fills
+        # the kata-microvm row when its separate run is present, mirroring build_readme.
+        kr = kata_results if product == "sandbox" else None
+        density = render_density_detail(results, kata_results=kr)
+        if density.strip():
+            sections.append(density.rstrip())
+        # hb#134: the honest-limits RETRACTION posture stays on the headline page; only the full
+        # bind/exec decomposition table + non-comparable caveat move here (detail=True).
+        contention_detail = render_at_scale_contention(results, detail=True)
+        if contention_detail.strip():
+            sections.append(contention_detail.rstrip())
     return "\n\n".join(sections) + "\n"
 
 
@@ -195,6 +220,11 @@ def main(argv=None):
     with open(out, "w") as fh:
         fh.write(readme)
     sys.stderr.write(f"generate: wrote {out} ({len(readme)} bytes)\n")
+    details = build_details(root)
+    details_out = os.path.join(root, "DETAILS.md")
+    with open(details_out, "w") as fh:
+        fh.write(details)
+    sys.stderr.write(f"generate: wrote {details_out} ({len(details)} bytes)\n")
     return 0
 
 
