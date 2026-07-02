@@ -2515,11 +2515,12 @@ def test_cluster_scale_only_linearity_renders_wrapper_without_burst():
 
 def test_cluster_scale_saturation_present_renders_third_subblock():
     # hb#132: cluster_saturation present ⇒ the "Does it hold at cluster scale?" wrapper renders a
-    # THIRD demoted ### sub-block (Saturation), alongside the intro's "Three questions" framing.
+    # demoted ### sub-block (Saturation), alongside the intro's "Four questions" framing (#134 fold
+    # added the contention sub-block as the 4th cluster-scale question).
     out = render.render_cluster_scale(
         _matrix_results(_full_gvisor_scenarios(), cluster_saturation=_cs()))
     assert "## Does it hold at cluster scale?" in out
-    assert "Three questions a bigger cluster raises" in out
+    assert "Four questions a bigger cluster raises" in out
     assert "### Saturation — the whole-cluster warm-hand-out ceiling" in out
     # its standalone ## heading is DEMOTED, not duplicated, inside the combined section.
     assert "## Cluster Saturation" not in out
@@ -3136,12 +3137,15 @@ def test_what_this_means_public_safe_no_internal_names():
         assert forbidden not in out
 
 
-def test_what_this_means_in_full_readme_between_speedup_and_scale():
+def test_what_this_means_in_full_readme_between_matrix_and_scale():
+    # #134 fold: the Warm-vs-Cold punchline was dropped from the page (redundant with the
+    # what-this-means speedup bullet; the full table stays in DETAILS), so "What this means for you"
+    # now sits between the core-metrics matrix and the cluster-scale block.
     from generate import build_readme
     readme = build_readme()
     wtm_at = readme.find("## What this means for you")
     assert wtm_at != -1
-    assert readme.index("## Warm-vs-Cold Speedup") < wtm_at
+    assert readme.index("## Agent Sandbox — Core Metrics") < wtm_at
     assert wtm_at < readme.index("## Does it hold at cluster scale?")
 
 
@@ -3285,13 +3289,19 @@ def test_north_star_unknown_product_renders_nothing():
     assert out == ""
 
 
-def test_north_star_in_full_readme_between_matrix_and_envelope():
+def test_north_star_in_full_readme_nested_under_what_this_means():
+    # #134 fold: North-Star + Operating Envelope are demoted to ### sub-blocks under
+    # "## What this means for you"; the envelope ("### What wait should I budget?") renders first,
+    # the North-Star ("### How close to the North Star?") second.
     from generate import build_readme
     readme = build_readme()
-    ns_at = readme.find("## North-Star check")
+    ns_at = readme.find("### How close to the North Star?")
     assert ns_at != -1
-    assert readme.index("## Agent Sandbox — Core Metrics") < ns_at
-    assert ns_at < readme.index("## Operating Envelope")
+    envelope_at = readme.find("### What wait should I budget?")
+    assert envelope_at != -1
+    assert readme.index("## What this means for you") < envelope_at
+    assert envelope_at < ns_at
+    assert ns_at < readme.index("## Does it hold at cluster scale?")
 
 
 def _run_all():
