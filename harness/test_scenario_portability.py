@@ -346,6 +346,30 @@ def test_harness_enums_subset_of_render_allowlists():
     )
 
 
+def test_suspend_resume_excluded_from_kata_suite_na_by_construction():
+    """suspend_resume must NOT be a kata cell — it is N/A by construction (#3942).
+
+    render.render_matrix hardcodes the suspend_resume × kata-microvm cell to `N/A`
+    regardless of what a run emits (CRIU checkpoint/restore does not transfer to the
+    Kata VM model). Running the scenario in the kata suite would emit only a
+    misleading FAIL into sandbox-kata/results/latest.json that render discards anyway.
+    Excluding it keeps the raw kata results honest; this pins that exclusion so a
+    future suite edit cannot silently re-introduce a phantom kata resume FAIL.
+    """
+    kata_modules = {c.module for c in CELLS_BY_PRODUCT["sandbox-kata"]}
+    _check(
+        "suspend_resume" not in kata_modules,
+        "suspend_resume must not be in the sandbox-kata suite — it is N/A by "
+        f"construction and render forces N/A; kata suite = {sorted(kata_modules)}",
+    )
+    # It stays a real gVisor cell (measurable there) — this is a kata-only exclusion.
+    sandbox_modules = {c.module for c in CELLS_BY_PRODUCT["sandbox"]}
+    _check(
+        "suspend_resume" in sandbox_modules,
+        "suspend_resume must remain in the gVisor sandbox suite (measurable there)",
+    )
+
+
 def _all_tests():
     return [
         v
