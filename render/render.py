@@ -329,11 +329,15 @@ _NA = "N/A"
 
 # hb#132 dual-throughput. Each throughput cell carries TWO numbers: `<node> /node · <cluster>`.
 # The per-node half is the engineering rate (comparable across runtimes); the cluster half is a
-# MEASURED saturation rate at X nodes — never a per-node × N extrapolation (that fiction breaks
-# above the controller reconcile ceiling). The cluster half pends `pending (cluster-fire)` until
-# OUR own schema-validated saturation fire carries thpt_*_per_cluster. A landed cluster figure
-# below the sizing target renders with ⚠️ (honest under-target signal); the target itself is the
-# test-sizing floor and is NEVER printed as a value.
+# MEASURED per-activation-mode cluster rate at X nodes — never a per-node × N extrapolation (that
+# fiction breaks above the controller reconcile ceiling). The cluster half pends
+# `pending (cluster-fire)` until a schema-validated PER-MODE cluster-throughput fire carries
+# thpt_*_per_cluster in that mode's scenario sla_metrics. The standalone whole-cluster Saturation
+# ceiling (top-level cluster_saturation, rendered in DETAILS) is a DIFFERENT quantity — completion
+# throughput at overload, not the SLO-gated sustained rate these cells are defined to hold — so it
+# never fills a matrix cell. A landed cluster figure below the sizing target renders with ⚠️
+# (honest under-target signal); the target itself is the test-sizing floor and is NEVER printed
+# as a value.
 _CLUSTER_FIRE = "cluster-fire"
 CLUSTER_THROUGHPUT_TARGET = 300
 
@@ -665,9 +669,9 @@ def render_matrix(results, kata_results=None):
         lines.append(
             "**Throughput is dual — `per-node · per-cluster`.** The per-node figure is the "
             "engineering rate (comparable across runtimes); the per-cluster figure is a MEASURED "
-            f"cluster saturation rate at {cluster_x} nodes — never a per-node × N extrapolation "
-            "(that fiction breaks above the controller reconcile ceiling). A per-cluster figure "
-            "below the cluster sizing target renders with ⚠️."
+            f"per-activation-mode cluster rate at {cluster_x} nodes — never a per-node × N "
+            "extrapolation (that fiction breaks above the controller reconcile ceiling). A "
+            "per-cluster figure below the cluster sizing target renders with ⚠️."
         )
     elif len(distinct_xs) > 1:
         per_rt = "; ".join(
@@ -678,17 +682,21 @@ def render_matrix(results, kata_results=None):
         lines.append(
             "**Throughput is dual — `per-node · per-cluster`.** The per-node figure is the "
             "engineering rate (comparable across runtimes); the per-cluster figure is a MEASURED "
-            f"cluster saturation rate, measured per runtime at DIFFERENT node counts — {per_rt} "
-            "— never a per-node × N extrapolation (that fiction breaks above the controller "
-            "reconcile ceiling). Per-cluster figures are NOT comparable across runtimes here "
-            "(different X). A per-cluster figure below the cluster sizing target renders with ⚠️."
+            f"per-activation-mode cluster rate, measured per runtime at DIFFERENT node counts — "
+            f"{per_rt} — never a per-node × N extrapolation (that fiction breaks above the "
+            "controller reconcile ceiling). Per-cluster figures are NOT comparable across "
+            "runtimes here (different X). A per-cluster figure below the cluster sizing target "
+            "renders with ⚠️."
         )
     else:
         lines.append(
             "**Throughput is dual — `per-node · per-cluster`.** The per-node figure is the "
             "engineering rate (comparable across runtimes); the per-cluster figure is a MEASURED "
-            "cluster saturation rate (never a per-node × N extrapolation). Cluster halves render "
-            "`pending (cluster-fire)` until our own schema-validated saturation fire lands them."
+            "per-activation-mode cluster rate (never a per-node × N extrapolation). Cluster "
+            "halves render `pending (cluster-fire)` until a schema-validated per-mode "
+            "cluster-throughput fire lands them — the standalone whole-cluster Saturation "
+            "ceiling (DETAILS) measures the aggregate ceiling at overload, not these SLO-gated "
+            "per-mode cells, so it never fills a matrix half."
         )
     lines.append("")
     lines.append("| " + " | ".join(header) + " |")

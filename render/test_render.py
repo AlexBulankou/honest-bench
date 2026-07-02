@@ -705,7 +705,8 @@ def test_matrix_cluster_half_gated_on_node_count_presence():
     assert "/cluster" not in cells[2] and "/cluster" not in cells[3]
     # caption stays on the pending branch — no X was landed anywhere
     assert "at 40 nodes" not in out
-    assert "until our own schema-validated saturation fire lands them" in out
+    assert "until a schema-validated per-mode cluster-throughput fire lands them" in out
+    assert "so it never fills a matrix half" in out
 
 
 def test_matrix_mixed_x_caption_names_each_runtime():
@@ -738,8 +739,8 @@ def test_matrix_mixed_x_caption_names_each_runtime():
     assert "gVisor at 40 nodes; Kata + microVM at 20 nodes" in out
     assert "NOT comparable across runtimes here (different X)" in out
     # neither runtime's X is presented as THE table-wide X
-    assert "cluster saturation rate at 40 nodes" not in out
-    assert "cluster saturation rate at 20 nodes" not in out
+    assert "cluster rate at 40 nodes" not in out
+    assert "cluster rate at 20 nodes" not in out
     # both cluster halves still render their real figures (above target, no ⚠️)
     assert "350 /cluster" in out and "310 /cluster" in out
 
@@ -763,7 +764,7 @@ def test_matrix_same_x_two_runtimes_single_caption():
     out = render.render_matrix(
         _matrix_results(scen), kata_results=_kata_results(scenarios=kata_scen)
     )
-    assert "cluster saturation rate at 40 nodes" in out
+    assert "cluster rate at 40 nodes" in out
     assert "DIFFERENT node counts" not in out
 
 
