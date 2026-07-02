@@ -868,6 +868,173 @@ def test_matrix_bad_generated_at_dropped():
     assert "ask alex" not in out
 
 
+# --- #3942: kata_results companion-artifact merge (separate sandbox-kata run) ----------------
+
+
+def _kata_results(scenarios=None, provenance="default", **top):
+    # Shape of the sandbox-kata companion artifact: native cold measured PASS; warm-pool
+    # pending with the pool-topology-constrained reason (the 4/5-readyReplicas single-node
+    # contention artifact — a topology property, not a kata number).
+    if scenarios is None:
+        scenarios = [
+            {
+                "name": "native_digest_cold", "outcome": "PASS", "n": 5,
+                "sla_metrics": {
+                    "ttfe_p50_ms": 4362, "ttfe_p95_ms": 5000, "exec_success_rate": 1.0,
+                },
+            },
+            {
+                "name": "warmpool_cold_start", "outcome": "pending",
+                "pending_reason": "pool-topology-constrained", "n": 5,
+            },
+        ]
+    r = {"product": "sandbox-kata", "scenarios": scenarios}
+    if provenance == "default":
+        r["provenance"] = {
+            "runtime": "kata-microvm", "cluster_substrate": "gke-kata",
+            "machine_type": "n2-standard-4", "node_count": 1,
+        }
+    elif provenance is not None:
+        r["provenance"] = provenance
+    r.update(top)
+    return r
+
+
+def test_matrix_kata_results_fills_kata_rows_gvisor_unchanged():
+    # the companion artifact fills the kata native-cold row with real metrics while the
+    # primary gVisor rows render exactly as without it.
+    out = render.render_matrix(
+        _matrix_results(_full_gvisor_scenarios()),
+        kata_results=_kata_results(generated_at="2026-07-02T02:53:00Z"),
+    )
+    assert "| gVisor | Warm-pool hit (Base image) | 4 | 4 | 0.6s | 0.9s | 200 | 1.88 | 100% |" in out
+    kata_cold = [l for l in out.splitlines()
+                 if l.startswith("| Kata + microVM | Unique-image cold")][0]
+    cells = [c.strip() for c in kata_cold.strip("|").split("|")]
+    # n=5 is below the TTFE comparability floor, so the dagger rides along — the low-N
+    # honesty marker applies to kata_results rows exactly as it does to primary rows.
+    assert cells[4] == f"4.362s {render._LOW_N_MARK}"
+    assert cells[5] == f"5s {render._LOW_N_MARK}"
+    assert cells[6] == "5"
+    assert "100%" in cells[8]
+
+
+def test_matrix_kata_results_warmpool_renders_pool_topology_constrained():
+    # the warm-pool kata cell is a topology artifact, published as a qualified pending —
+    # never a bare FAIL headline and never leaked provisional metrics.
+    out = render.render_matrix(
+        _matrix_results(_full_gvisor_scenarios()), kata_results=_kata_results()
+    )
+    kata_warm = [l for l in out.splitlines()
+                 if l.startswith("| Kata + microVM | Warm-pool hit")][0]
+    cells = [c.strip() for c in kata_warm.strip("|").split("|")]
+    pend = "pending (pool-topology-constrained)"
+    assert cells[2] == pend and cells[3] == pend
+    assert cells[4] == pend and cells[5] == pend
+    assert cells[8] == pend
+
+
+def test_matrix_kata_results_separate_run_footnote():
+    # the kata rows come from a different substrate + machine shape than the build banner,
+    # so their own closed-schema provenance is disclosed; the static not-yet-measured line
+    # must be gone.
+    out = render.render_matrix(
+        _matrix_results(_full_gvisor_scenarios()),
+        kata_results=_kata_results(generated_at="2026-07-02T02:53:00Z"),
+    )
+    assert "not-yet-measured (requires-kata-microvm)" not in out
+    foot = [l for l in out.splitlines() if "separate run on the kata node pool" in l][0]
+    assert "cluster_substrate=gke-kata" in foot
+    assert "machine_type=n2-standard-4" in foot
+    assert "node_count=1" in foot
+    assert "generated-at=2026-07-02T02:53:00Z" in foot
+
+
+def test_matrix_kata_results_wrong_product_ignored():
+    # only the sandbox-kata product may fill the kata slot — anything else is dropped whole.
+    kr = _kata_results()
+    kr["product"] = "sandbox"
+    out = render.render_matrix(_matrix_results(_full_gvisor_scenarios()), kata_results=kr)
+    assert "4.362s" not in out
+    assert "not-yet-measured (requires-kata-microvm)" in out
+
+
+def test_matrix_kata_results_wrong_runtime_ignored():
+    # a sandbox-kata artifact whose provenance.runtime is absent or non-kata is dropped whole
+    # (the artifact does not prove what runtime it measured).
+    for prov in (None, {"runtime": "gvisor"}, {"runtime": "trust-me-vm"}):
+        out = render.render_matrix(
+            _matrix_results(_full_gvisor_scenarios()),
+            kata_results=_kata_results(provenance=prov),
+        )
+        assert "4.362s" not in out
+        assert "not-yet-measured (requires-kata-microvm)" in out
+
+
+def test_matrix_kata_measured_primary_wins_over_kata_results():
+    # a kata-measured PRIMARY run owns the kata rows; kata_results is ignored and no
+    # separate-run footnote renders (the main build banner already covers the kata rows).
+    scen = [
+        {
+            "name": "warmpool_cold_start", "outcome": "PASS", "n": 50,
+            "sla_metrics": {"ttfe_p50_ms": 700, "ttfe_p95_ms": 950, "exec_success_rate": 1.0},
+        },
+    ]
+    out = render.render_matrix(
+        _matrix_results(scen, provenance={"runtime": "kata-microvm"}),
+        kata_results=_kata_results(),
+    )
+    kata_warm = [l for l in out.splitlines()
+                 if l.startswith("| Kata + microVM | Warm-pool hit")][0]
+    assert "0.7s" in kata_warm  # primary's number, not kata_results' pending
+    assert "4.362s" not in out
+    assert "separate run on the kata node pool" not in out
+    assert "not-yet-measured (requires-kata-microvm)" not in out
+
+
+def test_matrix_kata_results_resume_row_stays_na():
+    # the N/A-by-design resume × kata cell is untouched by the companion artifact.
+    out = render.render_matrix(
+        _matrix_results(_full_gvisor_scenarios()), kata_results=_kata_results()
+    )
+    resume_kata = [l for l in out.splitlines()
+                   if l.startswith("| Kata + microVM | Resume-from-suspend")][0]
+    cells = [c.strip() for c in resume_kata.strip("|").split("|")]
+    assert all(c == "N/A" for c in cells[2:9]), cells
+
+
+def test_matrix_kata_results_invalid_provenance_values_dropped_from_footnote():
+    # out-of-schema provenance values are filtered by _clean_provenance before the footnote —
+    # a free-text machine_type or unknown substrate never reaches the page.
+    kr = _kata_results(provenance={
+        "runtime": "kata-microvm",
+        "machine_type": "OUR SECRET RIG (ask ops)",
+        "cluster_substrate": "internal-fleet-7",
+        "node_count": 1,
+    })
+    out = render.render_matrix(_matrix_results(_full_gvisor_scenarios()), kata_results=kr)
+    assert "SECRET RIG" not in out and "internal-fleet-7" not in out
+    foot = [l for l in out.splitlines() if "separate run on the kata node pool" in l][0]
+    assert "machine_type" not in foot and "cluster_substrate" not in foot
+    assert "node_count=1" in foot
+
+
+def test_matrix_kata_results_bad_generated_at_dropped():
+    out = render.render_matrix(
+        _matrix_results(_full_gvisor_scenarios()),
+        kata_results=_kata_results(generated_at="last tuesday, trust me"),
+    )
+    assert "trust me" not in out
+    foot = [l for l in out.splitlines() if "separate run on the kata node pool" in l][0]
+    assert "generated-at" not in foot
+
+
+def test_matrix_kata_results_none_identical_to_absent():
+    a = render.render_matrix(_matrix_results(_full_gvisor_scenarios()))
+    b = render.render_matrix(_matrix_results(_full_gvisor_scenarios()), kata_results=None)
+    assert a == b
+
+
 def _burst_scenario(metrics, n=10):
     return {"name": "burst_create", "outcome": "PASS", "n": n, "sla_metrics": metrics}
 
