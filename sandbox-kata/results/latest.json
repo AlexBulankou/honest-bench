@@ -1,0 +1,32 @@
+{
+  "generated_at": "2026-07-02T02:41:20Z",
+  "product": "sandbox-kata",
+  "provenance": {
+    "cluster_substrate": "gke-kata",
+    "cold_start_mode": "cold-provision",
+    "node_count": 1,
+    "run_id": "b4e64a8c51484f098f922e354f0b1fa5",
+    "runtime": "kata-microvm"
+  },
+  "scenarios": [
+    {
+      "name": "warmpool_cold_start",
+      "outcome": "pending",
+      "pending_reason": "pool-topology-constrained"
+    },
+    {
+      "n": 1,
+      "name": "native_digest_cold",
+      "outcome": "PASS",
+      "sla_metrics": {
+        "bind_p50_ms": 3731.9,
+        "bind_p95_ms": 3731.9,
+        "exec_p50_ms": 630.2,
+        "exec_p95_ms": 630.2,
+        "exec_success_rate": 1.0,
+        "ttfe_p50_ms": 4362.2,
+        "ttfe_p95_ms": 4362.2
+      }
+    }
+  ]
+}
