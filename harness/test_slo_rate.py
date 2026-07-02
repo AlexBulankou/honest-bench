@@ -8,9 +8,19 @@ The derivation's honesty spine under test:
   - non-monotonic sweeps credit only rungs that themselves comply.
 """
 
+from __future__ import annotations
+
+# Make this file runnable BOTH as `python3 harness/test_slo_rate.py` (the CB
+# unit-tests gate's bare-python3 discover-all convention) and via pytest, by
+# putting the repo root on sys.path before the absolute import below (mirrors
+# test_run_slo_sweep.py / test_run_stepup.py).
+import os as _os
+import sys as _sys
+_sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))))
+
 import math
 
-from .slo_rate import slo_cluster_rate, slo_sla_metrics_from_stepup
+from harness.slo_rate import slo_cluster_rate, slo_sla_metrics_from_stepup
 
 
 def _rung(offered, ready, p95):
@@ -124,7 +134,35 @@ class TestSloSlaMetricsFromStepup:
 
     def test_output_passes_scenario_sla_coercion(self):
         # The derived dict must survive results_schema._coerce_sla_metrics untouched.
-        from .results_schema import _coerce_sla_metrics
+        from harness.results_schema import _coerce_sla_metrics
 
         out = slo_sla_metrics_from_stepup({"pareto_points": SWEEP, "node_count": 40})
         assert _coerce_sla_metrics(out) == out
+
+
+def _all_tests():
+    tests = []
+    for k, v in sorted(globals().items()):
+        if k.startswith("Test") and isinstance(v, type):
+            for m in sorted(dir(v)):
+                if m.startswith("test_"):
+                    tests.append((f"{k}.{m}", getattr(v(), m)))
+    return tests
+
+
+def main() -> int:
+    tests = _all_tests()
+    failures = 0
+    for name, t in tests:
+        try:
+            t()
+            print(f"PASS {name}")
+        except AssertionError as e:
+            failures += 1
+            print(f"FAIL {name}: {e}")
+    print(f"\n{len(tests) - failures}/{len(tests)} passed")
+    return 1 if failures else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
