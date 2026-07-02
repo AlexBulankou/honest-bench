@@ -583,31 +583,23 @@ def render_matrix(results, kata_results=None):
         "Execution Success (Honesty Check)",
     ]
     lines = ["## Agent Sandbox — Core Metrics", ""]
-    lines.append(
-        "**Read TTFE down a column, not across rows.** Activation-mode rows differ in sample "
-        "size by orders of magnitude, and a p50 over hundreds of samples and a p50 over one are "
-        "not comparable: cross-row TTFE ranking is only meaningful between rows with similar "
-        "sample counts. Each TTFE cell carries its sample count inline as `(count=N)` so the "
-        f"basis is visible without cross-referencing; rows measured over fewer than "
-        f"N={TTFE_COMPARABILITY_MIN_N} samples are additionally marked {_LOW_N_MARK}."
-    )
-    lines.append("")
-    # hb#132: throughput cells are dual (`per-node · per-cluster`). Pin the cluster measurement
-    # size (X nodes) in the caption above the table, not per-cell. X is resolved per runtime from
-    # the landed thpt_cluster_node_count; absent everywhere, the cluster halves render
-    # `pending (cluster-fire)`. When two runtimes' cluster legs landed at the SAME X the caption
-    # stays single-figure; at DIFFERENT X it names each runtime's X explicitly so one runtime's
-    # figures are never captioned with the other's node count (the mixed-X ambiguity).
+    # hb#132/#134: throughput cells are dual (`per-node · per-cluster`). The static how-to-read
+    # (TTFE-down-a-column, the dual-throughput pair, the † and ⚠️ flags, the three pending flavors,
+    # N/A-by-construction) lives ONCE in the "How to read the cells" legend below the table; the
+    # caption above carries only the DYNAMIC cluster measurement size (X nodes), which a static
+    # legend cannot. X is resolved per runtime from the landed thpt_cluster_node_count; absent
+    # everywhere, the cluster halves render `pending (cluster-fire)` and the caption just anchors
+    # the pair. When two runtimes' cluster legs landed at the SAME X the caption stays
+    # single-figure; at DIFFERENT X it names each runtime's X explicitly so one runtime's figures
+    # are never captioned with the other's node count (the mixed-X ambiguity).
     cluster_xs = _resolve_cluster_x(sources)
     distinct_xs = set(cluster_xs.values())
     if len(distinct_xs) == 1:
         cluster_x = next(iter(distinct_xs))
         lines.append(
-            "**Throughput is dual — `per-node · per-cluster`.** The per-node figure is the "
-            "engineering rate (comparable across runtimes); the per-cluster figure is a MEASURED "
-            f"per-activation-mode cluster rate at {cluster_x} nodes — never a per-node × N "
-            "extrapolation (that fiction breaks above the controller reconcile ceiling). A "
-            "per-cluster figure below the cluster sizing target renders with ⚠️."
+            "**Throughput is dual — `per-node · per-cluster`.** Per-cluster figures here are a "
+            f"MEASURED cluster rate at {cluster_x} nodes; see the legend below for how to read "
+            "the pair."
         )
     elif len(distinct_xs) > 1:
         per_rt = "; ".join(
@@ -616,23 +608,15 @@ def render_matrix(results, kata_results=None):
             if rt in cluster_xs
         )
         lines.append(
-            "**Throughput is dual — `per-node · per-cluster`.** The per-node figure is the "
-            "engineering rate (comparable across runtimes); the per-cluster figure is a MEASURED "
-            f"per-activation-mode cluster rate, measured per runtime at DIFFERENT node counts — "
-            f"{per_rt} — never a per-node × N extrapolation (that fiction breaks above the "
-            "controller reconcile ceiling). Per-cluster figures are NOT comparable across "
-            "runtimes here (different X). A per-cluster figure below the cluster sizing target "
-            "renders with ⚠️."
+            "**Throughput is dual — `per-node · per-cluster`.** Per-cluster figures are measured "
+            f"per runtime at DIFFERENT node counts — {per_rt} — so they are NOT comparable across "
+            "runtimes here (different X); see the legend below."
         )
     else:
         lines.append(
-            "**Throughput is dual — `per-node · per-cluster`.** The per-node figure is the "
-            "engineering rate (comparable across runtimes); the per-cluster figure is a MEASURED "
-            "per-activation-mode cluster rate (never a per-node × N extrapolation). Cluster "
-            "halves render `pending (cluster-fire)` until a schema-validated per-mode "
-            "cluster-throughput fire lands them — the standalone whole-cluster Saturation "
-            "ceiling (DETAILS) measures the aggregate ceiling at overload, not these SLO-gated "
-            "per-mode cells, so it never fills a matrix half."
+            "**Throughput is dual — `per-node · per-cluster`.** Cluster halves render "
+            "`pending (cluster-fire)` until a schema-validated per-mode cluster-throughput fire "
+            "lands them; see the legend below for how to read the pair."
         )
     lines.append("")
     lines.append("| " + " | ".join(header) + " |")

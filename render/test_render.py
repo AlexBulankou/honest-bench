@@ -587,10 +587,11 @@ def test_matrix_low_n_ttfe_cells_marked():
 
 
 def test_matrix_low_n_marker_caveat_and_footnote_present():
-    # the prominent cross-row caveat (above the table) and the marker footnote (below) render
-    # whenever the matrix renders — they are static honesty scaffolding, not data-gated.
+    # the cross-row caveat + the low-N marker gloss render whenever the matrix renders — they are
+    # static honesty scaffolding (now carried once in the "How to read the cells" legend, hb#134
+    # nit-1 dedup), not data-gated.
     out = render.render_matrix(_matrix_results(_full_gvisor_scenarios()))
-    assert "Read TTFE down a column, not across rows." in out
+    assert "Read TTFE *down* a column, not across rows" in out
     assert render._LOW_N_MARK in out  # caveat + footnote reference the marker glyph
     assert f"N={render.TTFE_COMPARABILITY_MIN_N}" in out
 
@@ -708,7 +709,9 @@ def test_matrix_cluster_half_gated_on_node_count_presence():
     # caption stays on the pending branch — no X was landed anywhere
     assert "at 40 nodes" not in out
     assert "until a schema-validated per-mode cluster-throughput fire lands them" in out
-    assert "so it never fills a matrix half" in out
+    # the Saturation-ceiling distinction is carried once in the legend (hb#134 nit-1 dedup),
+    # not repeated in the caption above the table.
+    assert "distinct from the whole-cluster Saturation ceiling in DETAILS" in out
 
 
 def test_matrix_mixed_x_caption_names_each_runtime():
