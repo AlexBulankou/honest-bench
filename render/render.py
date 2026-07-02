@@ -503,73 +503,6 @@ def render_density_detail(results, kata_results=None):
     return "\n".join(lines) + "\n"
 
 
-def render_sample_sizes(results, kata_results=None):
-    """DETAILS.md deep-dive: the sample size (N) behind every Core Metrics matrix row.
-
-    hb#134 dropped the "Samples (N)" column from the headline matrix (page-friendliness pass),
-    but N is the receipt behind every TTFE p50/p95 — without it a reader cannot tell a warm-pool
-    p50 over hundreds of samples from a cold p50 over one. This block restores that receipt in
-    the appendix: the same runtime x activation-mode rows as the matrix, keyed by the same
-    per-scenario n, so the front page stays scannable while the number stays inspectable. Rows
-    below the cross-row comparability floor (N < TTFE_COMPARABILITY_MIN_N) are exactly the rows
-    marked _LOW_N_MARK on the matrix TTFE cells — the caption ties the two together. Same
-    per-runtime source + pending-reason discipline as the matrix: primary results claim their
-    measured runtime, kata_results may fill the kata-microvm slot, a pending row renders
-    `pending (<reason>)`, and resume x Kata is N/A by construction. Returns "" (INERT) only for
-    an unknown product; otherwise it always renders the runtime x mode skeleton, cells pending
-    individually, mirroring the matrix's honest-skeleton behaviour."""
-    product = results.get("product")
-    if product not in PRODUCTS:
-        return ""
-    prov = _clean_provenance(results.get("provenance"))
-    measured_runtime = prov.get("runtime") or "gvisor"
-    sources = {measured_runtime: _matrix_scenarios(results.get("scenarios"))}
-    if (
-        isinstance(kata_results, dict)
-        and kata_results.get("product") == "sandbox-kata"
-        and "kata-microvm" not in sources
-    ):
-        kp = _clean_provenance(kata_results.get("provenance"))
-        if kp.get("runtime") == "kata-microvm":
-            sources["kata-microvm"] = _matrix_scenarios(kata_results.get("scenarios"))
-    lines = ["## Sample Sizes (N per Core Metrics row)", ""]
-    lines.append(
-        "The receipt behind the Core Metrics table: the N each row's TTFE p50/p95 was measured "
-        f"over. Rows with N < {TTFE_COMPARABILITY_MIN_N} are exactly the ones marked "
-        f"{_LOW_N_MARK} on the matrix TTFE cells — a single-sample p50 is not a distribution, so "
-        "do not rank a low-N row against a high-N one. An unmeasured or not-yet-graduated row "
-        "renders `pending`; resume-from-suspend on Kata is N/A by construction."
-    )
-    lines.append("")
-    lines.append("| Runtime | Activation Mode | Samples (N) |")
-    lines.append("|---|---|---|")
-    for rt in MATRIX_RUNTIMES:
-        rt_label = RUNTIME_LABELS[rt]
-        rt_scen = sources.get(rt)
-        measured = rt_scen is not None
-        for scen_name, mode_label in ACTIVATION_MODE_ROWS:
-            if scen_name == "suspend_resume" and rt == "kata-microvm":
-                lines.append(f"| {rt_label} | {mode_label} | {_NA} |")
-                continue
-            sc = rt_scen.get(scen_name) if measured else None
-            sc_pending = bool(sc) and sc.get("outcome") == "pending"
-            pending_tok = _PENDING
-            if sc_pending:
-                reason = sc.get("pending_reason")
-                if reason:
-                    pending_tok = f"{_PENDING} ({reason})"
-            n_val = sc["n"] if (sc and sc["n"] > 0 and not sc_pending) else None
-            if n_val is None:
-                cell = pending_tok
-            elif n_val < TTFE_COMPARABILITY_MIN_N:
-                cell = f"{n_val} {_LOW_N_MARK}"
-            else:
-                cell = str(n_val)
-            lines.append(f"| {rt_label} | {mode_label} | {cell} |")
-    lines.append("")
-    return "\n".join(lines) + "\n"
-
-
 def _landed_cluster_x(m):
     """A metrics dict's landed, valid thpt_cluster_node_count as int — None if absent/invalid.
 
@@ -652,8 +585,9 @@ def render_matrix(results, kata_results=None):
         "**Read TTFE down a column, not across rows.** Activation-mode rows differ in sample "
         "size by orders of magnitude, and a p50 over hundreds of samples and a p50 over one are "
         "not comparable: cross-row TTFE ranking is only meaningful between rows with similar "
-        f"sample counts. Rows measured over fewer than N={TTFE_COMPARABILITY_MIN_N} samples are "
-        f"marked {_LOW_N_MARK} on their TTFE cells."
+        "sample counts. Each TTFE cell carries its sample count inline as `(count=N)` so the "
+        f"basis is visible without cross-referencing; rows measured over fewer than "
+        f"N={TTFE_COMPARABILITY_MIN_N} samples are additionally marked {_LOW_N_MARK}."
     )
     lines.append("")
     # hb#132: throughput cells are dual (`per-node · per-cluster`). Pin the cluster measurement
@@ -748,9 +682,18 @@ def render_matrix(results, kata_results=None):
             # rendered measurement (not `pending`) whose N is known and below the floor.
             low_n_ttfe = n_val is not None and n_val < TTFE_COMPARABILITY_MIN_N
 
+            # hb#142: each TTFE cell carries its sample count inline as `value (count=N)` —
+            # the receipt that used to live in a separate DETAILS "Sample Sizes" appendix now
+            # rides the cell itself, so a reader never has to cross-reference to tell a p50 over
+            # hundreds of samples from a p50 over one. The low-N dagger stays AFTER the count:
+            # `value (count=N) †`. Only a rendered measurement with a known N gets the suffix; a
+            # `pending` cell (n_val is None) renders unchanged.
             def ttfe_cell(key):
                 v = cell(key, _fmt_secs)
-                return f"{v} {_LOW_N_MARK}" if (v != _PENDING and low_n_ttfe) else v
+                if n_val is None or v == pending_tok:
+                    return v
+                v = f"{v} (count={n_val})"
+                return f"{v} {_LOW_N_MARK}" if low_n_ttfe else v
 
             # hb#132 dual cell: `<node> /node · <cluster>`. The per-node half preserves the prior
             # single-figure behavior (absent ⇒ the whole cell is pending, incl. `pending
@@ -948,8 +891,12 @@ def render_north_star(results, kata_results=None):
             continue
         p95_cell = _fmt_secs(p95)
         n_val = sc["n"] if sc["n"] > 0 else None
-        if n_val is not None and n_val < TTFE_COMPARABILITY_MIN_N:
-            p95_cell += f" {_LOW_N_MARK}"
+        # hb#142: inline sample count, mirroring the matrix TTFE cells. `value (count=N)`,
+        # with the low-N dagger AFTER the count when the row is below the comparability floor.
+        if n_val is not None:
+            p95_cell += f" (count={n_val})"
+            if n_val < TTFE_COMPARABILITY_MIN_N:
+                p95_cell += f" {_LOW_N_MARK}"
         if p95 < NORTH_STAR_TTFE_P95_MS:
             verdict = f"✅ met ({_fmt_secs(NORTH_STAR_TTFE_P95_MS - p95)} headroom)"
         else:

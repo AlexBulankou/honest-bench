@@ -266,15 +266,15 @@ def test_emit_to_render_matrix_convergence_gvisor_doc_rows():
     cf = "pending (cluster-fire)"
     assert (
         f"| gVisor | Warm-pool hit (Base image) | 4 /node · {cf} | 4 /node · {cf} "
-        "| 0.6s | 0.9s | 100% |"
+        "| 0.6s (count=200) | 0.9s (count=200) | 100% |"
     ) in out
     assert (
         f"| gVisor | Unique-image cold (RL reality) | 4 /node · {cf} | 0 /node · {cf} "
-        "| 1.2s | 1.56s | 100% |"
+        "| 1.2s (count=200) | 1.56s (count=200) | 100% |"
     ) in out
     assert (
         f"| gVisor | Resume-from-suspend | 4 /node · {cf} | 0 /node · {cf} "
-        "| 3.5s | 5s | 92.8% (1277/1376) ⚠️ |"
+        "| 3.5s (count=1376) | 5s (count=1376) | 92.8% (1277/1376) ⚠️ |"
     ) in out
     # the unmeasured runtime stays honest-pending (never a guess) on its measurable rows.
     assert "| Kata + microVM | Warm-pool hit (Base image) | pending | pending | pending | pending | pending |" in out
@@ -352,8 +352,8 @@ def test_emit_to_render_matrix_convergence_single_sample_ttfe_point():
     # one exact case, not an extrapolation). This is NOT the guarded regression (defaulting an
     # ABSENT key to 0): the derivation is gated on p95 > bar; absent/within-bar p95 still pends —
     # see the FAIL row below, which pends both throughput columns because p95 is absent.
-    assert "| gVisor | Unique-image cold (RL reality) | pending | 0 /node · 0 /cluster | 1.2s † | 1.2s † | 100% |" in out
-    assert "| gVisor | Resume-from-suspend | pending | 0 /node · 0 /cluster | 3.5s † | 3.5s † | 100% |" in out
+    assert "| gVisor | Unique-image cold (RL reality) | pending | 0 /node · 0 /cluster | 1.2s (count=1) † | 1.2s (count=1) † | 100% |" in out
+    assert "| gVisor | Resume-from-suspend | pending | 0 /node · 0 /cluster | 3.5s (count=1) † | 3.5s (count=1) † | 100% |" in out
 
     # never-reached-first-execution cold provision: every measured column pending, exec honest 0%.
     fail_results = {

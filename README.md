@@ -18,17 +18,17 @@ headline tables lives in the deep-dive appendix, [DETAILS.md](DETAILS.md).
 
 ## Agent Sandbox — Core Metrics
 
-**Read TTFE down a column, not across rows.** Activation-mode rows differ in sample size by orders of magnitude, and a p50 over hundreds of samples and a p50 over one are not comparable: cross-row TTFE ranking is only meaningful between rows with similar sample counts. Rows measured over fewer than N=30 samples are marked † on their TTFE cells.
+**Read TTFE down a column, not across rows.** Activation-mode rows differ in sample size by orders of magnitude, and a p50 over hundreds of samples and a p50 over one are not comparable: cross-row TTFE ranking is only meaningful between rows with similar sample counts. Each TTFE cell carries its sample count inline as `(count=N)` so the basis is visible without cross-referencing; rows measured over fewer than N=30 samples are additionally marked †.
 
 **Throughput is dual — `per-node · per-cluster`.** The per-node figure is the engineering rate (comparable across runtimes); the per-cluster figure is a MEASURED per-activation-mode cluster rate (never a per-node × N extrapolation). Cluster halves render `pending (cluster-fire)` until a schema-validated per-mode cluster-throughput fire lands them — the standalone whole-cluster Saturation ceiling (DETAILS) measures the aggregate ceiling at overload, not these SLO-gated per-mode cells, so it never fills a matrix half.
 
 | Runtime | Activation Mode | Throughput @ <5s TTFE (sb/s — node · cluster) | Throughput @ <1s TTFE (sb/s — node · cluster) | TTFE p50 | TTFE p95 | Execution Success (Honesty Check) |
 |---|---|---|---|---|---|---|
-| gVisor | Warm-pool hit (Base image) | 33.824 /node · pending (cluster-fire) | 32.696 /node · pending (cluster-fire) | 0.6317s | 0.9454s | 100% |
-| gVisor | Unique-image cold (RL reality) | pending | 0 /node · 0 /cluster | 4.5191s † | 4.5191s † | 100% |
+| gVisor | Warm-pool hit (Base image) | 33.824 /node · pending (cluster-fire) | 32.696 /node · pending (cluster-fire) | 0.6317s (count=30) | 0.9454s (count=30) | 100% |
+| gVisor | Unique-image cold (RL reality) | pending | 0 /node · 0 /cluster | 4.5191s (count=1) † | 4.5191s (count=1) † | 100% |
 | gVisor | Resume-from-suspend | pending (upstream-blocked) | pending (upstream-blocked) | pending (upstream-blocked) | pending (upstream-blocked) | pending (upstream-blocked) |
-| Kata + microVM | Warm-pool hit (Base image) | 16.798 /node · pending (cluster-fire) | 15.678 /node · pending (cluster-fire) | 0.6303s | 0.9867s | 100% |
-| Kata + microVM | Unique-image cold (RL reality) | pending | 0 /node · 0 /cluster | 4.8274s † | 4.8274s † | 100% |
+| Kata + microVM | Warm-pool hit (Base image) | 16.798 /node · pending (cluster-fire) | 15.678 /node · pending (cluster-fire) | 0.6303s (count=30) | 0.9867s (count=30) | 100% |
+| Kata + microVM | Unique-image cold (RL reality) | pending | 0 /node · 0 /cluster | 4.8274s (count=1) † | 4.8274s (count=1) † | 100% |
 | Kata + microVM | Resume-from-suspend | N/A | N/A | N/A | N/A | N/A |
 
 _TTFE = Time-To-First-Instruction: the sandbox executed its first instruction and returned a result — not merely pod-Ready._
@@ -49,8 +49,8 @@ The long-term target for a warm-pool hit is a TTFE p95 under 0.5s — a stricter
 
 | Runtime | Warm-pool-hit TTFE p95 (measured) | North Star (p95 < 0.5s) |
 |---|---|---|
-| gVisor | 0.9454s | ❌ not met (0.4454s above the bar) |
-| Kata + microVM | 0.9867s | ❌ not met (0.4867s above the bar) |
+| gVisor | 0.9454s (count=30) | ❌ not met (0.4454s above the bar) |
+| Kata + microVM | 0.9867s (count=30) | ❌ not met (0.4867s above the bar) |
 
 _An honest ❌ beats an implied pass: the page prints the measured distance to the target it misses, and a met bar prints its measured headroom. An unmeasured runtime reads `pending` — never a guess. † marks a p95 measured over fewer than N=30 samples (a single observation, not a distribution)._
 
