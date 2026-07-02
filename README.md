@@ -51,8 +51,8 @@ bash scripts/check-public-safety.sh           # fail-closed public-safety scan
 | gVisor | Warm-pool hit (Base image) | 33.824 /node · pending (cluster-fire) | 32.696 /node · pending (cluster-fire) | 0.6317s | 0.9454s | 30 | 5.98 | 100% |
 | gVisor | Unique-image cold (RL reality) | pending | pending | 4.5191s † | 4.5191s † | 1 | 5.98 | 100% |
 | gVisor | Resume-from-suspend | pending (upstream-blocked) | pending (upstream-blocked) | pending (upstream-blocked) | pending (upstream-blocked) | pending (upstream-blocked) | N/A | pending (upstream-blocked) |
-| Kata + microVM | Warm-pool hit (Base image) | pending (pool-topology-constrained) | pending (pool-topology-constrained) | pending (pool-topology-constrained) | pending (pool-topology-constrained) | pending (pool-topology-constrained) | pending | pending (pool-topology-constrained) |
-| Kata + microVM | Unique-image cold (RL reality) | pending | pending | 4.3622s † | 4.3622s † | 1 | pending | 100% |
+| Kata + microVM | Warm-pool hit (Base image) | 16.798 /node · pending (cluster-fire) | 15.678 /node · pending (cluster-fire) | 0.6303s | 0.9867s | 30 | pending | 100% |
+| Kata + microVM | Unique-image cold (RL reality) | pending | pending | 4.8274s † | 4.8274s † | 1 | pending | 100% |
 | Kata + microVM | Resume-from-suspend | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
 
 _TTFE = Time-To-First-Instruction: the sandbox executed its first instruction and returned a result — not merely pod-Ready._
@@ -61,7 +61,7 @@ _Throughput cells are dual — `per-node · per-cluster`. The per-node figure is
 _Max Density is sandboxes per node-allocatable sandbox-schedulable vCPU (the per-node denominator), not per total-cluster vCPU._
 _Execution Success is the Honesty Check: <100% prints the succeeded/total fraction and a ⚠️ flag._
 _† marks a TTFE measured over fewer than N=30 samples — read it as a single observation, not a distribution, and do not rank it against a high-N row._
-_Kata + microVM rows are measured in a separate run on the kata node pool: cluster_substrate=gke-kata · node_count=1 · generated-at=2026-07-02T02:41:20Z._
+_Kata + microVM rows are measured in a separate run on the kata node pool: cluster_substrate=gke-kata · node_count=2 · generated-at=2026-07-02T04:51:48Z._
 _Resume-from-suspend × Kata + microVM renders `N/A` by construction — CRIU checkpoint/restore does not transfer to the Kata VM isolation model, so that cell can never be measured (distinct from `pending`, which awaits a run)._
 _A bare `pending` cell awaits its TTFE-instrumented run. A `pending (upstream-blocked)` cell is different: that run DID land, but an upstream controller gap (the resume path's Suspended condition never clears) holds it — the cell graduates to a real number the moment the upstream fix lands, not merely when a run is scheduled._
 
