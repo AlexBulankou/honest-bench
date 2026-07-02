@@ -1452,13 +1452,19 @@ _COLD_LEG = {
 _COLD_LEG_DEFAULT = _COLD_LEG["cold-pull"]
 
 
-def render_warm_vs_cold(results):
+def render_warm_vs_cold(results, punchline_only=False):
     """Render the warm-vs-cold speedup block (#3954 sibling), or "" when INERT.
 
     Composes the warm leg (warm-pool TTFx p50) and the true-cold leg (unique-image cold) into
     ONE honest headline a reader can quote: warm provisioning is N times faster than cold. INERT
     (returns "") until the harness emits a complete, closed-schema-clean warm_vs_cold object —
     the classifier itself fails closed if the two legs ever diverge in semantic or runtime class.
+
+    hb#134 page-split: `punchline_only=True` renders ONLY the one-line headline a non-infra
+    reader needs (kept on the headline page, right under the matrix), with a pointer to the
+    full leg-by-leg table + coherence caveats in DETAILS.md. The default (full) path renders
+    the table and moves to the deep-dive appendix. The ratio is recomputed identically in both
+    paths, so page and appendix can never disagree.
     """
     wc = _clean_warm_vs_cold(results)
     if not wc:
@@ -1472,6 +1478,20 @@ def render_warm_vs_cold(results):
     # always defined and positive — this also closes an emitter speedup<=0.
     speedup = _fmt_num(wc["cold_ms"] / wc["warm_p50_ms"])
     cold = _COLD_LEG.get(wc.get("cold_start_mode"), _COLD_LEG_DEFAULT)
+    if punchline_only:
+        pl = ["## Warm-vs-Cold Speedup", ""]
+        pl.append(
+            f"A warm-pool provision is **{speedup}× faster** than {cold['descriptor']} "
+            f"({rt_label}) — both legs measured the same way ({sem_label}). Full leg-by-leg "
+            "table and the cross-block caveats are in the deep-dive appendix, "
+            "[DETAILS.md](DETAILS.md).")
+        pl.append("")
+        if wc.get("measured_at"):
+            pl.append(
+                f"_Measured {wc['measured_at'][:10]} — warm-vs-cold speedup "
+                "(point-in-time; refreshed on the next TTFE fire)._")
+            pl.append("")
+        return "\n".join(pl)
     lines = ["## Warm-vs-Cold Speedup", ""]
     lines.append(
         f"A warm-pool provision is **{speedup}× faster** than {cold['descriptor']} "

@@ -153,7 +153,7 @@ def build_readme(root=None):
         # hb#134: the operating-envelope headline table sits directly under the matrix — it is
         # the "what wait do I budget?" answer, always rendered (rows pend individually).
         sections.append(render_operating_envelope(results).rstrip())
-        speedup = render_warm_vs_cold(results)
+        speedup = render_warm_vs_cold(results, punchline_only=True)
         if speedup.strip():
             sections.append(speedup.rstrip())
         scale = render_scale_proof(results)
@@ -180,6 +180,7 @@ def build_details(root=None):
     hb#134 page-friendliness split: the headline README carries the answer a non-infra
     reader needs (matrix + operating envelope + scale + burst); the working behind those
     numbers — burst-create corroboration, the bind-vs-exec decomposition (warm + cold),
+    the full warm-vs-cold leg table (only its punchline stays on the headline page),
     the Kata pod-Ready table, the warm-pool acquisition breakdown, and the per-runtime
     Max-Density table (relocated off the headline matrix in the same pass) — moves here so
     the front page stays scannable. Same closed-schema render path as build_readme: each
@@ -203,6 +204,7 @@ def build_details(root=None):
             render_burst_corroboration,
             render_warm_bind_decomposition,
             render_cold_bind_decomposition,
+            render_warm_vs_cold,
             render_kata_activation,
             render_warm_pool_acquisition,
         ):

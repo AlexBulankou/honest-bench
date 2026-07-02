@@ -32,6 +32,22 @@ _Each row is an independently-measured percentile of its own per-claim distribut
 
 > ⚠️ **Regime caveat:** this warm tier was measured on a **drained, low-contention cluster** (single fire, small claim count). A green warm tier here is honest for THIS fire but is **not yet a sustained North-Star claim** — it wants corroboration under representative load before sub-1s warm is treated as durable.
 
+## Warm-vs-Cold Speedup
+
+A warm-pool provision is **7.28251× faster** than a true-cold start (gVisor). The warm pool keeps a ready slot so a claim skips the fresh-node image-pull path a cold start pays in full. Both legs are measured the same way (TTFE (executed first-instruction)); the ratio is the portable headline you can reproduce on your own cluster.
+
+| Leg | TTFE (p50) |
+|---|---|
+| Warm-pool hit (gVisor, n=30) | 0.7005s |
+| True-cold (unique-image) | 5.1014s |
+| Speedup (warm is N× faster) | 7.28251× |
+
+_Speedup = cold ÷ warm, computed from the displayed values over n=30 warm claims; the warm leg is the p50 so half of warm claims beat it._
+
+_This warm-vs-cold pair is a standalone point-in-time run; its warm-pool leg is a separate measurement from the Core Metrics matrix "Warm-pool hit" row (an independent run at its own operating point, refreshed on its own cadence). Read each block on its own terms — the two warm p50s are not directly comparable._
+
+_Measured 2026-07-02 — warm-vs-cold speedup (point-in-time; refreshed on the next TTFE fire)._
+
 ## Kata + microVM Activation (pod-Ready — NOT TTFE)
 
 These are **Kata + microVM pod-Ready / microVM-activation** latencies — the time to bring the guest microVM up and the pod Ready. They are **not TTFE** (the Core Metrics matrix's executed-first-instruction-and-returned-a-result metric), so they are **not comparable to the matrix TTFE columns**; the Kata TTFE cells there stay `pending` until a TTFE probe runs under Kata. Measured on hypervisor **Cloud Hypervisor**, Kata **3.32.0**, guest kernel `6.18.35`, host kernel `6.8.0-1054-gke`, n=3.
