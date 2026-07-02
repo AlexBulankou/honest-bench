@@ -46,8 +46,8 @@ bash scripts/check-public-safety.sh           # fail-closed public-safety scan
 
 | Runtime | Activation Mode | Throughput @ <5s TTFE (sb/s/node) | Throughput @ <1s TTFE (sb/s/node) | TTFE p50 | TTFE p95 | Samples (N) | Max Density (sb/vCPU) | Execution Success (Honesty Check) |
 |---|---|---|---|---|---|---|---|---|
-| gVisor | Warm-pool hit (Base image) | 14.037 | 9.358 | 0.8913s | 1.2171s | 30 | pending | 100% |
-| gVisor | Unique-image cold (RL reality) | pending | pending | 4.5191s † | 4.5191s † | 1 | pending | 100% |
+| gVisor | Warm-pool hit (Base image) | 33.824 | 32.696 | 0.6317s | 0.9454s | 30 | 5.98 | 100% |
+| gVisor | Unique-image cold (RL reality) | pending | pending | 4.5191s † | 4.5191s † | 1 | 5.98 | 100% |
 | gVisor | Resume-from-suspend | pending (upstream-blocked) | pending (upstream-blocked) | pending (upstream-blocked) | pending (upstream-blocked) | pending (upstream-blocked) | N/A | pending (upstream-blocked) |
 | Kata + microVM | Warm-pool hit (Base image) | pending (pool-topology-constrained) | pending (pool-topology-constrained) | pending (pool-topology-constrained) | pending (pool-topology-constrained) | pending (pool-topology-constrained) | pending | pending (pool-topology-constrained) |
 | Kata + microVM | Unique-image cold (RL reality) | pending | pending | 4.3622s † | 4.3622s † | 1 | pending | 100% |
@@ -84,9 +84,9 @@ Warm-hit TTFE (create → first-instruction result) splits into **bind** (create
 
 | Stage | p50 | p95 |
 |---|---|---|
-| Bind (create → bound, provisioning) | 0.6626s | 0.9715s |
-| Exec (websocket + first-instruction) | 0.2272s | 0.2573s |
-| **TTFE (total)** | **0.8913s** | **1.2171s** |
+| Bind (create → bound, provisioning) | 0.4135s | 0.6854s |
+| Exec (websocket + first-instruction) | 0.2189s | 0.298s |
+| **TTFE (total)** | **0.6317s** | **0.9454s** |
 
 _Each row is an independently-measured percentile of its own per-claim distribution (exec is measured per-claim as TTFE − bind, then percentiled — not p50(TTFE) − p50(bind)). Percentiles do not sum, so bind and exec need not add exactly to the total TTFE._
 
