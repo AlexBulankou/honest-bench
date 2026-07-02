@@ -446,19 +446,34 @@ def _runtime_density(scen_by_name):
     return None
 
 
+def _landed_cluster_x(m):
+    """A metrics dict's landed, valid thpt_cluster_node_count as int — None if absent/invalid.
+
+    The single validity rule shared by the caption resolver AND the per-cell cluster-half gate,
+    so "has an X" means the same thing in both places (numeric, non-bool, > 0)."""
+    x = (m or {}).get("thpt_cluster_node_count")
+    if isinstance(x, (int, float)) and not isinstance(x, bool) and x > 0:
+        return int(x)
+    return None
+
+
 def _resolve_cluster_x(sources):
     """hb#132: the X in the `@X nodes` cluster-throughput caption — the node count the per-cluster
-    figures were MEASURED at. Resolved from the first landed thpt_cluster_node_count across all
-    runtime sources; None ⇒ no cluster figure has landed yet (caption says cluster halves pend)."""
-    for rt_scen in sources.values():
+    figures were MEASURED at, resolved PER RUNTIME (first landed thpt_cluster_node_count within
+    each runtime's scenarios). Returns {runtime: X}; empty ⇒ no cluster figure has landed yet
+    (caption says cluster halves pend). Per-runtime because two runtimes' cluster fires may land
+    at DIFFERENT X — a single first-match X would silently caption one runtime's figures with the
+    other runtime's node count (the mixed-X ambiguity)."""
+    xs = {}
+    for rt, rt_scen in sources.items():
         if not rt_scen:
             continue
         for sc in rt_scen.values():
-            m = (sc or {}).get("metrics") or {}
-            x = m.get("thpt_cluster_node_count")
-            if isinstance(x, (int, float)) and not isinstance(x, bool) and x > 0:
-                return int(x)
-    return None
+            x = _landed_cluster_x((sc or {}).get("metrics"))
+            if x is not None:
+                xs[rt] = x
+                break
+    return xs
 
 
 def render_matrix(results, kata_results=None):
@@ -520,16 +535,35 @@ def render_matrix(results, kata_results=None):
     )
     lines.append("")
     # hb#132: throughput cells are dual (`per-node · per-cluster`). Pin the cluster measurement
-    # size (X nodes) in ONE caption above the table, not per-cell. X is resolved from the landed
-    # thpt_cluster_node_count; absent it, the cluster halves render `pending (cluster-fire)`.
-    cluster_x = _resolve_cluster_x(sources)
-    if cluster_x is not None:
+    # size (X nodes) in the caption above the table, not per-cell. X is resolved per runtime from
+    # the landed thpt_cluster_node_count; absent everywhere, the cluster halves render
+    # `pending (cluster-fire)`. When two runtimes' cluster legs landed at the SAME X the caption
+    # stays single-figure; at DIFFERENT X it names each runtime's X explicitly so one runtime's
+    # figures are never captioned with the other's node count (the mixed-X ambiguity).
+    cluster_xs = _resolve_cluster_x(sources)
+    distinct_xs = set(cluster_xs.values())
+    if len(distinct_xs) == 1:
+        cluster_x = next(iter(distinct_xs))
         lines.append(
             "**Throughput is dual — `per-node · per-cluster`.** The per-node figure is the "
             "engineering rate (comparable across runtimes); the per-cluster figure is a MEASURED "
             f"cluster saturation rate at {cluster_x} nodes — never a per-node × N extrapolation "
             "(that fiction breaks above the controller reconcile ceiling). A per-cluster figure "
             "below the cluster sizing target renders with ⚠️."
+        )
+    elif len(distinct_xs) > 1:
+        per_rt = "; ".join(
+            f"{RUNTIME_LABELS[rt]} at {cluster_xs[rt]} nodes"
+            for rt in MATRIX_RUNTIMES
+            if rt in cluster_xs
+        )
+        lines.append(
+            "**Throughput is dual — `per-node · per-cluster`.** The per-node figure is the "
+            "engineering rate (comparable across runtimes); the per-cluster figure is a MEASURED "
+            f"cluster saturation rate, measured per runtime at DIFFERENT node counts — {per_rt} "
+            "— never a per-node × N extrapolation (that fiction breaks above the controller "
+            "reconcile ceiling). Per-cluster figures are NOT comparable across runtimes here "
+            "(different X). A per-cluster figure below the cluster sizing target renders with ⚠️."
         )
     else:
         lines.append(
@@ -597,12 +631,16 @@ def render_matrix(results, kata_results=None):
             # single-figure behavior (absent ⇒ the whole cell is pending, incl. `pending
             # (<reason>)` for a pending scenario since m is empty). The cluster half pends
             # `pending (cluster-fire)` until the schema-validated fire carries the per-cluster
-            # field; a landed cluster figure below the sizing target carries ⚠️.
+            # field; a landed cluster figure below the sizing target carries ⚠️. The cluster half
+            # additionally requires thpt_cluster_node_count in the SAME metrics dict — a
+            # per_cluster figure with no X has no measurement size to disclose, so it pends
+            # rather than rendering a real rate under a caption that can't pin its X
+            # (defense-in-depth: the emit side already couples the triple all-or-nothing).
             def thpt_dual_cell(node_key, cluster_key):
                 if node_key not in m:
                     return pending_tok
                 node_half = f"{_fmt_num(m[node_key])} /node"
-                if cluster_key in m:
+                if cluster_key in m and _landed_cluster_x(m) is not None:
                     cluster_half = f"{_fmt_num(m[cluster_key])} /cluster"
                     if m[cluster_key] < CLUSTER_THROUGHPUT_TARGET:
                         cluster_half += " ⚠️"

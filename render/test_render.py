@@ -687,6 +687,86 @@ def test_matrix_dual_throughput_caption_pending_without_cluster_fire():
     assert "at 40 nodes" not in out  # no fabricated X without a landed node count
 
 
+def test_matrix_cluster_half_gated_on_node_count_presence():
+    # hb#132 render gate (defense-in-depth; the emit side couples the triple all-or-nothing):
+    # a per_cluster figure WITHOUT thpt_cluster_node_count in the same metrics dict has no X to
+    # disclose, so the cluster half pends rather than rendering a real rate under a caption
+    # stuck on the pending-branch text (the X-less-per_cluster ambiguity).
+    scen = _full_gvisor_scenarios()
+    scen[0]["sla_metrics"].update(
+        {"thpt_under_5s_per_cluster": 350, "thpt_under_1s_per_cluster": 320}
+        # deliberately NO thpt_cluster_node_count
+    )
+    out = render.render_matrix(_matrix_results(scen))
+    warm_line = [l for l in out.splitlines() if "Warm-pool hit" in l][0]
+    cells = [c.strip() for c in warm_line.strip("|").split("|")]
+    assert cells[2] == f"4 /node · pending ({render._CLUSTER_FIRE})"
+    assert cells[3] == f"4 /node · pending ({render._CLUSTER_FIRE})"
+    assert "/cluster" not in cells[2] and "/cluster" not in cells[3]
+    # caption stays on the pending branch — no X was landed anywhere
+    assert "at 40 nodes" not in out
+    assert "until our own schema-validated saturation fire lands them" in out
+
+
+def test_matrix_mixed_x_caption_names_each_runtime():
+    # hb#132 mixed-X: gVisor's cluster leg at X=40 and kata's at X=20 must NOT share a single
+    # first-match X — the caption names each runtime's X and flags non-comparability.
+    scen = _full_gvisor_scenarios()
+    scen[0]["sla_metrics"].update(
+        {
+            "thpt_under_5s_per_cluster": 350,
+            "thpt_under_1s_per_cluster": 320,
+            "thpt_cluster_node_count": 40,
+        }
+    )
+    kata_scen = [
+        {
+            "name": "warmpool_cold_start", "outcome": "PASS", "n": 30,
+            "sla_metrics": {
+                "thpt_under_5s_per_node": 16.8,
+                "thpt_under_5s_per_cluster": 310,
+                "thpt_under_1s_per_cluster": 305,
+                "thpt_cluster_node_count": 20,
+                "ttfe_p50_ms": 630, "ttfe_p95_ms": 987, "exec_success_rate": 1.0,
+            },
+        },
+    ]
+    out = render.render_matrix(
+        _matrix_results(scen), kata_results=_kata_results(scenarios=kata_scen)
+    )
+    assert "DIFFERENT node counts" in out
+    assert "gVisor at 40 nodes; Kata + microVM at 20 nodes" in out
+    assert "NOT comparable across runtimes here (different X)" in out
+    # neither runtime's X is presented as THE table-wide X
+    assert "cluster saturation rate at 40 nodes" not in out
+    assert "cluster saturation rate at 20 nodes" not in out
+    # both cluster halves still render their real figures (above target, no ⚠️)
+    assert "350 /cluster" in out and "310 /cluster" in out
+
+
+def test_matrix_same_x_two_runtimes_single_caption():
+    # two runtimes' cluster legs at the SAME X keep the single-figure caption (no mixed-X note).
+    scen = _full_gvisor_scenarios()
+    scen[0]["sla_metrics"].update(
+        {"thpt_under_5s_per_cluster": 350, "thpt_cluster_node_count": 40}
+    )
+    kata_scen = [
+        {
+            "name": "warmpool_cold_start", "outcome": "PASS", "n": 30,
+            "sla_metrics": {
+                "thpt_under_5s_per_node": 16.8,
+                "thpt_under_5s_per_cluster": 305,
+                "thpt_cluster_node_count": 40,
+            },
+        },
+    ]
+    out = render.render_matrix(
+        _matrix_results(scen), kata_results=_kata_results(scenarios=kata_scen)
+    )
+    assert "cluster saturation rate at 40 nodes" in out
+    assert "DIFFERENT node counts" not in out
+
+
 def test_matrix_exec_success_n_emitted_preferred_over_derived():
     # when the harness DOES emit exec_success_n, the fraction uses it verbatim (not rate*N).
     scen = _full_gvisor_scenarios()
