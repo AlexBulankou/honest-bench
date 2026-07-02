@@ -1937,8 +1937,11 @@ def render_at_scale_contention(results, detail=False):
     heading = ("## At Scale Under Contention — where sub-second warm activation breaks"
                if detail else "## Where it breaks today (honest limits)")
     lines = [heading, ""]
+    # hb#134 (a4s1 nit): the Concurrent Burst table lives on the headline README, so "above" is
+    # correct on the page path but dangles in the DETAILS detail-path (nothing is above it there).
+    burst_locator = "on the headline page" if detail else "above"
     caption = (
-        "The Concurrent Burst legs above are **1:1** — N ready sandboxes hit with N claims. This "
+        f"The Concurrent Burst legs {burst_locator} are **1:1** — N ready sandboxes hit with N claims. This "
         "is the deliberate **retraction**: the operating point where the pool is "
         "**over-subscribed** (more concurrent claims than ready pool members), and warm activation "
         f"**stops being sub-second**. Measured on **{label}**: a pool of **{_fmt_num(pool)}** ready "
