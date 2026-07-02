@@ -94,9 +94,10 @@ SUBSTRATE_CELLS = (
     ),
 )
 
-# Sandbox-Kata (#3942 PHASE 2, OPTION A): the SAME 4 perf cells as SANDBOX_CELLS but
-# gated to the gke-kata nested-virt pool, so the matrix can carry a Kata column ALONGSIDE
-# the gVisor one without `run --product sandbox-kata` overwriting the gVisor
+# Sandbox-Kata (#3942 PHASE 2, OPTION A): the 2 substrate-agnostic perf cells that are
+# kata-honest as written (warmpool_cold_start + native_digest_cold), gated to the
+# gke-kata nested-virt pool, so the matrix can carry a Kata column ALONGSIDE the gVisor
+# one without `run --product sandbox-kata` overwriting the gVisor
 # sandbox/results/latest.json (run.py writes <product>/results/latest.json wholesale).
 # Each cell requires_substrate="gke-kata" → it MEASURES for real only on the Kata pool
 # (where the EMIT invocation pins runtimeClassName: kata-clh) and renders honest-pending
@@ -106,12 +107,10 @@ SUBSTRATE_CELLS = (
 # badges do not apply. The render-side matrix join (gVisor + Kata columns) is a4s1's
 # PHASE 3 lane. DEFAULT_PRODUCT stays "sandbox" — the auto-refresh kind runner never
 # fires --product sandbox-kata; it only runs at PHASE 2 on the live gke-kata pool.
+# Two of the four SANDBOX_CELLS perf cells are deliberately EXCLUDED (see the NOTEs
+# below): suspend_resume (N/A-by-construction) and burst_create (not kata-honest as
+# written) — each for a distinct raw-results-honesty reason.
 SANDBOX_KATA_CELLS = (
-    Cell(
-        "burst_create",
-        requires_substrate="gke-kata",
-        pending_reason="requires-kata-runtime",
-    ),
     Cell(
         "warmpool_cold_start",
         requires_substrate="gke-kata",
@@ -122,6 +121,19 @@ SANDBOX_KATA_CELLS = (
         requires_substrate="gke-kata",
         pending_reason="requires-kata-runtime",
     ),
+    # NOTE: burst_create is deliberately NOT a kata cell (as written). Its pod spec
+    # hardcodes the tiny gVisor/kind footprint (requests 10m/16Mi, limits 100m/64Mi)
+    # and is NOT wired to runtime_class.container_resources_from_env, so under a kata
+    # microVM — which sizes the guest from the Pod's cpu+memory requests — the in-guest
+    # container is SIGKILLed (137) the instant it starts (#3942 finding). Its pod also
+    # injects only the gVisor taint toleration (sandbox.gke.io/runtime), not the kata
+    # one, so it would not even land on the tainted kata pool. Running it here would
+    # emit a dishonest crash-FAIL / capacity-Pending burst number into
+    # sandbox-kata/results/latest.json; excluding it keeps the raw results honest, the
+    # same principle as the suspend_resume exclusion below. Re-including it is not just
+    # adding the Cell back — it means wiring the kata resource floor + kata
+    # toleration/nodeSelector AND sizing the pool to the kata node capacity (a4s1's
+    # burst headline design lane).
     # NOTE: suspend_resume is deliberately NOT a kata cell. Resume-from-suspend ×
     # Kata + microVM is N/A by construction — CRIU checkpoint/restore does not
     # transfer to the Kata VM isolation model — so render.py hardcodes that cell to

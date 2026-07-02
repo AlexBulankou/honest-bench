@@ -370,6 +370,34 @@ def test_suspend_resume_excluded_from_kata_suite_na_by_construction():
     )
 
 
+def test_burst_create_excluded_from_kata_suite_not_kata_honest():
+    """burst_create must NOT be a kata cell as written — it is not kata-honest (#3942).
+
+    burst_create hardcodes the tiny gVisor/kind pod footprint (requests 10m/16Mi) and
+    is not wired to runtime_class.container_resources_from_env, so under a kata microVM
+    (guest sized from Pod requests) the in-guest container is SIGKILLed (137) instantly;
+    its pod also injects only the gVisor taint toleration, not the kata one, so it would
+    not land on the tainted kata pool. Running it in the kata suite would emit a
+    dishonest crash-FAIL / capacity-Pending burst number into
+    sandbox-kata/results/latest.json. Excluding it keeps the raw kata results honest;
+    this pins that exclusion so a future suite edit cannot silently re-introduce a
+    dishonest kata burst number without also wiring the kata resource floor + toleration
+    + pool sizing (a4s1's burst headline design lane).
+    """
+    kata_modules = {c.module for c in CELLS_BY_PRODUCT["sandbox-kata"]}
+    _check(
+        "burst_create" not in kata_modules,
+        "burst_create must not be in the sandbox-kata suite — it is not kata-honest as "
+        f"written (tiny resources SIGKILL under kata); kata suite = {sorted(kata_modules)}",
+    )
+    # It stays a real gVisor cell (the headline burst cell, measurable there).
+    sandbox_modules = {c.module for c in CELLS_BY_PRODUCT["sandbox"]}
+    _check(
+        "burst_create" in sandbox_modules,
+        "burst_create must remain in the gVisor sandbox suite (the headline burst cell)",
+    )
+
+
 def _all_tests():
     return [
         v
