@@ -107,6 +107,18 @@ def test_non_sandbox_product_fail_closed():
     _check(raw[0]["sla_metrics"] == {}, "product=substrate -> untouched (fail-closed)")
 
 
+def test_kata_product_merges_triple():
+    # hb#149 / Path A kata half: a sandbox-kata run's warm-row sweep merges the
+    # SAME triple into its scenario cell (render_matrix reads it via kata_results).
+    # The one product-gate widening beyond gVisor — substrate stays fail-closed.
+    raw = [_cell(sla_metrics={"ttfe_p95_ms": 640.0})]
+    _with_sweep(_WARM, "sandbox-kata", _NESTED, raw)
+    expected = dict(_TRIPLE)
+    expected["ttfe_p95_ms"] = 640.0
+    _check(raw[0]["sla_metrics"] == expected,
+           f"kata sweep triple merged, got {raw[0]['sla_metrics']!r}")
+
+
 def test_missing_file_merges_nothing():
     raw = [_cell()]
     _with_sweep(_WARM, "sandbox", None, raw, path_value="/nonexistent/sweep.json")
