@@ -497,12 +497,14 @@ def _run_suspend_resume_cycle(custom, core_v1, *, sandbox_name, pre_uid):
     Returns (kind, data):
       ("fail", (outcome, excerpt, {}))  -- a real suspend/resume LIFECYCLE
           regression; the caller returns it verbatim.
-      ("ok", (verdict, gap_excerpt, gap_sla, ttfe_ms, exec_ok, new_uid)) -- the
-          Suspended-clear gap verdict for THIS cycle plus the RAW resume-activation
-          TTFE sample (ttfe_ms/exec_ok are (None, False) when BENCH_TTFE_EXEC is
-          off). The caller accumulates samples across cycles and merges the TTFE
-          point itself, so this helper returns the gap excerpt WITHOUT a TTFE
-          appendix.
+      ("ok", (verdict, gap_excerpt, gap_sla, ttfe_ms, exec_ok, new_uid,
+          suspend_latency_ms)) -- the Suspended-clear gap verdict for THIS cycle
+          plus the RAW resume-activation TTFE sample (ttfe_ms/exec_ok are
+          (None, False) when BENCH_TTFE_EXEC is off) plus the RAW administrative-
+          suspend latency for this cycle (ms; the suspend leg runs on EVERY cycle,
+          so this is always measured, never TTFE-gated). The caller accumulates
+          samples across cycles and merges both points itself, so this helper
+          returns the gap excerpt WITHOUT a TTFE or suspend-latency appendix.
 
     Does NOT create or delete the Sandbox -- the caller owns its lifecycle.
     pre_uid is the backing Pod uid BEFORE this cycle's suspend; the resume leg
@@ -514,6 +516,13 @@ def _run_suspend_resume_cycle(custom, core_v1, *, sandbox_name, pre_uid):
     # --- SUSPEND LEG ---
     log.info("suspending (operatingMode=Suspended)")
     _patch_lifecycle(custom, sandbox_name=sandbox_name, suspend=True)
+    # t0 for the administrative-suspend latency: suspend-request return -> terminal
+    # Suspended state (backing Pod released + Suspended condition). Set AFTER the
+    # patch returns, mirroring the resume leg's resume_t0. This times the cost of a
+    # DELIBERATE operatingMode=Suspended patch -- NOT an idle/auto-suspend (upstream
+    # has none). Stays None if the leg times out (that path returns "fail" below).
+    suspend_t0 = time.monotonic()
+    suspend_latency_ms = None
 
     suspend_detail = "<no poll yet>"
     deadline = time.monotonic() + _SUSPEND_TIMEOUT_S
@@ -522,6 +531,7 @@ def _run_suspend_resume_cycle(custom, core_v1, *, sandbox_name, pre_uid):
         conds = _get_sandbox_conditions(custom, sandbox_name=sandbox_name)
         terminal, suspend_detail = _eval_suspend_state(exists, conds)
         if terminal:
+            suspend_latency_ms = round((time.monotonic() - suspend_t0) * 1000, 1)
             break
         time.sleep(_POLL_S)
     else:
@@ -619,7 +629,8 @@ def _run_suspend_resume_cycle(custom, core_v1, *, sandbox_name, pre_uid):
             create_monotonic=resume_t0,
         )
 
-    return ("ok", (verdict, gap_excerpt, gap_sla, ttfe_ms, exec_ok, new_uid))
+    return ("ok", (verdict, gap_excerpt, gap_sla, ttfe_ms, exec_ok, new_uid,
+                   suspend_latency_ms))
 
 
 def run(scenario_name: str) -> tuple[str, str, dict]:
@@ -683,6 +694,10 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
         gap_verdicts: list[tuple[str, str, dict]] = []
         ttfe_samples: list = []
         exec_oks: list[bool] = []
+        # Administrative-suspend latency samples: the suspend leg runs on EVERY
+        # cycle (never TTFE-gated), so this accumulates one sample per cycle
+        # regardless of _TTFE_EXEC.
+        suspend_latency_samples: list = []
         for i in range(cycle_count):
             if cycle_count > 1:
                 log.info("suspend/resume cycle %d/%d", i + 1, cycle_count)
@@ -690,11 +705,13 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
                 custom, core_v1, sandbox_name=sandbox_name, pre_uid=pre_uid)
             if kind == "fail":
                 return data
-            verdict, gap_excerpt, gap_sla, ttfe_ms, exec_ok, new_uid = data
+            (verdict, gap_excerpt, gap_sla, ttfe_ms, exec_ok, new_uid,
+             suspend_latency_ms) = data
             gap_verdicts.append((verdict, gap_excerpt, gap_sla))
             if _TTFE_EXEC:
                 ttfe_samples.append(ttfe_ms)
                 exec_oks.append(exec_ok)
+            suspend_latency_samples.append(suspend_latency_ms)
             pre_uid = new_uid  # next cycle suspends the just-resumed Pod
 
         # Runtime read-back (post-loop, mirrors native_digest_cold): verify the just-
@@ -725,6 +742,18 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
         # never cleared (the tracked upstream gap), else the first (PASS) cycle.
         verdict, excerpt, sla_metrics = next(
             (v for v in gap_verdicts if v[0] == "pending"), gap_verdicts[0])
+
+        # Merge the administrative-suspend latency point into the gap verdict's
+        # sla_metrics. UNGATED by _TTFE_EXEC: the suspend leg runs on every cycle,
+        # so this measurement always exists (whereas the resume TTFE probe is
+        # gated). The verdict is UNCHANGED — suspend latency is orthogonal to the
+        # Suspended-clear gap. Emits suspend_latency_ms (median, the INERT gate) +
+        # suspend_p90_ms (tail, only when n>=2); {} if no cycle reached terminal
+        # (no fabricated number). NOT an idle/auto-suspend — see metrics docstring.
+        sla_metrics = {
+            **sla_metrics,
+            **metrics.suspend_latency_point(suspend_latency_samples),
+        }
 
         # Merge the resume-activation TTFE distribution into the gap verdict's
         # sla_metrics. The verdict itself is UNCHANGED — the Suspended-clear gap is

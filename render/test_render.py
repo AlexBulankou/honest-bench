@@ -1322,6 +1322,116 @@ def test_session_turnover_bad_median_dropped_then_inert():
         assert out == "", f"bad median {bad!r} must render INERT"
 
 
+# --- #3868 administrative-suspend-latency axis ---------------------------------
+
+def _scen_with_suspend(metrics):
+    # Replace the fixture's suspend_resume cell's sla_metrics (it exists with resume-TTFE keys
+    # but no suspend_latency_ms) so tests exercise the administrative-suspend pair, not a
+    # never-reached second cell.
+    scen = [dict(s) for s in _full_gvisor_scenarios()]
+    for s in scen:
+        if s["name"] == "suspend_resume":
+            s["sla_metrics"] = metrics
+    return scen
+
+
+def _scen_without_suspend():
+    return [s for s in _full_gvisor_scenarios() if s["name"] != "suspend_resume"]
+
+
+def test_suspend_latency_inert_when_no_scenario():
+    # #3868: a suite with no suspend_resume cell at all ⇒ INERT.
+    out = render.render_suspend_latency(_matrix_results(_scen_without_suspend()))
+    assert out == ""
+
+
+def test_suspend_latency_inert_when_only_resume_ttfe():
+    # today's real pre-fire shape: the suspend_resume cell exists carrying only resume-TTFE keys
+    # (no suspend_latency_ms spine) ⇒ INERT (the axis is dark until a fire emits the median).
+    out = render.render_suspend_latency(_matrix_results(_full_gvisor_scenarios()))
+    assert out == ""
+
+
+def test_suspend_latency_inert_when_median_absent():
+    # a cell that emitted only the p90 tail (no median spine) ⇒ INERT (no partial lie).
+    out = render.render_suspend_latency(_matrix_results(_scen_with_suspend({"suspend_p90_ms": 7800.0})))
+    assert out == ""
+
+
+def test_suspend_latency_inert_when_empty_sla_metrics():
+    # the scenario emits {} when no suspend sample was captured (INERT honesty) ⇒ renders "".
+    out = render.render_suspend_latency(_matrix_results(_scen_with_suspend({})))
+    assert out == ""
+
+
+def test_suspend_latency_renders_median_only():
+    # median present, no p90 (n=1 fire) ⇒ renders the median row, omits the tail row.
+    out = render.render_suspend_latency(_matrix_results(_scen_with_suspend({"suspend_latency_ms": 4200.0})))
+    assert "## Administrative Suspend Latency" in out
+    assert "| Median (p50) | 4.2s |" in out
+    assert "Tail (p90)" not in out
+
+
+def test_suspend_latency_renders_median_and_p90():
+    out = render.render_suspend_latency(
+        _matrix_results(_scen_with_suspend({"suspend_latency_ms": 4200.0, "suspend_p90_ms": 7800.0}))
+    )
+    assert "| Median (p50) | 4.2s |" in out
+    assert "| Tail (p90) | 7.8s |" in out
+
+
+def test_suspend_latency_closed_schema_drops_foreign_keys():
+    # the suspend_resume cell also carries the resume-TTFE pair + pending_reason + n; the closed
+    # SUSPEND_LATENCY_FIELDS allow-list must drop all of them so only the suspend pair renders.
+    out = render.render_suspend_latency(
+        _matrix_results(
+            _scen_with_suspend(
+                {
+                    "suspend_latency_ms": 4200.0,
+                    "ttfe_p50_ms": 1396.0,
+                    "ttfe_p90_ms": 1722.0,
+                    "pending_reason": "leaked",
+                    "n": 999,
+                }
+            )
+        )
+    )
+    assert "| Median (p50) | 4.2s |" in out
+    assert "1.396s" not in out and "1.722s" not in out
+    assert "leaked" not in out and "999" not in out
+
+
+def test_suspend_latency_bad_median_dropped_then_inert():
+    # a non-numeric / negative / bool median fails the nonneg predicate ⇒ dropped ⇒ INERT.
+    for bad in ("soon", -1.0, True):
+        out = render.render_suspend_latency(_matrix_results(_scen_with_suspend({"suspend_latency_ms": bad})))
+        assert out == "", f"bad median {bad!r} must render INERT"
+
+
+def test_suspend_latency_bad_p90_dropped_median_still_renders():
+    # a bad p90 is dropped but the median spine survives ⇒ median-only render (tail omitted).
+    out = render.render_suspend_latency(
+        _matrix_results(_scen_with_suspend({"suspend_latency_ms": 4200.0, "suspend_p90_ms": -5.0}))
+    )
+    assert "| Median (p50) | 4.2s |" in out
+    assert "Tail (p90)" not in out
+
+
+def test_suspend_latency_never_frames_as_idle_or_auto():
+    # HARD naming constraint: the block must not let a reader infer an idle/auto-suspend capability.
+    out = render.render_suspend_latency(
+        _matrix_results(_scen_with_suspend({"suspend_latency_ms": 4200.0, "suspend_p90_ms": 7800.0}))
+    )
+    assert "administrative" in out.lower()
+    # the capability note must state the absence explicitly, and never brand this as idle/auto.
+    assert "no idle-timeout, activity-reclaim, or auto-suspend" in out
+    assert "idle suspend" not in out.lower()
+    # "auto-suspend"/"auto suspend" may appear ONLY inside the negating capability-note phrase.
+    scrubbed = out.lower().replace("no idle-timeout, activity-reclaim, or auto-suspend", "")
+    assert "auto-suspend" not in scrubbed
+    assert "auto suspend" not in scrubbed
+
+
 # --- #3868 vCPU-footprint axis -------------------------------------------------
 
 def test_vcpu_footprint_inert_when_no_footprint_fields():

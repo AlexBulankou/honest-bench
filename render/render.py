@@ -39,6 +39,7 @@ from schema import (
     SCENARIO_LABELS,
     SESSION_TURNOVER_FIELDS,
     STEPUP_PARETO_FIELDS,
+    SUSPEND_LATENCY_FIELDS,
     TTFE_COMPARABILITY_MIN_N,
     WARM_BIND_FIELDS,
     WARM_POOL_ACQUISITION_FIELDS,
@@ -1325,6 +1326,90 @@ def render_session_turnover(results):
         "_Refill latency is measured per-cycle as the wall-clock from a claim release to the warm "
         "pool returning to full readiness; the median and tail are percentiles of the completed-"
         "cycle distribution._"
+    )
+    lines.append("")
+    return "\n".join(lines)
+
+
+def _clean_suspend_latency(scenarios):
+    """Find suspend_resume and closed-schema-clean its administrative-suspend latency, or None.
+
+    The suspend_resume cell's correctness verdict (the Suspended-clear gap) and its resume-
+    activation TTFE distribution are rendered elsewhere; THIS reads only the administrative-suspend
+    latency pair the cell now also emits. suspend_latency_ms (the median) is the REQUIRED spine —
+    its presence is the INERT gate, so today's pre-fire data (no suspend_resume cell, or a cell
+    that ran before this axis emitted, whose sla_metrics carries no suspend_latency_ms) renders
+    nothing. suspend_p90_ms (the tail) is OPTIONAL (present only when the fire ran n>=2 cycles).
+    Any sla_metrics key not in SUSPEND_LATENCY_FIELDS, or failing its predicate, is dropped
+    (closed schema) — so the resume TTFE pair, pending_reason, and n never leak into this block.
+    """
+    if not isinstance(scenarios, list):
+        return None
+    for s in scenarios:
+        if not isinstance(s, dict) or s.get("name") != "suspend_resume":
+            continue
+        metrics = s.get("sla_metrics")
+        if not isinstance(metrics, dict):
+            return None
+        clean = {}
+        for key, ok in SUSPEND_LATENCY_FIELDS.items():
+            if key in metrics:
+                try:
+                    if ok(metrics[key]):
+                        clean[key] = metrics[key]
+                except (TypeError, ValueError):
+                    pass
+        if "suspend_latency_ms" not in clean:
+            return None
+        return {
+            "suspend_p50": clean["suspend_latency_ms"],
+            "suspend_p90": clean.get("suspend_p90_ms"),
+        }
+    return None
+
+
+def render_suspend_latency(results):
+    """Render the administrative-suspend latency block, or "" when INERT.
+
+    Suspend is the cost-lever an operator pulls to reclaim a Sandbox's compute while preserving its
+    identity (the CR survives; only the backing Pod is released). This block reports how fast that
+    ADMINISTRATIVE suspend completes — the operatingMode=Suspended patch → terminal-Suspended
+    wall-clock. It is DELIBERATELY not framed as an idle/auto-suspend: upstream agent-sandbox has no
+    idle-timeout or activity-reclaim path, so a reader must not infer an automatic scale-to-zero
+    from this number. Rendered ONLY when a suspend_resume fire emits a measured median suspend
+    latency (see _clean_suspend_latency), so the public page is byte-unchanged until that fire lands.
+    Diagnostic-only — adds a block, changes no existing cell.
+    """
+    susp = _clean_suspend_latency(results.get("scenarios"))
+    if not susp:
+        return ""
+    lines = ["## Administrative Suspend Latency", ""]
+    lines.append(
+        "Suspend is the cost-lever for reclaiming a sandbox's compute while keeping its identity: "
+        "an `operatingMode=Suspended` patch releases the backing Pod but preserves the CR, so a "
+        "later `operatingMode=Running` patch resumes it. This block reports how fast that "
+        "**administrative** suspend completes — from the patch to the terminal Suspended state "
+        "(Pod released + the Suspended condition observed)."
+    )
+    lines.append("")
+    lines.append(
+        "_Capability note: this is an **administrative** (operator- or user-driven) suspend. "
+        "Upstream agent-sandbox exposes only the closed `operatingMode` enum (`Running`; "
+        "`Suspended`) — there is **no idle-timeout, activity-reclaim, or auto-suspend** path, so "
+        "this latency must not be read as an automatic scale-to-zero._"
+    )
+    lines.append("")
+    header = ["Suspend latency", "Value"]
+    lines.append("| " + " | ".join(header) + " |")
+    lines.append("|" + "|".join(["---"] * len(header)) + "|")
+    lines.append(f"| Median (p50) | {_fmt_secs(susp['suspend_p50'])} |")
+    if susp["suspend_p90"] is not None:
+        lines.append(f"| Tail (p90) | {_fmt_secs(susp['suspend_p90'])} |")
+    lines.append("")
+    lines.append(
+        "_Suspend latency is measured per-cycle as the wall-clock from the "
+        "`operatingMode=Suspended` patch return to the terminal Suspended state; the median and "
+        "tail are percentiles of the measured suspend distribution._"
     )
     lines.append("")
     return "\n".join(lines)
