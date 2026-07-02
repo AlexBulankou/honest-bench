@@ -48,7 +48,7 @@ bash scripts/check-public-safety.sh           # fail-closed public-safety scan
 |---|---|---|---|---|---|---|---|---|
 | gVisor | Warm-pool hit (Base image) | 14.037 | 9.358 | 0.8913s | 1.2171s | 30 | pending | 100% |
 | gVisor | Unique-image cold (RL reality) | pending | pending | 4.5191s † | 4.5191s † | 1 | pending | 100% |
-| gVisor | Resume-from-suspend | pending | pending | pending | pending | pending | N/A | pending |
+| gVisor | Resume-from-suspend | pending (upstream-blocked) | pending (upstream-blocked) | pending (upstream-blocked) | pending (upstream-blocked) | pending (upstream-blocked) | N/A | pending (upstream-blocked) |
 | Kata + microVM | Warm-pool hit (Base image) | pending | pending | pending | pending | pending | pending | pending |
 | Kata + microVM | Unique-image cold (RL reality) | pending | pending | pending | pending | pending | pending | pending |
 | Kata + microVM | Resume-from-suspend | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
@@ -60,7 +60,7 @@ _Execution Success is the Honesty Check: <100% prints the succeeded/total fracti
 _† marks a TTFE measured over fewer than N=30 samples — read it as a single observation, not a distribution, and do not rank it against a high-N row._
 _Kata + microVM rows are not-yet-measured (requires-kata-microvm)._
 _Resume-from-suspend × Kata + microVM renders `N/A` by construction — CRIU checkpoint/restore does not transfer to the Kata VM isolation model, so that cell can never be measured (distinct from `pending`, which awaits a run)._
-_Cells render `pending` until the TTFE-instrumented run lands._
+_A bare `pending` cell awaits its TTFE-instrumented run. A `pending (upstream-blocked)` cell is different: that run DID land, but an upstream controller gap (the resume path's Suspended condition never clears) holds it — the cell graduates to a real number the moment the upstream fix lands, not merely when a run is scheduled._
 
 _build: cluster_substrate=gke-sandbox · run_id=dc1dd343fee74008a2f75ccdfed39eb9 · node_count=1_
 _generated-at: 2026-07-01T07:23:08Z_

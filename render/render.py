@@ -393,12 +393,21 @@ def _matrix_scenarios(scenarios):
         n = n if isinstance(n, int) and not isinstance(n, bool) and n >= 0 else 0
         outcome = s.get("outcome")
         metrics = _clean_matrix_metrics(s.get("sla_metrics"))
+        # Carry the pending_reason through (closed-enum-guarded, same discipline as the
+        # non-matrix _clean_scenario at 106-107) so a pending matrix cell can say WHY it is
+        # pending. This is the honesty distinction: a gVisor resume cell whose run DID land
+        # but is held by an upstream controller bug is `upstream-blocked` — it must NOT read
+        # like a not-yet-run `not-yet-measured` pending. A free-text / unknown reason is
+        # dropped (renders bare `pending`), never leaked to the public page.
+        reason = s.get("pending_reason")
+        if reason is not None and reason not in PENDING_REASONS:
+            reason = None
         # A `pending` scenario has no publishable measurement: its sla_metrics are
         # provisional gap-probe artifacts, not results. The upstream-blocked resume probe
         # is the canonical case — it records the probe's timeout CEILING (the wall-clock it
         # waits out a never-clearing Suspended condition), not a real resume TTFE. Suppress
-        # those metrics so a pending matrix cell renders `pending` across EVERY metric
-        # column instead of leaking a number a reader would rank against a real
+        # those metrics so a pending matrix cell renders `pending (<reason>)` across EVERY
+        # metric column instead of leaking a number a reader would rank against a real
         # distribution. A PASS scenario keeps its metrics (absent individual keys still
         # fall through to per-cell `pending`), so a resume row graduates cleanly
         # pending -> real the moment its outcome flips to PASS.
@@ -408,6 +417,7 @@ def _matrix_scenarios(scenarios):
             "outcome": outcome,
             "n": n,
             "metrics": metrics,
+            "pending_reason": reason,
         }
     return out
 
@@ -484,13 +494,27 @@ def render_matrix(results):
             sc_pending = bool(sc) and sc.get("outcome") == "pending"
             m = sc["metrics"] if sc else {}
 
+            # A pending cell distinguishes WHY it is pending. The canonical case is the
+            # gVisor resume row: its run DID land, but an upstream controller bug (the
+            # Suspended condition never clears) blocks graduation — that is `upstream-blocked`,
+            # NOT a not-yet-run cell. Render `pending (<reason>)` so a reader cannot mistake a
+            # known-upstream-gap for an unmeasured one. A pending scenario with no carried
+            # reason falls back to bare `pending` (a genuinely not-yet-run cell). Non-measured
+            # runtime rows (sc is None) also fall back to bare `pending` — correct, since they
+            # simply were not measured in this run.
+            pending_tok = _PENDING
+            if sc_pending:
+                reason = sc.get("pending_reason")
+                if reason:
+                    pending_tok = f"{_PENDING} ({reason})"
+
             def cell(key, fmt):
-                return fmt(m[key]) if key in m else _PENDING
+                return fmt(m[key]) if key in m else pending_tok
 
             # A pending scenario's N is a probe-attempt count, not a published sample size;
             # render it `pending` too so the whole row reads pending until graduation.
             n_val = sc["n"] if (sc and sc["n"] > 0 and not sc_pending) else None
-            n_cell = str(n_val) if n_val else _PENDING
+            n_cell = str(n_val) if n_val else pending_tok
 
             # Low-N TTFE cells carry a small-sample marker so a reader does not rank them
             # against a high-N row (a single-sample p50 is not a distribution). Mark only a
@@ -508,7 +532,7 @@ def render_matrix(results):
             if "exec_success_rate" in m:
                 exec_cell = _exec_cell(m["exec_success_rate"], n_val, m.get("exec_success_n"))
             else:
-                exec_cell = _PENDING
+                exec_cell = pending_tok
             if is_resume:
                 dens_cell = "N/A"
             elif density is not None:
@@ -553,7 +577,12 @@ def render_matrix(results):
         "checkpoint/restore does not transfer to the Kata VM isolation model, so that cell "
         "can never be measured (distinct from `pending`, which awaits a run)._"
     )
-    lines.append("_Cells render `pending` until the TTFE-instrumented run lands._")
+    lines.append(
+        "_A bare `pending` cell awaits its TTFE-instrumented run. A `pending (upstream-blocked)` "
+        "cell is different: that run DID land, but an upstream controller gap (the resume path's "
+        "Suspended condition never clears) holds it — the cell graduates to a real number the "
+        "moment the upstream fix lands, not merely when a run is scheduled._"
+    )
     lines.append("")
 
     banner_order = [
