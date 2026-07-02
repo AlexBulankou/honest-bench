@@ -1,31 +1,42 @@
 {
-  "generated_at": "2026-07-02T02:41:20Z",
+  "generated_at": "2026-07-02T04:51:48Z",
   "product": "sandbox-kata",
   "provenance": {
     "cluster_substrate": "gke-kata",
     "cold_start_mode": "cold-provision",
-    "node_count": 1,
-    "run_id": "b4e64a8c51484f098f922e354f0b1fa5",
+    "node_count": 2,
+    "run_id": "979885b77ec2423f9b7449f463c60159",
     "runtime": "kata-microvm"
   },
   "scenarios": [
     {
+      "n": 30,
       "name": "warmpool_cold_start",
-      "outcome": "pending",
-      "pending_reason": "pool-topology-constrained"
+      "outcome": "PASS",
+      "sla_metrics": {
+        "bind_p50_ms": 398.9,
+        "bind_p95_ms": 714.7,
+        "exec_p50_ms": 249.5,
+        "exec_p95_ms": 281.3,
+        "exec_success_rate": 1.0,
+        "thpt_under_1s_per_node": 15.678,
+        "thpt_under_5s_per_node": 16.798,
+        "ttfe_p50_ms": 630.3,
+        "ttfe_p95_ms": 986.7
+      }
     },
     {
       "n": 1,
       "name": "native_digest_cold",
       "outcome": "PASS",
       "sla_metrics": {
-        "bind_p50_ms": 3731.9,
-        "bind_p95_ms": 3731.9,
-        "exec_p50_ms": 630.2,
-        "exec_p95_ms": 630.2,
+        "bind_p50_ms": 4562.0,
+        "bind_p95_ms": 4562.0,
+        "exec_p50_ms": 265.4,
+        "exec_p95_ms": 265.4,
         "exec_success_rate": 1.0,
-        "ttfe_p50_ms": 4362.2,
-        "ttfe_p95_ms": 4362.2
+        "ttfe_p50_ms": 4827.4,
+        "ttfe_p95_ms": 4827.4
       }
     }
   ]
