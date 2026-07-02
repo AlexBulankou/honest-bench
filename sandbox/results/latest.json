@@ -195,12 +195,12 @@
     "warmpool_size": 600
   },
   "warm_vs_cold": {
-    "cold_ms": 4519.1,
-    "measured_at": "2026-07-01T07:23:08Z",
-    "n_warm": 10,
+    "cold_ms": 5101.4,
+    "measured_at": "2026-07-02T02:55:38Z",
+    "n_warm": 30,
     "runtime_class": "gvisor",
     "semantic": "ttfe",
-    "speedup": 11.561,
-    "warm_p50_ms": 390.9
+    "speedup": 7.283,
+    "warm_p50_ms": 700.5
   }
 }
