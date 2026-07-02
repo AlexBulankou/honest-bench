@@ -1689,7 +1689,7 @@ def test_emit_to_render_slo_sweep_convergence():
         "| 4 /node · pending (cluster-fire) | 0.6s (count=200) | 0.9s (count=200) | 100% |"
     ) in out, f"matrix row did not render the independent per-bar fill:\n{out}"
     # the caption pins the X the cluster figure was measured at.
-    assert "per-activation-mode cluster rate at 40 nodes" in out, (
+    assert "cluster rate at 40 nodes" in out, (
         "the @X-nodes caption must resolve from the landed thpt_cluster_node_count"
     )
 
