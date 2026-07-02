@@ -556,15 +556,15 @@ def test_matrix_renders_doc_exact_gvisor_rows():
     cf = f"pending ({render._CLUSTER_FIRE})"
     assert (
         f"| gVisor | Warm-pool hit (Base image) | 4 /node · {cf} | 4 /node · {cf} "
-        "| 0.6s | 0.9s | 200 | 1.88 | 100% |"
+        "| 0.6s | 0.9s | 100% |"
     ) in out
     assert (
         f"| gVisor | Unique-image cold (RL reality) | 4 /node · {cf} | 0 /node · {cf} "
-        "| 1.2s | 1.56s | 200 | 1.88 | 100% |"
+        "| 1.2s | 1.56s | 100% |"
     ) in out
     assert (
         f"| gVisor | Resume-from-suspend | 4 /node · {cf} | 0 /node · {cf} "
-        "| 3.5s | 5s | 1376 | N/A | 92.8% (1277/1376) ⚠️ |"
+        "| 3.5s | 5s | 92.8% (1277/1376) ⚠️ |"
     ) in out
 
 
@@ -776,13 +776,6 @@ def test_matrix_exec_success_n_emitted_preferred_over_derived():
     assert "(1277/1376)" not in out
 
 
-def test_matrix_resume_density_is_na():
-    out = render.render_matrix(_matrix_results(_full_gvisor_scenarios()))
-    resume_line = [l for l in out.splitlines() if "Resume-from-suspend" in l and "gVisor" in l][0]
-    cells = [c.strip() for c in resume_line.strip("|").split("|")]
-    assert cells[7] == "N/A"  # Max Density column is N/A for resume (no steady-state pool)
-
-
 def test_matrix_pending_scenario_suppresses_leaked_metrics():
     # A scenario whose OUTCOME is `pending` carries provisional sla_metrics that are NOT a
     # publishable measurement — the upstream-blocked resume probe records its timeout
@@ -807,15 +800,12 @@ def test_matrix_pending_scenario_suppresses_leaked_metrics():
     out = render.render_matrix(_matrix_results(scen))
     resume_line = [l for l in out.splitlines() if "Resume-from-suspend" in l and "gVisor" in l][0]
     cells = [c.strip() for c in resume_line.strip("|").split("|")]
-    # columns 2..6 (thpt5, thpt1, p50, p95, n) all pending; density (7) N/A-by-design;
-    # exec (8) pending — none of the provisional values survive. Each pending cell carries
-    # the upstream-blocked reason.
+    # columns 2..6 (thpt5, thpt1, p50, p95, exec) all pending — none of the provisional
+    # values survive. Each pending cell carries the upstream-blocked reason.
     pend = "pending (upstream-blocked)"
     assert cells[2] == pend and cells[3] == pend
     assert cells[4] == pend and cells[5] == pend
     assert cells[6] == pend
-    assert cells[7] == "N/A"
-    assert cells[8] == pend
     # the leaked ceiling never appears anywhere in the row
     assert "34.8414" not in resume_line and "34841" not in resume_line
 
@@ -829,30 +819,29 @@ def test_matrix_pass_scenario_still_shows_metrics_after_pending_guard():
     resume_line = [l for l in out.splitlines() if "Resume-from-suspend" in l and "gVisor" in l][0]
     cells = [c.strip() for c in resume_line.strip("|").split("|")]
     assert cells[4] == "3.5s" and cells[5] == "5s"  # real TTFE p50/p95 survive
-    assert cells[6] == "1376"  # real N survives (>= floor, no dagger)
-    assert "pending" not in [cells[4], cells[5], cells[6]]
+    # N=1376 (>= floor) means no low-N dagger on the TTFE cells
+    assert render._LOW_N_MARK not in resume_line
+    assert "pending" not in [cells[4], cells[5]]
 
 
 def test_matrix_density_sourced_from_warmpool_not_stale_burst_create():
     # a4s2 Q3 lock (PR #28): DENSITY_SOURCE_SCENARIOS = (warmpool_cold_start,). A stale
     # burst_create row carrying the OLD cluster-wide-capacity 0.45 must NOT shadow warmpool's
-    # corrected per-node-allocatable 1.88 — the warm + cold rows source 1.88, never 0.45.
+    # corrected per-node-allocatable 1.88. hb#134 relocated Max Density off the headline
+    # matrix into render_density_detail (DETAILS.md), so the sourcing guard now asserts
+    # against that block: the gVisor row sources 1.88, never 0.45.
     scen = _full_gvisor_scenarios() + [
         {
             "name": "burst_create", "outcome": "PASS", "n": 10,
             "sla_metrics": {"density_per_vcpu": 0.45},
         }
     ]
+    detail = render.render_density_detail(_matrix_results(scen))
+    assert "| gVisor | 1.88 |" in detail
+    assert "0.45" not in detail
+    # and the headline matrix no longer carries any density cell at all
     out = render.render_matrix(_matrix_results(scen))
-    assert (
-        "| gVisor | Warm-pool hit (Base image) | 4 /node · pending (cluster-fire) "
-        "| 4 /node · pending (cluster-fire) | 0.6s | 0.9s | 200 | 1.88 | 100% |"
-    ) in out
-    assert (
-        "| gVisor | Unique-image cold (RL reality) | 4 /node · pending (cluster-fire) "
-        "| 0 /node · pending (cluster-fire) | 1.2s | 1.56s | 200 | 1.88 | 100% |"
-    ) in out
-    assert "0.45" not in out
+    assert "1.88" not in out and "0.45" not in out and "Max Density" not in out
 
 
 def test_matrix_kata_warm_cold_rows_pending():
@@ -883,8 +872,8 @@ def test_matrix_resume_kata_is_na_by_design_not_pending():
         ]
         assert len(resume_kata) == 1
         cells = [c.strip() for c in resume_kata[0].strip("|").split("|")]
-        # columns 2..8 are the 7 metric cells (thpt5, thpt1, p50, p95, n, density, exec)
-        assert all(c == "N/A" for c in cells[2:9]), cells
+        # columns 2..6 are the 5 metric cells (thpt5, thpt1, p50, p95, exec)
+        assert all(c == "N/A" for c in cells[2:7]), cells
         assert "pending" not in resume_kata[0]
     assert "N/A` by construction" in out
 
@@ -904,14 +893,12 @@ def test_matrix_gvisor_resume_pending_carries_upstream_blocked_reason():
     resume_line = [l for l in out.splitlines() if "Resume-from-suspend" in l and "gVisor" in l][0]
     cells = [c.strip() for c in resume_line.strip("|").split("|")]
     pend = "pending (upstream-blocked)"
-    # thpt5, thpt1, p50, p95, n, exec all carry the reason; density is N/A-by-design.
+    # thpt5, thpt1, p50, p95, exec all carry the reason.
     assert cells[2] == pend and cells[3] == pend
     assert cells[4] == pend and cells[5] == pend
     assert cells[6] == pend
-    assert cells[7] == "N/A"
-    assert cells[8] == pend
     # a bare `pending` never appears in this row (every pending cell is qualified)
-    for c in (cells[2], cells[3], cells[4], cells[5], cells[6], cells[8]):
+    for c in (cells[2], cells[3], cells[4], cells[5], cells[6]):
         assert c == pend
 
 
@@ -925,7 +912,7 @@ def test_matrix_bare_pending_no_reason_stays_bare():
     out = render.render_matrix(_matrix_results(scen))
     resume_line = [l for l in out.splitlines() if "Resume-from-suspend" in l and "gVisor" in l][0]
     cells = [c.strip() for c in resume_line.strip("|").split("|")]
-    assert cells[2] == "pending" and cells[4] == "pending" and cells[8] == "pending"
+    assert cells[2] == "pending" and cells[4] == "pending" and cells[6] == "pending"
     assert "(" not in resume_line.split("Resume-from-suspend")[1]  # no qualifier anywhere
 
 
@@ -999,7 +986,7 @@ def test_matrix_invalid_runtime_provenance_dropped_defaults_gvisor():
     assert "trust-me-vm" not in out
     assert (
         "| gVisor | Warm-pool hit (Base image) | 4 /node · pending (cluster-fire) "
-        "| 4 /node · pending (cluster-fire) | 0.6s | 0.9s | 200 | 1.88 | 100% |"
+        "| 4 /node · pending (cluster-fire) | 0.6s | 0.9s | 100% |"
     ) in out
 
 
@@ -1008,9 +995,8 @@ def test_matrix_empty_metrics_renders_pending_skeleton():
     out = render.render_matrix(_matrix_results(scen))
     warm = [l for l in out.splitlines() if l.startswith("| gVisor | Warm-pool hit")][0]
     cells = [c.strip() for c in warm.strip("|").split("|")]
-    assert cells[2] == "pending" and cells[4] == "pending" and cells[8] == "pending"
-    # N is still shown from the scenario count
-    assert cells[6] == "5"
+    # thpt5, p50, exec all pending when the metrics dict is empty
+    assert cells[2] == "pending" and cells[4] == "pending" and cells[6] == "pending"
 
 
 def test_matrix_unknown_product_raises():
@@ -1070,7 +1056,7 @@ def test_matrix_kata_results_fills_kata_rows_gvisor_unchanged():
     )
     assert (
         "| gVisor | Warm-pool hit (Base image) | 4 /node · pending (cluster-fire) "
-        "| 4 /node · pending (cluster-fire) | 0.6s | 0.9s | 200 | 1.88 | 100% |"
+        "| 4 /node · pending (cluster-fire) | 0.6s | 0.9s | 100% |"
     ) in out
     kata_cold = [l for l in out.splitlines()
                  if l.startswith("| Kata + microVM | Unique-image cold")][0]
@@ -1079,8 +1065,7 @@ def test_matrix_kata_results_fills_kata_rows_gvisor_unchanged():
     # honesty marker applies to kata_results rows exactly as it does to primary rows.
     assert cells[4] == f"4.362s {render._LOW_N_MARK}"
     assert cells[5] == f"5s {render._LOW_N_MARK}"
-    assert cells[6] == "5"
-    assert "100%" in cells[8]
+    assert "100%" in cells[6]
 
 
 def test_matrix_kata_results_warmpool_renders_pool_topology_constrained():
@@ -1095,7 +1080,7 @@ def test_matrix_kata_results_warmpool_renders_pool_topology_constrained():
     pend = "pending (pool-topology-constrained)"
     assert cells[2] == pend and cells[3] == pend
     assert cells[4] == pend and cells[5] == pend
-    assert cells[8] == pend
+    assert cells[6] == pend
 
 
 def test_matrix_kata_results_separate_run_footnote():

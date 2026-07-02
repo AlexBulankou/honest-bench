@@ -454,6 +454,47 @@ def _runtime_density(scen_by_name):
     return None
 
 
+def render_density_detail(results, kata_results=None):
+    """DETAILS.md deep-dive: per-runtime Max-Density (sandboxes per node-allocatable
+    sandbox-schedulable vCPU). Relocated off the headline matrix (hb#134 page-friendliness
+    pass — a non-infra reader does not need it in the core table) but PRESERVED here so the
+    #133/#135 saturation measurement is not lost. Same per-runtime source logic as the
+    matrix: the primary results claim their measured runtime; kata_results (the sandbox-kata
+    product) may fill the kata-microvm slot. Unmeasured runtimes render `pending`. Returns ""
+    (INERT) only for an unknown product — otherwise it always renders the runtime skeleton,
+    rows pending individually, mirroring the matrix's honest-skeleton behaviour."""
+    product = results.get("product")
+    if product not in PRODUCTS:
+        return ""
+    prov = _clean_provenance(results.get("provenance"))
+    measured_runtime = prov.get("runtime") or "gvisor"
+    sources = {measured_runtime: _matrix_scenarios(results.get("scenarios"))}
+    if (
+        isinstance(kata_results, dict)
+        and kata_results.get("product") == "sandbox-kata"
+        and "kata-microvm" not in sources
+    ):
+        kp = _clean_provenance(kata_results.get("provenance"))
+        if kp.get("runtime") == "kata-microvm":
+            sources["kata-microvm"] = _matrix_scenarios(kata_results.get("scenarios"))
+    lines = ["## Max Density (sandboxes per vCPU)", ""]
+    lines.append(
+        "Max Density is sandboxes per node-allocatable sandbox-schedulable vCPU (the "
+        "per-node denominator), not per total-cluster vCPU. An unmeasured runtime "
+        "renders `pending`."
+    )
+    lines.append("")
+    lines.append("| Runtime | Max Density (sb/vCPU) |")
+    lines.append("|---|---|")
+    for rt in MATRIX_RUNTIMES:
+        rt_scen = sources.get(rt)
+        density = _runtime_density(rt_scen) if rt_scen is not None else None
+        cell = _fmt_num(density) if density is not None else _PENDING
+        lines.append(f"| {RUNTIME_LABELS[rt]} | {cell} |")
+    lines.append("")
+    return "\n".join(lines) + "\n"
+
+
 def _landed_cluster_x(m):
     """A metrics dict's landed, valid thpt_cluster_node_count as int — None if absent/invalid.
 
@@ -485,7 +526,7 @@ def _resolve_cluster_x(sources):
 
 
 def render_matrix(results, kata_results=None):
-    """Render the doc's 9-column Core Metrics Table (primary results + optional kata results).
+    """Render the doc's 7-column Core Metrics Table (primary results + optional kata results).
 
     A single run measures ONE runtime (provenance.runtime, default gvisor); that runtime's rows
     fill from the measured scenarios. The Kata + microVM rows can fill from a SECOND results
@@ -529,17 +570,15 @@ def render_matrix(results, kata_results=None):
         "Throughput @ <1s TTFE (sb/s — node · cluster)",
         "TTFE p50",
         "TTFE p95",
-        "Samples (N)",
-        "Max Density (sb/vCPU)",
         "Execution Success (Honesty Check)",
     ]
     lines = ["## Agent Sandbox — Core Metrics", ""]
     lines.append(
-        "**Read TTFE down a column, not across rows.** Each activation-mode row carries its own "
-        "sample size (the Samples (N) column) — they differ by orders of magnitude. A p50 over "
-        "hundreds of samples and a p50 over one are not comparable: cross-row TTFE ranking is "
-        f"only meaningful between rows with similar N. Rows below N={TTFE_COMPARABILITY_MIN_N} "
-        f"are marked {_LOW_N_MARK} on their TTFE cells."
+        "**Read TTFE down a column, not across rows.** Activation-mode rows differ in sample "
+        "size by orders of magnitude, and a p50 over hundreds of samples and a p50 over one are "
+        "not comparable: cross-row TTFE ranking is only meaningful between rows with similar "
+        f"sample counts. Rows measured over fewer than N={TTFE_COMPARABILITY_MIN_N} samples are "
+        f"marked {_LOW_N_MARK} on their TTFE cells."
     )
     lines.append("")
     # hb#132: throughput cells are dual (`per-node · per-cluster`). Pin the cluster measurement
@@ -588,7 +627,6 @@ def render_matrix(results, kata_results=None):
         rt_label = RUNTIME_LABELS[rt]
         rt_scen = sources.get(rt)
         measured = rt_scen is not None
-        density = _runtime_density(rt_scen) if measured else None
         for scen_name, mode_label in ACTIVATION_MODE_ROWS:
             is_resume = scen_name == "suspend_resume"
             # Resume-from-suspend × Kata+microVM is N/A by construction: CRIU
@@ -598,7 +636,7 @@ def render_matrix(results, kata_results=None):
             # future measurement that is structurally impossible. Holds regardless of
             # which runtime this run measured (a kata-measured run still N/As it).
             if is_resume and rt == "kata-microvm":
-                lines.append("| " + " | ".join([rt_label, mode_label] + [_NA] * 7) + " |")
+                lines.append("| " + " | ".join([rt_label, mode_label] + [_NA] * 5) + " |")
                 continue
             sc = rt_scen.get(scen_name) if measured else None
             sc_pending = bool(sc) and sc.get("outcome") == "pending"
@@ -664,17 +702,11 @@ def render_matrix(results, kata_results=None):
                 exec_cell = _exec_cell(m["exec_success_rate"], n_val, m.get("exec_success_n"))
             else:
                 exec_cell = pending_tok
-            if is_resume:
-                dens_cell = "N/A"
-            elif density is not None:
-                dens_cell = _fmt_num(density)
-            else:
-                dens_cell = _PENDING
 
             lines.append(
                 "| "
                 + " | ".join(
-                    [rt_label, mode_label, thpt5, thpt1, p50, p95, n_cell, dens_cell, exec_cell]
+                    [rt_label, mode_label, thpt5, thpt1, p50, p95, exec_cell]
                 )
                 + " |"
             )
@@ -695,10 +727,6 @@ def render_matrix(results, kata_results=None):
         "per-node × N extrapolation. The cluster half renders `pending (cluster-fire)` until our "
         "own schema-validated saturation fire lands it; a landed figure below the cluster sizing "
         "target carries ⚠️._"
-    )
-    lines.append(
-        "_Max Density is sandboxes per node-allocatable sandbox-schedulable vCPU (the "
-        "per-node denominator), not per total-cluster vCPU._"
     )
     lines.append(
         "_Execution Success is the Honesty Check: <100% prints the succeeded/total fraction "

@@ -57,3 +57,12 @@ Acquisition latency on **gVisor**: the time from a `SandboxClaim` being **reques
 _Controller-startup lower bound (p95 **1.33812s**): controller-first-observed → Ready, which EXCLUDES the claim-admission → first-reconcile queueing lag — it UNDER-reports the true acquisition path, so treat it as a floor on the controller's own contribution, not a second acquisition measurement._
 
 _Measured 2026-07-01 — warm-pool acquisition latency (point-in-time)._
+
+## Max Density (sandboxes per vCPU)
+
+Max Density is sandboxes per node-allocatable sandbox-schedulable vCPU (the per-node denominator), not per total-cluster vCPU. An unmeasured runtime renders `pending`.
+
+| Runtime | Max Density (sb/vCPU) |
+|---|---|
+| gVisor | 5.98 |
+| Kata + microVM | pending |

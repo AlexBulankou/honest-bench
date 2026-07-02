@@ -266,21 +266,21 @@ def test_emit_to_render_matrix_convergence_gvisor_doc_rows():
     cf = "pending (cluster-fire)"
     assert (
         f"| gVisor | Warm-pool hit (Base image) | 4 /node · {cf} | 4 /node · {cf} "
-        "| 0.6s | 0.9s | 200 | 1.88 | 100% |"
+        "| 0.6s | 0.9s | 100% |"
     ) in out
     assert (
         f"| gVisor | Unique-image cold (RL reality) | 4 /node · {cf} | 0 /node · {cf} "
-        "| 1.2s | 1.56s | 200 | 1.88 | 100% |"
+        "| 1.2s | 1.56s | 100% |"
     ) in out
     assert (
         f"| gVisor | Resume-from-suspend | 4 /node · {cf} | 0 /node · {cf} "
-        "| 3.5s | 5s | 1376 | N/A | 92.8% (1277/1376) ⚠️ |"
+        "| 3.5s | 5s | 92.8% (1277/1376) ⚠️ |"
     ) in out
     # the unmeasured runtime stays honest-pending (never a guess) on its measurable rows.
-    assert "| Kata + microVM | Warm-pool hit (Base image) | pending | pending | pending | pending | pending | pending | pending |" in out
+    assert "| Kata + microVM | Warm-pool hit (Base image) | pending | pending | pending | pending | pending |" in out
     # resume × Kata is N/A-by-construction (CRIU does not transfer to the Kata VM model), never
     # pending — a pending cell would imply a future measurement that is structurally impossible.
-    assert "| Kata + microVM | Resume-from-suspend | N/A | N/A | N/A | N/A | N/A | N/A | N/A |" in out
+    assert "| Kata + microVM | Resume-from-suspend | N/A | N/A | N/A | N/A | N/A |" in out
 
 
 def test_emit_to_render_matrix_convergence_single_sample_ttfe_point():
@@ -340,11 +340,12 @@ def test_emit_to_render_matrix_convergence_single_sample_ttfe_point():
     out = render.render_matrix(results)
 
     # (b) single-sample rows: p50 == p95 (one point), throughput columns PENDING (not a false 0),
-    # density pending (cold) / N/A (resume), exec 100%. The TTFE p50/p95 cells carry the matched-N
-    # small-sample marker `†` (N=1 < TTFE_COMPARABILITY_MIN_N) so a cross-row read can't rank a
-    # 1-sample point against a high-N row -- the cross-row honesty fix this contract now pins.
-    assert "| gVisor | Unique-image cold (RL reality) | pending | pending | 1.2s † | 1.2s † | 1 | pending | 100% |" in out
-    assert "| gVisor | Resume-from-suspend | pending | pending | 3.5s † | 3.5s † | 1 | N/A | 100% |" in out
+    # exec 100%. The TTFE p50/p95 cells carry the matched-N small-sample marker `†` (N=1 <
+    # TTFE_COMPARABILITY_MIN_N) so a cross-row read can't rank a 1-sample point against a high-N
+    # row -- the cross-row honesty fix this contract now pins. (hb#134 dropped the N + Max-Density
+    # columns from the headline matrix; Max-Density moved to render_density_detail / DETAILS.md.)
+    assert "| gVisor | Unique-image cold (RL reality) | pending | pending | 1.2s † | 1.2s † | 100% |" in out
+    assert "| gVisor | Resume-from-suspend | pending | pending | 3.5s † | 3.5s † | 100% |" in out
 
     # never-reached-first-execution cold provision: every measured column pending, exec honest 0%.
     fail_results = {
@@ -354,7 +355,7 @@ def test_emit_to_render_matrix_convergence_single_sample_ttfe_point():
         "scenarios": [_row("native_digest_cold", "FAIL", cold_fail)],
     }
     out_fail = render.render_matrix(fail_results)
-    assert "| gVisor | Unique-image cold (RL reality) | pending | pending | pending | pending | 1 | pending | 0% (0/1) ⚠️ |" in out_fail
+    assert "| gVisor | Unique-image cold (RL reality) | pending | pending | pending | pending | 0% (0/1) ⚠️ |" in out_fail
 
 
 def test_emit_to_render_cold_bind_decomposition_convergence():

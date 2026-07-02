@@ -46,6 +46,7 @@ def _load_render():
         mod.render_concurrent_burst,
         mod.render_warm_pool_acquisition,
         mod.render_at_scale_contention,
+        mod.render_density_detail,
         mod.render_recipe,
     )
 
@@ -53,7 +54,8 @@ def _load_render():
 (render_matrix, render_operating_envelope, render_burst_corroboration,
  render_warm_bind_decomposition, render_cold_bind_decomposition, render_warm_vs_cold,
  render_scale_proof, render_stepup, render_kata_activation, render_concurrent_burst,
- render_warm_pool_acquisition, render_at_scale_contention, render_recipe) = _load_render()
+ render_warm_pool_acquisition, render_at_scale_contention, render_density_detail,
+ render_recipe) = _load_render()
 
 # Product -> results path, relative to the repo root (parent of render/).
 # The PUBLIC customer page is SANDBOX-ONLY (alex 2026-06-28): substrate demotes from a
@@ -178,12 +180,18 @@ def build_details(root=None):
     hb#134 page-friendliness split: the headline README carries the answer a non-infra
     reader needs (matrix + operating envelope + scale + burst); the working behind those
     numbers — burst-create corroboration, the bind-vs-exec decomposition (warm + cold),
-    the Kata pod-Ready table, and the warm-pool acquisition breakdown — moves here so the
-    front page stays scannable. Same closed-schema render path as build_readme: each block
-    is INERT (returns "") unless its required fields are present, so DETAILS degrades to an
-    honest skeleton rather than a blank or a guess.
+    the Kata pod-Ready table, the warm-pool acquisition breakdown, and the per-runtime
+    Max-Density table (relocated off the headline matrix in the same pass) — moves here so
+    the front page stays scannable. Same closed-schema render path as build_readme: each
+    block is INERT (returns "") unless its required fields are present, so DETAILS degrades
+    to an honest skeleton rather than a blank or a guess.
     """
     root = root or _repo_root()
+    kata_results = None
+    kata_path = os.path.join(root, _KATA_RESULTS_REL)
+    if os.path.exists(kata_path):
+        with open(kata_path) as fh:
+            kata_results = json.load(fh)
     sections = [_DETAILS_PREAMBLE.rstrip()]
     for product, rel in _PRODUCTS:
         path = os.path.join(root, rel)
@@ -201,6 +209,12 @@ def build_details(root=None):
             block = renderer(results)
             if block.strip():
                 sections.append(block.rstrip())
+        # Max-Density relocated here from the headline matrix (hb#134). kata_results fills
+        # the kata-microvm row when its separate run is present, mirroring build_readme.
+        kr = kata_results if product == "sandbox" else None
+        density = render_density_detail(results, kata_results=kr)
+        if density.strip():
+            sections.append(density.rstrip())
     return "\n\n".join(sections) + "\n"
 
 

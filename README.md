@@ -30,23 +30,22 @@ working behind them — live in the deep-dive appendix, [DETAILS.md](DETAILS.md)
 
 ## Agent Sandbox — Core Metrics
 
-**Read TTFE down a column, not across rows.** Each activation-mode row carries its own sample size (the Samples (N) column) — they differ by orders of magnitude. A p50 over hundreds of samples and a p50 over one are not comparable: cross-row TTFE ranking is only meaningful between rows with similar N. Rows below N=30 are marked † on their TTFE cells.
+**Read TTFE down a column, not across rows.** Activation-mode rows differ in sample size by orders of magnitude, and a p50 over hundreds of samples and a p50 over one are not comparable: cross-row TTFE ranking is only meaningful between rows with similar sample counts. Rows measured over fewer than N=30 samples are marked † on their TTFE cells.
 
 **Throughput is dual — `per-node · per-cluster`.** The per-node figure is the engineering rate (comparable across runtimes); the per-cluster figure is a MEASURED cluster saturation rate (never a per-node × N extrapolation). Cluster halves render `pending (cluster-fire)` until our own schema-validated saturation fire lands them.
 
-| Runtime | Activation Mode | Throughput @ <5s TTFE (sb/s — node · cluster) | Throughput @ <1s TTFE (sb/s — node · cluster) | TTFE p50 | TTFE p95 | Samples (N) | Max Density (sb/vCPU) | Execution Success (Honesty Check) |
-|---|---|---|---|---|---|---|---|---|
-| gVisor | Warm-pool hit (Base image) | 33.824 /node · pending (cluster-fire) | 32.696 /node · pending (cluster-fire) | 0.6317s | 0.9454s | 30 | 5.98 | 100% |
-| gVisor | Unique-image cold (RL reality) | pending | pending | 4.5191s † | 4.5191s † | 1 | 5.98 | 100% |
-| gVisor | Resume-from-suspend | pending (upstream-blocked) | pending (upstream-blocked) | pending (upstream-blocked) | pending (upstream-blocked) | pending (upstream-blocked) | N/A | pending (upstream-blocked) |
-| Kata + microVM | Warm-pool hit (Base image) | 16.798 /node · pending (cluster-fire) | 15.678 /node · pending (cluster-fire) | 0.6303s | 0.9867s | 30 | pending | 100% |
-| Kata + microVM | Unique-image cold (RL reality) | pending | pending | 4.8274s † | 4.8274s † | 1 | pending | 100% |
-| Kata + microVM | Resume-from-suspend | N/A | N/A | N/A | N/A | N/A | N/A | N/A |
+| Runtime | Activation Mode | Throughput @ <5s TTFE (sb/s — node · cluster) | Throughput @ <1s TTFE (sb/s — node · cluster) | TTFE p50 | TTFE p95 | Execution Success (Honesty Check) |
+|---|---|---|---|---|---|---|
+| gVisor | Warm-pool hit (Base image) | 33.824 /node · pending (cluster-fire) | 32.696 /node · pending (cluster-fire) | 0.6317s | 0.9454s | 100% |
+| gVisor | Unique-image cold (RL reality) | pending | pending | 4.5191s † | 4.5191s † | 100% |
+| gVisor | Resume-from-suspend | pending (upstream-blocked) | pending (upstream-blocked) | pending (upstream-blocked) | pending (upstream-blocked) | pending (upstream-blocked) |
+| Kata + microVM | Warm-pool hit (Base image) | 16.798 /node · pending (cluster-fire) | 15.678 /node · pending (cluster-fire) | 0.6303s | 0.9867s | 100% |
+| Kata + microVM | Unique-image cold (RL reality) | pending | pending | 4.8274s † | 4.8274s † | 100% |
+| Kata + microVM | Resume-from-suspend | N/A | N/A | N/A | N/A | N/A |
 
 _TTFE = Time-To-First-Instruction: the sandbox executed its first instruction and returned a result — not merely pod-Ready._
 _Throughput @ <1s renders the harness-emitted `0` when the p95 misses the 1s bar (we print a zero rather than round up)._
 _Throughput cells are dual — `per-node · per-cluster`. The per-node figure is the engineering rate; the per-cluster figure is a MEASURED cluster saturation rate, never a per-node × N extrapolation. The cluster half renders `pending (cluster-fire)` until our own schema-validated saturation fire lands it; a landed figure below the cluster sizing target carries ⚠️._
-_Max Density is sandboxes per node-allocatable sandbox-schedulable vCPU (the per-node denominator), not per total-cluster vCPU._
 _Execution Success is the Honesty Check: <100% prints the succeeded/total fraction and a ⚠️ flag._
 _† marks a TTFE measured over fewer than N=30 samples — read it as a single observation, not a distribution, and do not rank it against a high-N row._
 _Kata + microVM rows are measured in a separate run on the kata node pool: cluster_substrate=gke-kata · node_count=2 · generated-at=2026-07-02T04:51:48Z._
