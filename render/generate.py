@@ -49,6 +49,7 @@ def _load_render():
         mod.render_at_scale_contention,
         mod.render_cluster_saturation,
         mod.render_density_detail,
+        mod.render_sample_sizes,
         mod.render_recipe,
     )
 
@@ -57,7 +58,8 @@ def _load_render():
  render_warm_bind_decomposition, render_cold_bind_decomposition, render_warm_vs_cold,
  render_scale_proof, render_cluster_scale, render_stepup, render_kata_activation,
  render_concurrent_burst, render_warm_pool_acquisition, render_at_scale_contention,
- render_cluster_saturation, render_density_detail, render_recipe) = _load_render()
+ render_cluster_saturation, render_density_detail, render_sample_sizes,
+ render_recipe) = _load_render()
 
 # Product -> results path, relative to the repo root (parent of render/).
 # The PUBLIC customer page is SANDBOX-ONLY (alex 2026-06-28): substrate demotes from a
@@ -206,6 +208,12 @@ def build_details(root=None):
         density = render_density_detail(results, kata_results=kr)
         if density.strip():
             sections.append(density.rstrip())
+        # hb#134 fast-follow: the headline matrix dropped its Samples-N column in the same
+        # page-friendliness pass; surface N here as the per-row receipt behind each TTFE cell
+        # (kata_results fills the kata-microvm rows, mirroring the matrix + density blocks).
+        sample_sizes = render_sample_sizes(results, kata_results=kr)
+        if sample_sizes.strip():
+            sections.append(sample_sizes.rstrip())
         # hb#134: the honest-limits RETRACTION posture stays on the headline page; only the full
         # bind/exec decomposition table + non-comparable caveat move here (detail=True).
         contention_detail = render_at_scale_contention(results, detail=True)
