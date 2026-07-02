@@ -1,0 +1,102 @@
+# Offline unit-tests gate — Cloud Build PR-trigger config (a#4014 GHA→CB migration).
+#
+# Replaces .github/workflows/unit-tests.yml (deleted in the same PR). alex's
+# fleet-wide rule: NO GitHub Actions on any of his repos — Cloud Build ONLY.
+#
+# WHAT IT GATES (unchanged from the workflow it replaces): the two refresh
+# configs are manual-only, so nothing else runs this repo's unit tests on a PR.
+# A change that broke a harness/render/scenario test could land green. This
+# config closes that gap as a MERGE GATE.
+#
+# POSTURE — FAIL-CLOSED (a real gate, NOT the advisory a4-pr-lint posture).
+# Every step propagates its non-zero exit so a genuinely broken test / leak /
+# dependency failure reds the build and blocks the merge. There is no WARN-wrap:
+# this config is meant to be wired as a REQUIRED status check on main (a4z1 +
+# alex own the branch-protection wiring). Cloud Build posts this build's
+# pass/fail as a commit status on the PR head SHA.
+#
+# AUTH: runs as a native Cloud Build service account — no WIF, no long-lived
+# keys, no repo secrets. This step needs neither a GitHub token nor cluster
+# access (offline: leak scan + stdlib/kubernetes-import test modules only).
+#
+# TRUSTED-REF re-bake (edits here require re-baking the live inline trigger from
+# THIS file via user-ADC — the trusted-gate boundary; repo + live share one
+# source so they cannot drift). Bind on the Cloud Build GitHub App connection
+# stood up for AlexBulankou/honest-bench. The exact --service-account and
+# --project values are project-specific and kept OUT of this public file — see
+# scripts/setup-cloud-build-triggers.sh (parametrized) for the full commands.
+# The shape:
+#   gcloud builds triggers update github hb-unit-tests \
+#     --inline-config=cloudbuild-unit-tests.yaml \
+#     --repo-owner=AlexBulankou --repo-name=honest-bench \
+#     --pull-request-pattern='^main$' \
+#     --comment-control=COMMENTS_DISABLED \
+#     --service-account=<CLOUDBUILD_SA> --project=<PROJECT>
+# GOTCHA (inherited from a4-pr-lint): --comment-control=COMMENTS_DISABLED is
+# REQUIRED. `update github` with --pull-request-pattern silently defaults to
+# COMMENTS_ENABLED, which gates every PR build behind a /gcbrun owner comment.
+# A second push-to-main trigger from the same file gates post-merge main too
+# (the workflow's `push: branches:[main]` half) — see the setup script.
+
+steps:
+  # Gate-zero leak scan. check-public-safety.sh (no-arg form) scans the whole
+  # git-tracked tree for generic internal-leak patterns and is fail-closed. It
+  # is offline (no cluster/network). Run it FIRST to fail fast on a leak before
+  # spending the test minutes. Uses `git ls-files`, so it needs git — the full
+  # python:3.12 image (buildpack-deps base) ships git; the -slim variant does not.
+  - name: python:3.12
+    id: public-safety
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        bash scripts/check-public-safety.sh
+
+  # Discover-all + run every test_*.py. Mirrors the workflow's discover-all glob
+  # so a new test_*.py is gated the instant it is committed (no per-file list to
+  # drift). Most modules are stdlib-pure, but the render tests import kubernetes
+  # at module load, so install the harness deps to cover the whole set. Each
+  # module self-runs via its `if __name__ == "__main__"` guard and exits non-zero
+  # on failure. Fail-closed: a pip failure OR any module failure reds the build.
+  - name: python:3.12
+    id: unit-tests
+    entrypoint: bash
+    waitFor: ['public-safety']
+    args:
+      - -c
+      - |
+        set -uo pipefail
+        pip install --quiet --no-cache-dir -r harness/requirements.txt || {
+          echo "ERROR: dependency install failed." >&2
+          exit 1
+        }
+        mapfile -t tests < <(find . -path ./.git -prune -o -name 'test_*.py' -print | sort)
+        if [ "${#tests[@]}" -eq 0 ]; then
+          echo "ERROR: no test_*.py modules found — discovery glob is broken." >&2
+          exit 1
+        fi
+        echo "Discovered ${#tests[@]} test modules."
+        pass=0
+        failed=()
+        for t in "${tests[@]}"; do
+          echo "==> $t"
+          if python3 "$t"; then
+            pass=$((pass + 1))
+          else
+            failed+=("$t")
+          fi
+        done
+        echo "----------------------------------------"
+        echo "PASS=$pass FAIL=${#failed[@]} TOTAL=${#tests[@]}"
+        if [ "${#failed[@]}" -ne 0 ]; then
+          printf 'FAILED: %s\n' "${failed[@]}" >&2
+          exit 1
+        fi
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+
+# pip install of the harness deps + ~full test suite discovery/run. The workflow
+# had no explicit timeout (6h GHA default); 600s is ample for the offline suite.
+timeout: 600s

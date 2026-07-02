@@ -1,0 +1,177 @@
+# Refresh the gke-sandbox (gVisor) honest-benchmark headline — MANUAL Cloud Build
+# trigger (a#4014 GHA->CB migration; replaces .github/workflows/refresh-gke-sandbox.yml).
+#
+# Fleet rule: NO GitHub Actions — Cloud Build ONLY. "Spend-arm" is now the
+# trigger's invocation policy: this config binds to a MANUAL trigger (no
+# branch/PR/schedule wiring), so a real gVisor GKE cluster is never spun
+# unattended. Fire it by hand:
+#   gcloud builds triggers run hb-refresh-gke-sandbox --project=<PROJECT> \
+#     --substitutions=_POOL_REPLICAS=10,_MACHINE_TYPE=e2-standard-16,_REGION=us-central1
+#
+# WHAT IT DOES (unchanged from the workflow it replaces): provisions a FRESH,
+# EPHEMERAL GKE node pool with the gVisor runtime (`--sandbox type=gvisor`),
+# installs the SAME upstream controller from main as the kind path, fires the
+# burst-create headline under runtimeClassName=gvisor, renders, runs public-safety
+# fail-closed, and opens a PR with the result. The cluster is torn down via a bash
+# EXIT trap — the CB-native equivalent of the workflow's `if: always()` teardown
+# (Cloud Build has no always()-step; a trap in the orchestration step guarantees
+# teardown on success, failure, OR timeout).
+#
+# Honest by construction (unchanged): a fresh node pool means an empty containerd
+# cache (a genuine cold pull), the controller is the public upstream main image
+# (no fork), and BENCH_CLUSTER_SUBSTRATE=gke-sandbox + BURST_CREATE_RUNTIME_CLASS=
+# gvisor arm the burst-create read-back guard that refuses to publish a gke-sandbox
+# cell unless every backing pod actually landed on the gvisor RuntimeClass.
+#
+# AUTH — NATIVE CB SERVICE ACCOUNT, NO WIF (the whole point of the migration).
+# The three retired repo secrets (GCP_WIF_PROVIDER / GCP_SERVICE_ACCOUNT /
+# GCP_PROJECT) are GONE: the build runs as a dedicated least-privilege SA passed
+# on the trigger. That SA needs, on the target project:
+#   - roles/container.admin        (create + delete the ephemeral cluster, kubectl)
+#   - roles/iam.serviceAccountUser (act-as the node pool runtime SA on create)
+#   - roles/compute.viewer         (cluster create reads network/subnet metadata)
+# and Secret Accessor on the GitHub-token secret below. Project-specific SA +
+# project values are kept OUT of this public file — see the parametrized
+# scripts/setup-cloud-build-triggers.sh for the trigger-creation commands.
+#
+# REPRODUCIBLE BY ANYONE with a GCP project: point the setup script at your own
+# project + SA + a GitHub token secret named hb-refresh-github-token.
+
+substitutions:
+  _POOL_REPLICAS: "10"       # burst size K (warm slots == claims fired)
+  _MACHINE_TYPE: "e2-standard-16"
+  _REGION: "us-central1"
+
+steps:
+  # Single orchestration step: create -> install -> measure -> render -> public-safety,
+  # with an EXIT trap that tears the cluster down no matter how the step ends.
+  # Everything through public-safety lives here so a failure anywhere still hits the
+  # trap (leaked GKE clusters = ongoing spend — the one invariant that must hold).
+  # The PR-open step runs only on success (CB skips later steps after a failure), by
+  # which point the trap has already deleted the cluster.
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    id: measure
+    entrypoint: bash
+    env:
+      - "BENCH_CLUSTER_SUBSTRATE=gke-sandbox"
+      - "BURST_CREATE_RUNTIME_CLASS=gvisor"
+      - "BURST_CREATE_POOL_REPLICAS=${_POOL_REPLICAS}"
+    args:
+      - -c
+      - |
+        set -euo pipefail
+
+        REGION="${_REGION}"
+        # Short, valid GKE cluster name (<=40 chars, starts with a letter). BUILD_ID
+        # is a 36-char UUID — too long to prefix — so key on a timestamp; a manual
+        # trigger fires one at a time, so collision is not a concern.
+        CLUSTER="hb-gvisor-ci-$(date +%s)"
+
+        # Guaranteed teardown: fires on normal exit, `set -e` abort, or SIGTERM
+        # (build timeout). The CB-native stand-in for `if: always()`.
+        cleanup() {
+          echo "==> [trap] tearing down ephemeral cluster $CLUSTER"
+          gcloud container clusters delete "$CLUSTER" \
+            --region "$REGION" --quiet || true
+        }
+        trap cleanup EXIT
+
+        # kubeconfig isolated to /workspace so we never touch a shared path.
+        export KUBECONFIG=/workspace/hb-refresh.kubeconfig
+
+        # Harness deps. The cloud-sdk image's python3 is PEP-668 externally-managed,
+        # so --break-system-packages is required (container is ephemeral — safe).
+        pip install --quiet --no-cache-dir --break-system-packages -r harness/requirements.txt
+
+        echo "==> creating ephemeral gVisor cluster $CLUSTER in $REGION"
+        gcloud container clusters create "$CLUSTER" \
+          --region "$REGION" \
+          --release-channel rapid \
+          --machine-type "${_MACHINE_TYPE}" \
+          --node-locations "$REGION-a" \
+          --num-nodes 1 \
+          --enable-autoscaling --min-nodes 1 --max-nodes 3 \
+          --sandbox type=gvisor \
+          --no-enable-basic-auth --no-issue-client-certificate
+
+        gcloud container clusters get-credentials "$CLUSTER" --region "$REGION"
+
+        echo "==> installing OSS controller from upstream main"
+        bash recipe/install-controller-from-main.sh
+
+        echo "==> running sandbox harness (gke-sandbox / gVisor)"
+        python3 -m harness.run --product sandbox
+
+        echo "==> rendering README/DETAILS from results"
+        python3 -m render.generate
+
+        echo "==> public-safety gate (fail-closed)"
+        bash scripts/check-public-safety.sh
+
+  # Open the refresh PR — runs only if `measure` succeeded (so the cluster is
+  # already torn down and the rendered diff is on disk in /workspace). Uses a
+  # narrow-scope GitHub token from Secret Manager (contents:write +
+  # pull-requests:write on honest-bench) instead of the workflow's ambient
+  # GITHUB_TOKEN. peter-evans/create-pull-request is replaced by plain git push +
+  # a REST call to the pulls API. The commit identity is a non-personal automation
+  # handle (no dot-TLD, so no address ships in this public file).
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    id: open-pr
+    entrypoint: bash
+    secretEnv: ['GITHUB_TOKEN']
+    args:
+      - -c
+      - |
+        set -euo pipefail
+
+        # No result change -> nothing to PR (parity with peter-evans's no-op skip).
+        if git diff --quiet -- sandbox/results/latest.json README.md DETAILS.md; then
+          echo "No benchmark diff to publish — skipping PR."
+          exit 0
+        fi
+
+        # $$ escapes CB's substitution engine so GITHUB_TOKEN is read at runtime from
+        # secretEnv, not as a build substitution at submit time (the #1474 foot-gun;
+        # the engine scans the whole step string, comments included — avoid the
+        # single-dollar-brace form even here).
+        git config --global url."https://x-access-token:$${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
+        git config --global user.name "honest-bench-refresh"
+        git config --global user.email "refresh@localhost"
+
+        BRANCH="auto/refresh-gke-sandbox"
+        git checkout -B "$BRANCH"
+        git add sandbox/results/latest.json README.md DETAILS.md
+        git commit -m "data: auto-refresh benchmark results (substrate=gke-sandbox, gVisor)"
+        git push --force-with-lease origin "$BRANCH"
+
+        # Open the PR (idempotent: if one is already open for this head, the push
+        # above updated it; skip re-creating). Body kept single-line to avoid JSON
+        # newline handling in the shell.
+        BODY="Automated gke-sandbox (gVisor) benchmark refresh from a manual Cloud Build dispatch. substrate: gke-sandbox (fresh ephemeral node pool with --sandbox type=gvisor); burst fired under runtimeClassName=gvisor (burst-create read-back guard confirmed every backing pod landed on the gvisor RuntimeClass); results regenerated from sandbox/results/latest.json; public-safety scanner passed (fail-closed gate before this PR opened). Review the headline change before merge."
+        api="https://api.github.com/repos/AlexBulankou/honest-bench/pulls"
+        open_count=$(curl -sS -H "Authorization: Bearer $${GITHUB_TOKEN}" \
+          "$api?head=AlexBulankou:$BRANCH&state=open" \
+          | python3 -c 'import sys,json; print(len(json.load(sys.stdin)))')
+        if [ "$open_count" != "0" ]; then
+          echo "A PR for $BRANCH is already open — pushed the update to it."
+          exit 0
+        fi
+        payload=$(python3 -c 'import json,sys; print(json.dumps({"title":"data: auto-refresh gke-sandbox (gVisor) benchmark headline","head":sys.argv[1],"base":"main","body":sys.argv[2]}))' "$BRANCH" "$BODY")
+        curl -sS -X POST -H "Authorization: Bearer $${GITHUB_TOKEN}" \
+          -H "Accept: application/vnd.github+json" "$api" -d "$payload"
+
+availableSecrets:
+  secretManager:
+    # $PROJECT_ID is a Cloud Build built-in substitution resolved at build time, so
+    # the concrete project id never ships in this public file. Provision a narrow
+    # GitHub token (contents:write + pull-requests:write on AlexBulankou/honest-bench)
+    # as Secret Manager secret `hb-refresh-github-token`. The unit-tests trigger
+    # needs no secret (read-only offline run).
+    - versionName: projects/$PROJECT_ID/secrets/hb-refresh-github-token/versions/latest
+      env: GITHUB_TOKEN
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+
+# gVisor node pool create (~5-8 min) + burst measure + teardown fits under 45 min.
+timeout: 2700s
