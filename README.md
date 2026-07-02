@@ -25,15 +25,15 @@ headline tables lives in the deep-dive appendix, [DETAILS.md](DETAILS.md).
 | Runtime | Activation Mode | Throughput @ <5s TTFE (sb/s — node · cluster) | Throughput @ <1s TTFE (sb/s — node · cluster) | TTFE p50 | TTFE p95 | Execution Success (Honesty Check) |
 |---|---|---|---|---|---|---|
 | gVisor | Warm-pool hit (Base image) | 33.824 /node · pending (cluster-fire) | 32.696 /node · pending (cluster-fire) | 0.6317s | 0.9454s | 100% |
-| gVisor | Unique-image cold (RL reality) | pending | pending | 4.5191s † | 4.5191s † | 100% |
+| gVisor | Unique-image cold (RL reality) | pending | 0 /node · 0 /cluster | 4.5191s † | 4.5191s † | 100% |
 | gVisor | Resume-from-suspend | pending (upstream-blocked) | pending (upstream-blocked) | pending (upstream-blocked) | pending (upstream-blocked) | pending (upstream-blocked) |
 | Kata + microVM | Warm-pool hit (Base image) | 16.798 /node · pending (cluster-fire) | 15.678 /node · pending (cluster-fire) | 0.6303s | 0.9867s | 100% |
-| Kata + microVM | Unique-image cold (RL reality) | pending | pending | 4.8274s † | 4.8274s † | 100% |
+| Kata + microVM | Unique-image cold (RL reality) | pending | 0 /node · 0 /cluster | 4.8274s † | 4.8274s † | 100% |
 | Kata + microVM | Resume-from-suspend | N/A | N/A | N/A | N/A | N/A |
 
 _TTFE = Time-To-First-Instruction: the sandbox executed its first instruction and returned a result — not merely pod-Ready._
-_Throughput @ <1s renders the harness-emitted `0` when the p95 misses the 1s bar (we print a zero rather than round up)._
-_Throughput cells are dual — `per-node · per-cluster`. The per-node figure is the engineering rate; the per-cluster figure is a MEASURED cluster saturation rate, never a per-node × N extrapolation. The cluster half renders `pending (cluster-fire)` until our own schema-validated saturation fire lands it; a landed figure below the cluster sizing target carries ⚠️._
+_A throughput cell renders an honest `0` when the measured TTFE p95 misses that cell's bar (we print a zero rather than round up). This holds even before a throughput fire runs: if p95 already exceeds the bar, no sandboxes meet it, so the rate is a derived `0` at every scale — both `/node` and `/cluster`._
+_Throughput cells are dual — `per-node · per-cluster`. The per-node figure is the engineering rate; the per-cluster figure is a MEASURED per-activation-mode cluster rate, never a per-node × N extrapolation. It renders `pending (cluster-fire)` until a schema-validated per-mode cluster-throughput fire lands it (distinct from the standalone whole-cluster Saturation ceiling reported separately in DETAILS — that fire measures the aggregate ceiling, not these per-mode cells); a landed figure below the cluster sizing target carries ⚠️._
 _Execution Success is the Honesty Check: <100% prints the succeeded/total fraction and a ⚠️ flag._
 _† marks a TTFE measured over fewer than N=30 samples — read it as a single observation, not a distribution, and do not rank it against a high-N row._
 _Kata + microVM rows are measured in a separate run on the kata node pool: cluster_substrate=gke-kata · node_count=2 · generated-at=2026-07-02T04:51:48Z._
@@ -69,6 +69,8 @@ Three questions a bigger cluster raises: does throughput stay flat as you add no
 | Nodes Tested | Density Holds Flat? | Throughput Holds Flat? |
 |---|---|---|
 | 1 → 2 → 4 → 8 → 16 | ✅ Yes (0.63 → 0.63 → 0.63 → 0.63 → 0.63) | ⚠️ No |
+
+_The density values in this row are the per-node density retained at each node count (a linearity series — does per-node density stay flat as the cluster grows?), not the absolute Max Density per vCPU (reported separately in DETAILS)._
 
 _Per-step density retention: 1→2 ✅ 1 · 2→4 ✅ 1 · 4→8 ✅ 1 · 8→16 ✅ 1 — holds flat step-to-step._
 
