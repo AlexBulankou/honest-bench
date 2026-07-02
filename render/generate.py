@@ -103,6 +103,20 @@ python3 -m harness.run                        # run the portable suite (cluster=
 python3 -m render.generate                    # regenerate this page
 bash scripts/check-public-safety.sh           # fail-closed public-safety scan
 ```
+
+The headline numbers are all here. The corroboration and decomposition tables — the
+working behind them — live in the deep-dive appendix, [DETAILS.md](DETAILS.md).
+"""
+
+# Deep-dive appendix header. Same no-measured-numbers-here rule as _PREAMBLE: every
+# number in DETAILS.md comes from a render function, so this constant carries zero PII risk.
+_DETAILS_PREAMBLE = """\
+# Honest benchmarks — deep-dive appendix
+
+The corroboration and decomposition tables behind the headline page
+([README.md](README.md)). Same rule: **every number is machine-rendered from a real
+harness run — nothing here is typed by hand.** Start with the headline page; come here
+when you want to see the working.
 """
 
 
@@ -137,15 +151,6 @@ def build_readme(root=None):
         # hb#134: the operating-envelope headline table sits directly under the matrix — it is
         # the "what wait do I budget?" answer, always rendered (rows pend individually).
         sections.append(render_operating_envelope(results).rstrip())
-        corr = render_burst_corroboration(results)
-        if corr.strip():
-            sections.append(corr.rstrip())
-        bind_dec = render_warm_bind_decomposition(results)
-        if bind_dec.strip():
-            sections.append(bind_dec.rstrip())
-        cold_dec = render_cold_bind_decomposition(results)
-        if cold_dec.strip():
-            sections.append(cold_dec.rstrip())
         speedup = render_warm_vs_cold(results)
         if speedup.strip():
             sections.append(speedup.rstrip())
@@ -155,21 +160,47 @@ def build_readme(root=None):
         stepup = render_stepup(results)
         if stepup.strip():
             sections.append(stepup.rstrip())
-        kata = render_kata_activation(results)
-        if kata.strip():
-            sections.append(kata.rstrip())
         burst = render_concurrent_burst(results)
         if burst.strip():
             sections.append(burst.rstrip())
-        acq = render_warm_pool_acquisition(results)
-        if acq.strip():
-            sections.append(acq.rstrip())
         contention = render_at_scale_contention(results)
         if contention.strip():
             sections.append(contention.rstrip())
     # #4021: the Reproducibility Recipe is product-agnostic architecture prose, so it renders
     # ONCE after the per-product loop — the preamble forward-refs "the recipe at the bottom".
     sections.append(render_recipe().rstrip())
+    return "\n\n".join(sections) + "\n"
+
+
+def build_details(root=None):
+    """Return the deep-dive appendix (DETAILS.md): corroboration + decomposition tables.
+
+    hb#134 page-friendliness split: the headline README carries the answer a non-infra
+    reader needs (matrix + operating envelope + scale + burst); the working behind those
+    numbers — burst-create corroboration, the bind-vs-exec decomposition (warm + cold),
+    the Kata pod-Ready table, and the warm-pool acquisition breakdown — moves here so the
+    front page stays scannable. Same closed-schema render path as build_readme: each block
+    is INERT (returns "") unless its required fields are present, so DETAILS degrades to an
+    honest skeleton rather than a blank or a guess.
+    """
+    root = root or _repo_root()
+    sections = [_DETAILS_PREAMBLE.rstrip()]
+    for product, rel in _PRODUCTS:
+        path = os.path.join(root, rel)
+        if not os.path.exists(path):
+            continue
+        with open(path) as fh:
+            results = json.load(fh)
+        for renderer in (
+            render_burst_corroboration,
+            render_warm_bind_decomposition,
+            render_cold_bind_decomposition,
+            render_kata_activation,
+            render_warm_pool_acquisition,
+        ):
+            block = renderer(results)
+            if block.strip():
+                sections.append(block.rstrip())
     return "\n\n".join(sections) + "\n"
 
 
@@ -180,6 +211,11 @@ def main(argv=None):
     with open(out, "w") as fh:
         fh.write(readme)
     sys.stderr.write(f"generate: wrote {out} ({len(readme)} bytes)\n")
+    details = build_details(root)
+    details_out = os.path.join(root, "DETAILS.md")
+    with open(details_out, "w") as fh:
+        fh.write(details)
+    sys.stderr.write(f"generate: wrote {details_out} ({len(details)} bytes)\n")
     return 0
 
 
