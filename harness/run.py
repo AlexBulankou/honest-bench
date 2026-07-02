@@ -32,6 +32,7 @@ import pathlib
 import uuid
 
 from . import results_schema
+from . import slo_rate
 from . import stepup_adapter
 from . import warm_vs_cold as warm_vs_cold_mod
 from .scenario_map import cells_for_product, substrate_satisfies
@@ -642,6 +643,116 @@ def _raw_cell(raw: list, name: str):
     return None
 
 
+# Per-mode SLO cluster-rate ingestion (hb#132/#149 wiring). DEFAULT-OFF.
+#
+# The matrix cluster halves are an SLO-GATED RATE (#149): the sustained creation
+# rate at which p95 TTFE stays within the bar. The honest producer is a
+# per-activation-mode STEP-UP SWEEP — same out-of-process CL2 orchestrator and
+# scrubbed nested record shape as BENCH_STEPUP_RESULT, fired once per matrix row
+# with that row's activation mode. Each sweep's derived triple merges into the
+# matching scenario's sla_metrics; the derivation itself is harness/slo_rate.py.
+#
+# The scenario list mirrors render/schema.py's ACTIVATION_MODE_ROWS (the matrix
+# rows). Kept as a literal here because the harness never imports the render
+# package (offline-portability discipline); the cross-contract suite asserts the
+# two stay in sync.
+SLO_SWEEP_SCENARIOS = (
+    "warmpool_cold_start",
+    "native_digest_cold",
+    "suspend_resume",
+)
+
+# Keys of the hb#132 per-cluster emit triple (schema-locked in metrics.py).
+_CLUSTER_TRIPLE_KEYS = (
+    "thpt_under_5s_per_cluster",
+    "thpt_under_1s_per_cluster",
+    "thpt_cluster_node_count",
+)
+
+
+def slo_sweep_env_var(scenario: str) -> str:
+    """Env var holding the nested sweep-record path for one activation mode."""
+    return "BENCH_SLO_SWEEP_" + scenario.upper()
+
+
+def merge_slo_sweeps(raw: list, product: str) -> None:
+    """Merge per-mode SLO-sweep-derived cluster triples into scenario sla_metrics.
+
+    For each activation-mode scenario, when BENCH_SLO_SWEEP_<SCENARIO> points at a
+    readable nested sweep record, flatten it (stepup_adapter.stepup_nested_to_flat)
+    and derive the hb#132 emit triple (slo_rate.slo_sla_metrics_from_stepup); a
+    non-empty derivation merges into that scenario's raw sla_metrics, then flows
+    through the closed emitter (_coerce_sla_metrics) like any measured key.
+
+    Fail-closed, mirroring maybe_stepup: non-sandbox product, unset/blank env,
+    unreadable/malformed file, or an underivable record (no compliant rung, no
+    valid node_count) merge NOTHING — the cell keeps pending, never a fabricated
+    0. A sweep-derived triple OVERWRITES a direct-emit triple on the same cell:
+    the sweep derivation is the preferred producer (see the cluster_node_count
+    caller contract in metrics.ttfe_sla_metrics). Mutates raw in place; a
+    scenario absent from this run (or with a non-dict sla_metrics) is skipped.
+    """
+    if product != "sandbox":
+        return
+    for name in SLO_SWEEP_SCENARIOS:
+        path = os.environ.get(slo_sweep_env_var(name), "").strip()
+        if not path:
+            continue
+        try:
+            rec = json.loads(pathlib.Path(path).read_text())
+        except (OSError, ValueError):
+            continue
+        derived = slo_rate.slo_sla_metrics_from_stepup(
+            stepup_adapter.stepup_nested_to_flat(rec)
+        )
+        if not derived:
+            continue
+        cell = _raw_cell(raw, name)
+        if cell is None or not isinstance(cell.get("sla_metrics"), dict):
+            continue
+        cell["sla_metrics"].update(derived)
+
+
+def carry_prior_cluster_triples(raw: list, prior_scenarios) -> None:
+    """Carry each scenario's SLO cluster triple across the daily refresh.
+
+    The cluster halves of a matrix row come from a deliberate manual sweep fire
+    (merge_slo_sweeps above, or the direct emit leg), not from the daily
+    single-node refresh — which wholesale-rewrites every registered scenario cell
+    and would silently DROP the triple the next day. Same do-not-auto-decay
+    posture as carry_prior_scale_proof / carry_prior_stepup, applied at the
+    per-scenario-key level: a fresh cell that already carries ANY triple key wins
+    outright (a fresh sweep or direct emit is never mixed with a stale one);
+    otherwise the prior committed cell's triple is copied onto the fresh cell.
+
+    Honesty spine: a carried triple is copied ALL-together and only when the
+    prior cell has a node count plus >=1 per-cluster rate — never a per-cluster
+    figure without its measurement size (the render pins X from
+    thpt_cluster_node_count). Mixing scales inside one row is the hb#132 design
+    itself: the per-node half is today's fire, the cluster half is the sweep's,
+    and the render captions each cluster half with its own X.
+    """
+    if not isinstance(prior_scenarios, list):
+        return
+    prior_by_name = {
+        s.get("name"): s for s in prior_scenarios if isinstance(s, dict)
+    }
+    for cell in raw:
+        if not isinstance(cell, dict):
+            continue
+        m = cell.get("sla_metrics")
+        if not isinstance(m, dict) or any(k in m for k in _CLUSTER_TRIPLE_KEYS):
+            continue
+        prior = prior_by_name.get(cell.get("name"))
+        pm = prior.get("sla_metrics") if isinstance(prior, dict) else None
+        if not isinstance(pm, dict):
+            continue
+        carried = {k: pm[k] for k in _CLUSTER_TRIPLE_KEYS if k in pm}
+        if "thpt_cluster_node_count" not in carried or len(carried) < 2:
+            continue
+        m.update(carried)
+
+
 # Warm-vs-cold speedup producer. DEFAULT-OFF (rides BENCH_TTFE_EXEC).
 #
 # Unlike maybe_scale_proof (which runs its own sweep) and maybe_stepup (which reads
@@ -785,6 +896,12 @@ def main(argv=None) -> int:
     prior_cluster_saturation = _read_prior_cluster_saturation(out)
     prior_provisioning_rate_sweep = _read_prior_provisioning_rate_sweep(out)
     raw = merge_seed_placeholders(raw, prior_scenarios)
+    # Per-mode SLO cluster-rate legs (hb#132/#149): fresh env-armed sweep
+    # derivations merge first (fresh wins), then prior committed triples carry
+    # onto cells that still lack them, so the matrix cluster halves neither decay
+    # on the daily refresh nor shadow a deliberate new sweep.
+    merge_slo_sweeps(raw, args.product)
+    carry_prior_cluster_triples(raw, prior_scenarios)
     generated_at = _now_iso()
     # Carry the Scale Proof block across the daily refresh (#3952): a fresh sweep
     # this run wins and is stamped measured_at=generated_at; otherwise the prior
