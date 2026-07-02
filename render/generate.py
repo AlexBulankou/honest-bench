@@ -52,6 +52,7 @@ def _load_render():
         mod.render_provisioning_rate_sweep,
         mod.render_session_turnover,
         mod.render_density_detail,
+        mod.render_vcpu_footprint,
         mod.render_recipe,
     )
 
@@ -61,7 +62,7 @@ def _load_render():
  render_scale_proof, render_cluster_scale, render_stepup, render_kata_activation,
  render_concurrent_burst, render_warm_pool_acquisition, render_at_scale_contention,
  render_cluster_saturation, render_provisioning_rate_sweep, render_session_turnover,
- render_density_detail, render_recipe) = _load_render()
+ render_density_detail, render_vcpu_footprint, render_recipe) = _load_render()
 
 # Product -> results path, relative to the repo root (parent of render/).
 # The PUBLIC customer page is SANDBOX-ONLY (alex 2026-06-28): substrate demotes from a
@@ -215,6 +216,13 @@ def build_details(root=None):
         density = render_density_detail(results, kata_results=kr)
         if density.strip():
             sections.append(density.rstrip())
+        # #3868: per-sandbox declared footprint — the reproducibility qualifier for Max Density
+        # (gVisor's tiny request vs Kata's guest-sane microVM floor differ ~50x, so densities are
+        # only comparable with the footprint stated). Placed next to density; same kata_results
+        # source. INERT-first: renders nothing until a fire emits the provenance footprint fields.
+        footprint = render_vcpu_footprint(results, kata_results=kr)
+        if footprint.strip():
+            sections.append(footprint.rstrip())
         # hb#134: the honest-limits RETRACTION posture stays on the headline page; only the full
         # bind/exec decomposition table + non-comparable caveat move here (detail=True).
         contention_detail = render_at_scale_contention(results, detail=True)

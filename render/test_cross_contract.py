@@ -1801,6 +1801,101 @@ def test_emit_to_render_session_turnover_convergence():
     assert "cycles)" not in out_no_n, "the '(over N cycles)' footnote must be absent when n is absent"
 
 
+def test_emit_to_render_vcpu_footprint_convergence():
+    """Convergence guard for the vCPU-footprint provenance axis (#3868).
+
+    Unlike session_turnover (a SCENARIO CELL), the footprint is a RUN-LEVEL PROVENANCE field:
+    the emitter writes `sandbox_cpu_request_m` / `sandbox_mem_request_mib` in run.build_provenance
+    (only for sandbox-family products, next to `runtime`), and the render side allow-lists them via
+    schema.PROVENANCE_FIELDS + reads them in render.render_vcpu_footprint. The emit vocabulary
+    (build_provenance keys) and the render vocabulary (PROVENANCE_FIELDS + _footprint_from_provenance)
+    are INDEPENDENT closed sets, so a drift — a renamed key, a predicate that rejects the emitted
+    int, or an emit that stops setting one leg — would silently return the block to INERT (page
+    byte-unchanged). This pins the contract through the REAL emitter: build_provenance -> the SAME
+    _clean_provenance the renderer applies -> render_vcpu_footprint, asserting the gVisor and Kata
+    footprints survive the closed-schema round-trip and render, while an emit WITHOUT the footprint
+    legs (substrate, which omits `runtime`) renders "".
+    """
+    import schema
+
+    sys.path.insert(0, _ROOT)
+    try:
+        from harness import run as _run
+    except Exception as exc:  # pragma: no cover - harness has its own deps
+        print(f"  (skip: harness run not importable: {exc})")
+        return
+
+    # (0) pin the emit-key names against the render allow-list — the TRUE emit vocabulary is the
+    # set of keys build_provenance writes on a sandbox-family run; each must be allow-listed by
+    # PROVENANCE_FIELDS or _clean_provenance would drop it before the renderer ever sees it.
+    for emit_key in ("sandbox_cpu_request_m", "sandbox_mem_request_mib"):
+        assert emit_key in schema.PROVENANCE_FIELDS, (
+            f"emit/render DRIFT: build_provenance emits {emit_key!r} but render PROVENANCE_FIELDS "
+            f"does not allow-list it — _clean_provenance would silently drop it (block INERT)."
+        )
+
+    # (1) the REAL emitter output for both matrix runtimes survives the SAME _clean_provenance the
+    # renderer applies, and every survivor passes the independent render predicate.
+    gvisor_prov = _run.build_provenance("gke-sandbox", "sandbox")
+    kata_prov = _run.build_provenance("gke-sandbox", "sandbox-kata")
+    assert gvisor_prov.get("runtime") == "gvisor" and kata_prov.get("runtime") == "kata-microvm", (
+        f"build_provenance runtime drift: gvisor={gvisor_prov.get('runtime')!r} "
+        f"kata={kata_prov.get('runtime')!r}"
+    )
+    for prov, want in ((gvisor_prov, (10, 16)), (kata_prov, (500, 512))):
+        cleaned = render._clean_provenance(prov)
+        for k in ("sandbox_cpu_request_m", "sandbox_mem_request_mib"):
+            assert k in cleaned, (
+                f"emit/render schema DRIFT: _clean_provenance dropped {k!r} from a real "
+                f"build_provenance emit — the footprint block would go INERT.\n"
+                f"emitted={prov}\ncleaned={cleaned}"
+            )
+            assert schema.PROVENANCE_FIELDS[k](cleaned[k]), (
+                f"render PROVENANCE_FIELDS[{k!r}] rejects emitted value {cleaned[k]!r} — INERT."
+            )
+        assert (cleaned["sandbox_cpu_request_m"], cleaned["sandbox_mem_request_mib"]) == want, (
+            f"footprint drift: expected {want}, got "
+            f"({cleaned['sandbox_cpu_request_m']}, {cleaned['sandbox_mem_request_mib']})"
+        )
+
+    # (2) full path: the gVisor primary emit renders its own row measured; the Kata companion
+    # artifact fills the kata-microvm row.
+    gvisor_results = {
+        "product": "sandbox",
+        "generated_at": "2026-07-02T03:00:00Z",
+        "provenance": gvisor_prov,
+        "scenarios": [],
+    }
+    kata_results = {
+        "product": "sandbox-kata",
+        "generated_at": "2026-07-02T03:00:00Z",
+        "provenance": kata_prov,
+        "scenarios": [],
+    }
+    out = render.render_vcpu_footprint(gvisor_results, kata_results=kata_results)
+    assert "## Per-Sandbox Footprint (declared request)" in out
+    assert "| gVisor | 10m | 16Mi |" in out, f"gVisor footprint row must render measured:\n{out}"
+    assert "| Kata + microVM | 500m | 512Mi |" in out, (
+        f"the Kata companion artifact must fill the kata-microvm row:\n{out}"
+    )
+
+    # (3) INERT gate: a REAL substrate emit omits `runtime`, so build_provenance never sets the
+    # footprint legs — the block must render "".
+    substrate_prov = _run.build_provenance("kind", "substrate")
+    assert "sandbox_cpu_request_m" not in substrate_prov, (
+        "substrate build_provenance must not emit a footprint (no `runtime`)"
+    )
+    inert = {
+        "product": "substrate",
+        "generated_at": "2026-07-02T03:00:00Z",
+        "provenance": substrate_prov,
+        "scenarios": [],
+    }
+    assert render.render_vcpu_footprint(inert) == "", (
+        f"a provenance emit without footprint legs must render INERT (''): {substrate_prov!r}"
+    )
+
+
 def _run_all():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:

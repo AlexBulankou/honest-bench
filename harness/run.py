@@ -31,11 +31,13 @@ import os
 import pathlib
 import uuid
 
+from . import metrics
 from . import results_schema
 from . import slo_rate
 from . import stepup_adapter
 from . import warm_vs_cold as warm_vs_cold_mod
 from .scenario_map import cells_for_product, substrate_satisfies
+from .scenarios import runtime_class as rc
 
 log = logging.getLogger("bench-harness")
 
@@ -849,6 +851,16 @@ def build_provenance(substrate: str, product: str = results_schema.DEFAULT_PRODU
     runtime = _matrix_runtime_for(product)
     if runtime:
         prov["runtime"] = runtime
+        # vCPU-footprint axis (#3868): the per-sandbox DECLARED request the density
+        # figures were measured under — a run-level property of the runtime, not a
+        # per-scenario measurement, so it rides provenance next to `runtime`. Sourced
+        # from the SAME `container_resources_from_env` the matrix scenarios pod-spec
+        # with (runtime_family normalizes kata-microvm -> the kata floor), so it
+        # picks up any BENCH_POD_* override in lock-step. Sandbox-family only —
+        # substrate omits `runtime`, so it never gets a footprint either.
+        requests = rc.container_resources_from_env(runtime).get("requests", {})
+        prov["sandbox_cpu_request_m"] = metrics.parse_cpu_millicores(requests["cpu"])
+        prov["sandbox_mem_request_mib"] = metrics.parse_mem_mib(requests["memory"])
     return prov
 
 
