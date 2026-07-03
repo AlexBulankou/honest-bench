@@ -1,29 +1,41 @@
 # Upstream blockers — file-ready
 
-This page inventories every upstream defect currently holding an honest-bench metric (or the trust in one): **what** is blocked, the **diagnosis** already done, and the maintainer-facing **action** prepared to copy-paste quality — a file-ready issue body, a ready comment on an existing upstream issue, or a DCO-ready patch with the exact retrieval commands. Unlike [README.md](README.md) and [WORK_IN_PROGRESS.md](WORK_IN_PROGRESS.md), which are machine-rendered from harness runs, this page is **hand-maintained** — owned by the s-dev crew and refreshed whenever a blocker moves (filed, merged, superseded, rebased). Absent cells on the rendered pages link to [WORK_IN_PROGRESS.md](WORK_IN_PROGRESS.md) for their reason class; this page carries the upstream half of that story.
+This page inventories every upstream defect currently holding an honest-bench metric (or the trust in one): **what** is blocked, the **diagnosis** already done, and the maintainer-facing **action** prepared to copy-paste quality. Every action is a **GH issue** — new, or adopted-existing where the dup-search found the same defect already filed — or **GH issue + PR** when a fix is staged, in which case a DCO-signed branch is already pushed to the maintainer's fork and opening the PR is one click. See the conventions below. Unlike [README.md](README.md) and [WORK_IN_PROGRESS.md](WORK_IN_PROGRESS.md), which are machine-rendered from harness runs, this page is **hand-maintained** — owned by the s-dev crew and refreshed whenever a blocker moves (filed, merged, superseded, rebased). Absent cells on the rendered pages link to [WORK_IN_PROGRESS.md](WORK_IN_PROGRESS.md) for their reason class; this page carries the upstream half of that story.
 
 House fence (this page ships verbatim in a public repo): `AlexBulankou/a` is a **private** repo, so internal issue refs render as plain "internal tracking a#NNNN" prose — never a link, never a bare `#NNNN`. Public honest-bench issues render as normal hb#NNN links. Upstream projects are named in plain English, with real links to their public issues/PRs.
 
-_Last hand-refresh: 2026-07-03._
+_Last hand-refresh: 2026-07-03 (rev 2 — issue-first actions, fork-ready branches, verified dup-search)._
+
+## Conventions (rev 2026-07-03)
+
+1. **Every blocker files as a GitHub issue — `Action` is `GH issue` or `GH issue + PR`.** A PR never ships without its issue; the issue is the durable record even when a fix is attached. Where the dup-search found the SAME defect already filed upstream, the action is `GH issue — use existing #N`: comment the evidence there, never file a duplicate.
+2. **No fork creation — the maintainer's standing forks are used and agent-prepared.** [`AlexBulankou/agent-sandbox`](https://github.com/AlexBulankou/agent-sandbox) and [`AlexBulankou/substrate`](https://github.com/AlexBulankou/substrate) are the forks. For every `GH issue + PR` row, agents sync the fork's `main` to upstream, cut a clean branch from the upstream tip, apply the staged patch DCO-signed (authored as the maintainer, no bot co-author), and push. The Steps block then reduces to: file the issue → open the compare link → Create PR.
+3. **Dup-search before filing.** Each section carries a `Related upstream` list from a verified duplicate-search (issues + PRs, open + closed, adversarially re-checked) dated at the refresh. A SAME hit re-points the whole row at the existing issue; RELATED hits are linked in the filed body.
+
+**Fork state at this refresh (2026-07-03):** both forks synced to upstream `main` (agent-sandbox → `0be472b`); branches pushed: [`adoption-completion-bounded-requeue`](https://github.com/AlexBulankou/agent-sandbox/tree/adoption-completion-bounded-requeue) (§S4 — READY), [`resume-clears-suspended-condition`](https://github.com/AlexBulankou/agent-sandbox/tree/resume-clears-suspended-condition) (§S1 — PARKED, superseded in direction by KEP 119; do not file).
 
 ---
 
 ## Sandbox upstream blockers
 
-Target project: [kubernetes-sigs/agent-sandbox](https://github.com/kubernetes-sigs/agent-sandbox). PR-type rows below have a locally compiled, test-verified patch staged; the upstream project is filed under the maintainer's own identity (no bot pushes), so each Steps block gives the exact retrieve → `git am --signoff` → push sequence.
+Target project: [kubernetes-sigs/agent-sandbox](https://github.com/kubernetes-sigs/agent-sandbox). Fork: [`AlexBulankou/agent-sandbox`](https://github.com/AlexBulankou/agent-sandbox), synced to upstream `main` = `0be472b` at this refresh. Dup-search 2026-07-03: **S1, S2 and S3 all have existing upstream anchors — the only NEW sandbox issue to file is S4's.** The one `GH issue + PR` row (S4) has its DCO-signed branch already pushed to the fork; its Steps block is file-issue + one-click PR.
 
 | # | What | Action | Steps |
 |---|---|---|---|
-| S1 | `Suspended=True` never clears on resume → the entire **gVisor × Resume-from-suspend** README row (all 5 cells) renders [`pending (upstream-blocked)`](WORK_IN_PROGRESS.md#upstream-blocked); prior 92.8% resume exec-success (N=1376) retracted pending this. Internal tracking a#4099. | Prepared upstream **PR** — `fix(controller): clear stale Suspended condition on resume` (15-line fix + 94-line test, compile/test/falsifiability verified; optional Part-2 perf companion ships separately). | [→ §S1 file-ready material](#s1-resume-suspended-condition) |
-| S2 | True-TTFE is **null-by-construction** everywhere: the startup-latency histogram's anchor annotation has no production writer upstream, so SLO-sweep pareto reads `[]` and `ready_per_s` reads null every fire ([hb#174](https://github.com/AlexBulankou/honest-bench/issues/174)). Internal tracking a#3975. | **DECISION FIRST** — a 4-file/+228 mutating-webhook stamper PR is staged, but filing it reverses the 06-29 "skip upstream conversations, rush toward honest-bench results" call; [hb#175](https://github.com/AlexBulankou/honest-bench/issues/175)'s literal-TTFE upper bound is the current honest interim. | [→ §S2 file-ready material](#s2-ttfe-webhook-stamper) |
-| S3 | Snapshot-backed sandbox goes `Ready=True` before restore is verified → blank pods served as "restored" (7.45% / 5.24% real-flap rates on the two paths); restore-success confidence is unassertable for every snapshot-restore-backed number. Internal tracking a#2614. | Prepared **comment** on the open upstream design issue [kubernetes-sigs/agent-sandbox#952](https://github.com/kubernetes-sigs/agent-sandbox/issues/952) — no patch by design; the ask is a design decision (restore-verified readiness gate before `Ready=True`). | [→ §S3 file-ready material](#s3-restore-readiness-handshake) |
-| S4 | SandboxClaim adoption-completion bounces through the informer cache with a non-nil error → **exponential-backoff amplifier** (5ms·(2^K − 1)) inflating exactly the concurrent warm-claim tails the README reports. Layer-2 only — Layer-1 resolved live by upstream [#975](https://github.com/kubernetes-sigs/agent-sandbox/issues/975). Internal tracking a#3641. | Prepared upstream **PR** — sentinel `errAdoptionTriggeredRetry` → bounded 1 ms nil-error requeue; preserves the tested duplicate-adoption protection. Rebase if upstream [#1072](https://github.com/kubernetes-sigs/agent-sandbox/issues/1072) merges first. | [→ §S4 file-ready material](#s4-adoption-completion-cache-race) |
+| S1 | `Suspended=True` never clears on resume → the entire **gVisor × Resume-from-suspend** README row (all 5 cells) renders [`pending (upstream-blocked)`](WORK_IN_PROGRESS.md#upstream-blocked); prior 92.8% resume exec-success (N=1376) retracted pending this. Internal tracking a#4099. | **GH issue — use existing [#873](https://github.com/kubernetes-sigs/agent-sandbox/issues/873)** (same defect; fix in flight: PR [#893](https://github.com/kubernetes-sigs/agent-sandbox/pull/893) implementing the **merged** KEP-119 revision [#890](https://github.com/kubernetes-sigs/agent-sandbox/pull/890) — persist + flip-to-False). Our staged remove-style patch is **superseded in direction — do not file it**; comment evidence + offer the regression test on #873. | [→ §S1 file-ready material](#s1-resume-suspended-condition) |
+| S2 | True-TTFE is **null-by-construction** everywhere: the startup-latency histogram's anchor annotation has no production writer upstream, so SLO-sweep pareto reads `[]` and `ready_per_s` reads null every fire ([hb#174](https://github.com/AlexBulankou/honest-bench/issues/174)). Internal tracking a#3975. | **GH issue — use existing [#751](https://github.com/kubernetes-sigs/agent-sandbox/issues/751)** (same defect: the anchor annotation is never set, histogram empty) with example-webhook PR [#761](https://github.com/kubernetes-sigs/agent-sandbox/pull/761) open ("Fixes #751"). Comment/support there. The staged **in-tree** stamper PR stays optional + decision-gated ([hb#175](https://github.com/AlexBulankou/honest-bench/issues/175)'s literal-TTFE upper bound remains the honest interim). | [→ §S2 file-ready material](#s2-ttfe-webhook-stamper) |
+| S3 | Snapshot-backed sandbox goes `Ready=True` before restore is verified → blank pods served as "restored" (7.45% / 5.24% real-flap rates on the two paths); restore-success confidence is unassertable for every snapshot-restore-backed number. Internal tracking a#2614. | **GH issue — use existing [#952](https://github.com/kubernetes-sigs/agent-sandbox/issues/952)** (verified open + still the right anchor) — prepared evidence **comment** ready; no patch by design (the ask is a design decision: restore-verified readiness gate before `Ready=True`). | [→ §S3 file-ready material](#s3-restore-readiness-handshake) |
+| S4 | SandboxClaim adoption-completion bounces through the informer cache with a non-nil error → **exponential-backoff amplifier** (5ms·(2^K − 1)) inflating exactly the concurrent warm-claim tails the README reports. Layer-2 only — Layer-1 resolved live by upstream [#975](https://github.com/kubernetes-sigs/agent-sandbox/issues/975). Internal tracking a#3641. | **GH issue + PR** — issue file-ready below (dup-search: no existing report); DCO-signed branch [`adoption-completion-bounded-requeue`](https://github.com/AlexBulankou/agent-sandbox/tree/adoption-completion-bounded-requeue) pushed to the fork — PR is one click. Rebase if upstream [#1072](https://github.com/kubernetes-sigs/agent-sandbox/issues/1072) merges first. | [→ §S4 file-ready material](#s4-adoption-completion-cache-race) |
 
 <a id="s1-resume-suspended-condition"></a>
 
 ### §S1 — Suspended condition never clears on resume
 
-**Internal tracking a#4099 · prepared upstream PR · `controllers/sandbox_controller.go`**
+**Internal tracking a#4099 · GH issue — use existing [#873](https://github.com/kubernetes-sigs/agent-sandbox/issues/873) · `controllers/sandbox_controller.go`**
+
+> **⚠ Direction superseded (dup-search 2026-07-03).** Upstream tracks this exact defect as [#873](https://github.com/kubernetes-sigs/agent-sandbox/issues/873) *(open — "Fix suspended condition persistence")*, with fix PR [#893](https://github.com/kubernetes-sigs/agent-sandbox/pull/893) in flight implementing the **merged** KEP-119 revision ([#890](https://github.com/kubernetes-sigs/agent-sandbox/pull/890)): the Suspended condition must **persist and flip to False** on resume (preserving `lastTransitionTime`), **not** be removed. The staged patch below removes the condition (mirrors the `Finished` cleanup) — filing it would contradict the merged KEP. **Do not file the PR.** The branch [`resume-clears-suspended-condition`](https://github.com/AlexBulankou/agent-sandbox/tree/resume-clears-suspended-condition) stays parked on the fork for reference. Action: comment on #873 (body below), endorse #893, offer the regression test (adapted to assert `Suspended=False`, not absent).
+
+**Related upstream (dup-search 2026-07-03):** [#873](https://github.com/kubernetes-sigs/agent-sandbox/issues/873) *(open, SAME — adopt)* · [#893](https://github.com/kubernetes-sigs/agent-sandbox/pull/893) *(open PR, KEP-119 implementation — would close the defect)* · [#890](https://github.com/kubernetes-sigs/agent-sandbox/pull/890) *(merged KEP revision — mandates flip-to-False)* · [#793](https://github.com/kubernetes-sigs/agent-sandbox/issues/793) / [#1067](https://github.com/kubernetes-sigs/agent-sandbox/issues/1067) *(open, same file — rebase risks)*
 
 **What's blocked**
 
@@ -47,21 +59,23 @@ Target project: [kubernetes-sigs/agent-sandbox](https://github.com/kubernetes-si
 **Steps**
 
 ```bash
-# 1) pull the patch off the pod
-kubectl exec a4-a4s2-0 -n a4 -c agent -- \
-  cat /home/agent/work/.a4/upstream-drafts/resume-clears-suspended-condition.patch \
-  > resume-clears-suspended-condition.patch
-
-# 2) apply on a fresh checkout of your fork of kubernetes-sigs/agent-sandbox
-git clone https://github.com/<your-fork>/agent-sandbox.git && cd agent-sandbox
-git remote add upstream https://github.com/kubernetes-sigs/agent-sandbox.git
-git fetch upstream main
-git checkout -b resume-clears-suspended-condition upstream/main
-git am --signoff ../resume-clears-suspended-condition.patch   # adds your DCO Signed-off-by
-
-# 3) push to your fork, open the PR against kubernetes-sigs/agent-sandbox main
-git push -u origin resume-clears-suspended-condition
+# copy the fenced comment below into a file, then:
+gh issue comment 873 --repo kubernetes-sigs/agent-sandbox --body-file s1-873-comment.md
 ```
+
+**Comment body for [#873](https://github.com/kubernetes-sigs/agent-sandbox/issues/873) (copy-paste)**
+
+````markdown
+### Independent confirmation + benchmark-side evidence
+
+We hit this exact defect measuring resume-from-suspend for a public benchmark ([honest-bench](https://github.com/AlexBulankou/honest-bench)). Mechanism as observed on current `main` (`0be472b`): `reconcileChildResources` upserts each freshly-computed condition via `meta.SetStatusCondition` and `RemoveStatusCondition`s only `Finished`; `computeSuspendedCondition` returns `nil` once the sandbox is resumed, and `SetStatusCondition` only upserts — so a prior-leg `Suspended=True` survives resume indefinitely, alongside `Ready=True`.
+
+Impact on our side: we **retracted** a previously-measured resume exec-success figure (~92.8%, N=1376) because the resume-readiness signal is untrustworthy while a resumed sandbox still advertises `Suspended=True` — the benchmark's entire gVisor × resume-from-suspend row renders `pending (upstream-blocked)` until this lands.
+
+Direction: agree with the revised KEP 119 (#890) — persist + flip-to-False beats removal (`kubectl wait --for=condition=Suspended=False` usability, transition history preserved) — and #893 looks like the right implementation. Happy to contribute a regression test if useful: a Running-mode Sandbox pre-seeded with a stale `Suspended=True` (Reason `PodTerminated`) plus a Running/Ready backing pod; one reconcile; assert `Suspended` transitions to `False` (not removed) AND `Ready=True`. Fails on current `main`, passes under #893's contract.
+````
+
+**Historical — superseded, do NOT file (retained for reference only; the KEP-119 direction replaces it)**
 
 **PR title (copy-paste)**
 
@@ -109,18 +123,41 @@ Mirror the existing `Finished` cleanup: track whether the computed set contains 
 - The annotation's only writers upstream are unit-test fixtures; the registered SandboxClaim webhook is the v1alpha1↔v1beta1 **conversion** webhook, not a mutating defaulter — there is no webhook to install (verified correction to the earlier "not installed on our cluster" framing).
 - So the histogram is empty on **every deployment of upstream main** — null-by-construction, not an environment gap.
 
-**Action — DECISION FIRST**
+**Action — GH issue: use existing [#751](https://github.com/kubernetes-sigs/agent-sandbox/issues/751); in-tree stamper PR stays decision-gated**
 
-Filing this reverses the 2026-06-29 "skip upstream conversations, rush toward honest-bench results" call. [hb#175](https://github.com/AlexBulankou/honest-bench/issues/175)'s literal-TTFE upper bound is the current honest interim, so nothing is dishonestly rendered while this stays unfiled — the question is whether true-TTFE is worth re-opening the upstream conversation. **File only after re-deciding.** Additionally: the staged patch base is **STALE** (upstream HEAD `985d1dd`, 2026-06-29) vs the current tip `0be472b` — run `git apply --check` and rebuild before signing (unlike the §S1/§S4 batch, this one was **not** in the 2026-07-03 apply-clean re-sweep).
+The dup-search (2026-07-03) found the gap already filed upstream: [#751](https://github.com/kubernetes-sigs/agent-sandbox/issues/751) *(open)* — "`agents.x-k8s.io/webhook-first-observed-at` annotation is never set, leaving ClaimStartupLatency empty" — quotes the exact skip-guard this section diagnoses, and maintainers confirm no webhook ships today. Open PR [#761](https://github.com/kubernetes-sigs/agent-sandbox/pull/761) ("Fixes #751") adds a **documentation example** of the mutating webhook (user-applied manifests), not an in-tree production writer. So the upstream conversation **already exists** — commenting evidence + supporting #751/#761 does not reverse the 2026-06-29 "skip upstream conversations" call. What remains decision-gated is only whether to ALSO offer our staged **in-tree** stamper (operator-managed `MutatingWebhookConfiguration`, reusing the self-generated CA) as an upstream PR alternative to #761's example. If that is greenlit: the staged patch base is **STALE** (`985d1dd`, 2026-06-29) vs current tip `0be472b` — `git apply --check` + rebuild before signing (this one was **not** in the 2026-07-03 apply-clean re-sweep).
+
+**Related upstream (dup-search 2026-07-03):** [#751](https://github.com/kubernetes-sigs/agent-sandbox/issues/751) *(open, SAME — adopt)* · [#761](https://github.com/kubernetes-sigs/agent-sandbox/pull/761) *(open PR — example-webhook docs, "Fixes #751")* · [#540](https://github.com/kubernetes-sigs/agent-sandbox/pull/540) *(merged — origin of the gap: shipped the annotation consumer, deliberately no writer; note it names the annotation `webhook-first-seen-at`)* · [#565](https://github.com/kubernetes-sigs/agent-sandbox/pull/565) *(open PR — different metric/annotation: client-side `client-first-requested-at`)* · [#940](https://github.com/kubernetes-sigs/agent-sandbox/issues/940) *(open — controller-histogram overcount, distinct defect)* · [#1051](https://github.com/kubernetes-sigs/agent-sandbox/issues/1051) *(open — label-cardinality cleanup on the same histograms)*
+
+**Steps**
+
+```bash
+# copy the fenced comment below into a file, then:
+gh issue comment 751 --repo kubernetes-sigs/agent-sandbox --body-file s2-751-comment.md
+```
+
+**Comment body for [#751](https://github.com/kubernetes-sigs/agent-sandbox/issues/751) (copy-paste)**
+
+````markdown
+### Confirmed from an independent deployment + benchmark impact
+
+Independent confirmation on a stock deployment of current `main`: with no cloud-provider webhook installed, `agent_sandbox_claim_startup_latency_ms` records zero samples on every fire — `recordClaimStartupLatency` hits the missing-annotation early-return on every claim, so the histogram is empty **by construction**, not as an environment gap. (The registered SandboxClaim webhook is the v1alpha1↔v1beta1 conversion webhook, not a mutating defaulter — there is nothing to "enable".)
+
+Benchmark impact: for a public Agent-Sandbox benchmark ([honest-bench](https://github.com/AlexBulankou/honest-bench)) this makes true end-to-end TTFE unmeasurable by construction — we currently publish a literal-TTFE **upper bound** from an exec-probe instead, with the true-TTFE cells marked blocked on this issue.
+
++1 to #761's example webhook. Also worth considering: an **in-tree** production writer — a `CustomDefaulter` on SandboxClaim wired into the existing generic-webhook builder, with a programmatic `MutatingWebhookConfiguration` the operator self-applies (reusing the same self-generated CA + caBundle-injection pattern `tls.go` already uses for the conversion configs), `failurePolicy: Ignore` + `SideEffects: None` so an observability webhook can never gate the create path. We have a compile-tested draft (4 files / +228, 3/3 defaulter unit tests) if maintainers would take this in-tree rather than as example manifests.
+````
 
 **Prepared artifact**
 
 - Full patch (4 files / +228: new `extensions/controllers/sandboxclaim_webhook.go` + test, `cmd/agent-sandbox-controller/main.go`, `cmd/agent-sandbox-controller/tls.go`) + paste-ready PR body, both staged on the s-dev pod (paths in the Steps block).
 - Compile-verified in-pod against `985d1dd`: `go build` exit 0, `go vet` exit 0, 3/3 defaulter unit tests PASS.
 
-**Steps** (only after re-deciding the 06-29 call)
+**Steps — optional in-tree stamper PR (only if greenlit; STALE base, re-check first)**
 
 ```bash
+# agents re-verify + push the branch to the fork on greenlight (see Conventions);
+# manual fallback:
 # 1) pull the full patch + PR body off the pod
 kubectl exec a4-a4s1-0 -n a4 -c agent -- \
   cat /home/agent/work/.a4/share/3975-webhook-stamper.patch.md > 3975-webhook-stamper.patch.md
@@ -192,6 +229,8 @@ The fix supplies that writer at the earliest server-side observation point — a
 **Action**
 
 Comment on the open upstream design issue [#952](https://github.com/kubernetes-sigs/agent-sandbox/issues/952) ("Correct time at which we can mark a resume pod as ready"), broadening it with the blank-served evidence + rates. **No patch by design** — the ask is a design decision: a restore-verified readiness gate before `Ready=True`, which belongs to the maintainers' readiness/restore handshake design, not to a drive-by fix.
+
+**Related upstream (dup-search 2026-07-03):** [#952](https://github.com/kubernetes-sigs/agent-sandbox/issues/952) *(open, SAME — the anchor; verified: its body already describes PodRestored being set only after background restore completes while resume is marked done on Pod-Ready)* · [#415](https://github.com/kubernetes-sigs/agent-sandbox/pull/415) *(merged — client-side `is_restored_from_snapshot` polls the `PodRestored` pod condition: proves the restore-verified signal exists pod-side but is opt-in client polling, not a readiness gate — strengthens the ask)* · [#397](https://github.com/kubernetes-sigs/agent-sandbox/pull/397) *(closed unmerged — prior premature-Ready gate attempt for PodIP; same mechanism family)* · [#248](https://github.com/kubernetes-sigs/agent-sandbox/issues/248) *(open — pause/resume state-carryover test ask)* · [#990](https://github.com/kubernetes-sigs/agent-sandbox/pull/990) *(merged — reworked `computeReadyCondition` with zero restore awareness: the gap was revisited and left open)*
 
 **Steps**
 
@@ -289,25 +328,32 @@ Introduce a restore-verified signal the controller can gate on for snapshot-back
 - Verification already done: `gofmt -l` clean, `go build ./extensions/controllers/...` exit 0, `go vet` exit 0, full `extensions/controllers` suite PASSES including the updated duplicate-adoption test; falsifiability probe confirmed (gating off the sentinel conversion flips the test to FAIL).
 - **Rebase-if:** upstream PR [#1072](https://github.com/kubernetes-sigs/agent-sandbox/issues/1072) ("tolerate AlreadyExists in SandboxClaim createSandbox", open — same file, different facet; both needed, neither moot) merges first.
 
+**Related upstream (dup-search 2026-07-03 — no existing report of this defect; new issue is correct):** [#1059](https://github.com/kubernetes-sigs/agent-sandbox/issues/1059) *(open — intra-reconcile retry-count knob in `adoptSandboxFromCandidates`; adjacent path)* · [#1042](https://github.com/kubernetes-sigs/agent-sandbox/issues/1042) *(open — cold-start `createSandbox` AlreadyExists race; same file, different path)* · [#1072](https://github.com/kubernetes-sigs/agent-sandbox/issues/1072) *(open PR — fixes #1042; rebase-if it merges first)* · [#527](https://github.com/kubernetes-sigs/agent-sandbox/issues/527) *(open — redundant-reconcile churn, addressed via event predicates in #532)* · [#975](https://github.com/kubernetes-sigs/agent-sandbox/pull/975) *(merged — resolved the deterministic Layer-1)*
+
 **Steps**
 
 ```bash
-# 1) pull the patch off the pod
-kubectl exec a4-a4s2-0 -n a4 -c agent -- \
-  cat /home/agent/work/.a4/upstream-drafts/3641-adoption-completion-cache-race.patch \
-  > 3641-adoption-completion-cache-race.patch
+# 1) file the issue (title + body below):
+gh issue create --repo kubernetes-sigs/agent-sandbox \
+  --title "SandboxClaim adoption-completion look-again requeue rides the exponential failure rate-limiter (cache-lag retry compounds to multi-second backoff under concurrency)" \
+  --body-file s4-issue.md
 
-# 2) fresh checkout of your fork; rebase first if upstream #1072 merged (same file)
-git fetch upstream main
-git checkout -b adoption-completion-bounded-requeue upstream/main
-git am --signoff ../3641-adoption-completion-cache-race.patch
-
-# 3) check the patch's commit subject before pushing — if it carries a parenthesized
-#    internal issue-number suffix (internal tracking a#3641), drop it: that number is
-#    meaningless upstream
-git commit --amend   # if needed
-git push -u origin adoption-completion-bounded-requeue
+# 2) open the PR from the ready branch (DCO-signed, based on upstream main @ 0be472b):
+#    https://github.com/kubernetes-sigs/agent-sandbox/compare/main...AlexBulankou:agent-sandbox:adoption-completion-bounded-requeue?expand=1
+#    Paste the prepared PR body below and add a first line: "Fixes #<issue from step 1>".
 ```
+
+**Issue body (copy-paste → s4-issue.md)**
+
+````markdown
+When a `SandboxClaim` adopts a warm-pool `Sandbox`, the controller completes the adoption with a direct API-server patch and then **deliberately returns a non-nil error** ("triggered adoption completion… retry") so the next reconcile re-reads the sandbox from the informer cache. The deferral itself is load-bearing (tested duplicate-adoption protection during cache lag) — but signalling it with a non-nil error routes every look-again through the workqueue's `ItemExponentialFailureRateLimiter`, and the item is never `Forget`'d between passes, so K cache-lag re-reads compound to `5ms·(2^K − 1)` of backoff.
+
+Under concurrency (e.g. four claims adopting from one warm pool) the per-claim cache-lag windows overlap, K grows, and the backoff reaches multi-second stalls — inflating exactly the concurrent warm-claim tail latencies and pushing bounded e2e waits (observability-annotation read ~13s; TTL-after-finished ~74s) past their windows. Observable signature: repeated `"Triggered adoption completion for sandbox, retry"` per claim with exponentially-spaced retry log lines.
+
+Proposed fix (PR to follow from `AlexBulankou:adoption-completion-bounded-requeue`): keep the first-pass deferral, change only the requeue **mechanism** — a sentinel `errAdoptionTriggeredRetry` mapped in Reconcile to `ctrl.Result{RequeueAfter: immediateRequeueDelay}, nil` (the 1 ms constant already exists). Nil error ⇒ the item is `Forget`'d each pass, so each look-again costs a bounded 1 ms instead of exponential backoff; the tested duplicate-adoption protection is preserved (only the retry *cost* changes, not the deferral).
+
+Related: #1059 (intra-reconcile retry-count knob, adjacent), #1042 / #1072 (cold-start create race, same file), #527 (redundant-reconcile churn), #975 (resolved the deterministic Layer-1 of our original report).
+````
 
 **Suggested PR title** (adjust as needed)
 
@@ -375,14 +421,14 @@ The shipped fix removes the timing-dependent **timeout** (the exponential backof
 
 ## Substrate upstream blockers
 
-Target project: [agent-substrate/substrate](https://github.com/agent-substrate/substrate). All four rows are **issue-type** — the substrate upstream is maintainer-driven, so these file as issues with suggested fixes (no prepared branches; the one near-PR fix, U1's requeue patch, is locally validated internally but its behavioral proof needs fork-push capability — internal tracking a#2691). One sitting files all four; suggested order: **U2 → U1 → U3 → U4** (new regression with active e2e red first, then the pre-existing keystone, then hardening, then the wedge).
+Target project: [agent-substrate/substrate](https://github.com/agent-substrate/substrate). Fork: [`AlexBulankou/substrate`](https://github.com/AlexBulankou/substrate), synced to upstream `main` at this refresh. All four rows are **GH issue** actions (no prepared branches; the one near-PR fix, U1's requeue patch, is locally validated internally but its behavioral proof needs a cluster build+run — internal tracking a#2691). Dup-search 2026-07-03: **U4 is already filed upstream as [#50](https://github.com/agent-substrate/substrate/issues/50) with fix PR [#353](https://github.com/agent-substrate/substrate/pull/353) in flight — U4 comments there instead of filing.** One sitting clears all four; suggested order: **U2 → U1 → U3 (new filings) → U4 (two comments)**.
 
 | # | What | Action | Steps |
 |---|---|---|---|
-| U1 | Golden-actor reconcile **hard-errors on transient `SNAPSHOT_TYPE_UNSPECIFIED`** instead of requeueing → the activation-latency SLA store has **zero clean records ever** (metric honestly PENDING by construction); compounds with the manifest-migration stranding of pre-migration goldens. Internal tracking a#3210. | File-ready **issue** with suggested fix (requeue-on-UNSPECIFIED, or stamp EXTERNAL before the gate). | [→ §U1 file-ready text](#u1-snapshot-type-unspecified) |
-| U2 | DATA-scope golden snapshot **hard-fails on zero durable-dir volumes** (regression in upstream #295) → golden-snapshot e2e leg deterministically RED since 2026-06-27 (45 of 46 fires FAIL as of 07-03). Internal tracking a#3842. | File-ready **issue** — recommends a caller-side scope gate (admission validation) as the primary fix; explains why a naive callee no-op just moves the brick to restore. | [→ §U2 file-ready text](#u2-data-snapshot-zero-ddv) |
-| U3 | Strict `protojson.Unmarshal` of persisted rows **bricks `ListActors`** across any proto field rename on a long-lived cluster; imminent second trigger: upstream [#370](https://github.com/agent-substrate/substrate/issues/370) reserves `SnapshotInfo.type`. Internal tracking a#2921. | File-ready **issue** — proposes `DiscardUnknown` on read paths; carries a paste-ready addendum for the post-#370 case ([#356](https://github.com/agent-substrate/substrate/issues/356) is the structural fix; merge order decides). | [→ §U3 file-ready text](#u3-ateredis-strict-protojson) |
-| U4 | `runsc checkpoint` against an exited/destroyed container **retried forever** (exit 128 → permanent SUSPENDING wedge); 3 independent occurrences in 2 days, 3/3 recovered only by manual worker recycle. Internal tracking a#4189. | File-ready **issue** — proposes terminal-classification of the checkpoint-target-missing case + recycle-not-retry (the recovery primitive already exists, nothing invokes it). | [→ §U4 file-ready text](#u4-checkpoint-exit-128) |
+| U1 | Golden-actor reconcile **hard-errors on transient `SNAPSHOT_TYPE_UNSPECIFIED`** instead of requeueing → the activation-latency SLA store has **zero clean records ever** (metric honestly PENDING by construction); compounds with the manifest-migration stranding of pre-migration goldens. Internal tracking a#3210. | **GH issue** — file-ready below with suggested fix (requeue-on-UNSPECIFIED, or stamp EXTERNAL before the gate); dup-search: no existing report. | [→ §U1 file-ready text](#u1-snapshot-type-unspecified) |
+| U2 | DATA-scope golden snapshot **hard-fails on zero durable-dir volumes** (regression in upstream #295) → golden-snapshot e2e leg deterministically RED since 2026-06-27 (45 of 46 fires FAIL as of 07-03). Internal tracking a#3842. | **GH issue** — file-ready below; recommends a caller-side scope gate (admission validation) as the primary fix; explains why a naive callee no-op just moves the brick to restore. Dup-search: no existing report. | [→ §U2 file-ready text](#u2-data-snapshot-zero-ddv) |
+| U3 | Strict `protojson.Unmarshal` of persisted rows **bricks `ListActors`** across any proto field rename on a long-lived cluster; imminent second trigger: upstream [#370](https://github.com/agent-substrate/substrate/issues/370) reserves `SnapshotInfo.type`. Internal tracking a#2921. | **GH issue** — file-ready below; proposes `DiscardUnknown` on read paths; carries a paste-ready addendum for the post-#370 case ([#356](https://github.com/agent-substrate/substrate/issues/356) is the structural fix; merge order decides). Dup-search: no existing report of the decode-brick itself. | [→ §U3 file-ready text](#u3-ateredis-strict-protojson) |
+| U4 | `runsc checkpoint` against an exited/destroyed container **retried forever** (exit 128 → permanent SUSPENDING wedge); 3 independent occurrences in 2 days, 3/3 recovered only by manual worker recycle. Internal tracking a#4189. | **GH issue — use existing [#50](https://github.com/agent-substrate/substrate/issues/50)** ("Actor stuck in STATUS_SUSPENDING" — the identical exit-128 wedge, verified from its logs) — comment our 3-occurrence evidence there; fix in flight: PR [#353](https://github.com/agent-substrate/substrate/pull/353) (terminal `CRASHED` classification during checkpoint — matches our fix #1); add the recycle-not-retry follow-through as a #353 comment. | [→ §U4 file-ready text](#u4-checkpoint-exit-128) |
 
 <a id="u1-snapshot-type-unspecified"></a>
 
@@ -396,6 +442,8 @@ Target project: [agent-substrate/substrate](https://github.com/agent-substrate/s
 - The snapshot-correctness payload (internal tracking a#3637) rides the same golden-actor path this bug bricks.
 - **Impact widened 2026-07-02:** the snapshot `manifest.json` format migration stranded pre-migration goldens (unresumable, no backfill), and the only remediation — a fresh golden re-commit — is exactly the path this bug bricks. The two defects compound.
 - Pre-existing brick (not a regression). A requeue-on-UNSPECIFIED fix is locally patch-validated internally (applies clean, no new imports, behaviorally sound against the phase machine), but behavioral proof needs a cluster build+run via fork-push capability (internal tracking a#2691) — so today this files as an **issue with a suggested fix**, not a PR.
+
+**Related upstream (dup-search 2026-07-03 — no existing report; new issue is correct):** [#189](https://github.com/agent-substrate/substrate/pull/189) *(open PR — per-template `GoldenSnapshotWait`; same flow, doesn't touch the hard-error)* · [#362](https://github.com/agent-substrate/substrate/issues/362) *(open — post-checkpoint upload-failure fallback; different failure point)* · [#16](https://github.com/agent-substrate/substrate/issues/16) *(open — ActorTemplate lifecycle/mutability design)*
 
 **Steps**
 
@@ -471,6 +519,8 @@ The snapshot layout migrated to a manifest-based format (observed between 06-12 
 - Reds the substrate health report's upgrade-loop section every 3h fire; **deliberately not re-pinned** — the red e2e IS the signal that #295 needs an upstream fix (a re-pin would mask the regression).
 - Distinct from §U1: this suspend-path brick (controller line 151) fires **before** U1's take-gate (lines 154-155) is reached — **both** fixes are needed for a clean e2e + clean actor-probe.
 
+**Related upstream (dup-search 2026-07-03 — no existing report; new issue is correct):** [#295](https://github.com/agent-substrate/substrate/pull/295) *(merged 2026-06-27T03:05Z — the regressing PR; merge time matches the e2e red onset)* · [#339](https://github.com/agent-substrate/substrate/issues/339) *(open — default snapshot scope for onCommit/onPause: its resolution interacts with the recommended caller-side scope gate)* · [#220](https://github.com/agent-substrate/substrate/issues/220) *(open — the feature request #295 implements)*
+
 **Steps**
 
 ```bash
@@ -541,6 +591,8 @@ A TODO at the save switch already flags the DATA/FULL split as a temporary singl
 - **New urgency (2026-07-02 sweep):** open upstream PR [#370](https://github.com/agent-substrate/substrate/issues/370) (SnapshotType enum removal; `SnapshotInfo.type` → `reserved`) is a concrete, imminent **second trigger** of the same brick class. Open PR [#356](https://github.com/agent-substrate/substrate/issues/356) (binary protobuf encoding for ateredis rows) is the structural fix — **merge order decides** whether a fresh brick fires (#356-first = safe, #370-first = brick).
 
 **Steps**
+
+**Related upstream (dup-search 2026-07-03 — no existing report of the decode-brick; new issue is correct):** [#227](https://github.com/agent-substrate/substrate/pull/227) *(merged — the rename that first triggered it)* · [#370](https://github.com/agent-substrate/substrate/pull/370) *(open — `SnapshotInfo.type` → reserved: the imminent second trigger)* · [#307](https://github.com/agent-substrate/substrate/issues/307) *(open — binary-protobuf capacity change; explicitly waves off decode-compat as "hard cutover", which strengthens this ask)* · [#356](https://github.com/agent-substrate/substrate/pull/356) *(open — implements #307; the structural fix, not merged)*
 
 Check the merge state of upstream #370 first — if it has merged, append the "Optional filing addendum" section (included in the fence below) and cite #370 as the concrete second trigger alongside #227.
 
@@ -639,15 +691,22 @@ that makes schema evolution safe for persisted rows.
 - **Three independent occurrences in 2 days** (2026-07-01/02) on a full-plane static-certs validation install: an e2e lane worker, plus two golden actors (one looped ~24h). 3/3 converged **only** via manual hosting-worker-pod recycle; none self-converged.
 - Freshest of the four filings: source pinned at upstream `main` `8631ae3` (2026-07-01); citations independently co-reviewed 3/3 verbatim, and the clean suspend/resume contract was independently verified (in-RAM carryover), corroborating exit-128 as an anomalous missing-container wedge, not expected behavior.
 
+**Related upstream (dup-search 2026-07-03):** [#50](https://github.com/agent-substrate/substrate/issues/50) *(open, SAME — adopt: its logs show the identical signature, `FetchSpec failed: loading container: file does not exist` → `runsc checkpoint: exit status 128` retried indefinitely, actor pinned STATUS_SUSPENDING)* · [#353](https://github.com/agent-substrate/substrate/pull/353) *(open PR, SAME-fix — puts the actor in terminal `CRASHED` when the runsc command fails during Suspend/Pause: exactly suggested-fix #1; omits only the recycle follow-through)* · [#292](https://github.com/agent-substrate/substrate/issues/292) *(open — CRASHED-state umbrella design; a maintainer comment already raises the retryable-vs-non-retryable runsc question)* · [#244](https://github.com/agent-substrate/substrate/issues/244) *(open — API-entry precondition validation, different defect)* · [#119](https://github.com/agent-substrate/substrate/issues/119) *(open — state-machine design; specifies the intended failure semantics this defect violates)*
+
 **Steps**
 
 ```bash
-gh issue create --repo agent-substrate/substrate \
-  --title "checkpoint against an exited/destroyed container is retried forever instead of being treated as terminal (runsc exit 128 → permanent SUSPENDING wedge)" \
-  --body-file u4-body.md
+# 1) comment our evidence on the existing issue (paste the prepared body below — it reads
+#    as an evidence comment as-is; keep the source pins):
+gh issue comment 50 --repo agent-substrate/substrate --body-file u4-50-comment.md
+
+# 2) addendum on the in-flight fix PR #353 (terminal CRASHED classification — matches our
+#    suggested fix #1); ask for the recycle-not-retry follow-through (our fix #2):
+gh pr comment 353 --repo agent-substrate/substrate --body \
+  "The terminal CRASHED classification here matches what we observe on a full-plane install: 3 independent runsc-checkpoint exit-128 wedges in 2 days, 3/3 recovered only by a manual worker recycle (evidence in #50). One follow-through worth considering: on terminal suspend failure, also release the worker assignment / re-run on a fresh worker — that is the recovery that works manually today. Happy to open a follow-up issue if preferred."
 ```
 
-**Issue body (copy-paste)**
+**Comment body for [#50](https://github.com/agent-substrate/substrate/issues/50) (copy-paste → u4-50-comment.md)**
 
 ````markdown
 Repo: agent-substrate/substrate · observed at build-from-main on 2026-07-01/02; source verified present at upstream `main` 8631ae3.
@@ -712,7 +771,8 @@ if err != nil {
 
 **Page-side notes (not part of the paste body)**
 
-- Source citations pinned at `main` `8631ae3` (2026-07-01) — `runsc.go:107-135`, `main.go:280-283`, `actortemplate_controller.go:149-151`. Re-verify line numbers at filing time.
+- Source citations pinned at `main` `8631ae3` (2026-07-01) — `runsc.go:107-135`, `main.go:280-283`, `actortemplate_controller.go:149-151`. Re-verify line numbers at posting time.
+- The body was drafted as a new-issue filing; posted as a #50 comment it reads as independent-reproduction evidence — prepend a one-liner like "Independent reproduction + source pins (3 occurrences / 2 days):" if desired.
 
 ---
 
