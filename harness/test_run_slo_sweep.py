@@ -251,6 +251,19 @@ def test_stamped_matching_runtime_merges_kata():
            f"kata stamp + sandbox-kata run merges, got {raw[0]['sla_metrics']!r}")
 
 
+def test_stamped_concrete_kata_runtime_merges_on_kata_run():
+    # Real-world vocab: the producer stamps the concrete k8s runtimeClassName
+    # (e.g. kata-qemu) -- there is no `kata-microvm` RuntimeClass on the
+    # cluster. The gate compares runtime *families*, so a kata-qemu stamp
+    # merges on a sandbox-kata run (the case a raw-string compare broke).
+    raw = [_cell(sla_metrics={"ttfe_p95_ms": 512.0})]
+    _with_sweep(_WARM, "sandbox-kata", _stamped("kata-qemu"), raw)
+    expected = dict(_TRIPLE)
+    expected["ttfe_p95_ms"] = 512.0
+    _check(raw[0]["sla_metrics"] == expected,
+           f"kata-qemu stamp + sandbox-kata run merges, got {raw[0]['sla_metrics']!r}")
+
+
 def test_stamped_mismatch_skips_on_kata_run():
     # The core contamination case: a stale gVisor record env-pointed during a
     # sandbox-kata merge must NOT cross-merge into the Kata cell.

@@ -753,7 +753,7 @@ def merge_slo_sweeps(raw: list, product: str) -> None:
         except (OSError, ValueError):
             continue
         stamped_runtime = _sweep_record_runtime(rec)
-        if stamped_runtime and stamped_runtime != expected_runtime:
+        if stamped_runtime and rc.runtime_family(stamped_runtime) != rc.runtime_family(expected_runtime):
             continue
         derived = slo_rate.slo_sla_metrics_from_stepup(
             stepup_adapter.stepup_nested_to_flat(rec)
