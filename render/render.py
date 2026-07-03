@@ -47,6 +47,7 @@ from schema import (
     _ISO,
 )
 from wip import NA_BY_CONSTRUCTION, build_work_in_progress, link_pending, wip_link
+from upstream_links import upstream_cell_refs, upstream_prose_refs
 
 # #4137: the sentence appended to the drained-regime warm caveat that NAMES the term driving
 # warm-hit TTFE growth with claim-count. Keyed by the schema WARM_SCALING_TERMS enum so the
@@ -737,10 +738,16 @@ def render_matrix(results, kata_results=None):
             # runtime rows (sc is None) also fall back to bare `pending` — correct, since they
             # simply were not measured in this run.
             pending_tok = _PENDING
+            pending_refs = ""
             if sc_pending:
                 reason = sc.get("pending_reason")
                 if reason:
                     pending_tok = f"{_PENDING} ({reason})"
+                    # hb#181: a reasoned pending cell carries its exact upstream refs
+                    # (issue + fix-PR with live status) inline, right after the linked
+                    # token — "" for classes with no upstream mapping (e.g. a bare
+                    # not-yet-run or a cluster-fire pend), so unmapped cells are unchanged.
+                    pending_refs = upstream_cell_refs(reason)
 
             def cell(key, fmt):
                 return fmt(m[key]) if key in m else pending_tok
@@ -814,7 +821,14 @@ def render_matrix(results, kata_results=None):
             else:
                 exec_cell = pending_tok
 
-            data_cells = [link_pending(c) for c in (thpt5, thpt1, p50, p95, exec_cell)]
+            # hb#181: append the upstream refs AFTER link_pending's wrapped token (never
+            # inside it — nested markdown links don't render). Only the exact whole-cell
+            # pending token gets refs; composite cells (e.g. a dual throughput cell whose
+            # cluster half embeds `pending (cluster-fire)`) are left alone.
+            data_cells = [
+                link_pending(c) + (pending_refs if (pending_refs and c == pending_tok) else "")
+                for c in (thpt5, thpt1, p50, p95, exec_cell)
+            ]
             lines.append(
                 "| "
                 + " | ".join([rt_label, mode_label] + data_cells)
@@ -871,7 +885,8 @@ def render_matrix(results, kata_results=None):
     lines.append(
         "- **`pending (upstream-blocked)`** — the run DID land, but an upstream controller gap "
         "(the resume path's Suspended condition never clears) holds it; it graduates to a real "
-        "number the moment the upstream fix lands, not merely when a run is scheduled."
+        "number the moment the upstream fix lands, not merely when a run is scheduled. "
+        "Tracked upstream: " + upstream_prose_refs("upstream-blocked") + "."
     )
     lines.append(
         "- **`pending (cluster-fire)`** — the per-node figure is measured, but the per-cluster "
