@@ -58,7 +58,7 @@ These are **Kata + microVM pod-Ready / microVM-activation** latencies — the ti
 | Warm-pool hit (ubuntu:24.04) | 3s |
 | Cold start — debian:12 (image pull 0.9s) | 3s |
 | Cold start — ubuntu:24.04 (image pull 0.887s) | 5s |
-| Snapshot resume | N/A — upstream-blocked (CRIU resume not wired, #3097) |
+| Snapshot resume | [N/A — upstream-blocked (CRIU resume not wired)](WORK_IN_PROGRESS.md#upstream-blocked) |
 
 _Measured 2026-06-30 — Kata pod-Ready / microVM-activation (point-in-time; not TTFE)._
 
@@ -81,7 +81,7 @@ Max Density is sandboxes per node-allocatable sandbox-schedulable vCPU (the per-
 | Runtime | Max Density (sb/vCPU) |
 |---|---|
 | gVisor | 5.98 |
-| Kata + microVM | pending |
+| Kata + microVM | [pending](WORK_IN_PROGRESS.md#not-yet-measured) |
 
 ## At Scale Under Contention — where sub-second warm activation breaks
 

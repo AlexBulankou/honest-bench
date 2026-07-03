@@ -34,12 +34,12 @@ pool — full recipe in [`recipe/REPRODUCE.md`](recipe/REPRODUCE.md), deep-dive 
 
 | Runtime | Activation Mode | Throughput @ <5s TTFE (sb/s — node · cluster) | Throughput @ <1s TTFE (sb/s — node · cluster) | TTFE p50 | TTFE p95 | Execution Success (Honesty Check) |
 |---|---|---|---|---|---|---|
-| gVisor | Warm-pool hit (Base image) | 33.824 /node · pending (cluster-fire) | 32.696 /node · pending (cluster-fire) | 0.6317s (count=30) | 0.9454s (count=30) | 100% |
-| gVisor | Unique-image cold (RL reality) | pending | 0 /node · 0 /cluster | 4.5191s (count=1) † | 4.5191s (count=1) † | 100% |
-| gVisor | Resume-from-suspend | pending (upstream-blocked) | pending (upstream-blocked) | pending (upstream-blocked) | pending (upstream-blocked) | pending (upstream-blocked) |
-| Kata + microVM | Warm-pool hit (Base image) | 16.798 /node · pending (cluster-fire) | 15.678 /node · pending (cluster-fire) | 0.6303s (count=30) | 0.9867s (count=30) | 100% |
-| Kata + microVM | Unique-image cold (RL reality) | pending | 0 /node · 0 /cluster | 4.8274s (count=1) † | 4.8274s (count=1) † | 100% |
-| Kata + microVM | Resume-from-suspend | N/A | N/A | N/A | N/A | N/A |
+| gVisor | Warm-pool hit (Base image) | 33.824 /node · [pending (cluster-fire)](WORK_IN_PROGRESS.md#cluster-fire) | 32.696 /node · [pending (cluster-fire)](WORK_IN_PROGRESS.md#cluster-fire) | 0.6317s (count=30) | 0.9454s (count=30) | 100% |
+| gVisor | Unique-image cold (RL reality) | [pending](WORK_IN_PROGRESS.md#not-yet-measured) | 0 /node · 0 /cluster | 4.5191s (count=1) † | 4.5191s (count=1) † | 100% |
+| gVisor | Resume-from-suspend | [pending (upstream-blocked)](WORK_IN_PROGRESS.md#upstream-blocked) | [pending (upstream-blocked)](WORK_IN_PROGRESS.md#upstream-blocked) | [pending (upstream-blocked)](WORK_IN_PROGRESS.md#upstream-blocked) | [pending (upstream-blocked)](WORK_IN_PROGRESS.md#upstream-blocked) | [pending (upstream-blocked)](WORK_IN_PROGRESS.md#upstream-blocked) |
+| Kata + microVM | Warm-pool hit (Base image) | 16.798 /node · [pending (cluster-fire)](WORK_IN_PROGRESS.md#cluster-fire) | 15.678 /node · [pending (cluster-fire)](WORK_IN_PROGRESS.md#cluster-fire) | 0.6303s (count=30) | 0.9867s (count=30) | 100% |
+| Kata + microVM | Unique-image cold (RL reality) | [pending](WORK_IN_PROGRESS.md#not-yet-measured) | 0 /node · 0 /cluster | 4.8274s (count=1) † | 4.8274s (count=1) † | 100% |
+| Kata + microVM | Resume-from-suspend | [N/A](WORK_IN_PROGRESS.md#na-by-construction) | [N/A](WORK_IN_PROGRESS.md#na-by-construction) | [N/A](WORK_IN_PROGRESS.md#na-by-construction) | [N/A](WORK_IN_PROGRESS.md#na-by-construction) | [N/A](WORK_IN_PROGRESS.md#na-by-construction) |
 
 **How to read the cells**
 
