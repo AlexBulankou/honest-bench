@@ -3,9 +3,15 @@
 Covers the JSON loader's fail-loud validation, the URL rule (issue vs PR path),
 and both formatters (compact cell suffix / fuller prose), including the
 unmapped-class -> "" contract that keeps non-upstream pending cells unchanged.
+
+Stdlib-only + self-running via the __main__ guard, matching the repo's test
+convention (the CI unit-tests gate runs each module with `python3 <file>`, so a
+pytest-native module would fail to import — pytest is intentionally NOT in
+harness/requirements.txt).
 """
 
-import pytest
+import json
+import tempfile
 
 import upstream_links
 from upstream_links import (
@@ -14,6 +20,33 @@ from upstream_links import (
     upstream_cell_refs,
     upstream_prose_refs,
 )
+
+
+# --- test helpers (stdlib replacements for pytest fixtures) -------------------
+
+
+def _assert_raises_assertion(fn):
+    """Assert that calling fn() raises AssertionError (pytest.raises stand-in)."""
+    try:
+        fn()
+    except AssertionError:
+        return
+    raise AssertionError(f"expected AssertionError from {fn!r}, none raised")
+
+
+def _load_data(data):
+    # run the REAL loader against a synthesized JSON file — no logic duplication.
+    # Manually redirect _LINKS_PATH and restore it (monkeypatch stand-in).
+    original = upstream_links._LINKS_PATH
+    with tempfile.TemporaryDirectory() as d:
+        p = f"{d}/upstream_links.json"
+        with open(p, "w", encoding="utf-8") as fh:
+            json.dump(data, fh)
+        upstream_links._LINKS_PATH = p
+        try:
+            return upstream_links._load()
+        finally:
+            upstream_links._LINKS_PATH = original
 
 
 # --- shipped-data invariants -------------------------------------------------
@@ -109,28 +142,17 @@ def _valid_ref():
     }
 
 
-def _load_data(tmp_path, monkeypatch, data):
-    # run the REAL loader against a synthesized JSON file — no logic duplication.
-    import json
-
-    p = tmp_path / "upstream_links.json"
-    p.write_text(json.dumps(data), encoding="utf-8")
-    monkeypatch.setattr(upstream_links, "_LINKS_PATH", str(p))
-    return upstream_links._load()
-
-
-def test_loader_accepts_minimal_valid_mapping(tmp_path, monkeypatch):
+def test_loader_accepts_minimal_valid_mapping():
     data = {
         "_meta": {},
         "classes": {"upstream-blocked": {"refs": [_valid_ref()]}},
     }
-    loaded = _load_data(tmp_path, monkeypatch, data)
+    loaded = _load_data(data)
     assert loaded["classes"]["upstream-blocked"]["refs"][0]["number"] == 873
 
 
-@pytest.mark.parametrize(
-    "mutate",
-    [
+def test_loader_rejects_bad_ref_fields():
+    mutations = [
         lambda r: r.update(kind="discussion"),
         lambda r: r.update(role="mentions"),
         lambda r: r.update(status="draft"),
@@ -140,28 +162,38 @@ def test_loader_accepts_minimal_valid_mapping(tmp_path, monkeypatch):
         # loader-side gate (hb#182 follow-up), not just the shipped-data test.
         lambda r: r.update(repo="some-org/private-tracker"),
         lambda r: r.update(number="873"),
-    ],
-)
-def test_loader_rejects_bad_ref_fields(tmp_path, monkeypatch, mutate):
-    ref = _valid_ref()
-    mutate(ref)
-    with pytest.raises(AssertionError):
-        _load_data(
-            tmp_path, monkeypatch,
-            {"classes": {"upstream-blocked": {"refs": [ref]}}},
+    ]
+    for mutate in mutations:
+        ref = _valid_ref()
+        mutate(ref)
+        _assert_raises_assertion(
+            lambda ref=ref: _load_data(
+                {"classes": {"upstream-blocked": {"refs": [ref]}}},
+            )
         )
 
 
-def test_loader_rejects_missing_required_class_and_empty_refs(tmp_path, monkeypatch):
-    with pytest.raises(AssertionError):
-        _load_data(
-            tmp_path, monkeypatch,
+def test_loader_rejects_missing_required_class_and_empty_refs():
+    _assert_raises_assertion(
+        lambda: _load_data(
             {"classes": {"other": {"refs": [_valid_ref()]}}},
         )
-    with pytest.raises(AssertionError):
-        _load_data(
-            tmp_path, monkeypatch,
+    )
+    _assert_raises_assertion(
+        lambda: _load_data(
             {"classes": {"upstream-blocked": {"refs": []}}},
         )
-    with pytest.raises(AssertionError):
-        _load_data(tmp_path, monkeypatch, {"classes": {}})
+    )
+    _assert_raises_assertion(lambda: _load_data({"classes": {}}))
+
+
+def _run_all():
+    fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
+    for fn in fns:
+        fn()
+        print(f"ok: {fn.__name__}")
+    print(f"test_upstream_links: all {len(fns)} tests passed")
+
+
+if __name__ == "__main__":
+    _run_all()
