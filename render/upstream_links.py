@@ -32,6 +32,12 @@ _KINDS = {"issue", "pr"}
 _ROLES = {"blocks", "fix-in-flight"}
 _STATUSES = {"open", "in-review", "merged", "closed"}
 
+# Public-safety allow-list, enforced at LOAD time (hb#182 follow-up): every
+# ref must point at a public upstream OSS repo, so even a programmatically
+# generated mapping can never put a non-public tracker on the rendered page.
+# The shipped-data test asserts the same set; the loader is the runtime gate.
+_PUBLIC_REPOS = {"kubernetes-sigs/agent-sandbox", "agent-substrate/substrate"}
+
 # Statuses that read better with a space in rendered text.
 STATUS_LABELS = {
     "open": "open",
@@ -39,6 +45,9 @@ STATUS_LABELS = {
     "merged": "merged",
     "closed": "closed",
 }
+# _cell_token/_prose_token index STATUS_LABELS by validated status — keep the
+# curated label map in lockstep with the enum or rendering KeyErrors.
+assert set(STATUS_LABELS) == _STATUSES
 
 # The one class the matrix consumes today; validation requires it so the
 # rendered gVisor x Resume row can never silently lose its refs.
@@ -64,6 +73,11 @@ def _load():
             repo = ref.get("repo")
             if not isinstance(repo, str) or repo.count("/") != 1:
                 raise AssertionError("upstream_links.json class %r: bad repo %r" % (cls, repo))
+            if repo not in _PUBLIC_REPOS:
+                raise AssertionError(
+                    "upstream_links.json class %r: repo %r not in the public-OSS "
+                    "allow-list %s" % (cls, repo, sorted(_PUBLIC_REPOS))
+                )
             if not isinstance(ref.get("number"), int):
                 raise AssertionError("upstream_links.json class %r: bad number %r" % (cls, ref.get("number")))
             if ref.get("kind") not in _KINDS:
