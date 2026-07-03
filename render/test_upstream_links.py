@@ -30,7 +30,10 @@ def test_required_class_present_with_issue_and_fix_pr():
 def test_all_shipped_refs_point_at_public_oss_repos():
     # public-safety: every ref in the shipped mapping is a public upstream OSS
     # repo — never an internal tracker (a#NNNN prose is wip.py's lane, not here).
+    # The loader now enforces the same set at load time (_PUBLIC_REPOS); this
+    # asserts the shipped data AND that the two allow-lists can't drift.
     allowed = {"kubernetes-sigs/agent-sandbox", "agent-substrate/substrate"}
+    assert upstream_links._PUBLIC_REPOS == allowed
     for cls in CLASSES.values():
         for ref in cls["refs"]:
             assert ref["repo"] in allowed, ref
@@ -133,6 +136,9 @@ def test_loader_accepts_minimal_valid_mapping(tmp_path, monkeypatch):
         lambda r: r.update(status="draft"),
         lambda r: r.update(repo="not-a-repo"),
         lambda r: r.update(repo="a/b/c"),
+        # well-formed owner/repo but NOT on the public-OSS allow-list — the
+        # loader-side gate (hb#182 follow-up), not just the shipped-data test.
+        lambda r: r.update(repo="some-org/private-tracker"),
         lambda r: r.update(number="873"),
     ],
 )
