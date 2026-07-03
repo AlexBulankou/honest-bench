@@ -15,7 +15,9 @@ sweep (hb#132/#149) into the run loop:
     producer). Partial per-bar fill merges only the landed bar + node_count.
   - carry_prior_cluster_triples: the scenario-level do-not-auto-decay carry.
     Fresh triple wins outright; a prior triple is carried all-together and only
-    with node_count + >=1 rate (never a rate without its measurement size).
+    with node_count + >=1 rate (never a rate without its measurement size). The
+    hb#174 stamps (thpt_slo_basis / thpt_slo_n_exec_ok) ride as passengers on a
+    carried triple but never gate or trigger the carry themselves.
 """
 
 from __future__ import annotations
@@ -55,6 +57,7 @@ _TRIPLE = {
     "thpt_under_5s_per_cluster": 28.4,
     "thpt_under_1s_per_cluster": 9.8,
     "thpt_cluster_node_count": 40,
+    "thpt_slo_basis": "true_ttfe",
 }
 
 _WARM = "warmpool_cold_start"
@@ -177,7 +180,8 @@ def test_partial_fill_merges_landed_bar_only():
     raw = [_cell()]
     _with_sweep(_WARM, "sandbox", rec, raw)
     _check(raw[0]["sla_metrics"] == {"thpt_under_5s_per_cluster": 28.4,
-                                     "thpt_cluster_node_count": 40},
+                                     "thpt_cluster_node_count": 40,
+                                     "thpt_slo_basis": "true_ttfe"},
            f"only the landed bar merges, got {raw[0]['sla_metrics']!r}")
 
 
@@ -347,6 +351,40 @@ def test_partial_prior_triple_carries_as_is():
     raw = [_cell()]
     run.carry_prior_cluster_triples(raw, [_prior(sla_metrics=dict(part))])
     _check(raw[0]["sla_metrics"] == part, "partial (landed-bar) triple carried")
+
+
+def test_basis_and_n_stamps_ride_carry_as_passengers():
+    # hb#174: a carried triple brings its basis + n_exec_ok stamps along, so a
+    # carried literal-basis rate never renders with its provenance stripped.
+    prior_m = {"thpt_under_5s_per_cluster": 27.1, "thpt_cluster_node_count": 2,
+               "thpt_slo_basis": "literal_ttfe_upper_bound+controller_completed",
+               "thpt_slo_n_exec_ok": 24}
+    raw = [_cell()]
+    run.carry_prior_cluster_triples(raw, [_prior(sla_metrics=dict(prior_m))])
+    _check(raw[0]["sla_metrics"] == prior_m,
+           f"basis + n stamps carried with the triple, got {raw[0]['sla_metrics']!r}")
+
+
+def test_stamps_without_rate_carry_nothing():
+    # Stamps are passengers, not triple keys: a prior with only basis + n (no
+    # rate, no node_count) has nothing to carry — the stamps must not leak.
+    raw = [_cell()]
+    run.carry_prior_cluster_triples(
+        raw, [_prior(sla_metrics={
+            "thpt_slo_basis": "true_ttfe", "thpt_slo_n_exec_ok": 24})])
+    _check(raw[0]["sla_metrics"] == {},
+           "stamps alone (no rate + node_count) never carried")
+
+
+def test_fresh_triple_blocks_prior_stamps_too():
+    # Fresh-wins blocks the WHOLE carry including passengers: a fresh triple
+    # must never end up wearing a prior fire's basis stamp.
+    fresh = {"thpt_under_5s_per_cluster": 33.0, "thpt_cluster_node_count": 80}
+    raw = [_cell(sla_metrics=dict(fresh))]
+    prior_m = dict(_TRIPLE, thpt_slo_n_exec_ok=24)
+    run.carry_prior_cluster_triples(raw, [_prior(sla_metrics=prior_m)])
+    _check(raw[0]["sla_metrics"] == fresh,
+           f"fresh triple keeps prior stamps out, got {raw[0]['sla_metrics']!r}")
 
 
 def test_node_count_alone_not_carried():

@@ -1706,6 +1706,43 @@ def test_emit_to_render_slo_sweep_convergence():
     )
 
 
+def test_slo_basis_enum_three_mirror_sync():
+    """hb#174: the SLO-basis enum is CLOSED and lives in THREE independent mirrors —
+    harness slo_rate.SLO_BASIS_ENUM (canonical), harness results_schema.SLO_BASIS_ENUM
+    (the sla_metrics coercer's carve-out gate), and render schema.SLO_BASIS_VALUES (the
+    matrix predicate that fail-closes an unknown basis). None imports another in
+    production (offline-portability discipline), so a member added to one and missed in
+    another would either drop honest triples (coercer/render stricter than producer) or
+    let an undisclosed basis render (producer stricter). This pins all three equal, plus
+    the render disclosure map: every NON-default member has an _SLO_BASIS_NOTES entry
+    (the default true_ttfe deliberately renders no line).
+    """
+    import schema
+
+    sys.path.insert(0, _ROOT)
+    try:
+        from harness import slo_rate as _slo
+    except Exception as exc:  # pragma: no cover - harness has its own deps
+        print(f"  (skip: harness slo_rate not importable: {exc})")
+        return
+
+    canonical = set(_slo.SLO_BASIS_ENUM)
+    assert set(_rs.SLO_BASIS_ENUM) == canonical, (
+        "enum DRIFT: harness results_schema.SLO_BASIS_ENUM != slo_rate.SLO_BASIS_ENUM — "
+        "the sla_metrics coercer would strip (or admit) a basis the producer disagrees on."
+    )
+    assert set(schema.SLO_BASIS_VALUES) == canonical, (
+        "enum DRIFT: render schema.SLO_BASIS_VALUES != harness slo_rate.SLO_BASIS_ENUM — "
+        "an honest derived triple would fail-closed drop render-side (or an unknown basis "
+        "would render undisclosed)."
+    )
+    assert set(render._SLO_BASIS_NOTES) == canonical - {"true_ttfe"}, (
+        "disclosure DRIFT: render._SLO_BASIS_NOTES must carry exactly the non-default "
+        "members — a note-less non-default basis would render its figures with no "
+        "measurement-window disclosure."
+    )
+
+
 def test_emit_to_render_session_turnover_convergence():
     """Convergence guard for the session-turnover refill-latency block (#3868).
 

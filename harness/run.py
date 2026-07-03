@@ -784,6 +784,13 @@ def carry_prior_cluster_triples(raw: list, prior_scenarios) -> None:
     thpt_cluster_node_count). Mixing scales inside one row is the hb#132 design
     itself: the per-node half is today's fire, the cluster half is the sweep's,
     and the render captions each cluster half with its own X.
+
+    hb#174: the basis stamp (`thpt_slo_basis`) and the literal sample-size stamp
+    (`thpt_slo_n_exec_ok`) travel WITH the triple — a carried rate keeps the
+    disclosure of which measured basis produced it and how thin its weakest
+    credited sample was. Stamps are passengers, not members: the fresh-wins check
+    and the eligibility guard key on the triple keys only, so a prior cell
+    carrying a stamp but no rate (a producer inconsistency) still carries nothing.
     """
     if not isinstance(prior_scenarios, list):
         return
@@ -801,8 +808,15 @@ def carry_prior_cluster_triples(raw: list, prior_scenarios) -> None:
         if not isinstance(pm, dict):
             continue
         carried = {k: pm[k] for k in _CLUSTER_TRIPLE_KEYS if k in pm}
-        if "thpt_cluster_node_count" not in carried or len(carried) < 2:
+        has_rate = any(
+            k in carried
+            for k in ("thpt_under_5s_per_cluster", "thpt_under_1s_per_cluster")
+        )
+        if "thpt_cluster_node_count" not in carried or not has_rate:
             continue
+        for passenger in ("thpt_slo_basis", "thpt_slo_n_exec_ok"):
+            if passenger in pm:
+                carried[passenger] = pm[passenger]
         m.update(carried)
 
 

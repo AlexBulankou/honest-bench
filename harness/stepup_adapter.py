@@ -92,6 +92,26 @@ def stepup_nested_to_flat(rec):
             cs_flat["verdict"] = cs_sat.get("verdict")
         flat["controller_startup"] = cs_flat
 
+    # Lift the literal-TTFE UPPER-BOUND leg (hb#174). Same pure-relabel bridge as the
+    # controller_startup lift: `pareto` -> `pareto_points`, `saturation.verdict` ->
+    # `verdict`, polarity flags (`upper_bound`, `includes_exec_setup_overhead`) carried
+    # verbatim. The producer's per-rung keys stay NAMESPACED (`literal_warm_p95_ms`,
+    # `acq_fulfilled_per_s`, `controller_completed_per_s`) — never aliased onto the
+    # true-TTFE names; slo_rate owns the basis pick + stamp downstream. The producer's
+    # free-text `caveat` is RENDER-OWNED and deliberately NOT copied (render keys its
+    # fixed upper-bound boilerplate off the booleans). Non-dict block => omitted.
+    lt = rec.get("literal_ttfe")
+    if isinstance(lt, dict):
+        lt_flat = {
+            "upper_bound": lt.get("upper_bound"),
+            "includes_exec_setup_overhead": lt.get("includes_exec_setup_overhead"),
+            "pareto_points": lt.get("pareto"),
+        }
+        lt_sat = lt.get("saturation")
+        if isinstance(lt_sat, dict):
+            lt_flat["verdict"] = lt_sat.get("verdict")
+        flat["literal_ttfe"] = lt_flat
+
     return flat
 
 

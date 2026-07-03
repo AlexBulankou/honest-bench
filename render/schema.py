@@ -298,6 +298,17 @@ TTFE_COMPARABILITY_MIN_N = 30
 # cluster-wide-capacity 0.45 must never shadow the corrected per-node number.
 DENSITY_SOURCE_SCENARIOS = ("warmpool_cold_start",)
 
+# hb#174: closed vocabulary for thpt_slo_basis — which measured basis produced a derived
+# per-cluster SLO triple. Independent mirror of the harness enum (slo_rate.SLO_BASIS_ENUM);
+# drift is caught by the cross-contract test, not by an import.
+SLO_BASIS_VALUES = frozenset(
+    (
+        "true_ttfe",
+        "literal_ttfe_upper_bound+controller_completed",
+        "literal_ttfe_upper_bound+acq_fulfilled",
+    )
+)
+
 # Matrix metric keys (per-scenario sla_metrics) -> closed-schema predicate. exec_success_n
 # is OPTIONAL (the numerator for the doc's "(1277/1376)" fraction); absent ⇒ render the bare
 # percentage. All are non-negative numerics; exec_success_rate is a 0..1 fraction.
@@ -320,6 +331,17 @@ MATRIX_METRIC_FIELDS = {
     "thpt_under_5s_per_cluster": _nonneg,
     "thpt_under_1s_per_cluster": _nonneg,
     "thpt_cluster_node_count": _nonneg,
+    # hb#174: which measured basis produced the per-cluster triple. Closed 3-value enum —
+    # the render-side mirror of harness slo_rate.SLO_BASIS_ENUM / results_schema.SLO_BASIS_ENUM
+    # (render never imports the harness; a cross-contract test asserts the three copies match).
+    # true_ttfe is the default basis and renders nothing extra; the two literal upper-bound
+    # bases key the per-runtime disclosure caption in render_matrix.
+    "thpt_slo_basis": lambda v: v in SLO_BASIS_VALUES,
+    # hb#174 sign-off (c): MIN warm-exec sample count across the rungs credited by a
+    # literal-basis derivation — the harness floor (>= 20) makes sub-20 unreachable from a
+    # valid producer, but the render predicate only asserts a positive int (the render-side
+    # job is the coarse-p95 caption when 20 <= n < 100, not re-enforcing the floor).
+    "thpt_slo_n_exec_ok": lambda v: isinstance(v, int) and not isinstance(v, bool) and v >= 1,
     "exec_success_rate": lambda v: isinstance(v, (int, float))
     and not isinstance(v, bool)
     and 0.0 <= v <= 1.0,

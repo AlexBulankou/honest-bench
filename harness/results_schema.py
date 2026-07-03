@@ -112,6 +112,19 @@ STEPUP_VERDICT_ENUM = (
     "no-measured-steps",
 )
 
+# hb#174 SLO-basis stamp — the emitter's INDEPENDENT copy of harness/slo_rate.py's
+# SLO_BASIS_ENUM (same deliberate no-shared-import posture as STEPUP_VERDICT_ENUM;
+# a drift is caught by the cross-contract test). `thpt_slo_basis` names which measured
+# basis produced a derived per-cluster SLO triple, so render can caption a literal-TTFE
+# upper-bound cell distinctly from a true-TTFE one. It is the ONLY non-numeric value
+# allowed through _coerce_sla_metrics, via an explicit enum-gated carve-out — a value
+# outside this set is a real bug (fail-closed raise), never a silent drop or a leak.
+SLO_BASIS_ENUM = (
+    "true_ttfe",
+    "literal_ttfe_upper_bound+controller_completed",
+    "literal_ttfe_upper_bound+acq_fulfilled",
+)
+
 # #3954 sibling warm-vs-cold — the emitter's INDEPENDENT copies of render's WARM_VS_COLD_FIELDS
 # closed vocabularies (semantic = the two measured TTFx modes; runtime_class = the keys of render's
 # RUNTIME_LABELS). The classifier (warm_vs_cold.classify_warm_vs_cold) only PARITY-checks
@@ -207,12 +220,25 @@ def _coerce_sla_metrics(raw) -> dict:
 
     This is the load-bearing leak-suspenders: an sla value MUST be numeric, so a
     raw failure_excerpt string stuffed into sla_metrics is dropped, never emitted.
+
+    ONE explicit carve-out (hb#174): the key `thpt_slo_basis` carries a CLOSED-ENUM
+    string (which measured basis produced the derived per-cluster SLO triple). It is
+    enum-gated fail-closed — present-but-non-enum RAISES (a real bug, matching the
+    module's closed-value-set posture), so the numeric-only guard is never weakened
+    to "any string on this key". Free text still cannot ride sla_metrics.
     """
     out: dict = {}
     if not isinstance(raw, dict):
         return out
     for k, v in raw.items():
         if not isinstance(k, str) or not _METRIC_KEY_RE.match(k):
+            continue
+        if k == "thpt_slo_basis":
+            if v not in SLO_BASIS_ENUM:
+                raise ValueError(
+                    f"sla_metrics.thpt_slo_basis {v!r} not in {SLO_BASIS_ENUM}"
+                )
+            out[k] = v
             continue
         # bool is a subclass of int — exclude it; an sla metric is a measurement.
         if isinstance(v, bool) or not isinstance(v, Real):
@@ -423,6 +449,77 @@ def _coerce_controller_startup(raw, clean_nonneg):
     return out
 
 
+def _coerce_literal_ttfe(raw, clean_nonneg):
+    """Coerce the literal-TTFE UPPER-BOUND leg (hb#174); None to omit it.
+
+    The exec-probe literal TTFE: every sample includes exec websocket-setup overhead, so
+    it OVER-reads true TTFE — a rung compliant at an SLO bar under this basis is
+    conservatively/provably compliant. That polarity is exactly why this leg (unlike the
+    controller-startup LOWER-bound proxy) is eligible to fill SLO cells downstream
+    (slo_rate owns the pick + `thpt_slo_basis` stamp).
+
+    `upper_bound` MUST be exactly True (load-bearing: render keys the upper-bound caveat
+    off it, and slo_rate consults the leg only when the polarity flag is present — an
+    absent/false flag drops the whole block so the leg can never render or derive
+    unmarked). `includes_exec_setup_overhead` is carried only when exactly True. The
+    producer's free-text caveat is render-owned and NEVER carried here.
+
+    pareto_points must be a non-empty list. Per point: `offered_rate_per_s` is a
+    positive finite Real < 100000 — Real, NOT int-only like the true-TTFE/controller
+    points, because kata rungs are fractional (0.5/1.5 per_s) and first-class where the
+    SLO knee sits at ~2-3/s. `literal_warm_p95_ms` (nonneg) is the required honesty
+    spine. Optional per-point measured values are dropped-per-field on a bad value
+    (honest partial point): warm/cold p50/p95/p99 percentiles + the two measured rate
+    candidates (`acq_fulfilled_per_s`, `controller_completed_per_s` — NAMESPACED, never
+    aliased onto true-TTFE names). Sampling-disclosure ints (`literal_every_n`,
+    `literal_warm_n_exec_ok`, `literal_cold_n_exec_ok`) kept as nonneg ints. Optional
+    verdict from the same closed set. Any malformed point returns None (the leg degrades
+    to nothing, never a fake curve).
+    """
+    if not isinstance(raw, dict):
+        return None
+    if raw.get("upper_bound") is not True:
+        return None
+    pts = raw.get("pareto_points")
+    if not isinstance(pts, list) or not pts:
+        return None
+    clean = []
+    for p in pts:
+        if not isinstance(p, dict):
+            return None
+        rate = p.get("offered_rate_per_s")
+        if isinstance(rate, bool) or not isinstance(rate, Real):
+            return None
+        frate = float(rate)
+        if frate != frate or not (0 < frate < 100000):
+            return None
+        p95 = clean_nonneg(p.get("literal_warm_p95_ms"))
+        if p95 is None:
+            return None
+        cp = {"offered_rate_per_s": frate, "literal_warm_p95_ms": p95}
+        for opt in (
+            "literal_warm_p50_ms", "literal_warm_p99_ms",
+            "literal_cold_p50_ms", "literal_cold_p95_ms", "literal_cold_p99_ms",
+            "acq_fulfilled_per_s", "controller_completed_per_s",
+        ):
+            if opt in p:
+                ov = clean_nonneg(p[opt])
+                if ov is not None:
+                    cp[opt] = ov
+        for opt in ("literal_every_n", "literal_warm_n_exec_ok", "literal_cold_n_exec_ok"):
+            v = p.get(opt)
+            if not isinstance(v, bool) and isinstance(v, int) and v >= 0:
+                cp[opt] = v
+        clean.append(cp)
+    out = {"upper_bound": True, "pareto_points": clean}
+    if raw.get("includes_exec_setup_overhead") is True:
+        out["includes_exec_setup_overhead"] = True
+    verdict = raw.get("verdict")
+    if verdict in STEPUP_VERDICT_ENUM:
+        out["verdict"] = verdict
+    return out
+
+
 def _coerce_saturation_point(raw, clean_nonneg):
     """Keep the closed operator saturation-point shape (#4030); None -> omit the key.
 
@@ -468,11 +565,12 @@ def _coerce_stepup(raw):
     share one contract. PUBLIC-safe by construction: only measured numbers + a bounded GCP
     machine shape survive — never an internal cluster/namespace/project name.
 
-    verdict is REQUIRED (unknown -> None). The two Pareto tables are BLOCK-LEVEL relaxed: the
+    verdict is REQUIRED (unknown -> None). The Pareto tables are BLOCK-LEVEL relaxed: the
     true-TTFE `pareto_points` is OMITTED (not emitted empty) when no step measured a true TTFE
-    warm p95 — the #3975 gap — and the controller_startup LOWER-BOUND proxy block stands in. At
-    least ONE of {pareto_points, controller_startup} must be present and valid; an all-empty
-    sweep returns None (the table renders nothing rather than a partial lie). True-TTFE per-point:
+    warm p95 — the #3975 gap — and the controller_startup LOWER-BOUND proxy and/or the
+    literal_ttfe UPPER-BOUND leg (hb#174) stand in. At least ONE of {pareto_points,
+    controller_startup, literal_ttfe} must be present and valid; an all-empty sweep returns
+    None (the table renders nothing rather than a partial lie). True-TTFE per-point:
     offered_rate_per_s (int 0<r<100000) + ttfe_p95_ms (nonneg, the honesty spine) required;
     ready_per_s / ttfe_p50_ms / ttfe_p99_ms / cost_usd_per_1k_ready optional (dropped on a bad
     value, so a partial Prometheus scrape yields a partial point honestly, never a fabricated 0).
@@ -513,10 +611,12 @@ def _coerce_stepup(raw):
             clean_points.append(cp)
 
     controller = _coerce_controller_startup(raw.get("controller_startup"), _clean_nonneg)
+    literal = _coerce_literal_ttfe(raw.get("literal_ttfe"), _clean_nonneg)
 
-    # Block-level relaxation: emit only when at least one of the two Pareto tables is populated.
-    # An all-empty sweep (no true-TTFE points AND no valid proxy block) is honest "nothing", -> None.
-    if not clean_points and controller is None:
+    # Block-level relaxation: emit only when at least one of the three Pareto tables is
+    # populated. An all-empty sweep (no true-TTFE points AND no valid proxy block AND no
+    # literal upper-bound leg) is honest "nothing", -> None.
+    if not clean_points and controller is None and literal is None:
         return None
 
     verdict = raw.get("verdict")
@@ -531,6 +631,8 @@ def _coerce_stepup(raw):
         out["saturation_point"] = saturation_point
     if controller is not None:
         out["controller_startup"] = controller
+    if literal is not None:
+        out["literal_ttfe"] = literal
 
     # Optional positive-int characteristic rates (None in the source when no breach).
     for key in ("north_star_breach_rate", "saturation_rate", "max_flat_rate"):

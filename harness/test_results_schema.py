@@ -781,6 +781,182 @@ def test_stepup_controller_startup_malformed_dropped():
     _check(len(out["pareto_points"]) == 1, "valid true-TTFE pareto survives a bad proxy sibling")
 
 
+# --- hb#174: literal-TTFE UPPER-BOUND leg + thpt_slo_basis carve-out ---------------------
+
+def _lit_block(**over):
+    base = {
+        "upper_bound": True,
+        "includes_exec_setup_overhead": True,
+        "pareto_points": [
+            {"offered_rate_per_s": 0.5, "literal_warm_p95_ms": 850.0,
+             "literal_warm_p50_ms": 400.0, "literal_warm_p99_ms": 1200.0,
+             "literal_cold_p50_ms": 2100.0, "literal_cold_p95_ms": 4100.0,
+             "literal_cold_p99_ms": 5200.0,
+             "acq_fulfilled_per_s": 0.49, "controller_completed_per_s": 0.47,
+             "literal_every_n": 3, "literal_warm_n_exec_ok": 12,
+             "literal_cold_n_exec_ok": 4},
+            {"offered_rate_per_s": 1.5, "literal_warm_p95_ms": 3200.0},
+        ],
+        "verdict": "degrading",
+    }
+    base.update(over)
+    return base
+
+def test_stepup_literal_ttfe_passthrough():
+    # hb#174: a valid literal exec-probe UPPER-bound block survives alongside a populated
+    # true-TTFE pareto — fractional rungs first-class (Real, not int-only), both NAMESPACED
+    # measured-rate candidates + sampling-disclosure ints carried.
+    su = {
+        "pareto_points": [{"offered_rate_per_s": 10, "ttfe_p95_ms": 240.0}],
+        "verdict": "saturated",
+        "literal_ttfe": _lit_block(),
+    }
+    lt = rs.build_results([], _prov(), GEN_AT, stepup=su)["stepup"]["literal_ttfe"]
+    _check(lt["upper_bound"] is True, "upper_bound True carried")
+    _check(lt["includes_exec_setup_overhead"] is True, "overhead-disclosure flag carried")
+    _check(lt["verdict"] == "degrading", "optional literal verdict carried")
+    _check(len(lt["pareto_points"]) == 2, "both literal points carried")
+    p0 = lt["pareto_points"][0]
+    _check(p0["offered_rate_per_s"] == 0.5,
+           "FRACTIONAL rung rate kept (kata knees sit between integer rungs)")
+    _check(p0["acq_fulfilled_per_s"] == 0.49 and p0["controller_completed_per_s"] == 0.47,
+           "both namespaced measured-rate candidates carried")
+    _check(p0["literal_every_n"] == 3 and p0["literal_warm_n_exec_ok"] == 12
+           and p0["literal_cold_n_exec_ok"] == 4, "sampling-disclosure ints carried")
+    _check(p0["literal_cold_p95_ms"] == 4100.0, "optional cold percentile carried")
+    _check(lt["pareto_points"][1] == {"offered_rate_per_s": 1.5, "literal_warm_p95_ms": 3200.0},
+           "spine-only literal point keeps just the required keys")
+
+def test_stepup_hb174_gap_empty_ttfe_with_literal_emits():
+    # The hb#174 gap shape: empty true-TTFE pareto + a valid literal leg -> stepup emitted,
+    # pareto_points OMITTED (never []), literal carries the only table.
+    su = {"pareto_points": [], "verdict": "no-measured-steps", "literal_ttfe": _lit_block()}
+    out = rs.build_results([], _prov(), GEN_AT, stepup=su)["stepup"]
+    _check("pareto_points" not in out, "empty true-TTFE pareto omitted, not emitted as []")
+    _check(out["verdict"] == "no-measured-steps", "honest no-measured-steps verdict")
+    _check(out["literal_ttfe"]["upper_bound"] is True, "literal block carried")
+
+def test_stepup_literal_ttfe_caveat_never_carried():
+    # PUBLIC-safety: the producer's free-text caveat is render-owned and must NEVER ride the
+    # public schema even if it reaches the coercer (same contract as controller_startup).
+    leak = "INTERNAL-cluster-name caveat with project-id"
+    su = {"pareto_points": [], "verdict": "no-measured-steps",
+          "literal_ttfe": _lit_block(caveat=leak)}
+    out = rs.build_results([], _prov(), GEN_AT, stepup=su)["stepup"]
+    _check("caveat" not in out["literal_ttfe"], "free-text caveat dropped from literal block")
+    _check(leak not in repr(out), "no leaked caveat string anywhere in emitted stepup")
+
+def test_stepup_literal_ttfe_extra_keys_dropped():
+    # Closed-schema per-level lock, same discipline as test_stepup_extra_keys_dropped: an
+    # extra/internal key at the literal-block level AND inside a literal point is dropped.
+    leak = "SYNTHETIC-LITERAL-LEAK-MARKER"
+    blk = _lit_block(internal_namespace=leak)
+    blk["pareto_points"][0]["obs_dsn"] = leak
+    su = {"pareto_points": [], "verdict": "no-measured-steps", "literal_ttfe": blk}
+    lt = rs.build_results([], _prov(), GEN_AT, stepup=su)["stepup"]["literal_ttfe"]
+    _check(set(lt) <= {"upper_bound", "includes_exec_setup_overhead", "pareto_points", "verdict"},
+           f"only contract keys at literal-block level, got {sorted(lt)}")
+    _check(set(lt["pareto_points"][0]) <= {
+        "offered_rate_per_s", "literal_warm_p95_ms", "literal_warm_p50_ms",
+        "literal_warm_p99_ms", "literal_cold_p50_ms", "literal_cold_p95_ms",
+        "literal_cold_p99_ms", "acq_fulfilled_per_s", "controller_completed_per_s",
+        "literal_every_n", "literal_warm_n_exec_ok", "literal_cold_n_exec_ok"},
+        f"only contract keys per literal point, got {sorted(lt['pareto_points'][0])}")
+    _check(leak not in repr(lt), "no leaked string anywhere in emitted literal block")
+
+def test_stepup_literal_ttfe_optional_fields_dropped_on_bad_value():
+    # Honest-partial per point: a bad optional value (NaN percentile, negative rate candidate,
+    # bool sampling int) is dropped while the point emits on its required spine.
+    blk = _lit_block()
+    blk["pareto_points"][0].update({
+        "literal_warm_p50_ms": float("nan"),
+        "acq_fulfilled_per_s": -1.0,
+        "literal_every_n": True,
+    })
+    su = {"pareto_points": [], "verdict": "no-measured-steps", "literal_ttfe": blk}
+    p0 = rs.build_results([], _prov(), GEN_AT, stepup=su)["stepup"]["literal_ttfe"]["pareto_points"][0]
+    _check("literal_warm_p50_ms" not in p0, "NaN optional percentile dropped")
+    _check("acq_fulfilled_per_s" not in p0, "negative rate candidate dropped")
+    _check("literal_every_n" not in p0, "bool sampling int dropped")
+    _check(p0["offered_rate_per_s"] == 0.5 and p0["literal_warm_p95_ms"] == 850.0,
+           "required spine intact")
+    _check(p0["controller_completed_per_s"] == 0.47, "good sibling optional field kept")
+
+def test_stepup_literal_ttfe_overhead_flag_only_true_carried():
+    # includes_exec_setup_overhead is carried only when exactly True — a falsy/truthy-not-True
+    # value is omitted while the block (gated on upper_bound, not this flag) still emits.
+    for flag in (False, None, 1, "true"):
+        su = {"pareto_points": [], "verdict": "no-measured-steps",
+              "literal_ttfe": _lit_block(includes_exec_setup_overhead=flag)}
+        lt = rs.build_results([], _prov(), GEN_AT, stepup=su)["stepup"]["literal_ttfe"]
+        _check("includes_exec_setup_overhead" not in lt,
+               f"non-True overhead flag omitted: {flag!r}")
+        _check(lt["upper_bound"] is True, "block itself still emits")
+
+def test_stepup_literal_ttfe_malformed_dropped():
+    # A malformed literal block is dropped; combined with an empty true-TTFE pareto that drops
+    # the whole stepup key. upper_bound must be exactly True (an unflagged latency basis could
+    # fabricate SLO compliance downstream — the load-bearing gate).
+    bad_blocks = [
+        _lit_block(upper_bound=False),
+        _lit_block(upper_bound=None),
+        _lit_block(upper_bound=1),                      # truthy-not-True
+        _lit_block(upper_bound="true"),
+        {k: v for k, v in _lit_block().items() if k != "upper_bound"},
+        _lit_block(pareto_points=[]),
+        _lit_block(pareto_points="x"),
+        _lit_block(pareto_points=[{"offered_rate_per_s": 10}]),               # no p95 spine
+        _lit_block(pareto_points=[{"offered_rate_per_s": 0,                   # rate not > 0
+                                   "literal_warm_p95_ms": 1.0}]),
+        _lit_block(pareto_points=[{"offered_rate_per_s": True,                # bool rate
+                                   "literal_warm_p95_ms": 1.0}]),
+        _lit_block(pareto_points=[{"offered_rate_per_s": 100000,              # >= cap
+                                   "literal_warm_p95_ms": 1.0}]),
+        _lit_block(pareto_points=[{"offered_rate_per_s": 10,
+                                   "literal_warm_p95_ms": -1.0}]),            # neg p95
+        _lit_block(pareto_points=["not-a-dict"]),
+    ]
+    for blk in bad_blocks:
+        su = {"pareto_points": [], "verdict": "no-measured-steps", "literal_ttfe": blk}
+        r = rs.build_results([], _prov(), GEN_AT, stepup=su)
+        _check("stepup" not in r, f"malformed literal + empty TTFE drops stepup: {blk!r}")
+    # A malformed literal alongside a VALID true-TTFE pareto keeps the true table and just
+    # omits the literal leg (the true table is honest on its own).
+    su = {"pareto_points": [{"offered_rate_per_s": 10, "ttfe_p95_ms": 240.0}],
+          "verdict": "saturated", "literal_ttfe": _lit_block(upper_bound=False)}
+    out = rs.build_results([], _prov(), GEN_AT, stepup=su)["stepup"]
+    _check("literal_ttfe" not in out, "unflagged literal omitted, true-TTFE table kept")
+    _check(len(out["pareto_points"]) == 1, "valid true-TTFE pareto survives a bad literal sibling")
+
+def test_sla_thpt_slo_basis_enum_carveout():
+    # hb#174: thpt_slo_basis is the ONE string key allowed through the numeric-only sla guard —
+    # closed-enum gated. Every enum member passes; any other value RAISES (fail-closed, a
+    # non-enum basis is a bug, never silently dropped or carried).
+    for basis in rs.SLO_BASIS_ENUM:
+        r = rs.build_results(
+            [{"name": "x", "outcome": "pass",
+              "sla_metrics": {"thpt_under_5s_per_cluster": 28.4, "thpt_slo_basis": basis}}],
+            _prov(), GEN_AT)
+        sla = r["scenarios"][0]["sla_metrics"]
+        _check(sla["thpt_slo_basis"] == basis, f"enum basis carried: {basis}")
+        _check(sla["thpt_under_5s_per_cluster"] == 28.4, "numeric sibling unaffected")
+    for bad in ("controller_startup", "", 1, None, True, "TRUE_TTFE"):
+        try:
+            rs.build_results(
+                [{"name": "x", "outcome": "pass", "sla_metrics": {"thpt_slo_basis": bad}}],
+                _prov(), GEN_AT)
+            _check(False, f"non-enum thpt_slo_basis must raise, accepted: {bad!r}")
+        except ValueError:
+            pass
+
+def test_slo_basis_enum_matches_slo_rate_canonical():
+    # Cross-contract: this module's SLO_BASIS_ENUM mirror must equal the canonical tuple in
+    # harness.slo_rate (independent copies by design — the test is the drift guard).
+    from harness.slo_rate import SLO_BASIS_ENUM as CANON
+    _check(tuple(rs.SLO_BASIS_ENUM) == tuple(CANON),
+           f"results_schema enum drifted from slo_rate: {rs.SLO_BASIS_ENUM} != {CANON}")
+
+
 # --- #3954 sibling: warm_vs_cold ingestion coercer --------------------------------------
 
 

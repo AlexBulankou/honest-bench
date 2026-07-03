@@ -386,7 +386,14 @@ def _exec_cell(rate, n_total, n_succ=None):
 
 
 def _clean_matrix_metrics(metrics):
-    """Keep only MATRIX_METRIC_FIELDS keys whose values pass their predicate (closed schema)."""
+    """Keep only MATRIX_METRIC_FIELDS keys whose values pass their predicate (closed schema).
+
+    hb#174 fail-closed basis gate: a `thpt_slo_basis` that was PRESENT in the input but
+    failed its predicate (unknown / outside SLO_BASIS_VALUES) drops the whole cluster
+    triple + the n stamp — an SLO rate must never render with an undisclosed measured
+    basis (the enum is genuinely closed, per the sign-off). An ABSENT basis keeps the
+    triple: legacy / direct saturation-fire triples predate the stamp and are legitimate.
+    """
     out = {}
     if not isinstance(metrics, dict):
         return out
@@ -397,6 +404,14 @@ def _clean_matrix_metrics(metrics):
                     out[key] = metrics[key]
             except (TypeError, ValueError):
                 pass
+    if "thpt_slo_basis" in metrics and "thpt_slo_basis" not in out:
+        for key in (
+            "thpt_under_5s_per_cluster",
+            "thpt_under_1s_per_cluster",
+            "thpt_cluster_node_count",
+            "thpt_slo_n_exec_ok",
+        ):
+            out.pop(key, None)
     return out
 
 
@@ -536,6 +551,60 @@ def _resolve_cluster_x(sources):
     return xs
 
 
+# hb#174: per-basis disclosure text for the cluster-throughput caption. Keyed by the
+# thpt_slo_basis value (schema.SLO_BASIS_VALUES — a sync test asserts every non-default
+# member has an entry here). The DEFAULT basis (true_ttfe — cluster rate read off the
+# true-TTFE Pareto) is deliberately ABSENT: it is what the legend already describes, so it
+# renders no extra line. The two literal bases are honest fallbacks with two disclosures
+# each: (a) the latency gate is the literal exec-probe warm p95 — an UPPER bound on TTFE
+# (every sample carries exec websocket-setup overhead), so a rung compliant at the bar is
+# conservatively compliant; (b) the rate is measured over a candidate-specific window,
+# named explicitly so the two candidates' non-identical denominators are never conflated.
+_SLO_BASIS_NOTES = {
+    "literal_ttfe_upper_bound+controller_completed": (
+        "derived from the literal exec-probe warm p95 — an UPPER bound on TTFE (includes "
+        "exec setup overhead), so compliance at the bar is conservative — gated against the "
+        "controller completion rate (completion-count delta over inter-scrape wall time, "
+        "which includes inter-step overhead and therefore under-reads the sustained rate: "
+        "also conservative)"
+    ),
+    "literal_ttfe_upper_bound+acq_fulfilled": (
+        "derived from the literal exec-probe warm p95 — an UPPER bound on TTFE (includes "
+        "exec setup overhead), so compliance at the bar is conservative — gated against the "
+        "acquisition fulfilled-claims rate (fulfilled claims over per-step duration, pending "
+        "claims excluded: a lower bound on the delivered rate, also conservative)"
+    ),
+}
+
+
+def _resolve_cluster_basis(sources):
+    """hb#174: per-runtime SLO-basis stamp for the caption disclosure. Returns
+    {runtime: (basis, n_exec_ok)} for runtimes whose landed cluster figures carry a
+    NON-DEFAULT thpt_slo_basis (one with an _SLO_BASIS_NOTES entry); n_exec_ok is that same
+    metrics dict's thpt_slo_n_exec_ok (the MIN warm-exec sample count across the credited
+    rungs) or None when absent. Resolved from the SAME metrics dict that carries the landed
+    X — a basis stamp on a cell with no landed cluster figure discloses nothing (there is
+    no figure to caveat), mirroring _resolve_cluster_x's landed-X rule. First landed match
+    per runtime wins, same as the X resolver, so the basis line and the @X caption describe
+    the same measurement."""
+    bases = {}
+    for rt, rt_scen in sources.items():
+        if not rt_scen:
+            continue
+        for sc in rt_scen.values():
+            m = (sc or {}).get("metrics") or {}
+            if _landed_cluster_x(m) is None:
+                continue
+            basis = m.get("thpt_slo_basis")
+            if basis in _SLO_BASIS_NOTES:
+                n = m.get("thpt_slo_n_exec_ok")
+                if not isinstance(n, int) or isinstance(n, bool):
+                    n = None
+                bases[rt] = (basis, n)
+            break
+    return bases
+
+
 def render_matrix(results, kata_results=None):
     """Render the doc's 7-column Core Metrics Table (primary results + optional kata results).
 
@@ -619,6 +688,22 @@ def render_matrix(results, kata_results=None):
             "`pending (cluster-fire)` until a schema-validated per-mode cluster-throughput fire "
             "lands them; see the legend below for how to read the pair."
         )
+    # hb#174: when a runtime's per-cluster figures were derived from a NON-DEFAULT SLO basis
+    # (the literal upper-bound leg), disclose it right under the @X caption — the reader must
+    # see the basis + its measurement window next to the figures, not buried in the legend.
+    # true_ttfe (the default) adds no line. One italic line per affected runtime.
+    cluster_bases = _resolve_cluster_basis(sources)
+    for rt in MATRIX_RUNTIMES:
+        hit = cluster_bases.get(rt)
+        if hit is not None:
+            basis, n_exec_ok = hit
+            note = _SLO_BASIS_NOTES[basis]
+            # hb#174 sign-off (c): a literal p95 over 20 <= n < 100 warm-exec samples
+            # derives honestly (the harness floor is 20) but is a COARSE percentile —
+            # caption the weakest credited sample count so the reader can weigh it.
+            if n_exec_ok is not None and 20 <= n_exec_ok < 100:
+                note = f"{note}; coarse p95 (n={n_exec_ok} warm-exec samples)"
+            lines.append(f"*{RUNTIME_LABELS[rt]} per-cluster rates: {note}.*")
     lines.append("")
     lines.append("| " + " | ".join(header) + " |")
     lines.append("|" + "|".join(["---"] * len(header)) + "|")
