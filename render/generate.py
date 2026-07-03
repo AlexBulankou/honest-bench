@@ -28,6 +28,11 @@ import sys
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _HERE)
 
+# wip.py is a static, data-free module (the closed pending-reason catalog + WORK_IN_PROGRESS.md
+# generator, hb#166). It flat-imports via the sys.path insert above, same as render.py's own
+# `from schema import ...` — no importlib dance needed (it has no `render` shadowing concern).
+from wip import build_work_in_progress  # noqa: E402
+
 
 def _load_render():
     spec = importlib.util.spec_from_file_location("_bench_render", os.path.join(_HERE, "render.py"))
@@ -286,6 +291,14 @@ def main(argv=None):
     with open(details_out, "w") as fh:
         fh.write(details)
     sys.stderr.write(f"generate: wrote {details_out} ({len(details)} bytes)\n")
+    # hb#166: the WORK_IN_PROGRESS.md page every pending/absent cell links to. Machine-rendered
+    # from the closed pending-reason enum (wip.py), never hand-maintained — same generate-only
+    # contract as README/DETAILS.
+    wip = build_work_in_progress()
+    wip_out = os.path.join(root, "WORK_IN_PROGRESS.md")
+    with open(wip_out, "w") as fh:
+        fh.write(wip)
+    sys.stderr.write(f"generate: wrote {wip_out} ({len(wip)} bytes)\n")
     return 0
 
 

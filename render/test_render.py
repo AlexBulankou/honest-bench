@@ -4,12 +4,25 @@ These assert the Layer-1 PII guard holds: anything not declared in schema.py is 
 goal columns are always (non-public), and harness free-text can never reach the output.
 """
 
+import re
+
 import render
 from schema import NON_PUBLIC
+from wip import WORK_IN_PROGRESS_FILE
+
+# hb#166: every matrix DATA cell is now wrapped in a WIP-anchor link
+# (`[pending (reason)](WORK_IN_PROGRESS.md#reason)`). These render-LOGIC tests
+# assert on the semantic cell content, not the link markup (contract-tested
+# separately in test_wip_links.py), so strip the link wrapper before asserting.
+_WIP_LINK_RE = re.compile(r"\[([^\]]*)\]\(" + re.escape(WORK_IN_PROGRESS_FILE) + r"#[a-z0-9-]+\)")
+
+
+def _unlink(s):
+    return _WIP_LINK_RE.sub(r"\1", s)
 
 
 def _render(results):
-    return render.render_product(results)
+    return _unlink(render.render_product(results))
 
 
 def test_unknown_scenario_name_dropped_and_counted():
@@ -555,6 +568,7 @@ def test_matrix_renders_doc_exact_gvisor_rows():
     # landed, the cluster half pends `pending (cluster-fire)` while the per-node half is exact.
     cf = f"pending ({render._CLUSTER_FIRE})"
     # hb#142: each TTFE cell carries its sample count inline as `value (count=N)`.
+    out = _unlink(out)
     assert (
         f"| gVisor | Warm-pool hit (Base image) | 4 /node · {cf} | 4 /node · {cf} "
         "| 0.6s (count=200) | 0.9s (count=200) | 100% |"
@@ -577,7 +591,7 @@ def test_matrix_low_n_ttfe_cells_marked():
     scen[1]["n"] = 1  # cold row: single sample (the inverting case a4z1 flagged)
     out = render.render_matrix(_matrix_results(scen))
     cold_line = [l for l in out.splitlines() if "Unique-image cold" in l][0]
-    cells = [c.strip() for c in cold_line.strip("|").split("|")]
+    cells = [_unlink(c.strip()) for c in cold_line.strip("|").split("|")]
     # hb#142: inline count precedes the low-N dagger — `value (count=N) †`.
     assert cells[4] == f"1.2s (count=1) {render._LOW_N_MARK}"  # TTFE p50 marked
     assert cells[5] == f"1.56s (count=1) {render._LOW_N_MARK}"  # TTFE p95 marked
@@ -602,7 +616,7 @@ def test_matrix_at_floor_n_not_marked():
     scen[1]["n"] = render.TTFE_COMPARABILITY_MIN_N  # exactly at floor
     out = render.render_matrix(_matrix_results(scen))
     cold_line = [l for l in out.splitlines() if "Unique-image cold" in l][0]
-    cells = [c.strip() for c in cold_line.strip("|").split("|")]
+    cells = [_unlink(c.strip()) for c in cold_line.strip("|").split("|")]
     assert cells[4] == "1.2s (count=30)"  # inline count, no marker at the floor
     assert cells[5] == "1.56s (count=30)"
 
@@ -616,7 +630,7 @@ def test_matrix_pending_ttfe_never_marked_even_low_n():
     ]
     out = render.render_matrix(_matrix_results(scen))
     cold_line = [l for l in out.splitlines() if "Unique-image cold" in l][0]
-    cells = [c.strip() for c in cold_line.strip("|").split("|")]
+    cells = [_unlink(c.strip()) for c in cold_line.strip("|").split("|")]
     assert cells[4] == "pending"  # TTFE p50 absent → pending, unmarked
     assert cells[5] == "pending"
 
@@ -626,7 +640,7 @@ def test_matrix_honest_zero_throughput_not_rounded():
     out = render.render_matrix(_matrix_results(_full_gvisor_scenarios()))
     # the per-node half of the <1s cell is exactly "0", never "pending" or a rounded-up value.
     cold_line = [l for l in out.splitlines() if "Unique-image cold" in l][0]
-    cells = [c.strip() for c in cold_line.strip("|").split("|")]
+    cells = [_unlink(c.strip()) for c in cold_line.strip("|").split("|")]
     assert cells[3] == f"0 /node · pending ({render._CLUSTER_FIRE})"  # Throughput @ <1s TTFE
 
 
@@ -643,7 +657,7 @@ def test_matrix_dual_throughput_cluster_figure_above_target_clean():
     )
     out = render.render_matrix(_matrix_results(scen))
     warm_line = [l for l in out.splitlines() if "Warm-pool hit" in l][0]
-    cells = [c.strip() for c in warm_line.strip("|").split("|")]
+    cells = [_unlink(c.strip()) for c in warm_line.strip("|").split("|")]
     assert cells[2] == "4 /node · 350 /cluster"
     assert cells[3] == "4 /node · 320 /cluster"
     assert "⚠️" not in cells[2] and "⚠️" not in cells[3]
@@ -663,7 +677,7 @@ def test_matrix_dual_throughput_cluster_figure_below_target_flagged():
     )
     out = render.render_matrix(_matrix_results(scen))
     warm_line = [l for l in out.splitlines() if "Warm-pool hit" in l][0]
-    cells = [c.strip() for c in warm_line.strip("|").split("|")]
+    cells = [_unlink(c.strip()) for c in warm_line.strip("|").split("|")]
     assert cells[2] == "4 /node · 148 /cluster ⚠️"
     assert cells[3] == "4 /node · 148 /cluster ⚠️"
 
@@ -676,7 +690,7 @@ def test_matrix_dual_throughput_at_target_not_flagged():
     )
     out = render.render_matrix(_matrix_results(scen))
     warm_line = [l for l in out.splitlines() if "Warm-pool hit" in l][0]
-    cells = [c.strip() for c in warm_line.strip("|").split("|")]
+    cells = [_unlink(c.strip()) for c in warm_line.strip("|").split("|")]
     assert cells[2] == f"4 /node · {render.CLUSTER_THROUGHPUT_TARGET} /cluster"
     assert "⚠️" not in cells[2]
 
@@ -702,7 +716,7 @@ def test_matrix_cluster_half_gated_on_node_count_presence():
     )
     out = render.render_matrix(_matrix_results(scen))
     warm_line = [l for l in out.splitlines() if "Warm-pool hit" in l][0]
-    cells = [c.strip() for c in warm_line.strip("|").split("|")]
+    cells = [_unlink(c.strip()) for c in warm_line.strip("|").split("|")]
     assert cells[2] == f"4 /node · pending ({render._CLUSTER_FIRE})"
     assert cells[3] == f"4 /node · pending ({render._CLUSTER_FIRE})"
     assert "/cluster" not in cells[2] and "/cluster" not in cells[3]
@@ -805,7 +819,7 @@ def test_matrix_pending_scenario_suppresses_leaked_metrics():
     }
     out = render.render_matrix(_matrix_results(scen))
     resume_line = [l for l in out.splitlines() if "Resume-from-suspend" in l and "gVisor" in l][0]
-    cells = [c.strip() for c in resume_line.strip("|").split("|")]
+    cells = [_unlink(c.strip()) for c in resume_line.strip("|").split("|")]
     # columns 2..6 (thpt5, thpt1, p50, p95, exec) all pending — none of the provisional
     # values survive. Each pending cell carries the upstream-blocked reason.
     pend = "pending (upstream-blocked)"
@@ -823,7 +837,7 @@ def test_matrix_pass_scenario_still_shows_metrics_after_pending_guard():
     scen = _full_gvisor_scenarios()  # scen[2] suspend_resume is PASS n=1376 here
     out = render.render_matrix(_matrix_results(scen))
     resume_line = [l for l in out.splitlines() if "Resume-from-suspend" in l and "gVisor" in l][0]
-    cells = [c.strip() for c in resume_line.strip("|").split("|")]
+    cells = [_unlink(c.strip()) for c in resume_line.strip("|").split("|")]
     # hb#142: real TTFE p50/p95 survive, now with inline count.
     assert cells[4] == "3.5s (count=1376)" and cells[5] == "5s (count=1376)"
     # N=1376 (>= floor) means no low-N dagger on the TTFE cells
@@ -861,7 +875,7 @@ def test_matrix_kata_warm_cold_rows_pending():
     ]
     assert len(kata_measurable) == 2
     for l in kata_measurable:
-        cells = [c.strip() for c in l.strip("|").split("|")]
+        cells = [_unlink(c.strip()) for c in l.strip("|").split("|")]
         assert cells[2] == "pending" and cells[3] == "pending"
         assert cells[4] == "pending" and cells[5] == "pending"
         assert cells[6] == "pending"
@@ -878,7 +892,7 @@ def test_matrix_resume_kata_is_na_by_design_not_pending():
             if l.startswith("| Kata + microVM | Resume-from-suspend")
         ]
         assert len(resume_kata) == 1
-        cells = [c.strip() for c in resume_kata[0].strip("|").split("|")]
+        cells = [_unlink(c.strip()) for c in resume_kata[0].strip("|").split("|")]
         # columns 2..6 are the 5 metric cells (thpt5, thpt1, p50, p95, exec)
         assert all(c == "N/A" for c in cells[2:7]), cells
         assert "pending" not in resume_kata[0]
@@ -898,7 +912,7 @@ def test_matrix_gvisor_resume_pending_carries_upstream_blocked_reason():
     }
     out = render.render_matrix(_matrix_results(scen))
     resume_line = [l for l in out.splitlines() if "Resume-from-suspend" in l and "gVisor" in l][0]
-    cells = [c.strip() for c in resume_line.strip("|").split("|")]
+    cells = [_unlink(c.strip()) for c in resume_line.strip("|").split("|")]
     pend = "pending (upstream-blocked)"
     # thpt5, thpt1, p50, p95, exec all carry the reason.
     assert cells[2] == pend and cells[3] == pend
@@ -916,9 +930,9 @@ def test_matrix_bare_pending_no_reason_stays_bare():
     # means "ran, but held".
     scen = _full_gvisor_scenarios()
     scen[2] = {"name": "suspend_resume", "outcome": "pending", "n": 0}
-    out = render.render_matrix(_matrix_results(scen))
+    out = _unlink(render.render_matrix(_matrix_results(scen)))
     resume_line = [l for l in out.splitlines() if "Resume-from-suspend" in l and "gVisor" in l][0]
-    cells = [c.strip() for c in resume_line.strip("|").split("|")]
+    cells = [_unlink(c.strip()) for c in resume_line.strip("|").split("|")]
     assert cells[2] == "pending" and cells[4] == "pending" and cells[6] == "pending"
     assert "(" not in resume_line.split("Resume-from-suspend")[1]  # no qualifier anywhere
 
@@ -935,7 +949,7 @@ def test_matrix_free_text_pending_reason_dropped_renders_bare_pending():
     out = render.render_matrix(_matrix_results(scen))
     assert "SYNTHETIC-MATRIX-FREETEXT-LEAK" not in out
     resume_line = [l for l in out.splitlines() if "Resume-from-suspend" in l and "gVisor" in l][0]
-    cells = [c.strip() for c in resume_line.strip("|").split("|")]
+    cells = [_unlink(c.strip()) for c in resume_line.strip("|").split("|")]
     assert cells[2] == "pending" and cells[4] == "pending"  # bare, no leaked qualifier
 
 
@@ -990,6 +1004,7 @@ def test_matrix_invalid_runtime_provenance_dropped_defaults_gvisor():
     # an out-of-enum runtime fails the provenance predicate (dropped) ⇒ default gvisor measured.
     scen = _full_gvisor_scenarios()
     out = render.render_matrix(_matrix_results(scen, provenance={"runtime": "trust-me-vm"}))
+    out = _unlink(out)
     assert "trust-me-vm" not in out
     assert (
         "| gVisor | Warm-pool hit (Base image) | 4 /node · pending (cluster-fire) "
@@ -1001,7 +1016,7 @@ def test_matrix_empty_metrics_renders_pending_skeleton():
     scen = [{"name": "warmpool_cold_start", "outcome": "PASS", "n": 5}]
     out = render.render_matrix(_matrix_results(scen))
     warm = [l for l in out.splitlines() if l.startswith("| gVisor | Warm-pool hit")][0]
-    cells = [c.strip() for c in warm.strip("|").split("|")]
+    cells = [_unlink(c.strip()) for c in warm.strip("|").split("|")]
     # thpt5, p50, exec all pending when the metrics dict is empty
     assert cells[2] == "pending" and cells[4] == "pending" and cells[6] == "pending"
 
@@ -1061,13 +1076,14 @@ def test_matrix_kata_results_fills_kata_rows_gvisor_unchanged():
         _matrix_results(_full_gvisor_scenarios()),
         kata_results=_kata_results(generated_at="2026-07-02T02:53:00Z"),
     )
+    out = _unlink(out)
     assert (
         "| gVisor | Warm-pool hit (Base image) | 4 /node · pending (cluster-fire) "
         "| 4 /node · pending (cluster-fire) | 0.6s (count=200) | 0.9s (count=200) | 100% |"
     ) in out
     kata_cold = [l for l in out.splitlines()
                  if l.startswith("| Kata + microVM | Unique-image cold")][0]
-    cells = [c.strip() for c in kata_cold.strip("|").split("|")]
+    cells = [_unlink(c.strip()) for c in kata_cold.strip("|").split("|")]
     # n=5 is below the TTFE comparability floor, so the dagger rides along — the low-N
     # honesty marker applies to kata_results rows exactly as it does to primary rows.
     assert cells[4] == f"4.362s (count=5) {render._LOW_N_MARK}"
@@ -1083,7 +1099,7 @@ def test_matrix_kata_results_warmpool_renders_pool_topology_constrained():
     )
     kata_warm = [l for l in out.splitlines()
                  if l.startswith("| Kata + microVM | Warm-pool hit")][0]
-    cells = [c.strip() for c in kata_warm.strip("|").split("|")]
+    cells = [_unlink(c.strip()) for c in kata_warm.strip("|").split("|")]
     pend = "pending (pool-topology-constrained)"
     assert cells[2] == pend and cells[3] == pend
     assert cells[4] == pend and cells[5] == pend
@@ -1155,7 +1171,7 @@ def test_matrix_kata_results_resume_row_stays_na():
     )
     resume_kata = [l for l in out.splitlines()
                    if l.startswith("| Kata + microVM | Resume-from-suspend")][0]
-    cells = [c.strip() for c in resume_kata.strip("|").split("|")]
+    cells = [_unlink(c.strip()) for c in resume_kata.strip("|").split("|")]
     assert all(c == "N/A" for c in cells[2:9]), cells
 
 
@@ -1465,6 +1481,7 @@ def test_vcpu_footprint_inert_when_only_cpu_present():
 def test_vcpu_footprint_gvisor_measured_kata_pends():
     prov = {"runtime": "gvisor", "sandbox_cpu_request_m": 10, "sandbox_mem_request_mib": 16}
     out = render.render_vcpu_footprint(_matrix_results(_full_gvisor_scenarios(), provenance=prov))
+    out = _unlink(out)
     assert "## Per-Sandbox Footprint (declared request)" in out
     assert "| gVisor | 10m | 16Mi |" in out
     assert "| Kata + microVM | pending | pending |" in out
@@ -1497,6 +1514,7 @@ def test_vcpu_footprint_kata_companion_wrong_product_ignored():
         "runtime": "kata-microvm", "sandbox_cpu_request_m": 500, "sandbox_mem_request_mib": 512}}
     out = render.render_vcpu_footprint(
         _matrix_results(_full_gvisor_scenarios(), provenance=prov), kata_results=kr)
+    out = _unlink(out)
     assert "| Kata + microVM | pending | pending |" in out
 
 
@@ -2875,6 +2893,7 @@ def test_operating_envelope_always_renders_skeleton_all_pending():
     # No source blocks present ⇒ the table STILL renders (honest skeleton), every row `pending`.
     # Absence of a measurement is `pending`, never a dropped row and never a guessed number.
     out = render.render_operating_envelope(_matrix_results([]))
+    out = _unlink(out)
     assert "## Operating Envelope — what wait should I budget?" in out
     # All four rows render, all four waits pend.
     assert "| Steady trickle — warm pool keeps up with demand | pending | full start → first result |" in out
@@ -2927,6 +2946,7 @@ def test_operating_envelope_row1_pends_when_scenario_not_pass():
     out = render.render_operating_envelope(
         _matrix_results(scen, at_scale_contention=_asc(),
                         concurrent_burst=_cb(), warm_pool_acquisition=_wpa()))
+    out = _unlink(out)
     assert "| Steady trickle — warm pool keeps up with demand | pending | full start → first result |" in out
     assert "| Bursty — pool oversubscribed 2:1 (60 claims / 30 ready) | ~1.7s | full start → first result |" in out
 
@@ -2943,6 +2963,7 @@ def test_operating_envelope_row1_pend_inherits_pending_reason():
     out = render.render_operating_envelope(
         _matrix_results(scen, at_scale_contention=_asc(),
                         concurrent_burst=_cb(), warm_pool_acquisition=_wpa()))
+    out = _unlink(out)
     assert ("| Steady trickle — warm pool keeps up with demand | "
             "pending (upstream-blocked) | full start → first result |") in out
 
@@ -2959,6 +2980,7 @@ def test_operating_envelope_row1_missing_ttfe_pass_is_bare_pending():
     out = render.render_operating_envelope(
         _matrix_results(scen, at_scale_contention=_asc(),
                         concurrent_burst=_cb(), warm_pool_acquisition=_wpa()))
+    out = _unlink(out)
     assert "| Steady trickle — warm pool keeps up with demand | pending | full start → first result |" in out
     assert "pending (upstream-blocked)" not in out
 
@@ -2968,6 +2990,7 @@ def test_operating_envelope_row2_pends_when_contention_absent():
     out = render.render_operating_envelope(
         _matrix_results(_full_gvisor_scenarios(),
                         concurrent_burst=_cb(), warm_pool_acquisition=_wpa()))
+    out = _unlink(out)
     assert "| Bursty — pool oversubscribed (more claims than ready pool) | pending | full start → first result |" in out
     # its neighbours still render
     assert "| 300 sandboxes requested at once (1:1 pool) | ~6.9s | full start → first result |" in out
@@ -2979,6 +3002,7 @@ def test_operating_envelope_row2_pends_when_contention_inert_bad_runtime():
         _matrix_results(_full_gvisor_scenarios(),
                         at_scale_contention=_asc(runtime_class="lukewarm"),
                         concurrent_burst=_cb(), warm_pool_acquisition=_wpa()))
+    out = _unlink(out)
     assert "| Bursty — pool oversubscribed (more claims than ready pool) | pending | full start → first result |" in out
 
 
@@ -2986,6 +3010,7 @@ def test_operating_envelope_row3_pends_when_burst_absent():
     out = render.render_operating_envelope(
         _matrix_results(_full_gvisor_scenarios(),
                         at_scale_contention=_asc(), warm_pool_acquisition=_wpa()))
+    out = _unlink(out)
     assert "| Hundreds of sandboxes requested at once (1:1 pool) | pending | full start → first result |" in out
 
 
@@ -3007,6 +3032,7 @@ def test_operating_envelope_row3_ignores_cold_legs():
     cb = _cb(legs=[{"n": 300, "mode": "cold", "ttfe_p50_ms": 56029.4, "ttfe_p95_ms": 58412.4}])
     out = render.render_operating_envelope(
         _matrix_results(_full_gvisor_scenarios(), concurrent_burst=cb))
+    out = _unlink(out)
     assert "| Hundreds of sandboxes requested at once (1:1 pool) | pending | full start → first result |" in out
 
 
@@ -3014,6 +3040,7 @@ def test_operating_envelope_row4_pends_when_acquisition_absent():
     out = render.render_operating_envelope(
         _matrix_results(_full_gvisor_scenarios(),
                         at_scale_contention=_asc(), concurrent_burst=_cb()))
+    out = _unlink(out)
     assert "| Sustained high-rate churn | pending | pool hand-off only (before exec) |" in out
 
 
@@ -3232,6 +3259,7 @@ def test_north_star_low_n_dagger_on_p95_cell():
 def test_north_star_unmeasured_runtime_pends():
     # No kata companion artifact ⇒ the kata row pends on both cells — never a guess.
     out = render.render_north_star(_matrix_results(_full_gvisor_scenarios()))
+    out = _unlink(out)
     assert "| Kata + microVM | pending | pending |" in out
 
 
@@ -3241,6 +3269,7 @@ def test_north_star_kata_pending_warm_scenario_falls_through_to_pending():
     out = render.render_north_star(
         _matrix_results(_full_gvisor_scenarios()), kata_results=_kata_results()
     )
+    out = _unlink(out)
     assert "| Kata + microVM | pending | pending |" in out
 
 
@@ -3268,6 +3297,7 @@ def test_north_star_kata_results_wrong_product_or_runtime_ignored():
         _kata_results(scenarios=kata_scen, provenance={"runtime": "gvisor"}),
     ):
         out = render.render_north_star(_matrix_results(_full_gvisor_scenarios()), kata_results=kr)
+        out = _unlink(out)
         assert "| Kata + microVM | pending | pending |" in out
 
 

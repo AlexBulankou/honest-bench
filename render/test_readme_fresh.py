@@ -16,6 +16,7 @@ import difflib
 import os
 
 from generate import build_readme, build_details, _repo_root
+from wip import build_work_in_progress
 
 
 def _committed_readme():
@@ -25,6 +26,11 @@ def _committed_readme():
 
 def _committed_details():
     with open(os.path.join(_repo_root(), "DETAILS.md")) as fh:
+        return fh.read()
+
+
+def _committed_wip():
+    with open(os.path.join(_repo_root(), "WORK_IN_PROGRESS.md")) as fh:
         return fh.read()
 
 
@@ -65,6 +71,31 @@ def test_committed_details_equals_full_generate_output():
             "committed DETAILS.md is STALE vs render/generate.py output — run "
             "`python3 -m render.generate` and commit the result.\n" + diff
         )
+
+
+def test_committed_wip_equals_full_generate_output():
+    # hb#166: WORK_IN_PROGRESS.md is machine-rendered from the closed pending-reason enum
+    # (wip.py), same generate-only freshness discipline as README/DETAILS.
+    committed = _committed_wip()
+    generated = build_work_in_progress()
+    if committed != generated:
+        diff = "\n".join(
+            difflib.unified_diff(
+                generated.splitlines(),
+                committed.splitlines(),
+                fromfile="render/wip.py build_work_in_progress output",
+                tofile="committed WORK_IN_PROGRESS.md",
+                lineterm="",
+            )
+        )
+        raise AssertionError(
+            "committed WORK_IN_PROGRESS.md is STALE vs render output — run "
+            "`python3 -m render.generate` and commit the result.\n" + diff
+        )
+
+
+def test_build_wip_is_deterministic():
+    assert build_work_in_progress() == build_work_in_progress()
 
 
 def test_build_details_is_deterministic():

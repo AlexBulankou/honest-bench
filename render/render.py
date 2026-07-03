@@ -46,6 +46,7 @@ from schema import (
     WARM_VS_COLD_FIELDS,
     _ISO,
 )
+from wip import build_work_in_progress, link_pending, wip_link
 
 # #4137: the sentence appended to the drained-regime warm caveat that NAMES the term driving
 # warm-hit TTFE growth with claim-count. Keyed by the schema WARM_SCALING_TERMS enum so the
@@ -499,7 +500,7 @@ def render_density_detail(results, kata_results=None):
     for rt in MATRIX_RUNTIMES:
         rt_scen = sources.get(rt)
         density = _runtime_density(rt_scen) if rt_scen is not None else None
-        cell = _fmt_num(density) if density is not None else _PENDING
+        cell = _fmt_num(density) if density is not None else link_pending(_PENDING)
         lines.append(f"| {RUNTIME_LABELS[rt]} | {cell} |")
     lines.append("")
     return "\n".join(lines) + "\n"
@@ -635,7 +636,8 @@ def render_matrix(results, kata_results=None):
             # future measurement that is structurally impossible. Holds regardless of
             # which runtime this run measured (a kata-measured run still N/As it).
             if is_resume and rt == "kata-microvm":
-                lines.append("| " + " | ".join([rt_label, mode_label] + [_NA] * 5) + " |")
+                na_cell = link_pending(_NA)
+                lines.append("| " + " | ".join([rt_label, mode_label] + [na_cell] * 5) + " |")
                 continue
             sc = rt_scen.get(scen_name) if measured else None
             sc_pending = bool(sc) and sc.get("outcome") == "pending"
@@ -727,11 +729,10 @@ def render_matrix(results, kata_results=None):
             else:
                 exec_cell = pending_tok
 
+            data_cells = [link_pending(c) for c in (thpt5, thpt1, p50, p95, exec_cell)]
             lines.append(
                 "| "
-                + " | ".join(
-                    [rt_label, mode_label, thpt5, thpt1, p50, p95, exec_cell]
-                )
+                + " | ".join([rt_label, mode_label] + data_cells)
                 + " |"
             )
     lines.append("")
@@ -893,7 +894,8 @@ def render_north_star(results, kata_results=None, heading=None):
         sc = rt_scen.get("warmpool_cold_start") if rt_scen is not None else None
         p95 = sc["metrics"].get("ttfe_p95_ms") if sc else None
         if p95 is None:
-            lines.append(f"| {RUNTIME_LABELS[rt]} | {_PENDING} | {_PENDING} |")
+            pend = link_pending(_PENDING)
+            lines.append(f"| {RUNTIME_LABELS[rt]} | {pend} | {pend} |")
             continue
         p95_cell = _fmt_secs(p95)
         n_val = sc["n"] if sc["n"] > 0 else None
@@ -1042,7 +1044,7 @@ def render_operating_envelope(results, heading=None):
     lines.append("| " + " | ".join(header) + " |")
     lines.append("|" + "|".join(["---"] * len(header)) + "|")
     for label, wait, scope in rows:
-        lines.append(f"| {label} | {wait} | {scope} |")
+        lines.append(f"| {label} | {link_pending(wait)} | {scope} |")
     lines.append("")
     return "\n".join(lines)
 
@@ -1583,7 +1585,7 @@ def render_vcpu_footprint(results, kata_results=None):
     for rt in MATRIX_RUNTIMES:
         rt_fp = footprints.get(rt)
         if rt_fp is None:
-            cpu_cell = mem_cell = _PENDING
+            cpu_cell = mem_cell = link_pending(_PENDING)
         else:
             cpu_cell = f"{rt_fp[0]}m"
             mem_cell = f"{rt_fp[1]}Mi"
@@ -1845,7 +1847,9 @@ def render_scale_proof(results, heading="## Scale Proof (Linearity Check)"):
     lines = [heading, ""]
     lines.append("| " + " | ".join(header) + " |")
     lines.append("|" + "|".join(["---"] * len(header)) + "|")
-    lines.append("| " + " | ".join([nodes, dens_verdict, thpt_verdict]) + " |")
+    lines.append(
+        "| " + " | ".join([nodes, link_pending(dens_verdict), link_pending(thpt_verdict)]) + " |"
+    )
     lines.append("")
     # hb#142.3: the density figures in the sequence above are the per-node density RETAINED at
     # each node count (a linearity series — does per-node density hold flat as nodes grow?), a
@@ -2100,7 +2104,9 @@ def render_kata_activation(results):
         pull = f" (image pull {_fmt_secs(e['image_pull_ms'])})" if "image_pull_ms" in e else ""
         lines.append(f"| Cold start — {e['image']}{pull} | {_fmt_secs(e['ready_ms'])} |")
     # Resume row: a genuine upstream gap, NOT a failed/unrun test. (a4s1 ask (b).)
-    lines.append("| Snapshot resume | N/A — upstream-blocked (CRIU resume not wired, #3097) |")
+    # Links to the WIP entry; no bare internal issue ref on the public page (hb#166).
+    resume_cell = wip_link("upstream-blocked", "N/A — upstream-blocked (CRIU resume not wired)")
+    lines.append(f"| Snapshot resume | {resume_cell} |")
     lines.append("")
     if ka.get("measured_at"):
         lines.append(

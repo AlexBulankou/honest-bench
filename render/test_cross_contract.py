@@ -21,9 +21,21 @@ It guards the contract two ways:
 
 import json
 import os
+import re
 import sys
 
 import render
+from wip import WORK_IN_PROGRESS_FILE
+
+_WIP_LINK_RE = re.compile(r"\[([^\]]*)\]\(" + re.escape(WORK_IN_PROGRESS_FILE) + r"#[a-z0-9-]+\)")
+
+
+def _unlink(s):
+    # hb#166 wraps every pending/N-A data cell in a WORK_IN_PROGRESS.md link; these tests
+    # pin semantic row content, so strip the link markup (link integrity is contract-tested
+    # in test_wip_links.py). Idempotent — a no-op on already-unlinked strings.
+    return _WIP_LINK_RE.sub(r"\1", s)
+
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _ROOT = os.path.dirname(_HERE)
@@ -258,7 +270,7 @@ def test_emit_to_render_matrix_convergence_gvisor_doc_rows():
             {"name": "suspend_resume", "outcome": "PASS", "n": 1376, "sla_metrics": resume},
         ],
     }
-    out = render.render_matrix(results)
+    out = _unlink(render.render_matrix(results))
 
     # (b) the three gVisor rows render EXACTLY the spec doc's target numbers. hb#132: the
     # throughput cells are dual `<node> /node · <cluster>`; with no per-cluster field emitted the
@@ -337,7 +349,7 @@ def test_emit_to_render_matrix_convergence_single_sample_ttfe_point():
             _row("suspend_resume", "PASS", resume),
         ],
     }
-    out = render.render_matrix(results)
+    out = _unlink(render.render_matrix(results))
 
     # (b) single-sample rows: p50 == p95 (one point), exec 100%. The TTFE p50/p95 cells carry the
     # matched-N small-sample marker `†` (N=1 < TTFE_COMPARABILITY_MIN_N) so a cross-row read can't
@@ -362,7 +374,7 @@ def test_emit_to_render_matrix_convergence_single_sample_ttfe_point():
         "provenance": {"runtime": "gvisor", "cluster_substrate": "gke", "node_count": 1},
         "scenarios": [_row("native_digest_cold", "FAIL", cold_fail)],
     }
-    out_fail = render.render_matrix(fail_results)
+    out_fail = _unlink(render.render_matrix(fail_results))
     assert "| gVisor | Unique-image cold (RL reality) | pending | pending | pending | pending | 0% (0/1) ⚠️ |" in out_fail
 
 
@@ -1682,7 +1694,7 @@ def test_emit_to_render_slo_sweep_convergence():
             "per-key; only the direct-emit metrics.py leg is all-or-nothing."
         )
 
-    out = render.render_matrix(results)
+    out = _unlink(render.render_matrix(results))
     # 5s half fills (28.4 < the 300 cluster sizing target => ⚠️); 1s half keeps pending.
     assert (
         "| gVisor | Warm-pool hit (Base image) | 4 /node · 28.4 /cluster ⚠️ "
