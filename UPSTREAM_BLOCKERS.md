@@ -53,7 +53,7 @@ kubectl exec a4-a4s2-0 -n a4 -c agent -- \
   > resume-clears-suspended-condition.patch
 
 # 2) apply on a fresh checkout of your fork of kubernetes-sigs/agent-sandbox
-git clone git@github.com:<your-fork>/agent-sandbox.git && cd agent-sandbox
+git clone https://github.com/<your-fork>/agent-sandbox.git && cd agent-sandbox
 git remote add upstream https://github.com/kubernetes-sigs/agent-sandbox.git
 git fetch upstream main
 git checkout -b resume-clears-suspended-condition upstream/main
