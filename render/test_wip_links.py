@@ -128,6 +128,71 @@ def test_wip_page_has_no_bare_github_autolink():
     )
 
 
+def _resume_cell_anchor(page, *, matrix):
+    """The WIP anchor the Kata+microVM resume cell links to on a rendered page.
+
+    matrix=True scans the Core Metrics matrix row (`Resume-from-suspend` under the
+    `Kata + microVM` runtime); matrix=False scans the Kata activation DETAILS row
+    (`Snapshot resume`). Returns the single anchor id, or None if the cell is absent
+    or unlinked. hb#172: both must resolve to the SAME anchor.
+    """
+    needle = "Resume-from-suspend" if matrix else "Snapshot resume"
+    pat = re.compile(re.escape(WORK_IN_PROGRESS_FILE) + r"#([a-z0-9-]+)")
+    for line in page.splitlines():
+        if not line.startswith("|") or needle not in line:
+            continue
+        if matrix and "Kata + microVM" not in line:
+            continue
+        anchors = set(pat.findall(line))
+        # the matrix row has one anchor per SLO column, all identical by construction
+        return anchors.pop() if len(anchors) == 1 else (anchors or None)
+    return None
+
+
+def test_kata_resume_cell_coherent_across_surfaces():
+    # hb#172: the resume-from-suspend x Kata+microVM cell must tell ONE story on both
+    # public surfaces. It previously rendered `na-by-construction` in the README matrix
+    # but `upstream-blocked` in the DETAILS Kata activation block — a self-contradiction
+    # (is it impossible-by-model, or a fixable upstream gap?). Assert both now resolve to
+    # the same na-by-construction anchor: CRIU checkpoint/restore does not transfer to the
+    # Kata VM isolation model, so THIS metric can never be measured under Kata.
+    matrix_anchor = _resume_cell_anchor(build_readme(), matrix=True)
+    details_anchor = _resume_cell_anchor(build_details(), matrix=False)
+    assert matrix_anchor == NA_BY_CONSTRUCTION, (
+        f"README matrix Kata resume cell links to {matrix_anchor!r}, expected "
+        f"{NA_BY_CONSTRUCTION!r}"
+    )
+    assert details_anchor == NA_BY_CONSTRUCTION, (
+        f"DETAILS Kata resume cell links to {details_anchor!r}, expected "
+        f"{NA_BY_CONSTRUCTION!r}"
+    )
+    assert matrix_anchor == details_anchor, (
+        f"Kata resume cell diverges across surfaces: matrix={matrix_anchor!r} "
+        f"DETAILS={details_anchor!r} (hb#172 unification regressed)"
+    )
+
+
+def test_upstream_blocked_scoped_to_gvisor_not_kata():
+    # hb#172: the `upstream-blocked` WIP entry must NOT fold the Kata resume cell into the
+    # gVisor gap. It previously claimed CRIU "is not wired upstream" on the Kata VM model —
+    # framing an impossible-by-construction cell as a fixable upstream gap. The provenance
+    # `trace` is now gVisor-scoped; any Kata mention in the entry may only CONTRAST the
+    # separate na-by-construction story, never assert Kata is upstream-gated.
+    entry = WIP_CATALOG["upstream-blocked"]
+    trace = entry["trace"].lower()
+    assert "kata" not in trace, (
+        "upstream-blocked `trace` still references Kata — the Kata resume cell is "
+        "na-by-construction, not an upstream gap; keep the trace gVisor-scoped (hb#172)."
+    )
+    # If the `why` mentions Kata at all, it must be in the na-by-construction contrast.
+    why = entry["why"].lower()
+    if "kata" in why:
+        assert "na-by-construction" in why, (
+            "upstream-blocked `why` mentions Kata without the na-by-construction contrast "
+            "— it must not imply the Kata resume cell is upstream-blocked (hb#172)."
+        )
+
+
 def _run_all():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:

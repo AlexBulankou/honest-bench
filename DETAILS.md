@@ -58,7 +58,7 @@ These are **Kata + microVM pod-Ready / microVM-activation** latencies — the ti
 | Warm-pool hit (ubuntu:24.04) | 3s |
 | Cold start — debian:12 (image pull 0.9s) | 3s |
 | Cold start — ubuntu:24.04 (image pull 0.887s) | 5s |
-| Snapshot resume | [N/A — upstream-blocked (CRIU resume not wired)](WORK_IN_PROGRESS.md#upstream-blocked) |
+| Snapshot resume | [N/A — CRIU checkpoint/restore does not transfer to the Kata VM model](WORK_IN_PROGRESS.md#na-by-construction) |
 
 _Measured 2026-06-30 — Kata pod-Ready / microVM-activation (point-in-time; not TTFE)._
 
