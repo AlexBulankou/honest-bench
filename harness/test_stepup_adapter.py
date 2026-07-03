@@ -221,6 +221,98 @@ def test_flatten_non_dict_controller_startup_omitted():
     _check("controller_startup" not in flat, "non-dict controller_startup omitted from flat record")
 
 
+# ----------------------------------- literal-TTFE UPPER-BOUND leg (hb#174)
+
+def _nested_literal(over=None):
+    # The hb#174 producer shape: an EMPTY true-TTFE pareto (#3975 stamper unlanded) + a
+    # SEPARATE nested literal_ttfe block carrying the exec-probe UPPER-bound leg with the
+    # two NAMESPACED measured-rate candidates. Rung rates are fractional on purpose —
+    # kata rungs are 0.5/1.5 per_s and must be first-class through the whole bridge.
+    lt = {
+        "upper_bound": True,
+        "includes_exec_setup_overhead": True,
+        "caveat": "UPPER BOUND -- every sample includes exec websocket-setup overhead (hb#174)",
+        "saturation": {"verdict": "degrading", "max_flat_rate": 1},
+        "pareto": [
+            {"offered_rate_per_s": 0.5, "literal_warm_p95_ms": 850.0,
+             "literal_warm_p50_ms": 400.0, "literal_warm_p99_ms": 1200.0,
+             "literal_cold_p95_ms": 4100.0,
+             "acq_fulfilled_per_s": 0.49, "controller_completed_per_s": 0.47,
+             "literal_every_n": 3, "literal_warm_n_exec_ok": 12},
+            {"offered_rate_per_s": 1.5, "literal_warm_p95_ms": 3200.0,
+             "acq_fulfilled_per_s": 1.42, "controller_completed_per_s": 1.38},
+        ],
+    }
+    rec = _nested()
+    rec["pareto"] = []  # true-TTFE honestly empty while #3975 is open
+    rec["saturation"]["verdict"] = "no-measured-steps"
+    rec["literal_ttfe"] = lt
+    if over:
+        rec["literal_ttfe"].update(over)
+    return rec
+
+
+def test_flatten_lifts_literal_ttfe_block():
+    flat = a.stepup_nested_to_flat(_nested_literal())
+    lt = flat["literal_ttfe"]
+    _check(lt["upper_bound"] is True, "upper_bound carried verbatim")
+    _check(lt["includes_exec_setup_overhead"] is True,
+           "includes_exec_setup_overhead carried verbatim")
+    _check(len(lt["pareto_points"]) == 2, "literal pareto -> pareto_points (2 points)")
+    _check(lt["pareto_points"][0]["literal_warm_p95_ms"] == 850.0,
+           "namespaced per-point warm p95 lifted (never aliased to ttfe_p95_ms)")
+    _check(lt["verdict"] == "degrading", "saturation.verdict lifted to literal_ttfe.verdict")
+    _check("caveat" not in lt, "free-text caveat DELIBERATELY NOT lifted (render-owned, public-safe)")
+
+
+def test_convergence_literal_ttfe_round_trips():
+    out = rs._coerce_stepup(a.stepup_nested_to_flat(_nested_literal()))
+    _check(out is not None, "hb#174 gap record (empty TTFE + literal leg) coerces, not dropped")
+    _check("pareto_points" not in out, "empty true-TTFE pareto omitted, not emitted as []")
+    _check(out["verdict"] == "no-measured-steps", "honest no-measured-steps top-level verdict")
+    lt = out["literal_ttfe"]
+    _check(lt["upper_bound"] is True, "upper_bound survives the round trip")
+    _check(lt["includes_exec_setup_overhead"] is True,
+           "includes_exec_setup_overhead survives the round trip")
+    _check(lt["verdict"] == "degrading", "literal verdict survives")
+    _check(len(lt["pareto_points"]) == 2, "both literal points survive")
+    p0 = lt["pareto_points"][0]
+    _check(p0["offered_rate_per_s"] == 0.5,
+           "FRACTIONAL rung rate survives (Real, not int-only like true-TTFE points)")
+    _check(p0["acq_fulfilled_per_s"] == 0.49 and p0["controller_completed_per_s"] == 0.47,
+           "both NAMESPACED measured-rate candidates carried")
+    _check(p0["literal_every_n"] == 3 and p0["literal_warm_n_exec_ok"] == 12,
+           "sampling-disclosure ints carried")
+    _check(p0["literal_cold_p95_ms"] == 4100.0, "optional cold percentile carried")
+
+
+def test_convergence_literal_ttfe_caveat_never_round_trips():
+    # End-to-end public-safety, same contract as the controller leg: the producer's
+    # free-text caveat never reaches the coerced public output.
+    rec = _nested_literal()
+    leak = rec["literal_ttfe"]["caveat"]
+    out = rs._coerce_stepup(a.stepup_nested_to_flat(rec))
+    _check("caveat" not in out["literal_ttfe"], "caveat absent from coerced literal block")
+    _check(leak not in repr(out), "no caveat free-text anywhere in coerced output")
+
+
+def test_convergence_literal_upper_bound_flag_gates_block():
+    # An unflagged literal block must NOT survive coercion — an unmarked latency basis
+    # could fabricate SLO compliance downstream. upper_bound must be exactly True.
+    for flag in (False, None, "true", 1):
+        rec = _nested_literal({"upper_bound": flag})
+        out = rs._coerce_stepup(a.stepup_nested_to_flat(rec))
+        _check(out is None, f"upper_bound={flag!r} -> whole stepup block dropped "
+               "(empty true-TTFE + gated literal = nothing measured)")
+
+
+def test_flatten_non_dict_literal_ttfe_omitted():
+    rec = _nested_literal()
+    rec["literal_ttfe"] = "not-a-dict"
+    flat = a.stepup_nested_to_flat(rec)
+    _check("literal_ttfe" not in flat, "non-dict literal_ttfe omitted from flat record")
+
+
 def test_convergence_partial_measured_subset_only():
     # An UNMEASURED step (CL2/scrape gap) is already excluded from `pareto` by the
     # producer's assemble_pareto, so the adapter round-trips the MEASURED SUBSET only --

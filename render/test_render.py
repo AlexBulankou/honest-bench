@@ -728,6 +728,111 @@ def test_matrix_cluster_half_gated_on_node_count_presence():
     assert "distinct from the whole-cluster Saturation ceiling in DETAILS" in out
 
 
+def test_matrix_unknown_slo_basis_drops_cluster_triple_fail_closed():
+    # hb#174 sign-off (b): the basis enum is genuinely CLOSED. A cluster triple stamped with
+    # a basis outside SLO_BASIS_VALUES fails the schema predicate, and the fail-closed gate
+    # in _clean_matrix_metrics drops the WHOLE triple — the cluster halves pend and no X
+    # caption renders. An SLO rate must never print with an undisclosed/unknown basis.
+    # (The ABSENT-basis case — legacy direct-emit triples — stays covered by
+    # test_matrix_dual_throughput_cluster_figure_above_target_clean.)
+    scen = _full_gvisor_scenarios()
+    scen[0]["sla_metrics"].update(
+        {
+            "thpt_under_5s_per_cluster": 350,
+            "thpt_under_1s_per_cluster": 320,
+            "thpt_cluster_node_count": 40,
+            "thpt_slo_basis": "made_up_basis",
+        }
+    )
+    out = render.render_matrix(_matrix_results(scen))
+    warm_line = [l for l in out.splitlines() if "Warm-pool hit" in l][0]
+    cells = [_unlink(c.strip()) for c in warm_line.strip("|").split("|")]
+    assert cells[2] == f"4 /node · pending ({render._CLUSTER_FIRE})"
+    assert cells[3] == f"4 /node · pending ({render._CLUSTER_FIRE})"
+    assert "at 40 nodes" not in out
+    assert "made_up_basis" not in out  # the unknown stamp itself never leaks to the page
+
+
+def test_matrix_literal_basis_note_with_coarse_p95_caption():
+    # hb#174 sign-off (c): a literal-controller triple whose credited rungs' MIN warm-exec
+    # sample count is 20 <= n < 100 renders the basis disclosure line PLUS the coarse-p95
+    # caption naming n, right under the @X caption.
+    scen = _full_gvisor_scenarios()
+    scen[0]["sla_metrics"].update(
+        {
+            "thpt_under_5s_per_cluster": 27.1,
+            "thpt_cluster_node_count": 40,
+            "thpt_slo_basis": "literal_ttfe_upper_bound+controller_completed",
+            "thpt_slo_n_exec_ok": 24,
+        }
+    )
+    out = render.render_matrix(_matrix_results(scen))
+    warm_line = [l for l in out.splitlines() if "Warm-pool hit" in l][0]
+    cells = [_unlink(c.strip()) for c in warm_line.strip("|").split("|")]
+    assert cells[2] == "4 /node · 27.1 /cluster ⚠️"  # figure renders real (below target)
+    assert "at 40 nodes" in out
+    assert "gVisor per-cluster rates: derived from the literal exec-probe warm p95" in out
+    assert "controller completion rate" in out  # window disclosure (sign-off a)
+    assert "coarse p95 (n=24 warm-exec samples)" in out
+
+
+def test_matrix_literal_basis_high_n_no_coarse_caption():
+    # n >= 100 is a fine-grained p95: the basis note still renders (the fallback is always
+    # disclosed) but the coarse-p95 caption does not.
+    scen = _full_gvisor_scenarios()
+    scen[0]["sla_metrics"].update(
+        {
+            "thpt_under_5s_per_cluster": 27.1,
+            "thpt_cluster_node_count": 40,
+            "thpt_slo_basis": "literal_ttfe_upper_bound+acq_fulfilled",
+            "thpt_slo_n_exec_ok": 150,
+        }
+    )
+    out = render.render_matrix(_matrix_results(scen))
+    assert "gVisor per-cluster rates: derived from the literal exec-probe warm p95" in out
+    assert "acquisition fulfilled-claims rate" in out  # the acq window named, not controller's
+    assert "coarse p95" not in out
+
+
+def test_matrix_true_ttfe_basis_renders_no_note_line():
+    # the DEFAULT basis (true_ttfe) is what the legend already describes — a triple stamped
+    # with it renders clean with NO per-cluster-rates disclosure line.
+    scen = _full_gvisor_scenarios()
+    scen[0]["sla_metrics"].update(
+        {
+            "thpt_under_5s_per_cluster": 350,
+            "thpt_under_1s_per_cluster": 320,
+            "thpt_cluster_node_count": 40,
+            "thpt_slo_basis": "true_ttfe",
+        }
+    )
+    out = render.render_matrix(_matrix_results(scen))
+    warm_line = [l for l in out.splitlines() if "Warm-pool hit" in l][0]
+    cells = [_unlink(c.strip()) for c in warm_line.strip("|").split("|")]
+    assert cells[2] == "4 /node · 350 /cluster"
+    assert "at 40 nodes" in out
+    assert "per-cluster rates:" not in out
+
+
+def test_matrix_invalid_n_exec_ok_dropped_no_coarse_caption():
+    # a bool / sub-1 / non-int thpt_slo_n_exec_ok fails its schema predicate and drops out of
+    # the cleaned metrics — the triple + basis note survive, the coarse caption never renders
+    # (n unknown != n coarse), and no fabricated n prints.
+    scen = _full_gvisor_scenarios()
+    scen[0]["sla_metrics"].update(
+        {
+            "thpt_under_5s_per_cluster": 27.1,
+            "thpt_cluster_node_count": 40,
+            "thpt_slo_basis": "literal_ttfe_upper_bound+controller_completed",
+            "thpt_slo_n_exec_ok": True,  # bool masquerading as int — predicate rejects
+        }
+    )
+    out = render.render_matrix(_matrix_results(scen))
+    assert "gVisor per-cluster rates: derived from the literal exec-probe warm p95" in out
+    assert "at 40 nodes" in out
+    assert "coarse p95" not in out
+
+
 def test_matrix_mixed_x_caption_names_each_runtime():
     # hb#132 mixed-X: gVisor's cluster leg at X=40 and kata's at X=20 must NOT share a single
     # first-match X — the caption names each runtime's X and flags non-comparability.
