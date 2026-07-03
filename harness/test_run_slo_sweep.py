@@ -198,6 +198,123 @@ def test_env_var_naming():
            "env var is BENCH_SLO_SWEEP_<SCENARIO-UPPER>")
 
 
+# --- hb#169 runtime-match gate ---
+# The BENCH_SLO_SWEEP_* env namespace is shared across the gVisor (product
+# `sandbox`) and Kata+microVM (product `sandbox-kata`) merges, so a stale env var
+# left set across the OTHER product's run would cross-merge one runtime's rate
+# into the other's matrix cell. The durable guard is a runtime stamp on the
+# record (`params.runtime_class`, which the step-up producer already emits;
+# `params.runtime` also accepted) checked against the merging run's product
+# runtime (_matrix_runtime_for): tolerate-absent (back-compat), reject
+# present-and-mismatched.
+
+def _stamped(runtime, *, field="runtime_class"):
+    """A copy of _NESTED with a runtime stamp in params under `field` (hb#169)."""
+    return {"params": {"cluster_nodes": 40, field: runtime},
+            "pareto": [dict(p) for p in _NESTED["pareto"]]}
+
+
+def test_helper_reads_runtime_class():
+    _check(run._sweep_record_runtime(_stamped("gvisor")) == "gvisor",
+           "reads params.runtime_class")
+
+
+def test_helper_prefers_runtime_over_runtime_class():
+    rec = {"params": {"runtime": "kata-microvm", "runtime_class": "gvisor"}}
+    _check(run._sweep_record_runtime(rec) == "kata-microvm",
+           "params.runtime wins over params.runtime_class")
+
+
+def test_helper_absent_stamp_is_empty():
+    _check(run._sweep_record_runtime(_NESTED) == "", "no stamp -> ''")
+    _check(run._sweep_record_runtime({"params": "junk"}) == "", "non-dict params -> ''")
+    _check(run._sweep_record_runtime({}) == "", "no params -> ''")
+    _check(run._sweep_record_runtime({"params": {"runtime": "  "}}) == "",
+           "blank stamp -> ''")
+
+
+def test_stamped_matching_runtime_merges_gvisor():
+    raw = [_cell(sla_metrics={"ttfe_p95_ms": 900.0})]
+    _with_sweep(_WARM, "sandbox", _stamped("gvisor"), raw)
+    expected = dict(_TRIPLE)
+    expected["ttfe_p95_ms"] = 900.0
+    _check(raw[0]["sla_metrics"] == expected,
+           f"gvisor stamp + sandbox run merges, got {raw[0]['sla_metrics']!r}")
+
+
+def test_stamped_matching_runtime_merges_kata():
+    raw = [_cell(sla_metrics={"ttfe_p95_ms": 640.0})]
+    _with_sweep(_WARM, "sandbox-kata", _stamped("kata-microvm"), raw)
+    expected = dict(_TRIPLE)
+    expected["ttfe_p95_ms"] = 640.0
+    _check(raw[0]["sla_metrics"] == expected,
+           f"kata stamp + sandbox-kata run merges, got {raw[0]['sla_metrics']!r}")
+
+
+def test_stamped_concrete_kata_runtime_merges_on_kata_run():
+    # Real-world vocab: the producer stamps the concrete k8s runtimeClassName
+    # (e.g. kata-qemu) -- there is no `kata-microvm` RuntimeClass on the
+    # cluster. The gate compares runtime *families*, so a kata-qemu stamp
+    # merges on a sandbox-kata run (the case a raw-string compare broke).
+    raw = [_cell(sla_metrics={"ttfe_p95_ms": 512.0})]
+    _with_sweep(_WARM, "sandbox-kata", _stamped("kata-qemu"), raw)
+    expected = dict(_TRIPLE)
+    expected["ttfe_p95_ms"] = 512.0
+    _check(raw[0]["sla_metrics"] == expected,
+           f"kata-qemu stamp + sandbox-kata run merges, got {raw[0]['sla_metrics']!r}")
+
+
+def test_stamped_mismatch_skips_on_kata_run():
+    # The core contamination case: a stale gVisor record env-pointed during a
+    # sandbox-kata merge must NOT cross-merge into the Kata cell.
+    raw = [_cell()]
+    _with_sweep(_WARM, "sandbox-kata", _stamped("gvisor"), raw)
+    _check(raw[0]["sla_metrics"] == {},
+           "gvisor-stamped record skipped on a kata run (no cross-merge)")
+
+
+def test_stamped_mismatch_skips_on_gvisor_run():
+    raw = [_cell()]
+    _with_sweep(_WARM, "sandbox", _stamped("kata-microvm"), raw)
+    _check(raw[0]["sla_metrics"] == {},
+           "kata-stamped record skipped on a gvisor run (no cross-merge)")
+
+
+def test_unstamped_record_merges_backcompat():
+    # A legacy/shakeout record with no stamp still merges (tolerate-absent).
+    raw = [_cell()]
+    _with_sweep(_WARM, "sandbox", _NESTED, raw)
+    _check(raw[0]["sla_metrics"] == _TRIPLE,
+           f"unstamped record merges (back-compat), got {raw[0]['sla_metrics']!r}")
+
+
+def test_params_runtime_field_accepted():
+    raw = [_cell()]
+    _with_sweep(_WARM, "sandbox-kata", _stamped("kata-microvm", field="runtime"), raw)
+    _check(raw[0]["sla_metrics"] == _TRIPLE,
+           "params.runtime (hb#169 field name) accepted as the stamp")
+
+
+def test_matrix_runtime_override_gates():
+    # BENCH_MATRIX_RUNTIME overrides the product->runtime map for both directions.
+    saved = os.environ.get("BENCH_MATRIX_RUNTIME")
+    try:
+        os.environ["BENCH_MATRIX_RUNTIME"] = "kata-microvm"
+        raw = [_cell()]
+        _with_sweep(_WARM, "sandbox", _stamped("kata-microvm"), raw)
+        _check(raw[0]["sla_metrics"] == _TRIPLE,
+               "override makes kata stamp match on the sandbox product")
+        raw = [_cell()]
+        _with_sweep(_WARM, "sandbox", _stamped("gvisor"), raw)
+        _check(raw[0]["sla_metrics"] == {},
+               "override makes gvisor stamp skip on the sandbox product")
+    finally:
+        if saved is None:
+            os.environ.pop("BENCH_MATRIX_RUNTIME", None)
+        else:
+            os.environ["BENCH_MATRIX_RUNTIME"] = saved
+
+
 # --- carry_prior_cluster_triples ---
 
 def _prior(name=_WARM, sla_metrics=None):

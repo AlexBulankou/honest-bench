@@ -686,6 +686,31 @@ def slo_sweep_env_var(scenario: str) -> str:
     return "BENCH_SLO_SWEEP_" + scenario.upper()
 
 
+def _sweep_record_runtime(rec) -> str:
+    """The runtime this sweep record was MEASURED under, if the producer stamped it.
+
+    hb#169: the BENCH_SLO_SWEEP_* env namespace is shared across the gVisor
+    (product `sandbox`) and Kata+microVM (product `sandbox-kata`) merges, so a
+    stale env var left set across the OTHER product's run would cross-merge one
+    runtime's rate into the other's matrix cell. The durable guard is a runtime
+    stamp on the record (`params.runtime_class`, which the step-up producer
+    already emits; `params.runtime` also accepted for the hb#169 provenance-field
+    name) checked against the merging run's product runtime in merge_slo_sweeps.
+
+    Returns the stamped runtime string, or "" when the record carries no stamp
+    (a legacy/shakeout record) — the caller tolerates absent (back-compat) and
+    only rejects a PRESENT-and-mismatched stamp.
+    """
+    params = rec.get("params")
+    if not isinstance(params, dict):
+        return ""
+    for key in ("runtime", "runtime_class"):
+        val = params.get(key)
+        if isinstance(val, str) and val.strip():
+            return val.strip()
+    return ""
+
+
 def merge_slo_sweeps(raw: list, product: str) -> None:
     """Merge per-mode SLO-sweep-derived cluster triples into scenario sla_metrics.
 
@@ -706,9 +731,19 @@ def merge_slo_sweeps(raw: list, product: str) -> None:
     Runs for BOTH runtimes: a kata run's warm-row cluster half fills from its own
     sweep, merged into the sandbox-kata scenario cell that render_matrix reads via
     kata_results.
+
+    hb#169 runtime-match gate: the BENCH_SLO_SWEEP_* env namespace is shared by
+    both runtime products, so a record STAMPED with a runtime other than the one
+    this run measures (_matrix_runtime_for(product)) is a cross-runtime
+    contamination — a stale env var from the other product's fire — and is
+    skipped fail-closed, exactly like an unreadable/underivable record. An
+    unstamped record is tolerated (back-compat: legacy/shakeout records merge as
+    before under a matching product); only a PRESENT-and-mismatched stamp is
+    rejected.
     """
     if product not in _SLO_SWEEP_PRODUCTS:
         return
+    expected_runtime = _matrix_runtime_for(product)
     for name in SLO_SWEEP_SCENARIOS:
         path = os.environ.get(slo_sweep_env_var(name), "").strip()
         if not path:
@@ -716,6 +751,9 @@ def merge_slo_sweeps(raw: list, product: str) -> None:
         try:
             rec = json.loads(pathlib.Path(path).read_text())
         except (OSError, ValueError):
+            continue
+        stamped_runtime = _sweep_record_runtime(rec)
+        if stamped_runtime and rc.runtime_family(stamped_runtime) != rc.runtime_family(expected_runtime):
             continue
         derived = slo_rate.slo_sla_metrics_from_stepup(
             stepup_adapter.stepup_nested_to_flat(rec)
