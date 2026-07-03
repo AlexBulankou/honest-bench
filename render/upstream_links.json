@@ -1,0 +1,78 @@
+{
+  "_meta": {
+    "seeded_from": "UPSTREAM_BLOCKERS.md rev 3",
+    "last_verified": "2026-07-03",
+    "freshness": "Rides every UPSTREAM_BLOCKERS.md refresh PR; upstream link states verified daily by automation."
+  },
+  "classes": {
+    "upstream-blocked": {
+      "renders_at": "gVisor x Resume matrix row (pending cells), matrix legend, WORK_IN_PROGRESS.md#upstream-blocked",
+      "refs": [
+        {
+          "repo": "kubernetes-sigs/agent-sandbox",
+          "number": 873,
+          "kind": "issue",
+          "role": "blocks",
+          "status": "open"
+        },
+        {
+          "repo": "kubernetes-sigs/agent-sandbox",
+          "number": 893,
+          "kind": "pr",
+          "role": "fix-in-flight",
+          "status": "in-review"
+        }
+      ]
+    },
+    "ttfe-exec-probe-basis": {
+      "renders_at": "mapping-only today (no rendered caveat cell); machine-readable seed for the TTFE upper-bound basis",
+      "refs": [
+        {
+          "repo": "kubernetes-sigs/agent-sandbox",
+          "number": 751,
+          "kind": "issue",
+          "role": "blocks",
+          "status": "open"
+        },
+        {
+          "repo": "kubernetes-sigs/agent-sandbox",
+          "number": 761,
+          "kind": "pr",
+          "role": "fix-in-flight",
+          "status": "open"
+        }
+      ]
+    },
+    "snapshot-restore-verify": {
+      "renders_at": "mapping-only today (no rendered caveat cell); machine-readable seed for the blank-but-Ready restore gap",
+      "refs": [
+        {
+          "repo": "kubernetes-sigs/agent-sandbox",
+          "number": 952,
+          "kind": "issue",
+          "role": "blocks",
+          "status": "open"
+        }
+      ]
+    },
+    "substrate-actor-suspend-wedge": {
+      "renders_at": "mapping-only today (no rendered caveat cell); machine-readable seed for the substrate suspend wedge",
+      "refs": [
+        {
+          "repo": "agent-substrate/substrate",
+          "number": 50,
+          "kind": "issue",
+          "role": "blocks",
+          "status": "open"
+        },
+        {
+          "repo": "agent-substrate/substrate",
+          "number": 353,
+          "kind": "pr",
+          "role": "fix-in-flight",
+          "status": "in-review"
+        }
+      ]
+    }
+  }
+}

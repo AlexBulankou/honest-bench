@@ -1,0 +1,161 @@
+"""hb#181: upstream_links mapping + formatter tests.
+
+Covers the JSON loader's fail-loud validation, the URL rule (issue vs PR path),
+and both formatters (compact cell suffix / fuller prose), including the
+unmapped-class -> "" contract that keeps non-upstream pending cells unchanged.
+"""
+
+import pytest
+
+import upstream_links
+from upstream_links import (
+    CLASSES,
+    ref_url,
+    upstream_cell_refs,
+    upstream_prose_refs,
+)
+
+
+# --- shipped-data invariants -------------------------------------------------
+
+
+def test_required_class_present_with_issue_and_fix_pr():
+    # the one class the matrix consumes today must exist, and must carry the
+    # blocking issue first so the rendered arrow reads issue -> fix.
+    refs = CLASSES["upstream-blocked"]["refs"]
+    assert refs[0]["kind"] == "issue" and refs[0]["role"] == "blocks"
+    assert any(r["role"] == "fix-in-flight" for r in refs)
+
+
+def test_all_shipped_refs_point_at_public_oss_repos():
+    # public-safety: every ref in the shipped mapping is a public upstream OSS
+    # repo — never an internal tracker (a#NNNN prose is wip.py's lane, not here).
+    allowed = {"kubernetes-sigs/agent-sandbox", "agent-substrate/substrate"}
+    for cls in CLASSES.values():
+        for ref in cls["refs"]:
+            assert ref["repo"] in allowed, ref
+
+
+# --- URL rule ----------------------------------------------------------------
+
+
+def test_ref_url_issue_vs_pr_paths():
+    issue = {"repo": "kubernetes-sigs/agent-sandbox", "number": 873, "kind": "issue"}
+    pr = {"repo": "kubernetes-sigs/agent-sandbox", "number": 893, "kind": "pr"}
+    assert ref_url(issue) == "https://github.com/kubernetes-sigs/agent-sandbox/issues/873"
+    assert ref_url(pr) == "https://github.com/kubernetes-sigs/agent-sandbox/pull/893"
+
+
+# --- cell formatter ----------------------------------------------------------
+
+
+def test_cell_refs_upstream_blocked_exact():
+    # the exact suffix appended after the link_pending-wrapped token: leading
+    # space, arrow-joined, fix ref labeled with its live status.
+    assert upstream_cell_refs("upstream-blocked") == (
+        " [#873](https://github.com/kubernetes-sigs/agent-sandbox/issues/873)"
+        "→[#893 in review](https://github.com/kubernetes-sigs/agent-sandbox/pull/893)"
+    )
+
+
+def test_cell_refs_unmapped_and_none_are_empty():
+    # non-upstream pending classes render unchanged — "" for anything unmapped.
+    assert upstream_cell_refs("cluster-fire") == ""
+    assert upstream_cell_refs("not-yet-measured") == ""
+    assert upstream_cell_refs(None) == ""
+    assert upstream_cell_refs("") == ""
+
+
+# --- prose formatter ---------------------------------------------------------
+
+
+def test_prose_refs_upstream_blocked_exact():
+    assert upstream_prose_refs("upstream-blocked") == (
+        "[agent-sandbox#873](https://github.com/kubernetes-sigs/agent-sandbox/issues/873)"
+        " (issue, open)"
+        " → fix [agent-sandbox#893](https://github.com/kubernetes-sigs/agent-sandbox/pull/893)"
+        " (PR, in review)"
+    )
+
+
+def test_prose_refs_unmapped_is_empty():
+    assert upstream_prose_refs("no-such-class") == ""
+    assert upstream_prose_refs(None) == ""
+
+
+def test_prose_refs_single_ref_class_has_no_arrow():
+    # snapshot-restore-verify carries only the design issue (no fix PR yet).
+    prose = upstream_prose_refs("snapshot-restore-verify")
+    assert "→" not in prose
+    assert prose == (
+        "[agent-sandbox#952](https://github.com/kubernetes-sigs/agent-sandbox/issues/952)"
+        " (issue, open)"
+    )
+
+
+# --- loader validation (fail-loud at import) ----------------------------------
+
+
+def _valid_ref():
+    return {
+        "repo": "kubernetes-sigs/agent-sandbox",
+        "number": 873,
+        "kind": "issue",
+        "role": "blocks",
+        "status": "open",
+    }
+
+
+def _load_data(tmp_path, monkeypatch, data):
+    # run the REAL loader against a synthesized JSON file — no logic duplication.
+    import json
+
+    p = tmp_path / "upstream_links.json"
+    p.write_text(json.dumps(data), encoding="utf-8")
+    monkeypatch.setattr(upstream_links, "_LINKS_PATH", str(p))
+    return upstream_links._load()
+
+
+def test_loader_accepts_minimal_valid_mapping(tmp_path, monkeypatch):
+    data = {
+        "_meta": {},
+        "classes": {"upstream-blocked": {"refs": [_valid_ref()]}},
+    }
+    loaded = _load_data(tmp_path, monkeypatch, data)
+    assert loaded["classes"]["upstream-blocked"]["refs"][0]["number"] == 873
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda r: r.update(kind="discussion"),
+        lambda r: r.update(role="mentions"),
+        lambda r: r.update(status="draft"),
+        lambda r: r.update(repo="not-a-repo"),
+        lambda r: r.update(repo="a/b/c"),
+        lambda r: r.update(number="873"),
+    ],
+)
+def test_loader_rejects_bad_ref_fields(tmp_path, monkeypatch, mutate):
+    ref = _valid_ref()
+    mutate(ref)
+    with pytest.raises(AssertionError):
+        _load_data(
+            tmp_path, monkeypatch,
+            {"classes": {"upstream-blocked": {"refs": [ref]}}},
+        )
+
+
+def test_loader_rejects_missing_required_class_and_empty_refs(tmp_path, monkeypatch):
+    with pytest.raises(AssertionError):
+        _load_data(
+            tmp_path, monkeypatch,
+            {"classes": {"other": {"refs": [_valid_ref()]}}},
+        )
+    with pytest.raises(AssertionError):
+        _load_data(
+            tmp_path, monkeypatch,
+            {"classes": {"upstream-blocked": {"refs": []}}},
+        )
+    with pytest.raises(AssertionError):
+        _load_data(tmp_path, monkeypatch, {"classes": {}})

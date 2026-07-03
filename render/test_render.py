@@ -8,6 +8,7 @@ import re
 
 import render
 from schema import NON_PUBLIC
+from upstream_links import upstream_cell_refs
 from wip import WORK_IN_PROGRESS_FILE
 
 # hb#166: every matrix DATA cell is now wrapped in a WIP-anchor link
@@ -926,8 +927,9 @@ def test_matrix_pending_scenario_suppresses_leaked_metrics():
     resume_line = [l for l in out.splitlines() if "Resume-from-suspend" in l and "gVisor" in l][0]
     cells = [_unlink(c.strip()) for c in resume_line.strip("|").split("|")]
     # columns 2..6 (thpt5, thpt1, p50, p95, exec) all pending — none of the provisional
-    # values survive. Each pending cell carries the upstream-blocked reason.
-    pend = "pending (upstream-blocked)"
+    # values survive. Each pending cell carries the upstream-blocked reason plus its
+    # upstream refs suffix (hb#181), sourced from the same formatter the renderer uses.
+    pend = "pending (upstream-blocked)" + upstream_cell_refs("upstream-blocked")
     assert cells[2] == pend and cells[3] == pend
     assert cells[4] == pend and cells[5] == pend
     assert cells[6] == pend
@@ -1018,7 +1020,9 @@ def test_matrix_gvisor_resume_pending_carries_upstream_blocked_reason():
     out = render.render_matrix(_matrix_results(scen))
     resume_line = [l for l in out.splitlines() if "Resume-from-suspend" in l and "gVisor" in l][0]
     cells = [_unlink(c.strip()) for c in resume_line.strip("|").split("|")]
-    pend = "pending (upstream-blocked)"
+    # hb#181: the qualified pending cell also carries its exact upstream refs
+    # (issue → fix-PR with live status) inline, from the shared formatter.
+    pend = "pending (upstream-blocked)" + upstream_cell_refs("upstream-blocked")
     # thpt5, thpt1, p50, p95, exec all carry the reason.
     assert cells[2] == pend and cells[3] == pend
     assert cells[4] == pend and cells[5] == pend
@@ -1026,6 +1030,7 @@ def test_matrix_gvisor_resume_pending_carries_upstream_blocked_reason():
     # a bare `pending` never appears in this row (every pending cell is qualified)
     for c in (cells[2], cells[3], cells[4], cells[5], cells[6]):
         assert c == pend
+        assert c != "pending (upstream-blocked)"  # the refs suffix is load-bearing
 
 
 def test_matrix_bare_pending_no_reason_stays_bare():

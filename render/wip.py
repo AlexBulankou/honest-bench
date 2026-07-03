@@ -12,10 +12,13 @@ params, cluster ids, node-pool ids, or codenames. `AlexBulankou/a` is a PRIVATE
 repo, so an a#NNNN reference renders as explicit "internal tracking a#NNNN" prose
 (NOT a bare `#NNNN`, which GitHub would auto-link to a non-existent PUBLIC issue).
 Public honest-bench issues render as normal `hb#NNNN` links; public upstream
-projects (agent-sandbox) are named in plain English.
+projects (agent-sandbox, substrate) are named in plain English, with real
+upstream GitHub issue/PR links (public OSS refs — hb#181) sourced from the
+`upstream_links` mapping, never hand-typed.
 """
 
 from schema import PENDING_REASONS
+from upstream_links import upstream_prose_refs
 
 WORK_IN_PROGRESS_FILE = "WORK_IN_PROGRESS.md"
 
@@ -73,8 +76,9 @@ WIP_CATALOG = {
             "VM isolation model.)"
         ),
         "in_flight": (
-            "Tracked upstream in the agent-sandbox controller. No honest-bench-side measurement "
-            "can graduate it until the upstream fix lands."
+            "Yes — tracked upstream in the agent-sandbox controller: "
+            + upstream_prose_refs("upstream-blocked")
+            + ". No honest-bench-side measurement can graduate it until the upstream fix lands."
         ),
         "eta": (
             "Gated on the upstream agent-sandbox resume-graduation fix. There is no "
@@ -82,7 +86,9 @@ WIP_CATALOG = {
             "lands, not when a run is scheduled."
         ),
         "trace": (
-            "Upstream agent-sandbox controller (resume graduation)."
+            "Upstream agent-sandbox controller (resume graduation): "
+            + upstream_prose_refs("upstream-blocked")
+            + "."
         ),
     },
     "not-yet-measured": {
