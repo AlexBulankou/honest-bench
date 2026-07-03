@@ -67,9 +67,10 @@ WIP_CATALOG = {
         ),
         "why": (
             "**Gated (upstream).** The run itself lands, but an upstream controller gap holds "
-            "graduation: on gVisor the suspended condition never clears, and on the Kata VM model "
-            "CRIU checkpoint/restore is not wired upstream. This is a known upstream gap, NOT an "
-            "unrun or failed cell."
+            "graduation: on gVisor the suspended condition never clears. This is a known upstream "
+            "gap, NOT an unrun or failed cell. (The Kata + microVM resume cell is a separate story "
+            "— `na-by-construction`, because this CRIU-based metric does not transfer to the Kata "
+            "VM isolation model.)"
         ),
         "in_flight": (
             "Tracked upstream in the agent-sandbox controller. No honest-bench-side measurement "
@@ -81,8 +82,7 @@ WIP_CATALOG = {
             "lands, not when a run is scheduled."
         ),
         "trace": (
-            "Upstream agent-sandbox controller (resume graduation); Kata+microVM enablement "
-            "context under internal tracking a#3097."
+            "Upstream agent-sandbox controller (resume graduation)."
         ),
     },
     "not-yet-measured": {

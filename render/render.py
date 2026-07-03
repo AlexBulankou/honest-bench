@@ -46,7 +46,7 @@ from schema import (
     WARM_VS_COLD_FIELDS,
     _ISO,
 )
-from wip import build_work_in_progress, link_pending, wip_link
+from wip import NA_BY_CONSTRUCTION, build_work_in_progress, link_pending, wip_link
 
 # #4137: the sentence appended to the drained-regime warm caveat that NAMES the term driving
 # warm-hit TTFE growth with claim-count. Keyed by the schema WARM_SCALING_TERMS enum so the
@@ -2103,9 +2103,17 @@ def render_kata_activation(results):
     for e in ka["cold_ready"]:
         pull = f" (image pull {_fmt_secs(e['image_pull_ms'])})" if "image_pull_ms" in e else ""
         lines.append(f"| Cold start — {e['image']}{pull} | {_fmt_secs(e['ready_ms'])} |")
-    # Resume row: a genuine upstream gap, NOT a failed/unrun test. (a4s1 ask (b).)
-    # Links to the WIP entry; no bare internal issue ref on the public page (hb#166).
-    resume_cell = wip_link("upstream-blocked", "N/A — upstream-blocked (CRIU resume not wired)")
+    # Resume row under Kata + microVM: N/A by construction, matching the Core Metrics
+    # matrix (hb#172 unification). The benchmark's resume metric is CRIU-based, and CRIU
+    # checkpoint/restore does not transfer to the Kata VM isolation model — so THIS metric
+    # can never be measured under Kata (a hypothetical VM-snapshot resume would be a
+    # different cell, not this one graduating). `upstream-blocked` scopes to gVisor only,
+    # where the run lands but the Suspended condition never clears. Same anchor as the
+    # matrix so both public surfaces tell one story (hb#166: WIP-linked, no bare issue ref).
+    resume_cell = wip_link(
+        NA_BY_CONSTRUCTION,
+        "N/A — CRIU checkpoint/restore does not transfer to the Kata VM model",
+    )
     lines.append(f"| Snapshot resume | {resume_cell} |")
     lines.append("")
     if ka.get("measured_at"):
