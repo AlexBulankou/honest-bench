@@ -1198,7 +1198,9 @@ def render_what_this_means(results):
         lines.append(
             f"- **A warm-pool hit is about {speedup}× faster than starting cold ({rt}).** If "
             "start-up latency matters to you, the warm pool is the single biggest lever — size it "
-            "for your steady demand and most claims never pay the cold path."
+            "for your steady demand and most claims never pay the cold path. (This ratio is the "
+            "dedicated warm-vs-cold leg — a separate point-in-time measurement from the Core "
+            "Metrics matrix rows above, so do not reproduce it by dividing the matrix cells.)"
         )
     else:
         lines.append(
