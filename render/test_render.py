@@ -3213,6 +3213,25 @@ def test_what_this_means_renders_measured_numbers():
     assert "300 sandboxes asked for at once settled in ~6.9s." in out
 
 
+def test_what_this_means_speedup_carries_separate_leg_caveat():
+    # a4z1 honest-display finding: the ~7.3x headline is the warm_vs_cold LEG, NOT matrix-cell
+    # arithmetic — the matrix warm p50 / cold cell divide to a different ratio because they are
+    # separate measurements (and the matrix cold cell is a count=1 single observation). The
+    # measured clause must carry the "separate leg — do not divide the matrix cells" caveat so a
+    # reader never reads the two as a contradiction. Mirrors render_warm_vs_cold's DETAILS caveat.
+    out = render.render_what_this_means(
+        _matrix_results(_full_gvisor_scenarios(), warm_vs_cold=_wc(), concurrent_burst=_cb()))
+    assert "a separate point-in-time measurement from the Core Metrics matrix rows" in out
+    assert "do not reproduce it by dividing the matrix cells" in out
+
+
+def test_what_this_means_separate_leg_caveat_absent_when_speedup_degrades():
+    # The caveat rides ONLY the measured speedup clause — a degraded clause 2 (no warm_vs_cold)
+    # has no ratio to caveat, so the "matrix cells" note must not appear.
+    out = render.render_what_this_means(_matrix_results(_full_gvisor_scenarios()))
+    assert "dividing the matrix cells" not in out
+
+
 def test_what_this_means_no_double_hedge_on_wait_figures():
     # _fmt_wait already prefixes "~"; the prose must not add "about" in front of a ~-value
     # (would read "about ~0.6s"). Speedup keeps "about" because that figure carries no "~".
