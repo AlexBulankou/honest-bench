@@ -571,9 +571,11 @@ _SLO_BASIS_NOTES = {
     ),
     "literal_ttfe_upper_bound+acq_fulfilled": (
         "derived from the literal exec-probe warm p95 — an UPPER bound on TTFE (includes "
-        "exec setup overhead), so compliance at the bar is conservative — gated against the "
-        "acquisition fulfilled-claims rate (fulfilled claims over per-step duration, pending "
-        "claims excluded: a lower bound on the delivered rate, also conservative)"
+        "exec setup overhead), so compliance at the bar is conservative; fills the <5s cell "
+        "ONLY (the <1s cell stays honest-empty under this basis) — throughput is the "
+        "acquisition rate: fulfilled (claim->bound)/s, steady-state, pending claims "
+        "excluded; trust-gated per rung on agreement with the independent controller "
+        "completion rate (divergent rungs are ineligible)"
     ),
 }
 

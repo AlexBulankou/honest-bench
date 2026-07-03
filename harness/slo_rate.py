@@ -10,10 +10,15 @@ The SLO rate for bar B is then read straight off the sweep:
 
     slo_rate(B) = max measured ready_per_s over rungs whose ttfe_p95_ms <= B
 
-One sweep fills BOTH bars (the 5s-boundary rung and the 1s-boundary rung generally
-differ), which is exactly why derivation-from-sweep beats a single boundary fire: a
-fire pinned at one bar's boundary cannot honestly state the other bar's rate, but the
-coupled emit triple carries both.
+One TRUE-TTFE sweep fills BOTH bars (the 5s-boundary rung and the 1s-boundary rung
+generally differ), which is exactly why derivation-from-sweep beats a single boundary
+fire: a fire pinned at one bar's boundary cannot honestly state the other bar's rate,
+but the coupled emit triple carries both. The LITERAL upper-bound basis fills the 5s
+bar ONLY (hb#174 sign-off amendment 1): every literal sample carries ~0.5-0.7s of
+exec-probe websocket-setup overhead, which consumes 50-70% of the 1s budget and would
+under-credit genuinely-compliant rungs to near-empty. Subtracting an overhead floor is
+forbidden — it would break the cannot-over-credit guarantee — so under literal basis
+the 1s cell stays HONEST-EMPTY by construction until the true-TTFE stamp lands.
 
 Honesty spine (mirrors the rest of the harness):
 
@@ -38,8 +43,17 @@ Honesty spine (mirrors the rest of the harness):
     delivered rates; no node divisor or multiplier ever touches them.
   - Literal-basis rungs (hb#174) additionally require `literal_warm_n_exec_ok` >=
     LITERAL_N_EXEC_OK_FLOOR (absent => ineligible, fail-closed): a p95 over a handful
-    of exec samples must not prove SLO compliance. The credited rungs' MIN n is
-    stamped as `thpt_slo_n_exec_ok` so render can caption coarse-p95 figures.
+    of exec samples must not prove SLO compliance. The credited rung's n is stamped
+    as `thpt_slo_n_exec_ok` so render can caption coarse-p95 figures.
+  - Literal-basis rungs are ALSO dual-leg agreement-gated (hb#174 sign-off amendment
+    2): a rung is eligible only when BOTH `acq_fulfilled_per_s` AND
+    `controller_completed_per_s` are present, finite, > 0, AND agree within
+    LITERAL_RATE_AGREEMENT_TOL relative tolerance. The credited value is the
+    acquisition rate (fulfilled claim->bound per s, steady-state); the controller
+    completion rate is the independent trust cross-check. Divergence makes THAT RUNG
+    ineligible (per-rung gating, not sweep-level): the deliberate above-knee overload
+    rung legitimately diverges (flow conservation breaks at overload) and must not
+    poison the compliant rungs below it.
 """
 
 from __future__ import annotations
@@ -54,17 +68,18 @@ from .metrics import THRESHOLD_1S_MS, THRESHOLD_5S_MS
 # sla_metrics through the numeric-only coercer via an explicit enum-gated carve-out.
 #
 #   - true_ttfe: the true-TTFE pareto (ttfe_p95_ms x ready_per_s) — the original basis.
-#   - literal_ttfe_upper_bound+controller_completed: literal exec-probe warm p95 (UPPER
-#     bound — includes exec websocket-setup overhead, so compliance at the bar is
-#     conservative/honest) gated against the boundary-scrape controller completion rate
-#     (count-delta / inter-scrape wall time; a measured cluster-wide delivered rate).
-#   - literal_ttfe_upper_bound+acq_fulfilled: same latency gate against the acquisition
-#     watch fulfilled-claims rate ((bound-edges + prebound) / duration; pending excluded
-#     => a lower bound on delivered rate — still conservative for the SLO cell).
+#   - literal_ttfe_upper_bound+acq_fulfilled: literal exec-probe warm p95 (UPPER bound —
+#     includes exec websocket-setup overhead, so compliance at the bar is
+#     conservative/honest), crediting the acquisition-watch fulfilled-claims rate
+#     (fulfilled claim->bound per s, steady-state; pending excluded => a lower bound on
+#     the delivered rate), TRUST-GATED per-rung against `controller_completed_per_s`
+#     agreement (hb#174 sign-off amendment 2). Fills the 5s cell ONLY (amendment 1).
+#   - literal_ttfe_upper_bound+controller_completed: RETAINED for already-stamped
+#     records' schema compat — no longer produced (superseded by the amendment-2
+#     dual-leg gate above, which requires both legs and credits acq).
 #
-# Never mixed: one basis per triple. The literal bases fill ONLY when the true-TTFE
-# pareto derives nothing for either bar (the #3975 dead-family gap), and
-# controller_completed is preferred over acq_fulfilled (bound-edge != Ready ambiguity).
+# Never mixed: one basis per triple. The literal basis fills ONLY when the true-TTFE
+# pareto derives nothing for either bar (the #3975 dead-family gap).
 SLO_BASIS_TRUE_TTFE = "true_ttfe"
 SLO_BASIS_LITERAL_CONTROLLER = "literal_ttfe_upper_bound+controller_completed"
 SLO_BASIS_LITERAL_ACQ = "literal_ttfe_upper_bound+acq_fulfilled"
@@ -81,6 +96,15 @@ SLO_BASIS_ENUM = (
 # via the thpt_slo_n_exec_ok stamp. Absent n => ineligible (fail-closed; the producer
 # always emits literal_warm_n_exec_ok, so absence means an unknown provenance).
 LITERAL_N_EXEC_OK_FLOOR = 20
+
+# hb#174 sign-off amendment 2: the literal cell is trusted only when the two
+# independent rate legs — acquisition fulfilled-claims (per-step duration window) and
+# controller completion (inter-scrape boundary window) — agree per-rung within this
+# RELATIVE tolerance: |acq - ctrl| / max(acq, ctrl) <= TOL. Steady-state flow
+# conservation says the two must converge in a sustained hold; divergence means the
+# rung was not steady-state (overload, backlog drain, scrape skew) and its rate cannot
+# be credited. First-cut value 0.10 — disclosed in the PR for a4s2 adjudication.
+LITERAL_RATE_AGREEMENT_TOL = 0.10
 
 
 def _finite_number(v) -> Optional[float]:
@@ -157,52 +181,52 @@ def _valid_n_exec_ok(v) -> Optional[int]:
     return n if n >= LITERAL_N_EXEC_OK_FLOOR else None
 
 
-def _literal_bar(pareto_points, threshold_ms, rate_key):
-    """(best rate, that rung's n_exec_ok) among floor-eligible compliant literal rungs.
+def _derive_literal_5s(pareto_points) -> dict:
+    """5s-bar-ONLY literal fill: dual-leg agreement-gated, acq-credited (hb#174 amds).
 
-    The literal twin of _slo_rate with one extra eligibility gate (hb#174 sign-off
-    condition c): the rung's `literal_warm_n_exec_ok` must be a non-bool integral
-    number >= LITERAL_N_EXEC_OK_FLOOR. Absent or sub-floor n => the rung is ineligible
-    (fail-closed) — a thin-sample p95 must not prove SLO compliance. Returns None when
-    no eligible rung complies.
+    Amendment 1: the literal upper-bound basis may fill `thpt_under_5s_per_cluster`
+    ONLY — the 1s cell stays honest-empty (exec-probe overhead eats the 1s budget; no
+    overhead-floor subtraction, it would break cannot-over-credit).
+
+    Amendment 2 (per-rung eligibility, ALL required, fail-closed on absence):
+      - `literal_warm_p95_ms` finite and <= THRESHOLD_5S_MS,
+      - `literal_warm_n_exec_ok` >= LITERAL_N_EXEC_OK_FLOOR (thin-sample p95 proves
+        nothing),
+      - BOTH `acq_fulfilled_per_s` AND `controller_completed_per_s` finite and > 0,
+      - the two legs agree: |acq - ctrl| / max(acq, ctrl) <=
+        LITERAL_RATE_AGREEMENT_TOL (steady-state flow-conservation trust check; the
+        deliberate above-knee overload rung legitimately diverges and simply drops
+        out — per-rung gating, never sweep-level poison).
+
+    The credited value is the ACQUISITION rate (fulfilled claim->bound per s,
+    steady-state) of the best eligible rung; that rung's n lands as
+    `thpt_slo_n_exec_ok` for render's coarse-p95 caption. Empty dict when no rung
+    qualifies (the bar renders pending — never 0).
     """
     if not isinstance(pareto_points, list):
-        return None
+        return {}
     best: Optional[tuple] = None
     for pt in pareto_points:
         if not isinstance(pt, dict):
             continue
         p95 = _finite_number(pt.get("literal_warm_p95_ms"))
-        rate = _finite_number(pt.get(rate_key))
         n = _valid_n_exec_ok(pt.get("literal_warm_n_exec_ok"))
-        if p95 is None or rate is None or rate <= 0 or n is None:
+        acq = _finite_number(pt.get("acq_fulfilled_per_s"))
+        ctrl = _finite_number(pt.get("controller_completed_per_s"))
+        if p95 is None or n is None or acq is None or ctrl is None:
             continue
-        if p95 <= threshold_ms and (best is None or rate > best[0]):
-            best = (rate, n)
-    return best
-
-
-def _derive_literal_bars(pareto_points, rate_key) -> dict:
-    """Literal-leg bar fill + the credited rungs' sample-size stamp.
-
-    Same per-bar independent fill and rounding as _derive_bars, plus (hb#174 sign-off
-    condition c) `thpt_slo_n_exec_ok`: the MIN warm-exec sample count across the rungs
-    actually credited (one per landed bar) — the honest "weakest sample behind these
-    figures" number render uses for the coarse-p95 caption (20 <= n < 100).
-    """
-    out: dict = {}
-    ns: list = []
-    for key, threshold_ms in (
-        ("thpt_under_5s_per_cluster", THRESHOLD_5S_MS),
-        ("thpt_under_1s_per_cluster", THRESHOLD_1S_MS),
-    ):
-        hit = _literal_bar(pareto_points, threshold_ms, rate_key)
-        if hit is not None:
-            out[key] = round(hit[0], 3)
-            ns.append(hit[1])
-    if out:
-        out["thpt_slo_n_exec_ok"] = min(ns)
-    return out
+        if acq <= 0 or ctrl <= 0:
+            continue
+        if abs(acq - ctrl) / max(acq, ctrl) > LITERAL_RATE_AGREEMENT_TOL:
+            continue
+        if p95 <= THRESHOLD_5S_MS and (best is None or acq > best[0]):
+            best = (acq, n)
+    if best is None:
+        return {}
+    return {
+        "thpt_under_5s_per_cluster": round(best[0], 3),
+        "thpt_slo_n_exec_ok": best[1],
+    }
 
 
 def slo_sla_metrics_from_stepup(flat) -> dict:
@@ -213,35 +237,39 @@ def slo_sla_metrics_from_stepup(flat) -> dict:
     ready to merge into that activation mode's scenario `sla_metrics`:
 
       - `thpt_under_5s_per_cluster` / `thpt_under_1s_per_cluster`: each present ONLY
-        when its bar has a compliant rung (independent per-bar fill).
+        when its bar has a compliant rung. True-TTFE basis fills the bars
+        independently; the literal basis may fill the 5s bar ONLY (hb#174 sign-off
+        amendment 1 — the 1s cell stays honest-empty under literal basis).
       - `thpt_cluster_node_count`: present whenever >= 1 bar landed.
       - `thpt_slo_basis` (hb#174): which measured basis produced the triple — one of
         SLO_BASIS_ENUM, stamped whenever >= 1 bar landed.
-      - `thpt_slo_n_exec_ok` (hb#174, literal bases only): MIN warm-exec sample count
-        across the credited rungs — always >= LITERAL_N_EXEC_OK_FLOOR by construction
+      - `thpt_slo_n_exec_ok` (hb#174, literal basis only): the credited rung's
+        warm-exec sample count — always >= LITERAL_N_EXEC_OK_FLOOR by construction
         (sub-floor rungs are ineligible, fail-closed); render captions coarse p95 when
         20 <= n < 100. Never present on a true-TTFE triple.
 
-    Basis selection (hb#174) — ONE basis per triple, never mixed across bars:
+    Basis selection (hb#174, amended by the sign-off) — ONE basis per triple:
 
       1. true-TTFE pareto (`ttfe_p95_ms` x `ready_per_s`) — always tried first; while
          the #3975 production stamp is unlanded this derives nothing by construction.
       2. literal-TTFE UPPER-bound leg (`literal_warm_p95_ms`, exec-probe: every sample
          carries exec websocket-setup overhead, so a rung compliant at the bar is
-         conservatively/provably compliant) gated with `controller_completed_per_s`
-         (boundary-scrape count-delta / inter-scrape wall span — the span includes
-         inter-step overhead, so it under-reads the sustained rate: conservative).
-      3. same latency gate with `acq_fulfilled_per_s` ((bound-edges + prebound) /
-         step duration_s; pending excluded => lower bound; bound-edge != Ready).
+         conservatively/provably compliant), crediting `acq_fulfilled_per_s`
+         (fulfilled claim->bound per s, steady-state; pending excluded => lower
+         bound) with `controller_completed_per_s` as the per-rung agreement
+         cross-check (amendment 2; see _derive_literal_5s). 5s cell only.
 
-    The two literal rate candidates are measured over NON-IDENTICAL windows (per-step
-    duration_s vs inter-scrape wall span) — both err conservative, and the basis stamp
-    discloses which one the cell used so render can caption it. The literal leg is
-    consulted only when its block carries `upper_bound is True` (the polarity flag the
-    producer sets; the controller-startup LOWER-bound proxy remains banned here — an
-    under-reading latency basis could fabricate compliance). Each literal rung must
-    additionally clear the LITERAL_N_EXEC_OK_FLOOR sample floor (`literal_warm_n_exec_ok`
-    >= 20, absent => ineligible) — a thin-sample p95 must not prove compliance.
+    The two literal rate legs are measured over NON-IDENTICAL windows (per-step
+    duration_s vs inter-scrape wall span) — steady-state flow conservation makes them
+    converge in a sustained hold, which is exactly why their agreement is the trust
+    gate: a rung where they diverge was not steady-state and is ineligible. The
+    literal leg is consulted only when its block carries `upper_bound is True` (the
+    polarity flag the producer sets; the controller-startup LOWER-bound proxy remains
+    banned here — an under-reading latency basis could fabricate compliance). Each
+    literal rung must additionally clear the LITERAL_N_EXEC_OK_FLOOR sample floor
+    (`literal_warm_n_exec_ok` >= 20, absent => ineligible) — a thin-sample p95 must
+    not prove compliance. The SLO_BASIS_LITERAL_CONTROLLER enum value is retained for
+    already-stamped records but is no longer produced.
 
     Empty dict ({}) when nothing is derivable — no valid node_count, or no basis with a
     compliant rung on either bar. Rounding matches `throughput_per_cluster` (3
@@ -260,12 +288,8 @@ def slo_sla_metrics_from_stepup(flat) -> dict:
     if not out:
         lt = flat.get("literal_ttfe")
         if isinstance(lt, dict) and lt.get("upper_bound") is True:
-            lt_points = lt.get("pareto_points")
-            out = _derive_literal_bars(lt_points, "controller_completed_per_s")
-            basis = SLO_BASIS_LITERAL_CONTROLLER
-            if not out:
-                out = _derive_literal_bars(lt_points, "acq_fulfilled_per_s")
-                basis = SLO_BASIS_LITERAL_ACQ
+            out = _derive_literal_5s(lt.get("pareto_points"))
+            basis = SLO_BASIS_LITERAL_ACQ
     if not out:
         return {}
     out["thpt_cluster_node_count"] = int(node_count)
