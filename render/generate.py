@@ -122,7 +122,9 @@ python3 -m render.generate && git diff README.md   # 3. re-render this page + di
 
 First run `pip install -r harness/requirements.txt`; the gVisor/Kata rows need a matching GKE node
 pool — full recipe in [`recipe/REPRODUCE.md`](recipe/REPRODUCE.md), deep-dive tables in
-[DETAILS.md](DETAILS.md).
+[DETAILS.md](DETAILS.md). Any cell reading *pending (upstream-blocked)* traces to a specific upstream
+fix; the full inventory — each blocker with its status and next action — is in
+[UPSTREAM_BLOCKERS.md](UPSTREAM_BLOCKERS.md).
 """
 
 # Deep-dive appendix header. Same no-measured-numbers-here rule as _PREAMBLE: every
