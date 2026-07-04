@@ -326,6 +326,62 @@ A previously-published triple is carried forward across later env-less runs
 (same do-not-auto-decay posture as the scale-proof block), so one reviewed
 sweep fire per mode keeps the cell filled until a fresh fire supersedes it.
 
+## Refreshing published cells: the canonical per-product command
+
+A **wholesale refresh** (re-running the suite to update `latest.json`) must carry
+the full env block below, not a bare `python3 -m harness.run`. The reason is a
+knob-scoping property that has bitten three times: several published cells'
+**sample size is set by env knobs, not by a default** — so a refresh fire that
+omits a knob silently *downgrades* a previously-graduated cell rather than
+reproducing it. Concretely:
+
+- The warm cell's published `n` is the number of **warm pool members**
+  (`WARMPOOL_COLD_START_POOL_REPLICAS`, default 5) — the TTFE emit covers exactly
+  the pool, **not** the claim count. A refresh without the pool/claim knobs resets
+  a graduated warm row from n=30 back to n=5 and re-introduces the † marker.
+- The cold cell's `n` is `NATIVE_DIGEST_COLD_SAMPLES` (default 1) — same failure
+  shape.
+- Without `BENCH_TTFE_EXEC=1` the TTFE columns are not armed at all.
+
+The graduation shape published on the page is **pool=30 / claims=40** (a 1.33:1
+claims:pool ratio, so the pool is fully consumed with overflow exercised) and
+**30 cold samples**. Copy-paste, per product, in a **fresh shell each** (the
+`BENCH_SLO_SWEEP_*` cross-product caveat above applies to refreshes too):
+
+```bash
+# gVisor product — full suite, all knobs at the published graduation shape.
+BENCH_CLUSTER_SUBSTRATE=gke-sandbox \
+BURST_CREATE_RUNTIME_CLASS=gvisor \
+WARMPOOL_COLD_START_RUNTIME_CLASS=gvisor \
+WARMPOOL_COLD_START_POOL_REPLICAS=30 \
+WARMPOOL_COLD_START_CLAIM_COUNT=40 \
+WARMPOOL_COLD_START_WARMUP_TIMEOUT_S=600 \
+WARMPOOL_COLD_START_BIND_TIMEOUT_S=600 \
+SUSPEND_RESUME_RUNTIME_CLASS=gvisor \
+NATIVE_DIGEST_COLD_RUNTIME_CLASS=gvisor \
+NATIVE_DIGEST_COLD_SAMPLES=30 \
+BENCH_TTFE_EXEC=1 \
+  python3 -m harness.run
+```
+
+```bash
+# Kata product — same shape, kata RuntimeClass, scoped to the kata scenarios.
+BENCH_CLUSTER_SUBSTRATE=gke-kata \
+WARMPOOL_COLD_START_RUNTIME_CLASS=kata-clh \
+WARMPOOL_COLD_START_POOL_REPLICAS=30 \
+WARMPOOL_COLD_START_CLAIM_COUNT=40 \
+WARMPOOL_COLD_START_WARMUP_TIMEOUT_S=600 \
+WARMPOOL_COLD_START_BIND_TIMEOUT_S=600 \
+NATIVE_DIGEST_COLD_RUNTIME_CLASS=kata-clh \
+NATIVE_DIGEST_COLD_SAMPLES=30 \
+BENCH_TTFE_EXEC=1 \
+  python3 -m harness.run --product sandbox-kata
+```
+
+If a refresh renders a lower `n` (or a reappearing †) on a cell that was
+previously graduated, treat it as a mis-fired refresh — re-run with the block
+above — rather than committing the downgrade.
+
 ## Reproduce in CI (no laptop required)
 
 The same two paths above also run as **dispatch-only** GitHub Actions, so you can
