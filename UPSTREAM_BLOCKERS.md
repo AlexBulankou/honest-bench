@@ -2,7 +2,7 @@
 
 One screen: **what's blocked in product terms, where to engage upstream, and a ready-to-paste comment.** You never need to open a PR — staged patches are parked on the maintainer's forks as reference material, offered only if a maintainer asks. Each row is self-contained: forward it to the team as-is. Engineering depth (full diagnoses, file-ready bodies, patch provenance, dup-search evidence): [**UPSTREAM_BLOCKERS_DETAIL.md**](UPSTREAM_BLOCKERS_DETAIL.md).
 
-_Freshness: refreshed on every blocker state change; link states hand-verified at each refresh. Last verified: 2026-07-03. Machine-readable mirror: [`render/upstream_links.json`](render/upstream_links.json) (feeds the per-cell links on the rendered pages) — update it in the same PR as any blocker-state change here._
+_Freshness: refreshed on every blocker state change; link states hand-verified at each refresh. Last verified: 2026-07-04 (all 7 filed anchors re-checked live — agent-sandbox #873/#893/#751/#761/#952 and substrate #50/#353 all still open, no state change). Machine-readable mirror: [`render/upstream_links.json`](render/upstream_links.json) (feeds the per-cell links on the rendered pages) — update it in the same PR as any blocker-state change here._
 
 ---
 
