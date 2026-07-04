@@ -98,12 +98,16 @@ SLO_BASIS_ENUM = (
 LITERAL_N_EXEC_OK_FLOOR = 20
 
 # hb#174 sign-off amendment 2: the literal cell is trusted only when the two
-# independent rate legs — acquisition fulfilled-claims (per-step duration window) and
-# controller completion (inter-scrape boundary window) — agree per-rung within this
-# RELATIVE tolerance: |acq - ctrl| / max(acq, ctrl) <= TOL. Steady-state flow
-# conservation says the two must converge in a sustained hold; divergence means the
-# rung was not steady-state (overload, backlog drain, scrape skew) and its rate cannot
-# be credited. First-cut value 0.10 — disclosed in the PR for a4s2 adjudication.
+# independent rate legs — acquisition fulfilled-claims (measured fulfillment
+# window, a#4279) and controller completion (inter-scrape boundary window) —
+# agree per-rung within this RELATIVE tolerance: |acq - ctrl| / max(acq, ctrl)
+# <= TOL. The gate is a SUSTAINABILITY discriminator: acq ~= ctrl means the
+# rung is refill-limited steady state (real throughput); acq >> ctrl means the
+# rung is draining a warm buffer (transient, non-sustainable), so dropping it
+# is correct. TOL bounds how far acq may exceed the refill rate before the
+# throughput is deemed non-sustainable. 0.10 is UNVALIDATED against a real
+# passing rung — revisit once a low-rate fire (at/below controller refill
+# rate) produces one.
 LITERAL_RATE_AGREEMENT_TOL = 0.10
 
 
