@@ -1,4 +1,6 @@
-"""Cluster-free tests for native_digest_cold's runtime-class pinning (#3942).
+"""Cluster-free tests for native_digest_cold: runtime-class pinning (#3942) and
+the sample-count knob's mode-dependent honesty guard (NATIVE_DIGEST_COLD_SAMPLES,
+hb#196).
 
 Dependency-free: `python3 test_native_digest_cold.py` (exit 0 = pass). The pure
 pin logic lives in test_runtime_class.py; these lock that the SCENARIO actually
@@ -60,6 +62,51 @@ def test_sandbox_kata_pins_class_toleration_and_selector():
     assert spec["runtimeClassName"] == "kata"
     assert "sandbox.gke.io/kata" in {t["key"] for t in spec["tolerations"]}
     assert spec["nodeSelector"] == {"nested-virtualization": "enabled"}
+
+
+# ---- sample-count knob (NATIVE_DIGEST_COLD_SAMPLES, hb#196) ----
+#
+# The knob's honesty guard is mode-dependent: cold-provision has no cache
+# confound (every bare create is an independent cold provision), so N passes
+# through; cold-pull is cold exactly once per node+image, so N>1 is refused
+# (fall back to 1) rather than publishing a caching measurement as cold pull.
+
+def test_samples_default_is_one():
+    # Env unset in the test environment -> byte-identical single-sample default.
+    assert cell._SAMPLES == 1
+
+
+def test_effective_samples_provision_passes_through():
+    assert cell._effective_samples(1, "cold-provision") == 1
+    assert cell._effective_samples(30, "cold-provision") == 30
+
+
+def test_effective_samples_cold_pull_refuses_multi():
+    assert cell._effective_samples(30, "cold-pull") == 1
+
+
+def test_effective_samples_cold_pull_single_ok():
+    assert cell._effective_samples(1, "cold-pull") == 1
+
+
+def test_mode_env_validated_fail_fast():
+    # An unknown BENCH_NATIVE_DIGEST_COLD_MODE must raise at import, not fail
+    # open past the cold-pull refusal (which keys on the exact string). Re-exec
+    # the module import in a subprocess so the module-level guard is exercised.
+    import os
+    import subprocess
+    import sys
+
+    env = dict(os.environ, BENCH_NATIVE_DIGEST_COLD_MODE="cold-pul")
+    proc = subprocess.run(
+        [sys.executable, "-c", "import native_digest_cold"],
+        cwd=os.path.dirname(os.path.abspath(cell.__file__)),
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode != 0
+    assert "BENCH_NATIVE_DIGEST_COLD_MODE must be one of" in proc.stderr
 
 
 def _run_all():

@@ -3,10 +3,12 @@
     Setup    : Nothing pre-warmed. No SandboxWarmPool, no SandboxClaim — those
                paths pre-provision a sandbox so a claim binds warm, which is
                exactly the latency this cell isolates AGAINST.
-    Action   : Create ONE bare Sandbox CR on a configurable image with
+    Action   : Create N (default ONE; NATIVE_DIGEST_COLD_SAMPLES, hb#196) bare
+               Sandbox CRs SERIALLY on a configurable image with
                imagePullPolicy=Always (so the kubelet always re-validates the
                image rather than trusting a stale cache). Measure wall-clock
-               from create() return to the Sandbox's first Ready=True condition.
+               from each create() return to that Sandbox's first Ready=True
+               condition; delete before the next sample.
     Expected : The Sandbox provisions cold — controller reconcile + Pod schedule
                + image pull + container start — and reports Ready. The measured
                cold_start_ms is recorded (no in-scenario SLO gate; the render
@@ -52,14 +54,27 @@ the runner from `BENCH_NATIVE_DIGEST_COLD_MODE` (conservative default
 cold-provision) — so the render page can label which the published cold_start_ms
 represents.
 
-## Why a single sample (n=1)
+## Sample count (NATIVE_DIGEST_COLD_SAMPLES, hb#196) — mode-dependent honesty
 
-A cold pull is cold exactly once per (node, image): the first create downloads
-and caches the layers, so a second create of the SAME image on the SAME node is
-warm and would understate the cold path. Reporting the median of repeated
-same-image creates would therefore measure caching, not cold start. One cold
-provision is the honest measurement; the longitudinal record across runs (fresh
-nodes / fresh tags) is where the distribution lives.
+The single-sample rationale binds ONLY the cold-PULL mode: a cold pull is cold
+exactly once per (node, image) — the first create downloads and caches the
+layers, so a second create of the SAME image on the SAME node is warm and a
+median of repeated same-image creates would measure caching, not cold pull.
+In cold-pull mode the scenario therefore REFUSES N>1 (falls back to 1 with a
+log line); the longitudinal record across runs (fresh nodes / fresh tags) is
+where that distribution lives.
+
+In cold-PROVISION mode (the conservative default, and what both published cold
+cells measured) the layers are already cached BY CONSTRUCTION — the cell
+measures controller reconcile + Pod schedule + manifest re-validation +
+container start. There is no cache confound: every bare-Sandbox create is an
+independent cold provision, so repeated samples are honest and
+NATIVE_DIGEST_COLD_SAMPLES=N (default 1 = byte-identical prior behavior) runs
+N SERIAL create -> first Ready=True -> delete cycles and emits the
+samples-derived p50/p95 + n. Serial, never concurrent — concurrent cold creates
+would contend on scheduling, which is a different quantity (burst_create's).
+This is the graduation path for the render's TTFE_COMPARABILITY_MIN_N (n>=30
+drops the low-N dagger).
 
 ## Crash posture
 
@@ -119,6 +134,33 @@ _RUNTIME_CLASS = os.environ.get("NATIVE_DIGEST_COLD_RUNTIME_CLASS", "")
 # it before any cluster call — preventing a runc cold number from publishing under a
 # gVisor label. kind/gke make no isolation claim and impose no constraint.
 _CLUSTER_SUBSTRATE = os.environ.get("BENCH_CLUSTER_SUBSTRATE", "kind")
+
+# Sample-count knob (hb#196). Default 1 = byte-identical single-sample behavior.
+# N>1 runs N SERIAL create->Ready->delete cycles and emits samples-derived
+# p50/p95 + n — honest ONLY in cold-provision mode (see module docstring); the
+# run()-time guard refuses N>1 in cold-pull mode. Parsed fail-fast: a
+# non-integer or <1 value raises at import (crash posture — a mis-set knob must
+# never silently publish a differently-shaped cell).
+_SAMPLES = int(os.environ.get("NATIVE_DIGEST_COLD_SAMPLES", "1"))
+if _SAMPLES < 1:
+    raise ValueError(
+        f"NATIVE_DIGEST_COLD_SAMPLES must be >= 1, got {_SAMPLES}"
+    )
+
+# Which cold mode this run measures (provenance is stamped by the runner from the
+# same env, #3885; conservative default cold-provision). Read here ONLY to gate
+# the N>1 refusal — in cold-pull mode repeated same-image creates measure
+# caching, not cold pull, so the honest sample count is 1. Validated fail-fast
+# like _SAMPLES above: the refusal keys on the exact "cold-pull" string, so an
+# unknown mode would otherwise fail OPEN (slip past the refusal and publish a
+# caching measurement labeled cold).
+_COLD_MODES = ("cold-provision", "cold-pull")
+_COLD_MODE = os.environ.get("BENCH_NATIVE_DIGEST_COLD_MODE", "cold-provision")
+if _COLD_MODE not in _COLD_MODES:
+    raise ValueError(
+        f"BENCH_NATIVE_DIGEST_COLD_MODE must be one of {_COLD_MODES}, "
+        f"got {_COLD_MODE!r}"
+    )
 
 # Public benchmark metric key (milliseconds). The cold create→Ready wall-clock
 # this scenario measures internally in seconds is emitted via the run() 3-tuple
@@ -255,30 +297,38 @@ def _cleanup(custom, *, sandbox_name: str) -> None:
             log.warning("cleanup: delete sandbox %s failed: %s", sandbox_name, e)
 
 
-def run(scenario_name: str) -> tuple[str, str, dict]:
-    """Create one bare Sandbox cold, time create→Ready, return the measurement.
+def _effective_samples(requested: int, mode: str) -> int:
+    """Sample count actually run, after the cold-pull honesty guard.
 
-    Returns a 3-tuple (outcome, excerpt, sla_metrics). On success sla_metrics
-    carries {cold_start_ms, n=1} — a single cold provision (a cold pull is cold
-    exactly once per node+image, so n>1 would measure caching, not cold start).
-    A provisioning failure raises (crash-fail cell); this scenario has no
-    in-scenario SLO gate, so it never returns a ("FAIL", ...) outcome of its own.
+    Pure (testable dependency-free): in cold-pull mode N>1 is refused — a cold
+    pull is cold exactly once per (node, image), so repeated same-image creates
+    on the same node would measure caching, not cold pull. cold-provision has no
+    cache confound (layers cached by construction; every create is an
+    independent cold provision), so the requested N passes through.
     """
-    from kubernetes import client as k8s_client
+    if mode == "cold-pull" and requested > 1:
+        log.warning(
+            "NATIVE_DIGEST_COLD_SAMPLES=%d refused in cold-pull mode — a cold "
+            "pull is cold exactly once per node+image, repeats would measure "
+            "caching; falling back to a single sample",
+            requested,
+        )
+        return 1
+    return requested
 
-    # Pure, fail-fast (mirrors warmpool_cold_start): a gke-sandbox-labeled result
-    # MUST pin the gVisor RuntimeClass, else the published cold row is a runc number
-    # under a gVisor banner. Checked before the cluster is touched so the mistake
-    # crashes immediately. kind/gke impose no constraint.
-    rc.assert_substrate_runtime_consistency(_CLUSTER_SUBSTRATE, _RUNTIME_CLASS)
 
-    # Portable kubeconfig load (see _kube.load_cluster_config): an explicit
-    # KUBECONFIG wins, else in-cluster when running as a pod, else the default
-    # kubeconfig.
-    load_cluster_config()
+def _one_cold_sample(
+    custom, k8s_client
+) -> tuple[str, float, "float | None", "bool | None"]:
+    """One full cold cycle: create -> first Ready=True -> (probe) -> delete.
 
-    custom = k8s_client.CustomObjectsApi()
-
+    Returns (sandbox_name, cold_start_s, ttfe_ms, exec_ok); ttfe_ms/exec_ok are
+    (None, None) when BENCH_TTFE_EXEC is off. The sandbox is ALWAYS deleted
+    before return (per-sample finally), so with N>1 at most one benchmark
+    sandbox exists at a time — samples are serial and independent, and a
+    mid-loop crash leaks at most the in-flight sandbox (same posture as the
+    prior single-sample shape).
+    """
     suffix = uuid.uuid4().hex[:8]
     sandbox_name = f"cold-{suffix}"
 
@@ -305,7 +355,8 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
         # verify, so the path stays read-free there, preserving the default INERT shape).
         # Runs AFTER the measurement so it never perturbs the measured cold latency. The
         # gate shares the single substrate->runtime source of truth with the consistency
-        # guard above, which already proved _RUNTIME_CLASS == the required runtime.
+        # guard in run(), which already proved _RUNTIME_CLASS == the required runtime.
+        # Per-sample: each sandbox is verified while it exists (pre-delete).
         if rc.required_runtime_for_substrate(_CLUSTER_SUBSTRATE) is not None:
             core_v1 = k8s_client.CoreV1Api()
             verified = rc.verify_bound_pod_runtimes(
@@ -320,52 +371,143 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
                 verified, _RUNTIME_CLASS,
             )
 
-        # Emit-key assembly. Two paths, gated by BENCH_TTFE_EXEC:
-        #
-        #   TTFE-on  — probe the cold sandbox's first instruction (t0 = create
-        #     return) and emit the create->first-instruction-result histogram
-        #     (ttfe_p50_ms/ttfe_p95_ms = the single sample, exec_success_rate,
-        #     n=1). This SUPERSEDES cold_start_ms (the doc reports TTFE, not
-        #     create->Ready), so the legacy key is dropped on this path. The bare
-        #     Sandbox's backing pod is named for the CR (pod name == sandbox_name).
-        #   TTFE-off (legacy) — emit cold_start_ms (create->Ready, ms) + n=1.
+        ttfe_ms: "float | None" = None
+        exec_ok: "bool | None" = None
         if _TTFE_EXEC:
             core_v1 = k8s_client.CoreV1Api()
+            # The bare Sandbox's backing pod is named for the CR (pod name ==
+            # sandbox_name); t0 = create return, so ttfe is create->first-
+            # instruction-result against the same clock as cold_start_s.
             ttfe_ms, exec_ok = ttfe_probe.probe_first_instruction(
                 core_v1,
                 pod_name=sandbox_name,
                 namespace=_NAMESPACE,
                 create_monotonic=t0,
             )
-            # Inch #2 — cold TTFE bind-vs-exec decomposition (INDEPENDENTLY MEASURED,
-            # shared t0). bind = create->Ready (cold_start_s: the full cold provision —
-            # controller reconcile + pod schedule + image pull + container start).
-            # exec = ttfe_ms - bind_ms (websocket setup + first-instruction round-trip
-            # on the already-Ready sandbox). Ready precedes the first instruction, so
-            # exec >= 0 by construction. For cold, provision is EXPECTED to dominate;
-            # a large exec would instead point at an exec-channel artifact.
-            bind_ms = cold_start_s * 1000.0
-            exec_ms = (ttfe_ms - bind_ms) if ttfe_ms is not None else None
-            sla_metrics = metrics.single_sample_ttfe_point(
-                ttfe_ms, exec_ok, bind_ms=bind_ms, exec_ms=exec_ms,
-            )
+        return (sandbox_name, cold_start_s, ttfe_ms, exec_ok)
+    finally:
+        _cleanup(custom, sandbox_name=sandbox_name)
+
+
+def run(scenario_name: str) -> tuple[str, str, dict]:
+    """Create N bare Sandboxes cold (serial), time create→Ready, return metrics.
+
+    N = NATIVE_DIGEST_COLD_SAMPLES (default 1 — byte-identical single-sample
+    behavior). Each sample is a full create -> first Ready=True -> delete cycle,
+    run SERIALLY so samples never contend on scheduling (concurrent cold creates
+    measure burst contention — burst_create's quantity, not this cell's). In
+    cold-pull mode N>1 is refused (falls back to 1 with a log line): a cold pull
+    is cold exactly once per node+image, so repeats would measure caching.
+
+    Returns a 3-tuple (outcome, excerpt, sla_metrics). On success sla_metrics
+    carries the samples-derived point: TTFE-on -> ttfe/bind/exec p50+p95 +
+    exec_success_rate + n; TTFE-off (legacy) -> cold_start_ms (+ p95 when n>1)
+    + n. A provisioning failure raises (crash-fail cell); this scenario has no
+    in-scenario SLO gate, so it never returns a ("FAIL", ...) outcome of its own.
+    """
+    from kubernetes import client as k8s_client
+
+    # Pure, fail-fast (mirrors warmpool_cold_start): a gke-sandbox-labeled result
+    # MUST pin the gVisor RuntimeClass, else the published cold row is a runc number
+    # under a gVisor banner. Checked before the cluster is touched so the mistake
+    # crashes immediately. kind/gke impose no constraint.
+    rc.assert_substrate_runtime_consistency(_CLUSTER_SUBSTRATE, _RUNTIME_CLASS)
+
+    n_samples = _effective_samples(_SAMPLES, _COLD_MODE)
+
+    # Portable kubeconfig load (see _kube.load_cluster_config): an explicit
+    # KUBECONFIG wins, else in-cluster when running as a pod, else the default
+    # kubeconfig.
+    load_cluster_config()
+
+    custom = k8s_client.CustomObjectsApi()
+
+    cold_start_ss: list[float] = []
+    ttfe_ms_samples: list["float | None"] = []
+    exec_oks: list[bool] = []
+    last_sandbox_name = ""
+    for i in range(n_samples):
+        if n_samples > 1:
+            log.info("cold sample %d/%d", i + 1, n_samples)
+        sandbox_name, cold_start_s, ttfe_ms, exec_ok = _one_cold_sample(
+            custom, k8s_client
+        )
+        last_sandbox_name = sandbox_name
+        cold_start_ss.append(cold_start_s)
+        if _TTFE_EXEC:
+            ttfe_ms_samples.append(ttfe_ms)
+            exec_oks.append(bool(exec_ok))
+
+    # Emit-key assembly. Two paths, gated by BENCH_TTFE_EXEC:
+    #
+    #   TTFE-on  — the create->first-instruction-result distribution
+    #     (ttfe_p50_ms/ttfe_p95_ms over the present samples, exec_success_rate
+    #     over all attempts, n = attempts), plus the inch-#2 bind/exec
+    #     decomposition (per-sample INDEPENDENTLY MEASURED: bind = create->Ready
+    #     = the full cold provision; exec = ttfe - bind residual against the
+    #     SAME per-sample t0 — Ready precedes the first instruction, so
+    #     exec >= 0 by construction; provision is EXPECTED to dominate cold).
+    #     This SUPERSEDES cold_start_ms (the doc reports TTFE, not
+    #     create->Ready), so the legacy key is dropped on this path.
+    #   TTFE-off (legacy) — cold_start_ms (create->Ready, ms) + n. n=1 stays
+    #     byte-identical to the prior single-sample emit; n>1 reports the p50 as
+    #     cold_start_ms plus a cold_start_p95_ms tail.
+    if _TTFE_EXEC:
+        bind_ms_samples = [s * 1000.0 for s in cold_start_ss]
+        exec_ms_samples = [
+            (t - b) if t is not None else None
+            for t, b in zip(ttfe_ms_samples, bind_ms_samples)
+        ]
+        sla_metrics = metrics.multi_sample_ttfe_point(
+            ttfe_ms_samples, exec_oks,
+            bind_ms_samples=bind_ms_samples,
+            exec_ms_samples=exec_ms_samples,
+        )
+        if n_samples == 1:
+            bind_ms = bind_ms_samples[0]
             excerpt = (
-                f"Cold provision of bare Sandbox {sandbox_name} "
+                f"Cold provision of bare Sandbox {last_sandbox_name} "
                 f"(image={_SANDBOX_IMAGE}, pull=Always, no warm pool): "
-                f"create->Ready {cold_start_s:.2f}s (bind_ms={bind_ms:.0f}); "
-                f"TTFE probe exec_ok={exec_ok}, ttfe_ms={ttfe_ms!r}, "
-                f"exec_ms={exec_ms!r} (n=1; create->first-instruction-result)."
+                f"create->Ready {cold_start_ss[0]:.2f}s (bind_ms={bind_ms:.0f}); "
+                f"TTFE probe exec_ok={exec_oks[0]}, ttfe_ms={ttfe_ms_samples[0]!r}, "
+                f"exec_ms={exec_ms_samples[0]!r} (n=1; create->first-instruction-result)."
             )
         else:
+            n_exec_ok = sum(1 for ok in exec_oks if ok)
+            excerpt = (
+                f"Cold provision x{n_samples} serial bare Sandboxes "
+                f"(image={_SANDBOX_IMAGE}, pull=Always, no warm pool, "
+                f"mode={_COLD_MODE}): exec_ok {n_exec_ok}/{n_samples}; "
+                f"ttfe_p50_ms={sla_metrics.get('ttfe_p50_ms')!r}, "
+                f"ttfe_p95_ms={sla_metrics.get('ttfe_p95_ms')!r}, "
+                f"bind_p50_ms={sla_metrics.get('bind_p50_ms')!r} "
+                f"(n={n_samples}; create->first-instruction-result per sample)."
+            )
+    else:
+        if n_samples == 1:
+            cold_start_s = cold_start_ss[0]
             sla_metrics = {_SLA_METRIC_KEY: cold_start_s * 1000.0, "n": 1}
             excerpt = (
-                f"Cold provision of bare Sandbox {sandbox_name} "
+                f"Cold provision of bare Sandbox {last_sandbox_name} "
                 f"(image={_SANDBOX_IMAGE}, pull=Always, no warm pool) reached "
                 f"Ready=True in {cold_start_s:.2f}s. "
                 f"cold_start_ms={cold_start_s * 1000.0:.0f} "
                 f"(n=1; single cold provision — a cold pull is cold once per "
                 f"node+image)."
             )
-        return ("PASS", excerpt, sla_metrics)
-    finally:
-        _cleanup(custom, sandbox_name=sandbox_name)
+        else:
+            cold_ms = [s * 1000.0 for s in cold_start_ss]
+            p50 = round(metrics.percentile(cold_ms, 50), 1)
+            p95 = round(metrics.percentile(cold_ms, 95), 1)
+            sla_metrics = {
+                _SLA_METRIC_KEY: p50,
+                "cold_start_p95_ms": p95,
+                "n": n_samples,
+            }
+            excerpt = (
+                f"Cold provision x{n_samples} serial bare Sandboxes "
+                f"(image={_SANDBOX_IMAGE}, pull=Always, no warm pool, "
+                f"mode={_COLD_MODE}): create->Ready p50={p50:.0f}ms "
+                f"p95={p95:.0f}ms (n={n_samples})."
+            )
+    return ("PASS", excerpt, sla_metrics)
