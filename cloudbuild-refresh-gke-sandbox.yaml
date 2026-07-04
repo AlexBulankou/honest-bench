@@ -56,6 +56,21 @@ steps:
       - "BENCH_CLUSTER_SUBSTRATE=gke-sandbox"
       - "BURST_CREATE_RUNTIME_CLASS=gvisor"
       - "BURST_CREATE_POOL_REPLICAS=${_POOL_REPLICAS}"
+      # Graduation-shape knobs (#198): the published warm/cold cells are n=30, and
+      # each cell's n is scoped to these knobs (warm n = pool replicas, cold n =
+      # cold samples; TTFE columns need BENCH_TTFE_EXEC). A refresh without them
+      # would regress the graduated rows to n=5 / n=1 — which the harness now
+      # refuses (check_n_regression). Canonical block: recipe/REPRODUCE.md,
+      # "Refreshing published cells".
+      - "WARMPOOL_COLD_START_RUNTIME_CLASS=gvisor"
+      - "WARMPOOL_COLD_START_POOL_REPLICAS=30"
+      - "WARMPOOL_COLD_START_CLAIM_COUNT=40"
+      - "WARMPOOL_COLD_START_WARMUP_TIMEOUT_S=600"
+      - "WARMPOOL_COLD_START_BIND_TIMEOUT_S=600"
+      - "SUSPEND_RESUME_RUNTIME_CLASS=gvisor"
+      - "NATIVE_DIGEST_COLD_RUNTIME_CLASS=gvisor"
+      - "NATIVE_DIGEST_COLD_SAMPLES=30"
+      - "BENCH_TTFE_EXEC=1"
     args:
       - -c
       - |
@@ -183,5 +198,7 @@ availableSecrets:
 options:
   logging: CLOUD_LOGGING_ONLY
 
-# gVisor node pool create (~5-8 min) + burst measure + teardown fits under 45 min.
-timeout: 2700s
+# gVisor node pool create (~5-8 min) + burst measure + the n=30 graduation-shape
+# warm/cold cells (#198: 30-member pool warmup + 40 claims + 30 serial cold
+# samples, ~8-10 min extra) + teardown fits under 60 min.
+timeout: 3600s

@@ -177,6 +177,48 @@ def merge_seed_placeholders(raw: list[dict], prior_scenarios) -> list[dict]:
     return raw + carried
 
 
+def check_n_regression(raw: list[dict], prior_scenarios) -> list[str]:
+    """Detect a refresh that would silently lower a published cell's sample size.
+
+    A cell's published n is scoped to env knobs (`WARMPOOL_COLD_START_POOL_REPLICAS`
+    for the warm cell, `NATIVE_DIGEST_COLD_SAMPLES` for the cold cell), so a
+    wholesale refresh fired without those knobs resets a previously-graduated row
+    back to its default n — re-introducing the comparability marker with no signal
+    that anything was lost (hb#198, third gap in this class). This compares each
+    fresh row's `n` against the committed row of the same name and reports every
+    cell where fresh n < committed n while the committed row was actually measured
+    (a `pending` prior never gates — a placeholder has no graduated n to protect).
+
+    Returns human-readable regression lines; empty means clean. The caller decides
+    the posture (main() fails closed unless BENCH_ALLOW_N_REGRESSION is set).
+    """
+    prior_by_name = {}
+    if isinstance(prior_scenarios, list):
+        for s in prior_scenarios:
+            if isinstance(s, dict) and isinstance(s.get("name"), str):
+                prior_by_name[s["name"]] = s
+    regressions: list[str] = []
+    for row in raw:
+        if not isinstance(row, dict):
+            continue
+        prior = prior_by_name.get(row.get("name"))
+        if not isinstance(prior, dict):
+            continue
+        p_out = prior.get("outcome")
+        if not isinstance(p_out, str) or p_out.lower() == "pending":
+            continue
+        p_n, f_n = prior.get("n"), row.get("n")
+        if (
+            isinstance(p_n, int) and not isinstance(p_n, bool)
+            and isinstance(f_n, int) and not isinstance(f_n, bool)
+            and f_n < p_n
+        ):
+            regressions.append(
+                f"{row['name']}: fresh n={f_n} < committed n={p_n}"
+            )
+    return regressions
+
+
 def _read_prior_scenarios(out_path: pathlib.Path) -> list:
     """Read the existing results file's scenarios list (for the seed-merge above).
 
@@ -963,6 +1005,29 @@ def main(argv=None) -> int:
     # Preserve hand-seeded pending placeholders for cells this suite does not yet
     # register (#3909) — read BEFORE the wholesale write below, which would drop them.
     prior_scenarios = _read_prior_scenarios(out)
+    # Refuse a refresh that would silently downgrade a graduated cell's sample
+    # size (hb#198): a fire missing the graduation-shape knobs must fail loudly
+    # here, not publish a lower-n row. Deliberate downgrades stay possible via
+    # the explicit BENCH_ALLOW_N_REGRESSION opt-in, which converts the refusal
+    # into a loud warning — the decision is explicit either way.
+    n_regressions = check_n_regression(raw, prior_scenarios)
+    if n_regressions:
+        for line in n_regressions:
+            log.error("n-regression: %s", line)
+        if _env_flag("BENCH_ALLOW_N_REGRESSION"):
+            log.warning(
+                "BENCH_ALLOW_N_REGRESSION set — publishing %d lower-n cell(s) "
+                "anyway (deliberate downgrade)", len(n_regressions),
+            )
+        else:
+            log.error(
+                "refusing to write %s: %d cell(s) would regress below their "
+                "committed sample size. Re-fire with the canonical refresh "
+                "command in recipe/REPRODUCE.md (graduation-shape env knobs), "
+                "or set BENCH_ALLOW_N_REGRESSION=1 to downgrade deliberately.",
+                out, len(n_regressions),
+            )
+            return 1
     prior_scale_proof = _read_prior_scale_proof(out)
     prior_stepup = _read_prior_stepup(out)
     prior_warm_vs_cold = _read_prior_warm_vs_cold(out)
