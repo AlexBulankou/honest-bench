@@ -398,25 +398,41 @@ def single_sample_ttfe_point(
 
 
 def multi_sample_ttfe_point(
-    ttfe_ms_samples: Sequence[Optional[Real]], exec_oks: Sequence[bool]
+    ttfe_ms_samples: Sequence[Optional[Real]],
+    exec_oks: Sequence[bool],
+    *,
+    bind_ms_samples: Optional[Sequence[Optional[Real]]] = None,
+    exec_ms_samples: Optional[Sequence[Optional[Real]]] = None,
 ) -> dict[str, float]:
-    """N-sample TTFE metrics for a REPEATED one-shot activation scenario (resume).
+    """N-sample TTFE metrics for a REPEATED one-shot activation scenario.
 
     Generalizes ``single_sample_ttfe_point`` from one activation to N: the
     resume-from-suspend cell can loop N suspend->resume cycles (the cycle-count
-    knob) so a single noisy resume sample becomes a real p50/p95 distribution.
-    Like the single-sample form it emits the percentile pair + exec-success + the
-    sample count n, and OMITS throughput (a per-node rate over a handful of
-    activations is meaningless) and density (measured once via the warm-pool
-    DENSITY_SOURCE_SCENARIO, never per activation).
+    knob), and the cold-provision cell can loop N create->Ready->delete cycles
+    (NATIVE_DIGEST_COLD_SAMPLES, hb#196), so a single noisy activation sample
+    becomes a real p50/p95 distribution. Like the single-sample form it emits the
+    percentile pair + exec-success + the sample count n, and OMITS throughput (a
+    per-node rate over a handful of activations is meaningless) and density
+    (measured once via the warm-pool DENSITY_SOURCE_SCENARIO, never per
+    activation).
 
     n is the number of ATTEMPTED activations (len(exec_oks)); exec_success_rate is
     over all attempts so a failed cycle drags it down honestly. The percentile keys
     appear iff >=1 cycle produced a latency — a failed exec contributes None, is
     excluded from the distribution, but still counts against exec_success_rate.
 
-    For N=1 this returns output byte-identical to ``single_sample_ttfe_point``, so
-    the default (cycle_count=1) emit is unchanged.
+    Optional bind/exec decomposition (inch #2, cold — the N-sample form of
+    ``single_sample_ttfe_point``'s bind_ms/exec_ms kwargs): when
+    ``bind_ms_samples`` (per-cycle create->Ready provision times) and/or
+    ``exec_ms_samples`` (per-cycle residuals ttfe - bind against the SAME shared
+    per-cycle t0) are supplied, their p50/p95 pair is emitted over the present
+    (non-None) samples alongside the ttfe pair. INDEPENDENTLY MEASURED per cycle,
+    never derived from the ttfe percentiles. Both default None so the
+    un-decomposed callers (resume) stay byte-identical.
+
+    For N=1 this returns output byte-identical to ``single_sample_ttfe_point``
+    (with or without the decomposition kwargs), so the default (cycle_count=1 /
+    samples=1) emit is unchanged.
     """
     if not exec_oks:
         raise ValueError("multi_sample_ttfe_point of empty attempt set")
@@ -428,6 +444,16 @@ def multi_sample_ttfe_point(
     if present:
         metrics["ttfe_p50_ms"] = round(percentile(present, 50), 1)
         metrics["ttfe_p95_ms"] = round(percentile(present, 95), 1)
+    if bind_ms_samples is not None:
+        pb = [float(b) for b in bind_ms_samples if b is not None]
+        if pb:
+            metrics["bind_p50_ms"] = round(percentile(pb, 50), 1)
+            metrics["bind_p95_ms"] = round(percentile(pb, 95), 1)
+    if exec_ms_samples is not None:
+        pe = [float(e) for e in exec_ms_samples if e is not None]
+        if pe:
+            metrics["exec_p50_ms"] = round(percentile(pe, 50), 1)
+            metrics["exec_p95_ms"] = round(percentile(pe, 95), 1)
     return metrics
 
 

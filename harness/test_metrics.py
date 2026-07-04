@@ -448,6 +448,70 @@ def test_multi_sample_empty_attempts_raises():
     _check(raised, "multi_sample on empty attempt set raises")
 
 
+def test_multi_sample_decomposition_n1_identical_with_kwargs():
+    # hb#196: the cold cell passes bind/exec decomposition kwargs on EVERY call
+    # (including N=1). The ttfe/n/exec-rate keys must stay byte-identical to
+    # single_sample; the decomposition keys are additive.
+    single = m.single_sample_ttfe_point(3500.0, True)
+    multi = m.multi_sample_ttfe_point(
+        [3500.0], [True],
+        bind_ms_samples=[3000.0], exec_ms_samples=[500.0],
+    )
+    for k, v in single.items():
+        _check(multi[k] == v, f"decomposed multi(n=1) preserves {k}")
+    _check(_close(multi["bind_p50_ms"], 3000.0), "n=1 bind p50 == sample")
+    _check(_close(multi["bind_p95_ms"], 3000.0), "n=1 bind p95 == sample")
+    _check(_close(multi["exec_p50_ms"], 500.0), "n=1 exec p50 == sample")
+    _check(_close(multi["exec_p95_ms"], 500.0), "n=1 exec p95 == sample")
+
+
+def test_multi_sample_decomposition_distribution():
+    binds = [1000.0, 2000.0, 3000.0, 4000.0, 5000.0]
+    execs = [100.0, 200.0, 300.0, 400.0, 500.0]
+    ttfes = [b + e for b, e in zip(binds, execs)]
+    out = m.multi_sample_ttfe_point(
+        ttfes, [True] * 5, bind_ms_samples=binds, exec_ms_samples=execs,
+    )
+    _check(_close(out["bind_p50_ms"], round(m.percentile(binds, 50), 1)),
+           "bind p50 over bind samples")
+    _check(_close(out["bind_p95_ms"], round(m.percentile(binds, 95), 1)),
+           "bind p95 over bind samples")
+    _check(_close(out["exec_p50_ms"], round(m.percentile(execs, 50), 1)),
+           "exec p50 over exec samples")
+    _check(_close(out["exec_p95_ms"], round(m.percentile(execs, 95), 1)),
+           "exec p95 over exec samples")
+
+
+def test_multi_sample_decomposition_none_exec_excluded():
+    # A cycle whose TTFE probe failed has bind measured but exec None: the None
+    # is excluded from the exec distribution; bind still counts every cycle.
+    out = m.multi_sample_ttfe_point(
+        [1500.0, None, 3500.0], [True, False, True],
+        bind_ms_samples=[1000.0, 2000.0, 3000.0],
+        exec_ms_samples=[500.0, None, 500.0],
+    )
+    _check(_close(out["bind_p50_ms"], round(m.percentile([1000.0, 2000.0, 3000.0], 50), 1)),
+           "bind distribution counts all cycles")
+    _check(_close(out["exec_p50_ms"], round(m.percentile([500.0, 500.0], 50), 1)),
+           "exec distribution excludes None")
+
+
+def test_multi_sample_decomposition_all_none_omits_keys():
+    out = m.multi_sample_ttfe_point(
+        [None], [False], bind_ms_samples=[1000.0], exec_ms_samples=[None],
+    )
+    _check("bind_p50_ms" in out, "bind present when measured")
+    _check("exec_p50_ms" not in out, "all-None exec omits exec keys")
+    _check("exec_p95_ms" not in out, "all-None exec omits exec keys (p95)")
+
+
+def test_multi_sample_no_kwargs_shape_unchanged():
+    # Un-decomposed callers (resume) must see zero new keys.
+    out = m.multi_sample_ttfe_point([2000.0, 4000.0], [True, True])
+    for k in ("bind_p50_ms", "bind_p95_ms", "exec_p50_ms", "exec_p95_ms"):
+        _check(k not in out, f"no-kwargs call omits {k}")
+
+
 def test_multi_sample_merge_lifts_n_and_preserves_pending_reason():
     # The N>1 suspend_resume merge contract, validated offline: gap-persists path
     # carries pending_reason, we merge the N-sample TTFE point, run.py lifts n +
