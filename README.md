@@ -5,9 +5,10 @@ only question this page answers. The metric is **TTFE (Time-To-First-Instruction
 from "create this sandbox" to "it ran my first instruction and returned a result." Not pod-Ready (a
 pod can look ready seconds before it can run your code) — the real wait.
 
-**North Star:** a warm sandbox with **TTFE p95 under 0.5s** — the bar the scorecard below grades
-against. The **scale target** is to hold **sub-1s at 300+ creations/sec**, on a stock GKE cluster
-you can provision yourself.
+**North Star:** a warm sandbox with **TTFE p95 under 1s** — the bar the scorecard below grades
+against (a stricter **0.5s stretch bar** is tracked separately, below the scorecard). The **scale
+target** is to hold **sub-1s at 300+ creations/sec**, on a stock GKE cluster you can provision
+yourself.
 
 Two runtimes, two isolation trade-offs:
 - **gVisor** — a user-space kernel intercepting syscalls; near-container speed, strong isolation.
@@ -89,14 +90,23 @@ Find the row closest to **your** load; the p50 is the wait to plan around. The *
 
 ### How close to the North Star?
 
-The long-term target for a warm-pool hit is a TTFE p95 under 0.5s — a stricter bar than the 5s/1s throughput bars in the matrix above (those are today's operating envelope). This scorecard prints the measured distance to that target rather than leaving it implied. It is the same bar the step-up curve's North-Star verdict uses — the highest sustained creation rate holding p95 under it is reported in [DETAILS.md](DETAILS.md).
+The North Star is the bar in the spec doc: a warm-pool hit with TTFE p95 under 1s (spec doc: _Our North Star is < 1 second Time-To-First-Instruction_). This scorecard prints the measured distance to that target rather than leaving it implied. The 5s/1s throughput bars in the matrix above are today's operating envelope; the stricter 0.5s stretch bar (below) is an aspiration, not the North Star.
 
-| Runtime | Warm-pool-hit TTFE p95 (measured) | North Star (p95 < 0.5s) |
+| Runtime | Warm-pool-hit TTFE p95 (measured) | North Star (p95 < 1s) |
+|---|---|---|
+| gVisor | 0.9222s (count=30) | ✅ met (0.0778s headroom) |
+| Kata + microVM | 1.002s (count=30) | ❌ not met (0.002s above the bar) · within N=30 sampling noise |
+
+_An honest ❌ beats an implied pass: the page prints the measured distance to the target it misses, and a met bar prints its measured headroom. A miss that sits inside the sample spread is tagged `within sampling noise` (it stays a ❌ — the tag never flips a miss to a pass). An unmeasured runtime reads `pending` — never a guess. † marks a p95 measured over fewer than N=30 samples (a single observation, not a distribution)._
+
+### Stretch bar — warm-pool TTFE p95 < 0.5s
+
+Beyond the North Star, the page tracks a stricter 0.5s stretch target (landed via hb#148). It is an aspiration the runtimes are climbing toward — **not** the North Star, and a miss here is expected while the North Star is the live bar. The step-up curve's verdict grades sustained creation rate against this same stretch bar (reported in [DETAILS.md](DETAILS.md)).
+
+| Runtime | Warm-pool-hit TTFE p95 (measured) | Stretch (p95 < 0.5s) |
 |---|---|---|
 | gVisor | 0.9222s (count=30) | ❌ not met (0.4222s above the bar) |
 | Kata + microVM | 1.002s (count=30) | ❌ not met (0.502s above the bar) |
-
-_An honest ❌ beats an implied pass: the page prints the measured distance to the target it misses, and a met bar prints its measured headroom. An unmeasured runtime reads `pending` — never a guess. † marks a p95 measured over fewer than N=30 samples (a single observation, not a distribution)._
 
 ## Does it hold at cluster scale?
 

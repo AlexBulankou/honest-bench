@@ -11,6 +11,7 @@ Usage:
 
 import argparse
 import json
+import math
 import sys
 
 from schema import (
@@ -944,29 +945,45 @@ def render_matrix(results, kata_results=None):
     return "\n".join(lines)
 
 
-# --- #4162: North-Star scorecard (render-derived; zero emit-key change) --------------------
-# The long-term target for a warm-pool hit is TTFE p95 < 500ms — the SAME 500ms "North Star"
-# band the step-up curve's verdict already uses (schema.py stepup vocabulary: max_flat_rate =
-# highest sustained rate under it, reported in DETAILS). The matrix's 5s/1s throughput bars are
-# today's operating envelope; this block prints the measured GAP to the stricter target instead
-# of leaving it implied. It is derived entirely from the already-emitted warm-hit ttfe_p95_ms —
-# no new emit key, so the locked emitter⇄renderer schema contract is untouched.
-NORTH_STAR_TTFE_P95_MS = 500.0
+# --- #4162 / hb#202: North-Star scorecard (render-derived; zero emit-key change) -----------
+# The North Star is the bar in alex's spec doc: warm-pool-hit TTFE p95 < 1s ("Our North Star
+# is < 1 second Time-To-First-Instruction"). This block prints the measured GAP to that target
+# instead of leaving it implied. Separately, a 0.5s STRETCH bar (landed via hb#148) is kept as
+# a visually-distinct, explicitly-labeled stretch row — it no longer wears the "North Star"
+# label, resolving hb#202's SoT drift (the spec doc says <1s; 0.5s appears nowhere in it). Both
+# are derived entirely from the already-emitted warm-hit ttfe_p95_ms — no new emit key, so the
+# locked emitter⇄renderer schema contract is untouched. The matrix's 5s/1s throughput bars
+# remain today's operating envelope.
+NORTH_STAR_TTFE_P95_MS = 1000.0
+STRETCH_TTFE_P95_MS = 500.0
 
 
-def render_north_star(results, kata_results=None, heading=None):
-    """Headline scorecard: measured warm-pool-hit TTFE p95 vs the 500ms North-Star bar.
+def _p95_verdict(p95, bar_ms, p50, n):
+    """Signed-margin verdict for a measured p95 against a bar.
 
-    Same per-runtime sourcing as the matrix (the primary results claim their measured
-    runtime; kata_results may fill the kata-microvm slot; primary wins on conflict). A
-    runtime with no measured warm-hit p95 renders `pending` — never a guess (a pending
-    warm scenario's suppressed metrics fall through to `pending` here too). A met bar
-    renders ✅ with the measured headroom; a missed bar renders an honest ❌ with the
-    measured gap. Low-N p95 cells inherit the matrix's small-sample dagger.
+    Renders ✅/❌ with the measured headroom/gap. hb#202 (a4z1 flap-risk ask): when a MISS
+    sits inside the sample's spread, append a `within N=<n> sampling noise` annotation so a
+    2ms miss does not read as a hard fail on the next re-fire. The spread proxy is
+    (p95−p50)/√n — distribution-free, uses only committed schema fields (no CI field exists),
+    and by construction only ANNOTATES a miss, never converts ❌ into ✅.
     """
-    product = results.get("product")
-    if product not in PRODUCTS:
-        return ""
+    if p95 < bar_ms:
+        return f"✅ met ({_fmt_secs(bar_ms - p95)} headroom)"
+    gap = p95 - bar_ms
+    verdict = f"❌ not met ({_fmt_secs(gap)} above the bar)"
+    if isinstance(p50, (int, float)) and isinstance(n, int) and n > 0 and p95 > p50:
+        half_width = (p95 - p50) / math.sqrt(n)
+        if gap < half_width:
+            verdict += f" · within N={n} sampling noise"
+    return verdict
+
+
+def _north_star_rows(results, kata_results=None):
+    """Per-runtime measured warm-hit p95 rows, sourced exactly like the matrix.
+
+    Returns a list of (runtime_label, p95_or_None, p95_cell_or_None, p50_or_None, n_or_None).
+    A runtime with no measured warm-hit p95 carries p95=None (renders `pending`).
+    """
     prov = _clean_provenance(results.get("provenance"))
     measured_runtime = prov.get("runtime") or "gvisor"
     sources = {measured_runtime: _matrix_scenarios(results.get("scenarios"))}
@@ -979,48 +996,102 @@ def render_north_star(results, kata_results=None, heading=None):
         if kp.get("runtime") == "kata-microvm":
             sources["kata-microvm"] = _matrix_scenarios(kata_results.get("scenarios"))
 
-    bar = _fmt_secs(NORTH_STAR_TTFE_P95_MS)
-    heading = heading or f"## North-Star check — warm-pool TTFE p95 < {bar}"
-    lines = [heading, ""]
-    lines.append(
-        f"The long-term target for a warm-pool hit is a TTFE p95 under {bar} — a stricter bar "
-        "than the 5s/1s throughput bars in the matrix above (those are today's operating "
-        "envelope). This scorecard prints the measured distance to that target rather than "
-        "leaving it implied. It is the same bar the step-up curve's North-Star verdict uses — "
-        "the highest sustained creation rate holding p95 under it is reported in "
-        "[DETAILS.md](DETAILS.md)."
-    )
-    lines.append("")
-    lines.append(f"| Runtime | Warm-pool-hit TTFE p95 (measured) | North Star (p95 < {bar}) |")
-    lines.append("|---|---|---|")
+    rows = []
     for rt in MATRIX_RUNTIMES:
         rt_scen = sources.get(rt)
         sc = rt_scen.get("warmpool_cold_start") if rt_scen is not None else None
         p95 = sc["metrics"].get("ttfe_p95_ms") if sc else None
         if p95 is None:
-            pend = link_pending(_PENDING)
-            lines.append(f"| {RUNTIME_LABELS[rt]} | {pend} | {pend} |")
+            rows.append((RUNTIME_LABELS[rt], None, None, None, None))
             continue
-        p95_cell = _fmt_secs(p95)
+        p50 = sc["metrics"].get("ttfe_p50_ms")
         n_val = sc["n"] if sc["n"] > 0 else None
+        p95_cell = _fmt_secs(p95)
         # hb#142: inline sample count, mirroring the matrix TTFE cells. `value (count=N)`,
         # with the low-N dagger AFTER the count when the row is below the comparability floor.
         if n_val is not None:
             p95_cell += f" (count={n_val})"
             if n_val < TTFE_COMPARABILITY_MIN_N:
                 p95_cell += f" {_LOW_N_MARK}"
-        if p95 < NORTH_STAR_TTFE_P95_MS:
-            verdict = f"✅ met ({_fmt_secs(NORTH_STAR_TTFE_P95_MS - p95)} headroom)"
-        else:
-            verdict = f"❌ not met ({_fmt_secs(p95 - NORTH_STAR_TTFE_P95_MS)} above the bar)"
-        lines.append(f"| {RUNTIME_LABELS[rt]} | {p95_cell} | {verdict} |")
+        rows.append((RUNTIME_LABELS[rt], p95, p95_cell, p50, n_val))
+    return rows
+
+
+def render_north_star(results, kata_results=None, heading=None):
+    """Headline scorecard: measured warm-pool-hit TTFE p95 vs the spec doc's <1s North Star.
+
+    hb#202 ruling (B): the North-Star bar is the spec doc's <1s TTFE. The 0.5s bar landed via
+    hb#148 survives as a separate, explicitly-labeled STRETCH row — it no longer wears the
+    "North Star" label. Same per-runtime sourcing as the matrix (primary results claim their
+    measured runtime; kata_results may fill the kata-microvm slot; primary wins on conflict). A
+    runtime with no measured warm-hit p95 renders `pending` — never a guess. A met bar renders
+    ✅ with the measured headroom; a missed bar renders an honest ❌ with the measured gap
+    (annotated `within sampling noise` when the miss sits inside the sample spread). Low-N p95
+    cells inherit the matrix's small-sample dagger.
+    """
+    product = results.get("product")
+    if product not in PRODUCTS:
+        return ""
+    rows = _north_star_rows(results, kata_results)
+
+    ns_bar = _fmt_secs(NORTH_STAR_TTFE_P95_MS)
+    stretch_bar = _fmt_secs(STRETCH_TTFE_P95_MS)
+    heading = heading or f"## North-Star check — warm-pool TTFE p95 < {ns_bar}"
+    lines = [heading, ""]
+    lines.append(
+        f"The North Star is the bar in the spec doc: a warm-pool hit with TTFE p95 under "
+        f"{ns_bar} (spec doc: _Our North Star is < 1 second Time-To-First-Instruction_). This "
+        "scorecard prints the measured distance to that target rather than leaving it implied. "
+        "The 5s/1s throughput bars in the matrix above are today's operating envelope; the "
+        f"stricter {stretch_bar} stretch bar (below) is an aspiration, not the North Star."
+    )
+    lines.append("")
+    lines.append(
+        f"| Runtime | Warm-pool-hit TTFE p95 (measured) | North Star (p95 < {ns_bar}) |"
+    )
+    lines.append("|---|---|---|")
+    for label, p95, p95_cell, p50, n_val in rows:
+        if p95 is None:
+            pend = link_pending(_PENDING)
+            lines.append(f"| {label} | {pend} | {pend} |")
+            continue
+        verdict = _p95_verdict(p95, NORTH_STAR_TTFE_P95_MS, p50, n_val)
+        lines.append(f"| {label} | {p95_cell} | {verdict} |")
     lines.append("")
     lines.append(
         "_An honest ❌ beats an implied pass: the page prints the measured distance to the "
-        "target it misses, and a met bar prints its measured headroom. An unmeasured runtime "
-        f"reads `pending` — never a guess. {_LOW_N_MARK} marks a p95 measured over fewer than "
-        f"N={TTFE_COMPARABILITY_MIN_N} samples (a single observation, not a distribution)._"
+        "target it misses, and a met bar prints its measured headroom. A miss that sits inside "
+        "the sample spread is tagged `within sampling noise` (it stays a ❌ — the tag never "
+        "flips a miss to a pass). An unmeasured runtime reads `pending` — never a guess. "
+        f"{_LOW_N_MARK} marks a p95 measured over fewer than N={TTFE_COMPARABILITY_MIN_N} "
+        "samples (a single observation, not a distribution)._"
     )
+    lines.append("")
+
+    # hb#148 / hb#202: the 0.5s STRETCH bar, kept as a distinct, clearly-labeled aspiration
+    # row — visually separated from the North-Star scorecard above, and no longer labeled
+    # "North Star" (the spec doc's North Star is <1s; 0.5s is a stretch the page climbs toward).
+    lines.append(f"### Stretch bar — warm-pool TTFE p95 < {stretch_bar}")
+    lines.append("")
+    lines.append(
+        f"Beyond the North Star, the page tracks a stricter {stretch_bar} stretch target "
+        "(landed via hb#148). It is an aspiration the runtimes are climbing toward — **not** "
+        "the North Star, and a miss here is expected while the North Star is the live bar. The "
+        "step-up curve's verdict grades sustained creation rate against this same stretch bar "
+        "(reported in [DETAILS.md](DETAILS.md))."
+    )
+    lines.append("")
+    lines.append(
+        f"| Runtime | Warm-pool-hit TTFE p95 (measured) | Stretch (p95 < {stretch_bar}) |"
+    )
+    lines.append("|---|---|---|")
+    for label, p95, p95_cell, p50, n_val in rows:
+        if p95 is None:
+            pend = link_pending(_PENDING)
+            lines.append(f"| {label} | {pend} | {pend} |")
+            continue
+        verdict = _p95_verdict(p95, STRETCH_TTFE_P95_MS, p50, n_val)
+        lines.append(f"| {label} | {p95_cell} | {verdict} |")
     lines.append("")
     return "\n".join(lines)
 
@@ -2868,7 +2939,7 @@ def render_provisioning_rate_sweep(results):
 # warm+cold") is computed by the internal classifier (#4030) and emitted as the pre-validated
 # saturation_point block (2×2 warm/cold × tight(1s)/loose(5s) bars). Render reads it straight —
 # the operator headline is the emitter's number, not a render-time re-derivation. The schema
-# characteristic band-rates + verdict (North Star 500ms / collapse 2000ms) and the per-step
+# characteristic band-rates + verdict (0.5s stretch bar / collapse 2000ms) and the per-step
 # Pareto table render additively below as the methodology/study story.
 
 
@@ -2906,8 +2977,8 @@ def _sp_cell(leg, key):
 
 
 _STEPUP_VERDICT_LABELS = {
-    "flat-through-sweep": "✅ flat through the whole sweep (no measured step breached the North Star)",
-    "degrading": "⚠️ degrading (at least one step breached the North Star; none collapsed)",
+    "flat-through-sweep": "✅ flat through the whole sweep (no measured step breached the 0.5s stretch bar)",
+    "degrading": "⚠️ degrading (at least one step breached the 0.5s stretch bar; none collapsed)",
     "saturated": "🛑 saturated (at least one step crossed the collapse band)",
     "no-measured-steps": "pending (no step produced a measured TTFE — infra/scrape gap, honest)",
 }
@@ -2920,7 +2991,7 @@ def render_stepup(results):
     TTFE p95 under the 1s (tight) and 5s (loose) bars, split by leg (warm-pool hit vs cold-
     provision overflow), read straight off the emitter's pre-validated saturation_point block.
     An unmet bar renders em-dash, never a fabricated 0. The schema verdict + characteristic
-    band-rates (North Star 500ms / collapse 2000ms) and the per-step Pareto table render
+    band-rates (0.5s stretch bar / collapse 2000ms) and the per-step Pareto table render
     additively below as the methodology/study story. The controller_startup proxy renders as an
     explicit LOWER BOUND (it excludes claim→first-reconcile queueing, so it under-reports true
     TTFE). INERT until a closed-schema-clean stepup object with a non-empty table is emitted.
@@ -2959,11 +3030,11 @@ def render_stepup(results):
     pts = su.get("pareto_points")
     # Schema verdict + characteristic band-rates (stricter 500ms/2000ms framing) — additive.
     if "verdict" in su:
-        lines.append(f"Curve verdict (North Star p95<500ms / collapse 2000ms bands): {_STEPUP_VERDICT_LABELS[su['verdict']]}.")
+        lines.append(f"Curve verdict (0.5s stretch-bar p95<500ms / collapse 2000ms bands): {_STEPUP_VERDICT_LABELS[su['verdict']]}.")
         lines.append("")
     band_bits = []
     if "max_flat_rate" in su:
-        band_bits.append(f"highest rate under the 500ms North Star: **{_fmt_num(su['max_flat_rate'])}/s**")
+        band_bits.append(f"highest rate under the 0.5s stretch bar: **{_fmt_num(su['max_flat_rate'])}/s**")
     if "north_star_breach_rate" in su:
         band_bits.append(f"first rate to breach 500ms: {_fmt_num(su['north_star_breach_rate'])}/s")
     if "saturation_rate" in su:
