@@ -495,6 +495,16 @@ STEPUP_VERDICTS = {
 }
 
 
+# Stepup-family offered rate: any positive finite number < 100000 (hb#189). Fractional rungs
+# are first-class producer-side (kata 0.5/1.5 per_s; sub-refill credit ladders need midpoints
+# like 1.5), and the harness normalizes at ingest (integral -> int, fractional -> float), so
+# render only validates — it accepts both without normalizing.
+def _stepup_rate_ok(rate):
+    if isinstance(rate, bool) or not isinstance(rate, (int, float)):
+        return False
+    return rate == rate and 0 < rate < 100000
+
+
 # One Pareto point per swept rate. offered_rate_per_s + ttfe_p95_ms are REQUIRED (the x-axis
 # and the honesty spine); the rest are OPTIONAL (a partial Prometheus scrape yields a partial
 # point honestly, never a fabricated 0). A point missing a required field, or whose value
@@ -506,8 +516,7 @@ def _stepup_points_ok(v):
     for p in v:
         if not isinstance(p, dict):
             return False
-        rate = p.get("offered_rate_per_s")
-        if not (isinstance(rate, int) and not isinstance(rate, bool) and 0 < rate < 100000):
+        if not _stepup_rate_ok(p.get("offered_rate_per_s")):
             return False
         p95 = p.get("ttfe_p95_ms")
         if not (isinstance(p95, (int, float)) and not isinstance(p95, bool) and p95 >= 0):
@@ -544,8 +553,7 @@ def _stepup_controller_ok(v):
     for p in pts:
         if not isinstance(p, dict):
             return False
-        rate = p.get("offered_rate_per_s")
-        if not (isinstance(rate, int) and not isinstance(rate, bool) and 0 < rate < 100000):
+        if not _stepup_rate_ok(p.get("offered_rate_per_s")):
             return False
         p95 = p.get("controller_startup_p95_ms")
         if not (isinstance(p95, (int, float)) and not isinstance(p95, bool) and p95 >= 0):

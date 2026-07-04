@@ -586,6 +586,56 @@ def test_stepup_malformed_points_dropped():
         _check("stepup" not in r, f"malformed stepup omits key: {bad!r}")
 
 
+def test_stepup_fractional_rates_normalized():
+    # hb#189: fractional rungs are first-class (kata 0.5/1.5 per_s; sub-refill credit
+    # ladders need midpoints like 1.5). Integral floats normalize to strict int so
+    # existing integer-rung records round-trip byte-identically; fractional rates
+    # survive as float and are NEVER floored (1.5 -> 1 would alias the measurement
+    # onto a real rate-1 rung). Applies to BOTH the true-TTFE points and the
+    # controller-startup proxy points, and a MIXED ladder survives whole — the prior
+    # strict-int gate dropped the ENTIRE block on one fractional rung.
+    su = {
+        "pareto_points": [
+            {"offered_rate_per_s": 1, "ttfe_p95_ms": 100.0},
+            {"offered_rate_per_s": 1.5, "ttfe_p95_ms": 200.0},
+            {"offered_rate_per_s": 2.0, "ttfe_p95_ms": 300.0},
+        ],
+        "verdict": "flat-through-sweep",
+        "controller_startup": {
+            "lower_bound": True,
+            "pareto_points": [
+                {"offered_rate_per_s": 0.5, "controller_startup_p95_ms": 80.0},
+                {"offered_rate_per_s": 3.0, "controller_startup_p95_ms": 90.0},
+            ],
+        },
+    }
+    out = rs.build_results([], _prov(), GEN_AT, stepup=su)["stepup"]
+    rates = [p["offered_rate_per_s"] for p in out["pareto_points"]]
+    _check(rates == [1, 1.5, 2], f"mixed ladder survives whole, got {rates!r}")
+    _check(isinstance(rates[0], int) and isinstance(rates[2], int),
+           "integral rates normalize to strict int (2.0 -> 2)")
+    _check(isinstance(rates[1], float), "fractional rate stays float, never floored")
+    crates = [p["offered_rate_per_s"] for p in out["controller_startup"]["pareto_points"]]
+    _check(crates == [0.5, 3] and isinstance(crates[1], int),
+           f"proxy leg accepts fractional + normalizes integral, got {crates!r}")
+
+
+def test_stepup_fractional_relaxation_still_fails_closed():
+    # The hb#189 relaxation does NOT open the gate to junk: NaN / inf / negative /
+    # zero / bool / str rates still drop the whole block on either leg (fail-closed
+    # posture unchanged — only the int-only restriction was lifted).
+    for bad_rate in (float("nan"), float("inf"), -1.5, 0.0, True, "1.5"):
+        su = {"pareto_points": [{"offered_rate_per_s": bad_rate, "ttfe_p95_ms": 1.0}],
+              "verdict": "flat-through-sweep"}
+        r = rs.build_results([], _prov(), GEN_AT, stepup=su)
+        _check("stepup" not in r, f"bad TTFE-leg rate {bad_rate!r} still fails closed")
+        su = {"pareto_points": [], "verdict": "no-measured-steps",
+              "controller_startup": {"lower_bound": True, "pareto_points": [
+                  {"offered_rate_per_s": bad_rate, "controller_startup_p95_ms": 1.0}]}}
+        r = rs.build_results([], _prov(), GEN_AT, stepup=su)
+        _check("stepup" not in r, f"bad proxy-leg rate {bad_rate!r} still fails closed")
+
+
 def test_stepup_optional_point_fields_dropped_on_bad_value():
     # An optional per-point field with a non-finite/negative value is dropped, but the
     # point (and the object) still emits on its required spine — honest-partial, never
