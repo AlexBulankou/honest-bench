@@ -673,6 +673,38 @@ def test_emit_to_render_stepup_pareto_convergence():
             f"emit/render DRIFT on fractional ladder: {key!r} -> {val!r} rejected by render side"
         )
 
+    # (g) hb#189 second sweep: the DERIVED rate fields (saturation-point legs +
+    # characteristic rates) are values FROM the swept ladder, so a fractional ladder
+    # yields fractional derived rates — the emitter normalizes them via the same
+    # helper and the render allow-list accepts the normalized shape. Before this
+    # sweep the emitter silently DROPPED them (saturation leg -> block None;
+    # characteristic rate -> key omitted) and _pos_int rejected floats render-side.
+    dfrac_in = {
+        "pareto_points": [{"offered_rate_per_s": 1.5, "ttfe_p95_ms": 200.0}],
+        "verdict": "flat-through-sweep",
+        "saturation_point": {
+            "tight_ms": 1000.0, "loose_ms": 5000.0,
+            "warm": {"max_rate_under_tight": 1.5, "max_rate_under_loose": 2.0},
+        },
+        "north_star_breach_rate": 1.5,
+        "max_flat_rate": 0.5,
+    }
+    dfrac_results = mod.build_results(
+        [], {"cluster_substrate": "gke", "node_count": 510},
+        generated_at="2026-06-29T07:40:00Z", stepup=dfrac_in,
+    )
+    dsu = dfrac_results["stepup"]
+    assert dsu["saturation_point"]["warm"] == {
+        "max_rate_under_tight": 1.5, "max_rate_under_loose": 2
+    }, f"derived saturation leg drift: {dsu['saturation_point']['warm']!r}"
+    assert dsu["north_star_breach_rate"] == 1.5 and dsu["max_flat_rate"] == 0.5, (
+        "fractional characteristic rates must survive the emitter"
+    )
+    for key, val in dsu.items():
+        assert key in schema.STEPUP_PARETO_FIELDS and schema.STEPUP_PARETO_FIELDS[key](val), (
+            f"emit/render DRIFT on fractional derived rates: {key!r} -> {val!r} rejected"
+        )
+
 
 def test_emit_to_render_warm_vs_cold_convergence():
     """Convergence guard for the warm-vs-cold object (#3954 sibling) — INERT-render edition.

@@ -620,6 +620,49 @@ def test_stepup_fractional_rates_normalized():
            f"proxy leg accepts fractional + normalizes integral, got {crates!r}")
 
 
+def test_stepup_fractional_derived_rates_normalized():
+    # hb#189 second sweep (a4s2 pre-stage finding): the DERIVED rate fields are values
+    # FROM the swept ladder, so a fractional ladder yields fractional saturation-point
+    # legs and characteristic rates. Prior gates silently DROPPED them (saturation leg
+    # -> any_rate False -> whole block None; characteristic rate -> key omitted) — a
+    # silent omission on the published record, not a fail-closed reject.
+    su = {
+        "pareto_points": [{"offered_rate_per_s": 1.5, "ttfe_p95_ms": 100.0}],
+        "verdict": "flat-through-sweep",
+        "saturation_point": {
+            "tight_ms": 1000.0, "loose_ms": 5000.0,
+            "warm": {"max_rate_under_tight": 1.5, "max_rate_under_loose": 2.0},
+            "cold": {"max_rate_under_tight": None, "max_rate_under_loose": 0.5},
+        },
+        "north_star_breach_rate": 1.5,
+        "saturation_rate": 2.0,
+        "max_flat_rate": 0.5,
+    }
+    out = rs.build_results([], _prov(), GEN_AT, stepup=su)["stepup"]
+    sp = out["saturation_point"]
+    _check(sp["warm"] == {"max_rate_under_tight": 1.5, "max_rate_under_loose": 2},
+           f"saturation warm leg accepts fractional + normalizes integral, got {sp['warm']!r}")
+    _check(isinstance(sp["warm"]["max_rate_under_loose"], int),
+           "integral saturation rate normalizes to strict int (2.0 -> 2)")
+    _check(sp["cold"] == {"max_rate_under_loose": 0.5},
+           f"None saturation rate dropped, fractional kept, got {sp['cold']!r}")
+    _check(out["north_star_breach_rate"] == 1.5
+           and isinstance(out["north_star_breach_rate"], float),
+           "fractional characteristic rate survives, never floored")
+    _check(out["saturation_rate"] == 2 and isinstance(out["saturation_rate"], int),
+           "integral characteristic rate normalizes to strict int")
+    _check(out["max_flat_rate"] == 0.5, "sub-1 characteristic rate survives")
+    # Junk characteristic rates stay dropped (drop-semantics, not block-fail — unchanged).
+    su2 = {"pareto_points": [{"offered_rate_per_s": 1, "ttfe_p95_ms": 1.0}],
+           "verdict": "flat-through-sweep",
+           "north_star_breach_rate": float("nan"), "saturation_rate": True,
+           "max_flat_rate": -0.5}
+    out2 = rs.build_results([], _prov(), GEN_AT, stepup=su2)["stepup"]
+    _check(all(k not in out2 for k in
+               ("north_star_breach_rate", "saturation_rate", "max_flat_rate")),
+           "junk characteristic rates still dropped")
+
+
 def test_stepup_fractional_relaxation_still_fails_closed():
     # The hb#189 relaxation does NOT open the gate to junk: NaN / inf / negative /
     # zero / bool / str rates still drop the whole block on either leg (fail-closed
