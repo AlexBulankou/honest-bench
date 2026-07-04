@@ -28,7 +28,7 @@
     "pool_size": 600,
     "run_id": "c50e1c51a4c441f3a0705a2426a9a93c",
     "runtime_class": "gvisor",
-    "thpt_cluster_node_count": 40,
+    "thpt_cluster_node_count": 40.0,
     "thpt_under_1s_per_cluster": 0.0,
     "thpt_under_1s_per_node": 0.0,
     "thpt_under_5s_per_cluster": 2.558,
@@ -79,18 +79,18 @@
     "measured_at": "2026-06-30",
     "node_count": 20
   },
-  "generated_at": "2026-07-01T07:23:08Z",
+  "generated_at": "2026-07-04T18:32:56Z",
   "kata_activation": {
     "cold_ready": [
       {
         "image": "debian:12",
-        "image_pull_ms": 900,
-        "ready_ms": 3000
+        "image_pull_ms": 900.0,
+        "ready_ms": 3000.0
       },
       {
         "image": "ubuntu:24.04",
-        "image_pull_ms": 887,
-        "ready_ms": 5000
+        "image_pull_ms": 887.0,
+        "ready_ms": 5000.0
       }
     ],
     "guest_kernel": "6.18.35",
@@ -98,24 +98,24 @@
     "hypervisor": "Cloud Hypervisor",
     "kata_version": "3.32.0",
     "measured_at": "2026-06-30",
-    "microvm_activation_ms": 2000,
+    "microvm_activation_ms": 2000.0,
     "n": 3,
     "resume_status": "upstream-blocked",
     "runtime_class": "kata-microvm",
     "warm_image": "ubuntu:24.04",
-    "warm_ready_ms": 3000
+    "warm_ready_ms": 3000.0
   },
   "product": "sandbox",
   "provenance": {
     "cluster_substrate": "gke-sandbox",
     "cold_start_mode": "cold-provision",
     "node_count": 1,
-    "regime": "drained",
-    "run_id": "dc1dd343fee74008a2f75ccdfed39eb9"
+    "run_id": "c95500d1be8f439fb3a149b68aab707a",
+    "runtime": "gvisor"
   },
   "provisioning_rate_sweep": {
-    "ceiling_high_per_s": 150,
-    "ceiling_low_per_s": 100,
+    "ceiling_high_per_s": 150.0,
+    "ceiling_low_per_s": 100.0,
     "measured_at": "2026-07-01",
     "rate_points": [
       {
@@ -175,7 +175,7 @@
       "name": "burst_create",
       "outcome": "PASS",
       "sla_metrics": {
-        "density_per_vcpu": 0.2777777777777778,
+        "density_per_vcpu": 0.14705882352941177,
         "exec_success_rate": 1.0,
         "sandboxes_exec_under_1s": 10.0,
         "sandboxes_ready_under_1s": 10.0
@@ -186,30 +186,33 @@
       "name": "warmpool_cold_start",
       "outcome": "PASS",
       "sla_metrics": {
-        "bind_p50_ms": 413.5,
-        "bind_p95_ms": 685.4,
-        "density_per_vcpu": 5.98,
-        "exec_p50_ms": 218.9,
-        "exec_p95_ms": 298.0,
+        "bind_p50_ms": 506.2,
+        "bind_p95_ms": 678.0,
+        "exec_p50_ms": 239.2,
+        "exec_p95_ms": 293.3,
         "exec_success_rate": 1.0,
-        "thpt_under_1s_per_node": 32.696,
-        "thpt_under_5s_per_node": 33.824,
-        "ttfe_p50_ms": 631.7,
-        "ttfe_p95_ms": 945.4,
+        "thpt_cluster_node_count": 10.0,
+        "thpt_slo_basis": "literal_ttfe_upper_bound+acq_fulfilled",
+        "thpt_slo_n_exec_ok": 63.0,
+        "thpt_under_1s_per_node": 38.026,
         "thpt_under_5s_per_cluster": 1.204,
-        "thpt_slo_n_exec_ok": 63,
-        "thpt_cluster_node_count": 10,
-        "thpt_slo_basis": "literal_ttfe_upper_bound+acq_fulfilled"
+        "thpt_under_5s_per_node": 38.026,
+        "ttfe_p50_ms": 755.6,
+        "ttfe_p95_ms": 922.2
       }
     },
     {
-      "n": 1,
+      "n": 30,
       "name": "native_digest_cold",
       "outcome": "PASS",
       "sla_metrics": {
+        "bind_p50_ms": 3221.4,
+        "bind_p95_ms": 3487.0,
+        "exec_p50_ms": 229.3,
+        "exec_p95_ms": 295.2,
         "exec_success_rate": 1.0,
-        "ttfe_p50_ms": 4519.1,
-        "ttfe_p95_ms": 4519.1
+        "ttfe_p50_ms": 3451.8,
+        "ttfe_p95_ms": 3759.9
       }
     },
     {
@@ -219,8 +222,18 @@
       "pending_reason": "upstream-blocked",
       "sla_metrics": {
         "exec_success_rate": 1.0,
-        "ttfe_p50_ms": 34841.4,
-        "ttfe_p95_ms": 34841.4
+        "suspend_latency_ms": 2122.6,
+        "ttfe_p50_ms": 34604.4,
+        "ttfe_p95_ms": 34604.4
+      }
+    },
+    {
+      "n": 5,
+      "name": "session_turnover",
+      "outcome": "PASS",
+      "sla_metrics": {
+        "refill_latency_ms": 1239.8688520188443,
+        "refill_p90_ms": 1461.8037480395287
       }
     },
     {
@@ -251,12 +264,12 @@
     "warmpool_size": 600
   },
   "warm_vs_cold": {
-    "cold_ms": 5101.4,
-    "measured_at": "2026-07-02T02:55:38Z",
-    "n_warm": 30,
+    "cold_ms": 3451.8,
+    "measured_at": "2026-07-04T18:32:56Z",
+    "n_warm": 10,
     "runtime_class": "gvisor",
     "semantic": "ttfe",
-    "speedup": 7.283,
-    "warm_p50_ms": 700.5
+    "speedup": 9.982,
+    "warm_p50_ms": 345.8
   }
 }
