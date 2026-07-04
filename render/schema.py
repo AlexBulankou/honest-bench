@@ -581,7 +581,8 @@ _pos_int = lambda v: isinstance(v, int) and not isinstance(v, bool) and 0 < v < 
 # Distinct from the 500ms/2000ms methodology bands above (which stay on the characteristic-rate
 # fields for the Pareto/study story). tight_ms + loose_ms are REQUIRED positive bar floats;
 # basis is an OPTIONAL non-empty descriptor string. Each leg (warm/cold) is OPTIONAL; when
-# present its max_rate_under_{tight,loose} is a positive int OR None (honest "no swept rate met
+# present its max_rate_under_{tight,loose} is a positive rate (int, or fractional float on a
+# fractional ladder — hb#189) OR None (honest "no swept rate met
 # that bar" — render prints em-dash, never a fabricated 0). At least one leg must carry at least
 # one present rate, else the block is honest "nothing" and is dropped (fail-closed).
 def _stepup_saturation_point_ok(v):
@@ -606,7 +607,7 @@ def _stepup_saturation_point_ok(v):
                 rv = leg[k]
                 if rv is None:
                     continue  # honest "bar unmet" — valid, renders em-dash
-                if not (isinstance(rv, int) and not isinstance(rv, bool) and 0 < rv < 100000):
+                if not _stepup_rate_ok(rv):
                     return False
                 any_rate = True
     return any_rate
@@ -626,9 +627,11 @@ STEPUP_PARETO_FIELDS = {
     # The three characteristic rates (all optional — absent when the curve never crossed that
     # band). north_star_breach_rate = first rate with p95 >= 500ms; saturation_rate = first
     # rate with p95 >= 2000ms; max_flat_rate = highest rate still under the North Star.
-    "north_star_breach_rate": _pos_int,
-    "saturation_rate": _pos_int,
-    "max_flat_rate": _pos_int,
+    # These are values FROM the swept ladder, so a fractional ladder yields fractional
+    # characteristic rates — same relaxed predicate as the per-point rate (hb#189).
+    "north_star_breach_rate": _stepup_rate_ok,
+    "saturation_rate": _stepup_rate_ok,
+    "max_flat_rate": _stepup_rate_ok,
     # Sweep parameters (Little's-law inputs) — public-safe scalars.
     "sld_s": _nonneg,  # sandbox life duration (s)
     "wpr": lambda v: isinstance(v, (int, float)) and not isinstance(v, bool) and 0.0 <= v <= 1.0,

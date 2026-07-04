@@ -548,8 +548,10 @@ def _coerce_saturation_point(raw, clean_nonneg):
 
     Mirrors render/schema.py's _stepup_saturation_point_ok exactly. tight_ms + loose_ms are
     REQUIRED positive bar floats; basis is an OPTIONAL non-empty descriptor. Each leg (warm/
-    cold) is OPTIONAL; its max_rate_under_{tight,loose} is kept only as a positive int — a None
-    or absent value is DROPPED (the renderer prints em-dash, never a fabricated 0). At least one
+    cold) is OPTIONAL; its max_rate_under_{tight,loose} is a rate FROM the swept ladder, so it
+    normalizes via _coerce_offered_rate (integral -> int, fractional -> float — hb#189) — a
+    None, absent, or malformed value is DROPPED (the renderer prints em-dash, never a
+    fabricated 0). At least one
     leg must carry at least one present rate, else the block is honest "nothing" -> None.
     """
     if not isinstance(raw, dict):
@@ -569,8 +571,8 @@ def _coerce_saturation_point(raw, clean_nonneg):
             continue
         cleaned = {}
         for k in ("max_rate_under_tight", "max_rate_under_loose"):
-            rv = lv.get(k)
-            if not isinstance(rv, bool) and isinstance(rv, int) and 0 < rv < 100000:
+            rv = _coerce_offered_rate(lv.get(k))
+            if rv is not None:
                 cleaned[k] = rv
                 any_rate = True
         out[leg] = cleaned
@@ -659,10 +661,12 @@ def _coerce_stepup(raw):
     if literal is not None:
         out["literal_ttfe"] = literal
 
-    # Optional positive-int characteristic rates (None in the source when no breach).
+    # Optional characteristic rates (None in the source when no breach). Values FROM the swept
+    # ladder, so a fractional ladder yields fractional characteristic rates — normalized via
+    # _coerce_offered_rate (integral -> int, fractional -> float — hb#189).
     for key in ("north_star_breach_rate", "saturation_rate", "max_flat_rate"):
-        v = raw.get(key)
-        if isinstance(v, bool) or not isinstance(v, int) or not (0 < v < 100000):
+        v = _coerce_offered_rate(raw.get(key))
+        if v is None:
             continue
         out[key] = v
 
