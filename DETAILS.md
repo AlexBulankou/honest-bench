@@ -24,29 +24,39 @@ Warm-hit TTFE (create → first-instruction result) splits into **bind** (create
 
 | Stage | p50 | p95 |
 |---|---|---|
-| Bind (create → bound, provisioning) | 0.4135s | 0.6854s |
-| Exec (websocket + first-instruction) | 0.2189s | 0.298s |
-| **TTFE (total)** | **0.6317s** | **0.9454s** |
+| Bind (create → bound, provisioning) | 0.5062s | 0.678s |
+| Exec (websocket + first-instruction) | 0.2392s | 0.2933s |
+| **TTFE (total)** | **0.7556s** | **0.9222s** |
 
 _Each row is an independently-measured percentile of its own per-claim distribution (exec is measured per-claim as TTFE − bind, then percentiled — not p50(TTFE) − p50(bind)). Percentiles do not sum, so bind and exec need not add exactly to the total TTFE._
 
-> ⚠️ **Regime caveat:** this warm tier was measured on a **drained, low-contention cluster** (single fire, small claim count). A green warm tier here is honest for THIS fire but is **not yet a sustained North-Star claim** — it wants corroboration under representative load before sub-1s warm is treated as durable.
+## Cold-Start TTFE — Provision vs Exec Decomposition
+
+Cold-start TTFE (create → first-instruction result) splits into **provision** (create → Ready: controller reconcile + pod schedule + image pull + container start) and **exec** (websocket setup + the first-instruction round-trip on the already-Ready sandbox). For a cold start the provision is *expected* to dominate — a cold image pull is genuinely slow — so the signal to watch here is a large **exec**, which would point at the exec channel (a harness/product artifact), not the cold provision itself.
+
+| Stage | p50 | p95 |
+|---|---|---|
+| Provision (create → Ready) | 3.2214s | 3.487s |
+| Exec (websocket + first-instruction) | 0.2293s | 0.2952s |
+| **TTFE (total)** | **3.4518s** | **3.7599s** |
+
+_Each row is an independently-measured value against the same shared t0 (exec is the measured residual TTFE − provision, not a subtraction of percentiles). For the single-sample cold cell the p50 and p95 are the one measured sample._
 
 ## Warm-vs-Cold Speedup
 
-A warm-pool provision is **7.28251× faster** than a true-cold start (gVisor). The warm pool keeps a ready slot so a claim skips the fresh-node image-pull path a cold start pays in full. Both legs are measured the same way (TTFE (executed first-instruction)); the ratio is the portable headline you can reproduce on your own cluster.
+A warm-pool provision is **9.98207× faster** than a true-cold start (gVisor). The warm pool keeps a ready slot so a claim skips the fresh-node image-pull path a cold start pays in full. Both legs are measured the same way (TTFE (executed first-instruction)); the ratio is the portable headline you can reproduce on your own cluster.
 
 | Leg | TTFE (p50) |
 |---|---|
-| Warm-pool hit (gVisor, n=30) | 0.7005s |
-| True-cold (unique-image) | 5.1014s |
-| Speedup (warm is N× faster) | 7.28251× |
+| Warm-pool hit (gVisor, n=10) | 0.3458s |
+| True-cold (unique-image) | 3.4518s |
+| Speedup (warm is N× faster) | 9.98207× |
 
-_Speedup = cold ÷ warm, computed from the displayed values over n=30 warm claims; the warm leg is the p50 so half of warm claims beat it._
+_Speedup = cold ÷ warm, computed from the displayed values over n=10 warm claims; the warm leg is the p50 so half of warm claims beat it._
 
 _This warm-vs-cold pair is a standalone point-in-time run; its warm-pool leg is a separate measurement from the Core Metrics matrix "Warm-pool hit" row (an independent run at its own operating point, refreshed on its own cadence). Read each block on its own terms — the two warm p50s are not directly comparable._
 
-_Measured 2026-07-02 — warm-vs-cold speedup (point-in-time; refreshed on the next TTFE fire)._
+_Measured 2026-07-04 — warm-vs-cold speedup (point-in-time; refreshed on the next TTFE fire)._
 
 ## Kata + microVM Activation (pod-Ready — NOT TTFE)
 
@@ -80,7 +90,7 @@ Max Density is sandboxes per node-allocatable sandbox-schedulable vCPU (the per-
 
 | Runtime | Max Density (sb/vCPU) |
 |---|---|
-| gVisor | 5.98 |
+| gVisor | [pending](WORK_IN_PROGRESS.md#not-yet-measured) |
 | Kata + microVM | [pending](WORK_IN_PROGRESS.md#not-yet-measured) |
 
 ## At Scale Under Contention — where sub-second warm activation breaks
@@ -124,3 +134,26 @@ The warm-pool numbers elsewhere assume the pool is **already Ready**. This block
 _A distinct axis from the Concurrent Burst (claim:pool ratio) and Step-up (creation-rate TTFE) blocks: this measures provisioning **offered-rate** convergence, a separate regime — not directly comparable to those latency/throughput points._
 
 _Measured 2026-07-01 — warm-pool provisioning rate sweep (point-in-time; refreshed on the next rate sweep)._
+
+## Warm-Pool Turnover — Sustained-Churn Refill Latency
+
+The matrix measures the **claim** side (a warm hit is sub-second). This block measures the **reclaim** side: after a claim is released, how long the controller takes to **replenish** the warm pool under sustained claim/release churn. A slow refill silently demotes later claims from warm to cold — the failure mode a fleet cycling sandboxes continuously actually hits.
+
+| Refill latency | Value |
+|---|---|
+| Median (p50) (over 5 cycles) | 1.23987s |
+| Tail (p90) | 1.4618s |
+
+_Refill latency is measured per-cycle as the wall-clock from a claim release to the warm pool returning to full readiness; the median and tail are percentiles of the completed-cycle distribution._
+
+## Administrative Suspend Latency
+
+Suspend is the cost-lever for reclaiming a sandbox's compute while keeping its identity: an `operatingMode=Suspended` patch releases the backing Pod but preserves the CR, so a later `operatingMode=Running` patch resumes it. This block reports how fast that **administrative** suspend completes — from the patch to the terminal Suspended state (Pod released + the Suspended condition observed).
+
+_Capability note: this is an **administrative** (operator- or user-driven) suspend. Upstream agent-sandbox exposes only the closed `operatingMode` enum (`Running`; `Suspended`) — there is **no idle-timeout, activity-reclaim, or auto-suspend** path, so this latency must not be read as an automatic scale-to-zero._
+
+| Suspend latency | Value |
+|---|---|
+| Median (p50) | 2.1226s |
+
+_Suspend latency is measured per-cycle as the wall-clock from the `operatingMode=Suspended` patch return to the terminal Suspended state; the median and tail are percentiles of the measured suspend distribution._
