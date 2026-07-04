@@ -402,6 +402,28 @@ def _coerce_scale_proof(raw):
     return out
 
 
+def _coerce_offered_rate(rate):
+    """Normalize a stepup-family offered_rate_per_s; None to reject (hb#189).
+
+    Fractional rungs are first-class producer-side (kata 0.5/1.5 per_s; sub-refill
+    credit ladders need midpoints like 1.5), so the true-TTFE and controller-proxy
+    gates accept any positive finite Real < 100000 — matching the literal_ttfe leg's
+    existing posture. Two normalize rules keep honesty + history intact:
+
+      - integral -> strict int (2.0 -> 2): existing integer-rung records round-trip
+        byte-identically; downstream strict-int consumers of integer rungs are
+        unaffected.
+      - fractional -> float, NEVER floored: 1.5 -> 1 would alias the measurement onto
+        a real rate-1 rung and misattribute it.
+    """
+    if isinstance(rate, bool) or not isinstance(rate, Real):
+        return None
+    frate = float(rate)
+    if frate != frate or not (0 < frate < 100000):
+        return None
+    return int(frate) if frate == int(frate) else frate
+
+
 def _coerce_controller_startup(raw, clean_nonneg):
     """Coerce the controller-startup LOWER-BOUND proxy block (#3975); None to omit it.
 
@@ -429,8 +451,8 @@ def _coerce_controller_startup(raw, clean_nonneg):
     for p in pts:
         if not isinstance(p, dict):
             return None
-        rate = p.get("offered_rate_per_s")
-        if isinstance(rate, bool) or not isinstance(rate, int) or not (0 < rate < 100000):
+        rate = _coerce_offered_rate(p.get("offered_rate_per_s"))
+        if rate is None:
             return None
         p95 = clean_nonneg(p.get("controller_startup_p95_ms"))
         if p95 is None:
@@ -465,9 +487,10 @@ def _coerce_literal_ttfe(raw, clean_nonneg):
     producer's free-text caveat is render-owned and NEVER carried here.
 
     pareto_points must be a non-empty list. Per point: `offered_rate_per_s` is a
-    positive finite Real < 100000 — Real, NOT int-only like the true-TTFE/controller
-    points, because kata rungs are fractional (0.5/1.5 per_s) and first-class where the
-    SLO knee sits at ~2-3/s. `literal_warm_p95_ms` (nonneg) is the required honesty
+    positive finite Real < 100000, because kata rungs are fractional (0.5/1.5 per_s)
+    and first-class where the SLO knee sits at ~2-3/s (since hb#189 the true-TTFE and
+    controller points accept the same Real range via _coerce_offered_rate; this leg
+    keeps its historical always-float coercion). `literal_warm_p95_ms` (nonneg) is the required honesty
     spine. Optional per-point measured values are dropped-per-field on a bad value
     (honest partial point): warm/cold p50/p95/p99 percentiles + the two measured rate
     candidates (`acq_fulfilled_per_s`, `controller_completed_per_s` — NAMESPACED, never
@@ -571,7 +594,9 @@ def _coerce_stepup(raw):
     literal_ttfe UPPER-BOUND leg (hb#174) stand in. At least ONE of {pareto_points,
     controller_startup, literal_ttfe} must be present and valid; an all-empty sweep returns
     None (the table renders nothing rather than a partial lie). True-TTFE per-point:
-    offered_rate_per_s (int 0<r<100000) + ttfe_p95_ms (nonneg, the honesty spine) required;
+    offered_rate_per_s (positive finite Real < 100000, normalized via _coerce_offered_rate:
+    integral -> int, fractional -> float — hb#189) + ttfe_p95_ms (nonneg, the honesty spine)
+    required;
     ready_per_s / ttfe_p50_ms / ttfe_p99_ms / cost_usd_per_1k_ready optional (dropped on a bad
     value, so a partial Prometheus scrape yields a partial point honestly, never a fabricated 0).
     The characteristic rates + Little's-law params are optional sweep-level scalars.
@@ -596,8 +621,8 @@ def _coerce_stepup(raw):
         for p in points:
             if not isinstance(p, dict):
                 return None
-            rate = p.get("offered_rate_per_s")
-            if isinstance(rate, bool) or not isinstance(rate, int) or not (0 < rate < 100000):
+            rate = _coerce_offered_rate(p.get("offered_rate_per_s"))
+            if rate is None:
                 return None
             p95 = _clean_nonneg(p.get("ttfe_p95_ms"))
             if p95 is None:

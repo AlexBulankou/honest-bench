@@ -641,6 +641,38 @@ def test_emit_to_render_stepup_pareto_convergence():
     )
     assert "stepup" not in empty_results, "all-empty sweep must drop the stepup key entirely"
 
+    # (f) hb#189: a MIXED fractional ladder (kata 0.5/1.5 per_s rungs; sub-refill credit
+    # ladders need midpoints like 1.5) converges end-to-end — the emitter normalizes
+    # (integral -> int, fractional -> float, NEVER floored) and the independent render
+    # allow-list accepts the normalized shape on BOTH legs. Before hb#189 one fractional
+    # rung nulled the ENTIRE block at ingest AND the render predicate rejected float rates.
+    frac_in = {
+        "pareto_points": [
+            {"offered_rate_per_s": 1, "ttfe_p95_ms": 100.0},
+            {"offered_rate_per_s": 1.5, "ttfe_p95_ms": 200.0},
+            {"offered_rate_per_s": 2.0, "ttfe_p95_ms": 300.0},
+        ],
+        "verdict": "flat-through-sweep",
+        "controller_startup": {
+            "lower_bound": True,
+            "pareto_points": [{"offered_rate_per_s": 0.5, "controller_startup_p95_ms": 80.0}],
+        },
+    }
+    frac_results = mod.build_results(
+        [], {"cluster_substrate": "gke", "node_count": 510},
+        generated_at="2026-06-29T07:40:00Z", stepup=frac_in,
+    )
+    assert "stepup" in frac_results, "emitter dropped a valid mixed fractional ladder (hb#189)"
+    fsu = frac_results["stepup"]
+    rates = [p["offered_rate_per_s"] for p in fsu["pareto_points"]]
+    assert rates == [1, 1.5, 2] and isinstance(rates[2], int) and isinstance(rates[1], float), (
+        f"hb#189 normalize drift: expected [1, 1.5, 2] (integral->int, fractional->float), got {rates!r}"
+    )
+    for key, val in fsu.items():
+        assert key in schema.STEPUP_PARETO_FIELDS and schema.STEPUP_PARETO_FIELDS[key](val), (
+            f"emit/render DRIFT on fractional ladder: {key!r} -> {val!r} rejected by render side"
+        )
+
 
 def test_emit_to_render_warm_vs_cold_convergence():
     """Convergence guard for the warm-vs-cold object (#3954 sibling) — INERT-render edition.
