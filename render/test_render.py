@@ -2448,7 +2448,7 @@ def test_stepup_band_rates_and_verdict_additive():
     # The 500ms/2000ms methodology study renders additively BELOW the operator headline.
     out = render.render_stepup(_matrix_results(_full_gvisor_scenarios(), stepup=_su()))
     assert "🛑 saturated" in out
-    assert "highest rate under the 500ms North Star: **300/s**" in out
+    assert "highest rate under the 0.5s stretch bar: **300/s**" in out
     assert "first rate to breach 500ms: 500/s" in out
     assert "first rate to cross 2000ms: 800/s" in out
 
@@ -3350,13 +3350,24 @@ def test_recipe_in_full_readme_after_data_sections():
         assert recipe_at > contention_at
 
 
-# --- #4162 Option A: North-Star scorecard (warm-hit p95 vs the 500ms bar) --------------------
+# --- #4162 / hb#202: North-Star scorecard (warm-hit p95 vs the spec doc's <1s bar) -----------
+# hb#202 ruling (B): the North Star is the spec doc's <1s TTFE; the 0.5s bar (hb#148) survives
+# as a separate, clearly-labeled STRETCH row that no longer wears the "North Star" label.
 
 
-def test_north_star_gvisor_miss_prints_measured_gap():
+def test_north_star_bar_is_spec_doc_one_second():
     out = render.render_north_star(_matrix_results(_full_gvisor_scenarios()))
-    assert "## North-Star check — warm-pool TTFE p95 < 0.5s" in out
-    # 900ms warm-hit p95 misses the 500ms bar by exactly 0.4s — the gap is printed, not implied.
+    assert "## North-Star check — warm-pool TTFE p95 < 1s" in out
+    # gVisor warm-hit p95=900ms now MEETS the <1s North Star with 0.1s headroom.
+    assert "| gVisor | 0.9s (count=200) | ✅ met (0.1s headroom) |" in out
+
+
+def test_stretch_bar_kept_as_labeled_row():
+    out = render.render_north_star(_matrix_results(_full_gvisor_scenarios()))
+    # The 0.5s bar is now a distinct, explicitly-labeled stretch section (not "North Star").
+    assert "### Stretch bar — warm-pool TTFE p95 < 0.5s" in out
+    # gVisor warm-hit p95=900ms misses the 0.5s stretch bar by 0.4s — honest ❌, clearly outside
+    # the sample spread (gap 400ms >> half-width (900-600)/sqrt(200) ≈ 21ms), so no noise tag.
     assert "| gVisor | 0.9s (count=200) | ❌ not met (0.4s above the bar) |" in out
 
 
@@ -3366,17 +3377,51 @@ def test_north_star_met_bar_prints_headroom():
         "sla_metrics": {"ttfe_p95_ms": 400},
     }]
     out = render.render_north_star(_matrix_results(scen))
+    # 400ms clears BOTH bars: <1s North Star (0.6s headroom) and <0.5s stretch (0.1s headroom).
+    assert "| gVisor | 0.4s (count=200) | ✅ met (0.6s headroom) |" in out
     assert "| gVisor | 0.4s (count=200) | ✅ met (0.1s headroom) |" in out
 
 
-def test_north_star_exact_bar_is_not_met():
-    # Strict `<`: p95 == 500ms does NOT meet a "< 500ms" bar (never round toward the claim).
+def test_stretch_exact_bar_is_not_met():
+    # Strict `<`: p95 == 500ms does NOT meet the "< 0.5s" stretch bar (never round toward the
+    # claim). It DOES meet the <1s North Star (0.5s headroom).
     scen = [{
         "name": "warmpool_cold_start", "outcome": "PASS", "n": 200,
         "sla_metrics": {"ttfe_p95_ms": 500},
     }]
     out = render.render_north_star(_matrix_results(scen))
+    assert "| gVisor | 0.5s (count=200) | ✅ met (0.5s headroom) |" in out
     assert "❌ not met (0s above the bar)" in out
+
+
+def test_north_star_within_noise_annotates_marginal_miss():
+    # Kata warm p95=1002ms misses the <1s North Star by 2ms — inside the sample spread (n=30:
+    # half-width (1002-820)/sqrt(30) ≈ 33ms), so the honest ❌ carries a within-noise tag. The
+    # tag NEVER flips the miss to a pass.
+    kata_scen = [{
+        "name": "warmpool_cold_start", "outcome": "PASS", "n": 30,
+        "sla_metrics": {"ttfe_p50_ms": 820, "ttfe_p95_ms": 1002},
+    }]
+    out = render.render_north_star(
+        _matrix_results(_full_gvisor_scenarios()),
+        kata_results=_kata_results(scenarios=kata_scen),
+    )
+    assert (
+        "| Kata + microVM | 1.002s (count=30) | ❌ not met (0.002s above the bar) "
+        "· within N=30 sampling noise |"
+    ) in out
+
+
+def test_north_star_clear_miss_not_tagged_within_noise():
+    # A miss well outside the sample spread carries NO within-noise verdict tag.
+    scen = [{
+        "name": "warmpool_cold_start", "outcome": "PASS", "n": 30,
+        "sla_metrics": {"ttfe_p50_ms": 600, "ttfe_p95_ms": 1500},
+    }]
+    out = render.render_north_star(_matrix_results(scen))
+    # gap=500ms >> half-width (1500-600)/sqrt(30) ≈ 164ms → clear miss, no verdict tag.
+    assert "❌ not met (0.5s above the bar)" in out
+    assert "· within N=" not in out
 
 
 def test_north_star_low_n_dagger_on_p95_cell():
@@ -3385,6 +3430,9 @@ def test_north_star_low_n_dagger_on_p95_cell():
         "sla_metrics": {"ttfe_p95_ms": 900},
     }]
     out = render.render_north_star(_matrix_results(scen))
+    # <1s North Star: 900ms met with 0.1s headroom; the low-N dagger rides the p95 cell.
+    assert "| gVisor | 0.9s (count=5) † | ✅ met (0.1s headroom) |" in out
+    # 0.5s stretch: honest ❌ 0.4s above; dagger preserved on the p95 cell.
     assert "| gVisor | 0.9s (count=5) † | ❌ not met (0.4s above the bar) |" in out
 
 
@@ -3414,8 +3462,11 @@ def test_north_star_kata_results_fills_kata_row():
         _matrix_results(_full_gvisor_scenarios()),
         kata_results=_kata_results(scenarios=kata_scen),
     )
+    # Kata p95=986.7ms: meets the <1s North Star (0.0133s headroom); misses the 0.5s stretch.
+    assert "| Kata + microVM | 0.9867s (count=30) | ✅ met (0.0133s headroom) |" in out
     assert "| Kata + microVM | 0.9867s (count=30) | ❌ not met (0.4867s above the bar) |" in out
     # gVisor row unchanged by the companion artifact.
+    assert "| gVisor | 0.9s (count=200) | ✅ met (0.1s headroom) |" in out
     assert "| gVisor | 0.9s (count=200) | ❌ not met (0.4s above the bar) |" in out
 
 

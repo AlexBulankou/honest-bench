@@ -474,7 +474,7 @@ WARM_VS_COLD_FIELDS = {
 # (10 -> 30 -> 100 -> ... sb/sec), each step held against a warm pool pre-sized by Little's
 # law (warm = ceil(WPR * rate * SLD)). Per step we read TTFE p50/p95/p99 straight off the
 # controller metric agent_sandbox_claim_startup_latency_ms (warm/cold labeled) + the ready
-# rate, and classify the curve against the North Star (p95 < 500ms) / collapse (2000ms)
+# rate, and classify the curve against the 0.5s stretch bar (p95 < 500ms) / collapse (2000ms)
 # bands. This block is the PUBLIC-safe, scrubbed mirror of the internal classifier shape
 # (kb/sandbox/loadtest/stepup.py): only measured numbers + public GCP shape identifiers,
 # never an internal cluster/namespace/project name.
@@ -488,8 +488,8 @@ WARM_VS_COLD_FIELDS = {
 # Saturation verdicts (mirror of the internal classifier's closed set). A verdict not in
 # this set drops the whole block (fail-closed) rather than render an unknown label.
 STEPUP_VERDICTS = {
-    "flat-through-sweep",  # every measured step stayed under the North Star
-    "degrading",  # at least one step breached the North Star, none collapsed
+    "flat-through-sweep",  # every measured step stayed under the 0.5s stretch bar
+    "degrading",  # at least one step breached the 0.5s stretch bar, none collapsed
     "saturated",  # at least one step crossed the collapse band
     "no-measured-steps",  # every step was unmeasured (infra/scrape failure, honest)
 }
@@ -625,8 +625,9 @@ STEPUP_PARETO_FIELDS = {
     # The controller-startup LOWER-BOUND proxy block (#3975) — see _stepup_controller_ok.
     "controller_startup": _stepup_controller_ok,
     # The three characteristic rates (all optional — absent when the curve never crossed that
-    # band). north_star_breach_rate = first rate with p95 >= 500ms; saturation_rate = first
-    # rate with p95 >= 2000ms; max_flat_rate = highest rate still under the North Star.
+    # band). north_star_breach_rate (key name locked for schema-contract stability) = first
+    # rate with p95 >= 500ms, i.e. the first breach of the 0.5s stretch bar; saturation_rate =
+    # first rate with p95 >= 2000ms; max_flat_rate = highest rate still under the 0.5s stretch bar.
     # These are values FROM the swept ladder, so a fractional ladder yields fractional
     # characteristic rates — same relaxed predicate as the per-point rate (hb#189).
     "north_star_breach_rate": _stepup_rate_ok,

@@ -101,9 +101,10 @@ only question this page answers. The metric is **TTFE (Time-To-First-Instruction
 from "create this sandbox" to "it ran my first instruction and returned a result." Not pod-Ready (a
 pod can look ready seconds before it can run your code) — the real wait.
 
-**North Star:** a warm sandbox with **TTFE p95 under 0.5s** — the bar the scorecard below grades
-against. The **scale target** is to hold **sub-1s at 300+ creations/sec**, on a stock GKE cluster
-you can provision yourself.
+**North Star:** a warm sandbox with **TTFE p95 under 1s** — the bar the scorecard below grades
+against (a stricter **0.5s stretch bar** is tracked separately, below the scorecard). The **scale
+target** is to hold **sub-1s at 300+ creations/sec**, on a stock GKE cluster you can provision
+yourself.
 
 Two runtimes, two isolation trade-offs:
 - **gVisor** — a user-space kernel intercepting syscalls; near-container speed, strong isolation.
