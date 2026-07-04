@@ -89,6 +89,26 @@ def test_effective_samples_cold_pull_single_ok():
     assert cell._effective_samples(1, "cold-pull") == 1
 
 
+def test_mode_env_validated_fail_fast():
+    # An unknown BENCH_NATIVE_DIGEST_COLD_MODE must raise at import, not fail
+    # open past the cold-pull refusal (which keys on the exact string). Re-exec
+    # the module import in a subprocess so the module-level guard is exercised.
+    import os
+    import subprocess
+    import sys
+
+    env = dict(os.environ, BENCH_NATIVE_DIGEST_COLD_MODE="cold-pul")
+    proc = subprocess.run(
+        [sys.executable, "-c", "import native_digest_cold"],
+        cwd=os.path.dirname(os.path.abspath(cell.__file__)),
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode != 0
+    assert "BENCH_NATIVE_DIGEST_COLD_MODE must be one of" in proc.stderr
+
+
 def _run_all():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:

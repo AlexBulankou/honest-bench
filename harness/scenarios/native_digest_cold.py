@@ -150,8 +150,17 @@ if _SAMPLES < 1:
 # Which cold mode this run measures (provenance is stamped by the runner from the
 # same env, #3885; conservative default cold-provision). Read here ONLY to gate
 # the N>1 refusal — in cold-pull mode repeated same-image creates measure
-# caching, not cold pull, so the honest sample count is 1.
+# caching, not cold pull, so the honest sample count is 1. Validated fail-fast
+# like _SAMPLES above: the refusal keys on the exact "cold-pull" string, so an
+# unknown mode would otherwise fail OPEN (slip past the refusal and publish a
+# caching measurement labeled cold).
+_COLD_MODES = ("cold-provision", "cold-pull")
 _COLD_MODE = os.environ.get("BENCH_NATIVE_DIGEST_COLD_MODE", "cold-provision")
+if _COLD_MODE not in _COLD_MODES:
+    raise ValueError(
+        f"BENCH_NATIVE_DIGEST_COLD_MODE must be one of {_COLD_MODES}, "
+        f"got {_COLD_MODE!r}"
+    )
 
 # Public benchmark metric key (milliseconds). The cold create→Ready wall-clock
 # this scenario measures internally in seconds is emitted via the run() 3-tuple
