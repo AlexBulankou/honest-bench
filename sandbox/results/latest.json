@@ -195,7 +195,11 @@
         "thpt_under_1s_per_node": 32.696,
         "thpt_under_5s_per_node": 33.824,
         "ttfe_p50_ms": 631.7,
-        "ttfe_p95_ms": 945.4
+        "ttfe_p95_ms": 945.4,
+        "thpt_under_5s_per_cluster": 1.204,
+        "thpt_slo_n_exec_ok": 63,
+        "thpt_cluster_node_count": 10,
+        "thpt_slo_basis": "literal_ttfe_upper_bound+acq_fulfilled"
       }
     },
     {
