@@ -864,7 +864,9 @@ def render_matrix(results, kata_results=None):
     lines.append(
         "- **Throughput `x /node · y /cluster`** — per-node is the engineering rate (comparable "
         "across runtimes); per-cluster is a MEASURED per-activation-mode rate at the node count "
-        "named in the build line below the table, never a per-node × N extrapolation."
+        "named in the bold caption above the table — the per-cluster fire is separate from the "
+        "per-node fire, so the build line's `node_count` (the per-node fire's shape) does not "
+        "apply to it — never a per-node × N extrapolation."
     )
     lines.append(
         "- **honest `0`** — the measurement ran and could not hold the bar: the measured TTFE p95 misses "
