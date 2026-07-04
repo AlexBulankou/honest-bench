@@ -791,7 +791,10 @@ def test_matrix_literal_basis_high_n_no_coarse_caption():
     )
     out = render.render_matrix(_matrix_results(scen))
     assert "gVisor per-cluster rates: derived from the literal exec-probe warm p95" in out
-    assert "acquisition fulfilled-claims rate" in out  # the acq window named, not controller's
+    # hb#174 sign-off amendments: 5s-only cell + steady-state acq caption + trust gate.
+    assert "fills the <5s cell" in out
+    assert "fulfilled (claim->bound)/s, steady-state" in out
+    assert "controller completion rate" in out  # the independent cross-check named
     assert "coarse p95" not in out
 
 

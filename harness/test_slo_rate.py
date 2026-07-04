@@ -22,6 +22,7 @@ import math
 
 from harness.slo_rate import (
     LITERAL_N_EXEC_OK_FLOOR,
+    LITERAL_RATE_AGREEMENT_TOL,
     SLO_BASIS_ENUM,
     SLO_BASIS_LITERAL_ACQ,
     SLO_BASIS_LITERAL_CONTROLLER,
@@ -166,7 +167,7 @@ def _lit_rung(offered, warm_p95, ctrl=None, acq=None, n=24):
 
 
 class TestSloBasisSelection:
-    """hb#174: literal upper-bound fallback basis — order, gating, and the stamp."""
+    """hb#174 (as amended by the sign-off): 5s-only literal basis, dual-leg gated."""
 
     def test_true_ttfe_wins_when_it_derives(self):
         # A live true-TTFE pareto shadows the literal leg entirely.
@@ -175,15 +176,18 @@ class TestSloBasisSelection:
             "node_count": 40,
             "literal_ttfe": {
                 "upper_bound": True,
-                "pareto_points": [_lit_rung(10, 900.0, ctrl=99.0)],
+                "pareto_points": [_lit_rung(10, 900.0, ctrl=99.0, acq=99.0)],
             },
         }
         out = slo_sla_metrics_from_stepup(flat)
         assert out["thpt_slo_basis"] == SLO_BASIS_TRUE_TTFE
         assert out["thpt_under_5s_per_cluster"] == 28.4
 
-    def test_literal_controller_fallback_when_true_ttfe_dead(self):
+    def test_literal_5s_fallback_when_true_ttfe_dead(self):
         # The #3975 dead-family shape: true-TTFE points carry no ready_per_s.
+        # Literal fills the 5s cell ONLY (amendment 1), crediting the acq rate of
+        # the best agreement-gated rung; the 1s cell stays honest-empty even though
+        # the low rung's p95 clears the 1s bar.
         dead = [{"offered_rate_per_s": 10, "ready_per_s": None, "ttfe_p95_ms": None}]
         flat = {
             "pareto_points": dead,
@@ -199,14 +203,31 @@ class TestSloBasisSelection:
         }
         out = slo_sla_metrics_from_stepup(flat)
         assert out == {
-            "thpt_under_5s_per_cluster": 27.1,
-            "thpt_under_1s_per_cluster": 9.4,
+            "thpt_under_5s_per_cluster": 29.5,
             "thpt_cluster_node_count": 2,
-            "thpt_slo_basis": SLO_BASIS_LITERAL_CONTROLLER,
+            "thpt_slo_basis": SLO_BASIS_LITERAL_ACQ,
             "thpt_slo_n_exec_ok": 24,
         }
+        assert "thpt_under_1s_per_cluster" not in out
 
-    def test_acq_fallback_only_when_controller_rate_absent(self):
+    def test_literal_never_fills_1s_cell(self):
+        # Amendment 1: even a sub-1s literal p95 fills only the 5s cell — the
+        # exec-probe overhead makes the 1s budget unprovable under literal basis.
+        flat = {
+            "node_count": 2,
+            "literal_ttfe": {
+                "upper_bound": True,
+                "pareto_points": [_lit_rung(10, 850.0, ctrl=9.4, acq=9.9)],
+            },
+        }
+        out = slo_sla_metrics_from_stepup(flat)
+        assert out["thpt_under_5s_per_cluster"] == 9.9
+        assert "thpt_under_1s_per_cluster" not in out
+        assert out["thpt_slo_basis"] == SLO_BASIS_LITERAL_ACQ
+
+    def test_missing_controller_leg_ineligible(self):
+        # Amendment 2: BOTH legs required — an acq-only rung has no trust
+        # cross-check and derives nothing.
         flat = {
             "node_count": 2,
             "literal_ttfe": {
@@ -214,33 +235,89 @@ class TestSloBasisSelection:
                 "pareto_points": [_lit_rung(10, 850.0, acq=9.9)],
             },
         }
-        out = slo_sla_metrics_from_stepup(flat)
-        assert out["thpt_slo_basis"] == SLO_BASIS_LITERAL_ACQ
-        assert out["thpt_under_1s_per_cluster"] == 9.9
+        assert slo_sla_metrics_from_stepup(flat) == {}
 
-    def test_one_basis_per_triple_never_mixed(self):
-        # 5s bar derivable from controller rate; 1s bar would need the acq rate
-        # (controller absent on the low rung). One basis per triple: the acq-only
-        # 1s rung must NOT fill from a second basis alongside the controller 5s.
+    def test_missing_acq_leg_ineligible(self):
+        # Amendment 2 symmetric: a ctrl-only rung has no creditable value.
+        flat = {
+            "node_count": 2,
+            "literal_ttfe": {
+                "upper_bound": True,
+                "pareto_points": [_lit_rung(30, 3200.0, ctrl=27.1)],
+            },
+        }
+        assert slo_sla_metrics_from_stepup(flat) == {}
+
+    def test_single_leg_rungs_never_combine(self):
+        # One rung acq-only, one ctrl-only: neither is dual-leg eligible, so the
+        # sweep derives nothing — legs are never borrowed across rungs.
         flat = {
             "node_count": 2,
             "literal_ttfe": {
                 "upper_bound": True,
                 "pareto_points": [
-                    _lit_rung(10, 850.0, acq=9.9),        # 1s-compliant, acq only
-                    _lit_rung(30, 3200.0, ctrl=27.1),     # 5s-compliant, ctrl only
+                    _lit_rung(10, 850.0, acq=9.9),
+                    _lit_rung(30, 3200.0, ctrl=27.1),
+                ],
+            },
+        }
+        assert slo_sla_metrics_from_stepup(flat) == {}
+
+    def test_divergent_rung_ineligible_per_rung_not_sweep(self):
+        # The deliberate above-knee overload rung diverges (flow conservation
+        # breaks at overload): THAT rung drops out, the agreeing rung below it is
+        # still credited — per-rung gating, never sweep-level poison.
+        flat = {
+            "node_count": 2,
+            "literal_ttfe": {
+                "upper_bound": True,
+                "pareto_points": [
+                    _lit_rung(30, 3200.0, ctrl=27.1, acq=29.5),
+                    _lit_rung(100, 4100.0, ctrl=20.0, acq=44.0),  # |44-20|/44 ≈ 0.55
                 ],
             },
         }
         out = slo_sla_metrics_from_stepup(flat)
-        assert out["thpt_slo_basis"] == SLO_BASIS_LITERAL_CONTROLLER
-        assert out["thpt_under_5s_per_cluster"] == 27.1
-        assert "thpt_under_1s_per_cluster" not in out
+        assert out["thpt_under_5s_per_cluster"] == 29.5
+        assert out["thpt_slo_basis"] == SLO_BASIS_LITERAL_ACQ
+
+    def test_agreement_tolerance_boundary(self):
+        assert LITERAL_RATE_AGREEMENT_TOL == 0.10
+        # Exactly at tolerance: |10.0 - 9.0| / 10.0 == 0.10 → eligible (inclusive).
+        at_tol = {
+            "node_count": 2,
+            "literal_ttfe": {
+                "upper_bound": True,
+                "pareto_points": [_lit_rung(10, 3200.0, ctrl=9.0, acq=10.0)],
+            },
+        }
+        out = slo_sla_metrics_from_stepup(at_tol)
+        assert out["thpt_under_5s_per_cluster"] == 10.0
+        # Just past tolerance: |10.0 - 8.9| / 10.0 == 0.11 → ineligible.
+        past_tol = {
+            "node_count": 2,
+            "literal_ttfe": {
+                "upper_bound": True,
+                "pareto_points": [_lit_rung(10, 3200.0, ctrl=8.9, acq=10.0)],
+            },
+        }
+        assert slo_sla_metrics_from_stepup(past_tol) == {}
+
+    def test_zero_or_negative_leg_ineligible(self):
+        for ctrl, acq in ((0.0, 9.9), (9.4, 0.0), (-1.0, 9.9), (9.4, -1.0)):
+            flat = {
+                "node_count": 2,
+                "literal_ttfe": {
+                    "upper_bound": True,
+                    "pareto_points": [_lit_rung(10, 850.0, ctrl=ctrl, acq=acq)],
+                },
+            }
+            assert slo_sla_metrics_from_stepup(flat) == {}, f"ctrl={ctrl} acq={acq}"
 
     def test_upper_bound_flag_gates_literal_leg(self):
         # Missing/False/None upper_bound: the literal leg is never consulted —
         # an unflagged latency basis could fabricate compliance.
-        pts = [_lit_rung(10, 850.0, ctrl=9.4)]
+        pts = [_lit_rung(10, 850.0, ctrl=9.4, acq=9.9)]
         for flag in (False, None, "true", 1):
             flat = {
                 "node_count": 2,
@@ -295,11 +372,11 @@ class TestSloBasisSelection:
             "node_count": 2,
             "literal_ttfe": {
                 "upper_bound": True,
-                "pareto_points": [_lit_rung(10, 850.0, ctrl=9.4)],
+                "pareto_points": [_lit_rung(10, 850.0, ctrl=9.4, acq=9.9)],
             },
         }
         out = slo_sla_metrics_from_stepup(flat)
-        assert out["thpt_slo_basis"] == SLO_BASIS_LITERAL_CONTROLLER
+        assert out["thpt_slo_basis"] == SLO_BASIS_LITERAL_ACQ
         assert _coerce_sla_metrics(out) == out
 
 
@@ -317,51 +394,51 @@ class TestLiteralNExecOkFloor:
 
     def test_sub_floor_rung_ineligible(self):
         out = slo_sla_metrics_from_stepup(
-            self._flat([_lit_rung(10, 850.0, ctrl=9.4, n=19)])
+            self._flat([_lit_rung(10, 850.0, ctrl=9.4, acq=9.9, n=19)])
         )
         assert out == {}
 
     def test_floor_boundary_inclusive(self):
         out = slo_sla_metrics_from_stepup(
-            self._flat([_lit_rung(10, 850.0, ctrl=9.4, n=20)])
+            self._flat([_lit_rung(10, 850.0, ctrl=9.4, acq=9.9, n=20)])
         )
-        assert out["thpt_under_1s_per_cluster"] == 9.4
+        assert out["thpt_under_5s_per_cluster"] == 9.9
         assert out["thpt_slo_n_exec_ok"] == 20
 
     def test_absent_n_fails_closed(self):
         out = slo_sla_metrics_from_stepup(
-            self._flat([_lit_rung(10, 850.0, ctrl=9.4, n=None)])
+            self._flat([_lit_rung(10, 850.0, ctrl=9.4, acq=9.9, n=None)])
         )
         assert out == {}
 
     def test_bool_and_non_integral_n_ineligible(self):
         for bad in (True, 24.5, "24", float("nan")):
             out = slo_sla_metrics_from_stepup(
-                self._flat([_lit_rung(10, 850.0, ctrl=9.4, n=bad)])
+                self._flat([_lit_rung(10, 850.0, ctrl=9.4, acq=9.9, n=bad)])
             )
             assert out == {}, f"n={bad!r}"
 
     def test_integral_float_n_coerced_to_int(self):
         out = slo_sla_metrics_from_stepup(
-            self._flat([_lit_rung(10, 850.0, ctrl=9.4, n=24.0)])
+            self._flat([_lit_rung(10, 850.0, ctrl=9.4, acq=9.9, n=24.0)])
         )
         assert out["thpt_slo_n_exec_ok"] == 24
         assert isinstance(out["thpt_slo_n_exec_ok"], int)
 
-    def test_n_stamp_is_min_across_credited_rungs(self):
-        # 1s bar credits the n=20 rung; 5s bar credits the n=48 rung. The stamp is
-        # the MIN — the weakest sample behind any published figure.
+    def test_n_stamp_is_credited_rungs_n(self):
+        # Single-credited-rung semantics (5s-only literal cell): the stamp is the
+        # n of the rung whose acq rate was credited — never a different rung's n.
         out = slo_sla_metrics_from_stepup(
             self._flat(
                 [
-                    _lit_rung(10, 850.0, ctrl=9.4, n=20),
-                    _lit_rung(30, 3200.0, ctrl=27.1, n=48),
+                    _lit_rung(10, 850.0, ctrl=9.4, acq=9.9, n=20),
+                    _lit_rung(30, 3200.0, ctrl=27.1, acq=29.5, n=48),
                 ]
             )
         )
-        assert out["thpt_under_1s_per_cluster"] == 9.4
-        assert out["thpt_under_5s_per_cluster"] == 27.1
-        assert out["thpt_slo_n_exec_ok"] == 20
+        assert out["thpt_under_5s_per_cluster"] == 29.5
+        assert out["thpt_slo_n_exec_ok"] == 48
+        assert "thpt_under_1s_per_cluster" not in out
 
     def test_sub_floor_rung_skipped_not_bar_dropped(self):
         # The higher-rate compliant rung is thin-sample: it is SKIPPED, and the bar
@@ -370,12 +447,12 @@ class TestLiteralNExecOkFloor:
         out = slo_sla_metrics_from_stepup(
             self._flat(
                 [
-                    _lit_rung(30, 3200.0, ctrl=27.1, n=12),
-                    _lit_rung(10, 2900.0, ctrl=9.4, n=32),
+                    _lit_rung(30, 3200.0, ctrl=27.1, acq=29.5, n=12),
+                    _lit_rung(10, 2900.0, ctrl=9.4, acq=9.9, n=32),
                 ]
             )
         )
-        assert out["thpt_under_5s_per_cluster"] == 9.4
+        assert out["thpt_under_5s_per_cluster"] == 9.9
         assert out["thpt_slo_n_exec_ok"] == 32
         assert "thpt_under_1s_per_cluster" not in out
 
