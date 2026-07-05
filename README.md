@@ -42,8 +42,8 @@ blocker — diagnosis plus file-ready patches and comments — is hand-maintaine
 | gVisor | Warm-pool hit (Base image) | 38.026 /node · 1.204 /cluster ⚠️ | 38.026 /node · [pending (cluster-fire)](WORK_IN_PROGRESS.md#cluster-fire) | 0.7556s (count=30) | 0.9222s (count=30) | 100% |
 | gVisor | Unique-image cold (RL reality) | [pending](WORK_IN_PROGRESS.md#not-yet-measured) | 0 /node · 0 /cluster | 3.4518s (count=30) | 3.7599s (count=30) | 100% |
 | gVisor | Resume-from-suspend | [pending (upstream-blocked)](WORK_IN_PROGRESS.md#upstream-blocked) [#873](https://github.com/kubernetes-sigs/agent-sandbox/issues/873)→[#893 in review](https://github.com/kubernetes-sigs/agent-sandbox/pull/893) | [pending (upstream-blocked)](WORK_IN_PROGRESS.md#upstream-blocked) [#873](https://github.com/kubernetes-sigs/agent-sandbox/issues/873)→[#893 in review](https://github.com/kubernetes-sigs/agent-sandbox/pull/893) | [pending (upstream-blocked)](WORK_IN_PROGRESS.md#upstream-blocked) [#873](https://github.com/kubernetes-sigs/agent-sandbox/issues/873)→[#893 in review](https://github.com/kubernetes-sigs/agent-sandbox/pull/893) | [pending (upstream-blocked)](WORK_IN_PROGRESS.md#upstream-blocked) [#873](https://github.com/kubernetes-sigs/agent-sandbox/issues/873)→[#893 in review](https://github.com/kubernetes-sigs/agent-sandbox/pull/893) | [pending (upstream-blocked)](WORK_IN_PROGRESS.md#upstream-blocked) [#873](https://github.com/kubernetes-sigs/agent-sandbox/issues/873)→[#893 in review](https://github.com/kubernetes-sigs/agent-sandbox/pull/893) |
-| Kata + microVM | Warm-pool hit (Base image) | 35.883 /node · [pending (cluster-fire)](WORK_IN_PROGRESS.md#cluster-fire) | 32.295 /node · [pending (cluster-fire)](WORK_IN_PROGRESS.md#cluster-fire) | 0.82s (count=30) | 1.002s (count=30) | 100% |
-| Kata + microVM | Unique-image cold (RL reality) | [pending](WORK_IN_PROGRESS.md#not-yet-measured) | 0 /node · 0 /cluster | 3.1291s (count=30) | 3.9773s (count=30) | 100% |
+| Kata + microVM | Warm-pool hit (Base image) | 18.624 /node · [pending (cluster-fire)](WORK_IN_PROGRESS.md#cluster-fire) | 18.624 /node · [pending (cluster-fire)](WORK_IN_PROGRESS.md#cluster-fire) | 0.733s (count=30) | 0.9628s (count=30) | 100% |
+| Kata + microVM | Unique-image cold (RL reality) | [pending](WORK_IN_PROGRESS.md#not-yet-measured) | 0 /node · 0 /cluster | 2.8537s (count=30) | 3.1263s (count=30) | 100% |
 | Kata + microVM | Resume-from-suspend | [N/A](WORK_IN_PROGRESS.md#na-by-construction) | [N/A](WORK_IN_PROGRESS.md#na-by-construction) | [N/A](WORK_IN_PROGRESS.md#na-by-construction) | [N/A](WORK_IN_PROGRESS.md#na-by-construction) | [N/A](WORK_IN_PROGRESS.md#na-by-construction) |
 
 **How to read the cells**
@@ -60,7 +60,7 @@ blocker — diagnosis plus file-ready patches and comments — is hand-maintaine
 - **`pending (cluster-fire)`** — the per-node figure is measured, but the per-cluster half awaits a schema-validated per-mode cluster-throughput fire (distinct from the whole-cluster Saturation ceiling in DETAILS, which measures the aggregate ceiling at overload, not these SLO-gated per-mode cells).
 - **`N/A`** — `N/A` by construction: Resume-from-suspend × Kata + microVM can never be measured — CRIU checkpoint/restore does not transfer to the Kata VM isolation model — distinct from `pending`, which awaits a run.
 
-_Kata + microVM rows are measured in a separate run on the kata node pool: cluster_substrate=gke-kata · node_count=1 · generated-at=2026-07-04T18:25:44Z._
+_Kata + microVM rows are measured in a separate run on the kata node pool: cluster_substrate=gke-kata · node_count=2 · generated-at=2026-07-05T15:32:54Z._
 
 _build: cluster_substrate=gke-sandbox · run_id=c95500d1be8f439fb3a149b68aab707a · node_count=1_
 _generated-at: 2026-07-04T18:32:56Z_
@@ -95,7 +95,7 @@ The North Star is the bar in the spec doc: a warm-pool hit with TTFE p95 under 1
 | Runtime | Warm-pool-hit TTFE p95 (measured) | North Star (p95 < 1s) |
 |---|---|---|
 | gVisor | 0.9222s (count=30) | ✅ met (0.0778s headroom) |
-| Kata + microVM | 1.002s (count=30) | ❌ not met (0.002s above the bar) · within N=30 sampling noise |
+| Kata + microVM | 0.9628s (count=30) | ✅ met (0.0372s headroom) |
 
 _An honest ❌ beats an implied pass: the page prints the measured distance to the target it misses, and a met bar prints its measured headroom. A miss that sits inside the sample spread is tagged `within sampling noise` (it stays a ❌ — the tag never flips a miss to a pass). An unmeasured runtime reads `pending` — never a guess. † marks a p95 measured over fewer than N=30 samples (a single observation, not a distribution)._
 
@@ -106,7 +106,7 @@ Beyond the North Star, the page tracks a stricter 0.5s stretch target (landed vi
 | Runtime | Warm-pool-hit TTFE p95 (measured) | Stretch (p95 < 0.5s) |
 |---|---|---|
 | gVisor | 0.9222s (count=30) | ❌ not met (0.4222s above the bar) |
-| Kata + microVM | 1.002s (count=30) | ❌ not met (0.502s above the bar) |
+| Kata + microVM | 0.9628s (count=30) | ❌ not met (0.4628s above the bar) |
 
 ## Does it hold at cluster scale?
 
