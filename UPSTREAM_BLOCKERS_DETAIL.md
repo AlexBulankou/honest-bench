@@ -20,7 +20,7 @@ _Last hand-refresh: 2026-07-03 (rev 2 — issue-first actions, fork-ready branch
 
 ## Sandbox upstream blockers
 
-Target project: [kubernetes-sigs/agent-sandbox](https://github.com/kubernetes-sigs/agent-sandbox). Fork: [`AlexBulankou/agent-sandbox`](https://github.com/AlexBulankou/agent-sandbox), synced to upstream `main` = `0be472b` at this refresh. Dup-search 2026-07-03: **S1, S2 and S3 all have existing upstream anchors — the only NEW sandbox issue to file is S4's.** The one `GH issue + PR` row (S4) has its DCO-signed branch already pushed to the fork; its Steps block is file-issue + one-click PR.
+Target project: [kubernetes-sigs/agent-sandbox](https://github.com/kubernetes-sigs/agent-sandbox). Fork: [`AlexBulankou/agent-sandbox`](https://github.com/AlexBulankou/agent-sandbox), synced to upstream `main` = `0be472b` at this refresh. Dup-search 2026-07-03 (S1–S4) + 2026-07-04 (S5): **S1, S2, S3 and S5 all have existing upstream anchors — the only NEW sandbox issue to file remains S4's** (S5 adopts existing [#940](https://github.com/kubernetes-sigs/agent-sandbox/issues/940); comment there, never file a duplicate). The one `GH issue + PR` row (S4) has its DCO-signed branch already pushed to the fork; its Steps block is file-issue + one-click PR.
 
 | # | What | Action | Steps |
 |---|---|---|---|
@@ -28,6 +28,7 @@ Target project: [kubernetes-sigs/agent-sandbox](https://github.com/kubernetes-si
 | S2 | True-TTFE is **null-by-construction** everywhere: the startup-latency histogram's anchor annotation has no production writer upstream, so SLO-sweep pareto reads `[]` and `ready_per_s` reads null every fire ([hb#174](https://github.com/AlexBulankou/honest-bench/issues/174)). Internal tracking a#3975. | **GH issue — use existing [#751](https://github.com/kubernetes-sigs/agent-sandbox/issues/751)** (same defect: the anchor annotation is never set, histogram empty) with example-webhook PR [#761](https://github.com/kubernetes-sigs/agent-sandbox/pull/761) open ("Fixes #751"). Comment/support there. The staged **in-tree** stamper PR stays optional + decision-gated ([hb#175](https://github.com/AlexBulankou/honest-bench/issues/175)'s literal-TTFE upper bound remains the honest interim). | [→ §S2 file-ready material](#s2-ttfe-webhook-stamper) |
 | S3 | Snapshot-backed sandbox goes `Ready=True` before restore is verified → blank pods served as "restored" (7.45% / 5.24% real-flap rates on the two paths); restore-success confidence is unassertable for every snapshot-restore-backed number. Internal tracking a#2614. | **GH issue — use existing [#952](https://github.com/kubernetes-sigs/agent-sandbox/issues/952)** (verified open + still the right anchor) — prepared evidence **comment** ready; no patch by design (the ask is a design decision: restore-verified readiness gate before `Ready=True`). | [→ §S3 file-ready material](#s3-restore-readiness-handshake) |
 | S4 | SandboxClaim adoption-completion bounces through the informer cache with a non-nil error → **exponential-backoff amplifier** (5ms·(2^K − 1)) inflating exactly the concurrent warm-claim tails the README reports. Layer-2 only — Layer-1 resolved live by upstream [#975](https://github.com/kubernetes-sigs/agent-sandbox/issues/975). Internal tracking a#3641. | **GH issue + PR** — issue file-ready below (dup-search: no existing report); DCO-signed branch [`adoption-completion-bounded-requeue`](https://github.com/AlexBulankou/agent-sandbox/tree/adoption-completion-bounded-requeue) pushed to the fork — PR is one click. Rebase if upstream [#1072](https://github.com/kubernetes-sigs/agent-sandbox/issues/1072) merges first. | [→ §S4 file-ready material](#s4-adoption-completion-cache-race) |
+| S5 | Controller startup-latency histogram **double-records Ready transitions** on stale-informer replays — ~1.7–2.05× overcount at fire scale, so the controller rate leg fails the acq/controller agreement gate (rel-diff tolerance 0.10) and the literal-TTFE basis can't credit; affected Kata SLO cells publish honest-empty. Internal tracking a#4364. | **GH issue — use existing [#940](https://github.com/kubernetes-sigs/agent-sandbox/issues/940)** (same defect — reporter suspected the same stale-status replay; we confirmed it at code level; no fix in flight) — comment fire-scale evidence + confirmed mechanism there. Tested record-once patch staged internally; a PR would carry "Fixes #940". | [→ §S5 file-ready material](#s5-controller-histogram-double-record) |
 
 <a id="s1-resume-suspended-condition"></a>
 
@@ -129,7 +130,7 @@ Mirror the existing `Finished` cleanup: track whether the computed set contains 
 
 The dup-search (2026-07-03) found the gap already filed upstream: [#751](https://github.com/kubernetes-sigs/agent-sandbox/issues/751) *(open)* — "`agents.x-k8s.io/webhook-first-observed-at` annotation is never set, leaving ClaimStartupLatency empty" — quotes the exact skip-guard this section diagnoses, and maintainers confirm no webhook ships today. Open PR [#761](https://github.com/kubernetes-sigs/agent-sandbox/pull/761) ("Fixes #751") adds a **documentation example** of the mutating webhook (user-applied manifests), not an in-tree production writer. So the upstream conversation **already exists** — commenting evidence + supporting #751/#761 does not reverse the 2026-06-29 "skip upstream conversations" call. What remains decision-gated is only whether to ALSO offer our staged **in-tree** stamper (operator-managed `MutatingWebhookConfiguration`, reusing the self-generated CA) as an upstream PR alternative to #761's example. If that is greenlit: the staged patch base is **STALE** (`985d1dd`, 2026-06-29) vs current tip `0be472b` — `git apply --check` + rebuild before signing (this one was **not** in the 2026-07-03 apply-clean re-sweep).
 
-**Related upstream (dup-search 2026-07-03):** [#751](https://github.com/kubernetes-sigs/agent-sandbox/issues/751) *(open, SAME — adopt)* · [#761](https://github.com/kubernetes-sigs/agent-sandbox/pull/761) *(open PR — example-webhook docs, "Fixes #751")* · [#540](https://github.com/kubernetes-sigs/agent-sandbox/pull/540) *(merged — origin of the gap: shipped the annotation consumer, deliberately no writer; note it names the annotation `webhook-first-seen-at`)* · [#565](https://github.com/kubernetes-sigs/agent-sandbox/pull/565) *(open PR — different metric/annotation: client-side `client-first-requested-at`)* · [#940](https://github.com/kubernetes-sigs/agent-sandbox/issues/940) *(open — controller-histogram overcount, distinct defect)* · [#1051](https://github.com/kubernetes-sigs/agent-sandbox/issues/1051) *(open — label-cardinality cleanup on the same histograms)*
+**Related upstream (dup-search 2026-07-03):** [#751](https://github.com/kubernetes-sigs/agent-sandbox/issues/751) *(open, SAME — adopt)* · [#761](https://github.com/kubernetes-sigs/agent-sandbox/pull/761) *(open PR — example-webhook docs, "Fixes #751")* · [#540](https://github.com/kubernetes-sigs/agent-sandbox/pull/540) *(merged — origin of the gap: shipped the annotation consumer, deliberately no writer; note it names the annotation `webhook-first-seen-at`)* · [#565](https://github.com/kubernetes-sigs/agent-sandbox/pull/565) *(open PR — different metric/annotation: client-side `client-first-requested-at`)* · [#940](https://github.com/kubernetes-sigs/agent-sandbox/issues/940) *(open — controller-histogram overcount, distinct defect; now tracked as [§S5](#s5-controller-histogram-double-record))* · [#1051](https://github.com/kubernetes-sigs/agent-sandbox/issues/1051) *(open — label-cardinality cleanup on the same histograms)*
 
 **Steps**
 
@@ -418,6 +419,56 @@ The shipped fix removes the timing-dependent **timeout** (the exponential backof
 
 - Line numbers in the body are pinned to `a2ff59b` as a convenience; the **stable anchors** are the function names and the verbatim log string (`"Triggered adoption completion for sandbox, retry"`). Re-verify line numbers against then-current `main` at filing time.
 - Local verification (2026-07-01): `git apply --check` clean vs `da28b99` (2 files, 38 controller + 20 test insertions); build/vet/gofmt clean; full `extensions/controllers` suite PASSES under the new contract; falsifiability probe flips the test to FAIL when the sentinel conversion is gated off.
+
+<a id="s5-controller-histogram-double-record"></a>
+
+### §S5 — Controller startup-latency histogram double-records Ready transitions (stale-informer replay)
+
+**Internal tracking a#4364 · comment on existing [#940](https://github.com/kubernetes-sigs/agent-sandbox/issues/940) · `extensions/controllers/sandboxclaim_controller.go`**
+
+**What's blocked**
+
+- The controller-side startup-latency histogram `_count` is the **controller rate leg** of the acq/controller agreement gate that guards the literal-TTFE published basis (rel-diff tolerance 0.10). With the double-record inflating the controller leg ~1.7–2.05×, the gate reads a **false mismatch** even on a clean fire — one Kata fire produced a deceptive ~0.27 rel-diff purely from replayed records — so the literal basis can't credit and the affected **Kata SLO cells publish honest-empty**.
+- This is a **trust** blocker, not a matrix-cell-specific one: any cross-check built on the histogram `_count` (throughput validation, rate agreement, cell crediting) inherits the overcount. Our benchmark-side harness fix (counting boundary transitions instead of raw records) restores *our* leg, but the upstream histogram stays wrong for every consumer.
+
+**Diagnosis**
+
+- `recordCreationLatencyMetric` is guarded only by an `oldReady` early-return. A **stale informer snapshot replays the not-Ready→Ready edge** (its `oldStatus` predates the recorded transition), so a later reconcile re-enters the record path after metrics were already emitted and records the same claim again.
+- The deferred `observedTimes` cleanup does not stop the replay: the timing predicate's **UpdateFunc repopulates the first-observed entry for the same UID** (`LoadOrStore`), re-arming the record path between the first record and the replay.
+- Event multiplicity is nondeterministic and grows with load — measured 45 histogram records for 22 claims in one window and 51 for 30 in another (scale-from-0 burst). The +2/+3-of-500 in #940's original report is the same defect at low contention.
+
+**Related upstream (dup-search 2026-07-04):** [#940](https://github.com/kubernetes-sigs/agent-sandbox/issues/940) *(open, SAME — adopt; kind/bug, priority/important-soon; reporter's suspected mechanism — "a subsequent reconcile still sees an old status snapshot where the claim was not Ready yet and records the same claim again" — is exactly what we confirmed at code level; no fix PR in flight as of 2026-07-04)* · [#522](https://github.com/kubernetes-sigs/agent-sandbox/pull/522) *(merged — introduced the metric)* · [#533](https://github.com/kubernetes-sigs/agent-sandbox/pull/533) *(merged — moved timing into event predicates / first-observed tracking, the layer the replay defeats)* · [#546](https://github.com/kubernetes-sigs/agent-sandbox/pull/546) *(merged — fixed stale `observedTimes` for reused SandboxClaim names; adjacent staleness class)* · [#527](https://github.com/kubernetes-sigs/agent-sandbox/issues/527) *(open — redundant reconciles under scale, the replay's supply side)* · [#245](https://github.com/kubernetes-sigs/agent-sandbox/issues/245) *(metrics design — treats histogram `_count` as a throughput signal, the assumption this defect breaks)* · [#1051](https://github.com/kubernetes-sigs/agent-sandbox/issues/1051) *(open — label-cardinality cleanup on the same histograms; independent)*
+
+**Prepared artifact**
+
+- Tested **record-once gate** patch staged internally (base upstream `main` = `0be472b`, build-green): a UID-keyed `sync.Map` on the reconciler; `LoadOrStore` first-observer-wins gate placed after the existing `oldReady` guard and before label derivation; `DeleteFunc` cleanup kept **separate** from the `observedTimes` drain so the timing-predicate refill cannot re-arm it; keyed by UID (not NamespacedName) so delete+recreate under the same name records fresh. Controller restarts remain covered by the `oldReady` guard (post-restart cache already shows Ready).
+- A durable alternative (persist a recorded-marker on the object, e.g. annotation-consume) is documented for maintainers if they prefer surviving controller restarts over an in-memory gate; a middle variant (NamespacedName-keyed) was considered and rejected (name-reuse aliasing).
+- No public branch yet — offer in the #940 comment; the PR, when opened, carries **"Fixes #940"**.
+
+**Steps**
+
+```bash
+# No new issue — #940 IS this defect (dup-search 2026-07-04). Engage there:
+# 1) 👍 https://github.com/kubernetes-sigs/agent-sandbox/issues/940
+# 2) paste the comment body below on #940
+# 3) if maintainers want the patch: open the PR with first line "Fixes #940"
+```
+
+**Comment body (copy-paste → on #940)**
+
+````markdown
+Data point at benchmark fire scale: this overcount goes far beyond the +2/+3-of-500 reported here. Under a scale-from-0 burst we measured the histogram `_count` at ~1.7–2.05× the true Ready-transition count (45 records for 22 claims in one window; 51 for 30 in another) — enough to fail any throughput cross-check built on it.
+
+We confirmed the mechanism suspected in the report: a stale informer snapshot replays the not-Ready→Ready edge past the `oldReady` early-return in `recordCreationLatencyMetric` (the replayed event's old status predates the recorded transition), and the timing predicate's UpdateFunc repopulates the first-observed entry for the same UID (`LoadOrStore`), so the deferred cleanup doesn't stop the replay from recording again. Multiplicity is nondeterministic and grows with reconcile pressure, which is why low-contention runs only show +2/+3.
+
+We have a tested record-once fix staged (UID-keyed `sync.Map`, `LoadOrStore` first-observer-wins gate after the `oldReady` guard, delete-event cleanup kept separate from the first-observed drain so the predicate refill can't re-arm it; keyed by UID so delete+recreate under the same name records fresh; controller restarts remain covered by the `oldReady` guard). Happy to open a PR with "Fixes #940" if that direction works for maintainers — or, if you'd rather the gate survive controller restarts, a persisted-marker variant is also written up.
+````
+
+**Page-side notes (not part of the paste body)**
+
+- #940 state (open, no fix in flight) verified 2026-07-04 via the public API; re-verify at posting time.
+- The staged patch is verified against upstream `main` `0be472b` (build-green); it is **not** pushed to the fork — per house convention offer-on-ask, and the comment already offers it.
+- Benchmark-side, the harness now counts boundary *transitions* rather than raw histogram records (internal tracking a#4364's harness fix, merged), so our controller leg is replay-tolerant — the upstream fix is still required for the histogram itself to be trustworthy for anyone else.
 
 ---
 

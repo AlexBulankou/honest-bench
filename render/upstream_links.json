@@ -1,6 +1,6 @@
 {
   "_meta": {
-    "seeded_from": "UPSTREAM_BLOCKERS.md rev 3",
+    "seeded_from": "UPSTREAM_BLOCKERS.md rev 4",
     "last_verified": "2026-07-04",
     "freshness": "Rides every UPSTREAM_BLOCKERS.md refresh PR; link states hand-verified at each refresh."
   },
@@ -49,6 +49,18 @@
         {
           "repo": "kubernetes-sigs/agent-sandbox",
           "number": 952,
+          "kind": "issue",
+          "role": "blocks",
+          "status": "open"
+        }
+      ]
+    },
+    "controller-histogram-double-record": {
+      "renders_at": "Kata SLO-rate cells publishing honest-empty via the acq/controller agreement gate (rel-diff tolerance 0.10) on the literal-TTFE basis",
+      "refs": [
+        {
+          "repo": "kubernetes-sigs/agent-sandbox",
+          "number": 940,
           "kind": "issue",
           "role": "blocks",
           "status": "open"
