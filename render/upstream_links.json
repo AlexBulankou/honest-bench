@@ -1,7 +1,7 @@
 {
   "_meta": {
     "seeded_from": "UPSTREAM_BLOCKERS.md rev 4",
-    "last_verified": "2026-07-04",
+    "last_verified": "2026-07-05",
     "freshness": "Rides every UPSTREAM_BLOCKERS.md refresh PR; link states hand-verified at each refresh."
   },
   "classes": {
@@ -64,6 +64,13 @@
           "kind": "issue",
           "role": "blocks",
           "status": "open"
+        },
+        {
+          "repo": "kubernetes-sigs/agent-sandbox",
+          "number": 1087,
+          "kind": "pr",
+          "role": "fix-in-flight",
+          "status": "in-review"
         }
       ]
     },
