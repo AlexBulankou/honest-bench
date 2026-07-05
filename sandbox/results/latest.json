@@ -188,6 +188,7 @@
       "sla_metrics": {
         "bind_p50_ms": 506.2,
         "bind_p95_ms": 678.0,
+        "density_per_vcpu": 5.98,
         "exec_p50_ms": 239.2,
         "exec_p95_ms": 293.3,
         "exec_success_rate": 1.0,

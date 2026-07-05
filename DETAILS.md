@@ -90,7 +90,7 @@ Max Density is sandboxes per node-allocatable sandbox-schedulable vCPU (the per-
 
 | Runtime | Max Density (sb/vCPU) |
 |---|---|
-| gVisor | [pending](WORK_IN_PROGRESS.md#not-yet-measured) |
+| gVisor | 5.98 |
 | Kata + microVM | 1.26 |
 
 ## At Scale Under Contention — where sub-second warm activation breaks

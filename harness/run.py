@@ -27,6 +27,7 @@ import datetime
 import importlib
 import json
 import logging
+import math
 import os
 import pathlib
 import uuid
@@ -217,6 +218,76 @@ def check_n_regression(raw: list[dict], prior_scenarios) -> list[str]:
                 f"{row['name']}: fresh n={f_n} < committed n={p_n}"
             )
     return regressions
+
+
+def check_cell_downgrade(raw: list, prior_scenarios) -> list[str]:
+    """Detect a refresh that would silently downgrade any published cell (hb#206).
+
+    check_n_regression above is scoped to one field (`n`); this is the
+    generalization the same-day recurrence demanded: the gVisor Max Density cell
+    published 5.98 sb/vCPU on 07-02, then a canonical refresh fired without the
+    density envs re-emitted the row with no `density_per_vcpu` at all — a
+    filled→pending transition on the rendered page with zero signal in the run
+    (hb#206; the identical failure class hb#198/#200 fixed for `n`).
+
+    Three loss-directional legs, each compared against the committed row of the
+    same name (prior `pending` rows never gate — a placeholder protects nothing):
+
+    1. outcome downgrade — a measured (PASS/FAIL) prior whose fresh row's
+       outcome is `pending` (or missing);
+    2. sla_metrics key loss — any key present in the measured prior's
+       sla_metrics that is absent from the fresh row's (value CHANGES never
+       gate — a re-measure legitimately moves numbers; key GAINS never gate —
+       new instrumentation is not a downgrade);
+    3. row drop — a measured prior whose name is entirely absent from the fresh
+       set (merge_seed_placeholders deliberately resurrects only `pending`
+       priors, so a deregistered measured row would otherwise vanish silently).
+
+    MUST run AFTER merge_seed_placeholders / merge_slo_sweeps /
+    carry_prior_cluster_triples / carry_prior_density — the carry machinery
+    legitimately restores fields a fresh single-node fire cannot produce, and
+    gating before it would false-positive on every carried cluster triple.
+
+    Returns human-readable downgrade lines; empty means clean. The caller
+    decides the posture (main() fails closed unless BENCH_ALLOW_CELL_DOWNGRADE
+    is set).
+    """
+    fresh_by_name = {
+        r["name"]: r for r in raw
+        if isinstance(r, dict) and isinstance(r.get("name"), str)
+    }
+    downgrades: list[str] = []
+    if not isinstance(prior_scenarios, list):
+        return downgrades
+    for prior in prior_scenarios:
+        if not isinstance(prior, dict) or not isinstance(prior.get("name"), str):
+            continue
+        name = prior["name"]
+        p_out = prior.get("outcome")
+        if not isinstance(p_out, str) or p_out.lower() == "pending":
+            continue
+        fresh = fresh_by_name.get(name)
+        if fresh is None:
+            downgrades.append(
+                f"{name}: measured row (outcome={p_out}) dropped entirely from fresh set"
+            )
+            continue
+        f_out = fresh.get("outcome")
+        if not isinstance(f_out, str) or f_out.lower() == "pending":
+            downgrades.append(
+                f"{name}: outcome would downgrade {p_out} -> "
+                f"{f_out if isinstance(f_out, str) else 'missing'}"
+            )
+        pm = prior.get("sla_metrics")
+        fm = fresh.get("sla_metrics")
+        if isinstance(pm, dict):
+            fm_keys = set(fm.keys()) if isinstance(fm, dict) else set()
+            lost = sorted(k for k in pm if k not in fm_keys)
+            if lost:
+                downgrades.append(
+                    f"{name}: sla_metrics key(s) lost vs committed row: {', '.join(lost)}"
+                )
+    return downgrades
 
 
 def _read_prior_scenarios(out_path: pathlib.Path) -> list:
@@ -862,6 +933,53 @@ def carry_prior_cluster_triples(raw: list, prior_scenarios) -> None:
         m.update(carried)
 
 
+def carry_prior_density(raw: list, prior_scenarios) -> None:
+    """Carry `density_per_vcpu` across the daily refresh (hb#206).
+
+    Max Density is definitionally a cross-fire value: the deliberate saturation
+    probe MEASURES it, and the canonical refresh merely PUBLISHES it via the
+    BENCH_DENSITY_* env stamp on the density-source scenario. A refresh fired
+    without those envs therefore produces a row with no density — which, pre
+    this carry, silently reverted the rendered cell to `pending` (the 5.98
+    gVisor loss, published 07-02 at 6c85606, lost 07-04). Same
+    do-not-auto-decay posture as carry_prior_cluster_triples above, scoped to
+    the ONE field whose provenance is cross-fire by design — generalizing this
+    carry to same-fire metrics (ttfe, exec rates) would mix two fires' numbers
+    in one row, which the honesty spine forbids.
+
+    Fresh wins outright: a row that already carries density_per_vcpu (a new
+    env-stamped fire) is never overwritten. The prior must be a measured
+    (non-pending) row holding a finite non-negative real density — a pending
+    placeholder or malformed value carries nothing.
+    """
+    if not isinstance(prior_scenarios, list):
+        return
+    prior_by_name = {
+        s.get("name"): s for s in prior_scenarios if isinstance(s, dict)
+    }
+    for cell in raw:
+        if not isinstance(cell, dict):
+            continue
+        m = cell.get("sla_metrics")
+        if not isinstance(m, dict) or "density_per_vcpu" in m:
+            continue
+        prior = prior_by_name.get(cell.get("name"))
+        if not isinstance(prior, dict):
+            continue
+        p_out = prior.get("outcome")
+        if not isinstance(p_out, str) or p_out.lower() == "pending":
+            continue
+        pm = prior.get("sla_metrics")
+        if not isinstance(pm, dict):
+            continue
+        val = pm.get("density_per_vcpu")
+        if (
+            isinstance(val, (int, float)) and not isinstance(val, bool)
+            and math.isfinite(val) and val >= 0
+        ):
+            m["density_per_vcpu"] = val
+
+
 # Warm-vs-cold speedup producer. DEFAULT-OFF (rides BENCH_TTFE_EXEC).
 #
 # Unlike maybe_scale_proof (which runs its own sweep) and maybe_stepup (which reads
@@ -1044,6 +1162,35 @@ def main(argv=None) -> int:
     # on the daily refresh nor shadow a deliberate new sweep.
     merge_slo_sweeps(raw, args.product)
     carry_prior_cluster_triples(raw, prior_scenarios)
+    # Carry the cross-fire Max Density value (hb#206): the saturation probe
+    # measures it, the canonical refresh publishes it via env stamp — a refresh
+    # without the density envs must not decay the published cell to pending.
+    carry_prior_density(raw, prior_scenarios)
+    # Refuse a refresh that would silently downgrade ANY published cell —
+    # measured→pending outcome, sla_metrics key loss, or a dropped measured row
+    # (hb#206, generalizing the n-scoped guard above to cell-state transitions).
+    # Runs AFTER all scenario-level carries so legitimately-carried fields
+    # (cluster triples, density) never false-positive. Deliberate downgrades
+    # stay possible via the explicit BENCH_ALLOW_CELL_DOWNGRADE opt-in.
+    cell_downgrades = check_cell_downgrade(raw, prior_scenarios)
+    if cell_downgrades:
+        for line in cell_downgrades:
+            log.error("cell-downgrade: %s", line)
+        if _env_flag("BENCH_ALLOW_CELL_DOWNGRADE"):
+            log.warning(
+                "BENCH_ALLOW_CELL_DOWNGRADE set — publishing %d downgraded "
+                "cell(s) anyway (deliberate downgrade)", len(cell_downgrades),
+            )
+        else:
+            log.error(
+                "refusing to write %s: %d cell(s) would downgrade a published "
+                "value (measured->pending, lost sla_metrics key, or dropped "
+                "row). Re-fire carrying the envs the committed cells were "
+                "measured with, or set BENCH_ALLOW_CELL_DOWNGRADE=1 to "
+                "downgrade deliberately.",
+                out, len(cell_downgrades),
+            )
+            return 1
     generated_at = _now_iso()
     # Carry the Scale Proof block across the daily refresh (#3952): a fresh sweep
     # this run wins and is stamped measured_at=generated_at; otherwise the prior
