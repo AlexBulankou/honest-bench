@@ -142,11 +142,20 @@ def _valid_ref():
     }
 
 
-def test_loader_accepts_minimal_valid_mapping():
-    data = {
-        "_meta": {},
-        "classes": {"upstream-blocked": {"refs": [_valid_ref()]}},
+def _required_classes(**overrides):
+    """A minimal classes dict carrying every _REQUIRED_CLASSES member, so a
+    synthesized mapping fails on the property under test — never on the
+    missing-required-class check (which the loader runs first)."""
+    classes = {
+        cls: {"refs": [_valid_ref()]}
+        for cls in sorted(upstream_links._REQUIRED_CLASSES)
     }
+    classes.update(overrides)
+    return classes
+
+
+def test_loader_accepts_minimal_valid_mapping():
+    data = {"_meta": {}, "classes": _required_classes()}
     loaded = _load_data(data)
     assert loaded["classes"]["upstream-blocked"]["refs"][0]["number"] == 873
 
@@ -168,20 +177,20 @@ def test_loader_rejects_bad_ref_fields():
         mutate(ref)
         _assert_raises_assertion(
             lambda ref=ref: _load_data(
-                {"classes": {"upstream-blocked": {"refs": [ref]}}},
+                {"classes": _required_classes(**{"upstream-blocked": {"refs": [ref]}})},
             )
         )
 
 
 def test_loader_rejects_missing_required_class_and_empty_refs():
+    # each required class missing individually trips the missing-required check
+    for cls in sorted(upstream_links._REQUIRED_CLASSES):
+        classes = _required_classes()
+        del classes[cls]
+        _assert_raises_assertion(lambda classes=classes: _load_data({"classes": classes}))
     _assert_raises_assertion(
         lambda: _load_data(
-            {"classes": {"other": {"refs": [_valid_ref()]}}},
-        )
-    )
-    _assert_raises_assertion(
-        lambda: _load_data(
-            {"classes": {"upstream-blocked": {"refs": []}}},
+            {"classes": _required_classes(**{"upstream-blocked": {"refs": []}})},
         )
     )
     _assert_raises_assertion(lambda: _load_data({"classes": {}}))

@@ -62,6 +62,67 @@ WIP_CATALOG = {
         "eta": f"Gated on the per-mode cluster-throughput fire ([hb#132]({_HB}/132)).",
         "trace": f"[hb#132]({_HB}/132) (dual per-node + per-cluster throughput).",
     },
+    "trust-gate": {
+        "title": "SLO-rate fire ran; derivation refused by the trust gate (`trust-gate`)",
+        "what": (
+            "A warm-pool per-**cluster** SLO-rate cell whose measurement fire DID run, but "
+            "whose per-mode derivation was refused: the controller-side rate leg disagreed "
+            "with the acquisition-side leg beyond the pre-declared tolerance (rel-diff "
+            "> 0.10) at every measured rung, on both runtimes."
+        ),
+        "why": (
+            "**Gated (upstream, trust).** The two independent rate legs must agree before a "
+            "number publishes; on the warm-pool path they do not — the controller startup-latency "
+            "histogram double-records Ready transitions on stale-informer replays, inflating the "
+            "controller leg ~1.7–2×. Cold-path control legs PASS the same gate on both runtimes, "
+            "pinning the defect to the warm-pool path. The cell is honest-empty rather than "
+            "publish a number whose cross-check fails."
+        ),
+        "in_flight": (
+            "Yes — tracked upstream in the agent-sandbox controller: "
+            + upstream_prose_refs("trust-gate")
+            + ". Internal tracking a#4364 (gate exposure) / a#4277 (no tuning to avoid "
+            "honest-empty)."
+        ),
+        "eta": (
+            "Gated on the upstream histogram record-once fix. The cell graduates the moment a "
+            "post-fix fire passes the agreement gate — no honest-bench-side date."
+        ),
+        "trace": (
+            "Upstream agent-sandbox controller (histogram double-record): "
+            + upstream_prose_refs("trust-gate")
+            + ". Internal tracking a#4364."
+        ),
+    },
+    "no-compliant-rung": {
+        "title": "SLO-rate fire ran; no rung met the bar (`no-compliant-rung`)",
+        "what": (
+            "A cold-start per-**cluster** SLO-rate cell whose measurement fire DID run with the "
+            "trust gate PASSING, but where every measured rung's p95 sits over the cell's SLO "
+            "bar on the only available (literal upper-bound) basis."
+        ),
+        "why": (
+            "**not-yet-graduated (basis-gated).** An SLO-gated rate cannot be published as 0 "
+            "from a finite ladder — a lower untested rate could still comply — so \"no compliant "
+            "rung ⇒ pend, never 0\". The literal TTFE basis is an UPPER bound (it includes probe "
+            "scheduling overhead); the tighter true-TTFE basis has no production writer upstream, "
+            "so the cell may yet fill once that lands."
+        ),
+        "in_flight": (
+            "Yes — the true-TTFE annotation writer is tracked upstream: "
+            + upstream_prose_refs("no-compliant-rung")
+            + ". Internal tracking a#3975 (basis fallback)."
+        ),
+        "eta": (
+            "Gated on the upstream true-TTFE writer, or a future fire whose literal-basis p95 "
+            "clears the bar at some measured rate."
+        ),
+        "trace": (
+            "Upstream agent-sandbox (end-to-end TTFE measurability): "
+            + upstream_prose_refs("no-compliant-rung")
+            + ". Internal tracking a#3975 / a#4364."
+        ),
+    },
     "upstream-blocked": {
         "title": "Resume-from-suspend is blocked upstream (`upstream-blocked`)",
         "what": (
@@ -189,6 +250,8 @@ WIP_CATALOG = {
 WIP_ORDER = (
     "not-yet-measured",
     "cluster-fire",
+    "trust-gate",
+    "no-compliant-rung",
     "upstream-blocked",
     "requires-gvisor-runtime",
     "requires-kata-runtime",

@@ -1,7 +1,7 @@
 {
   "_meta": {
     "seeded_from": "UPSTREAM_BLOCKERS.md rev 4",
-    "last_verified": "2026-07-05",
+    "last_verified": "2026-07-06",
     "freshness": "Rides every UPSTREAM_BLOCKERS.md refresh PR; link states hand-verified at each refresh."
   },
   "classes": {
@@ -24,8 +24,8 @@
         }
       ]
     },
-    "ttfe-exec-probe-basis": {
-      "renders_at": "mapping-only today (no rendered caveat cell); machine-readable seed for the TTFE upper-bound basis",
+    "no-compliant-rung": {
+      "renders_at": "cold-start SLO-rate cluster cells (gVisor + Kata) publishing honest-empty because every measured rung's literal-basis p95 sits over the bar; the true-TTFE basis that could tighten the bound has no production writer upstream",
       "refs": [
         {
           "repo": "kubernetes-sigs/agent-sandbox",
@@ -55,8 +55,8 @@
         }
       ]
     },
-    "controller-histogram-double-record": {
-      "renders_at": "Kata SLO-rate cells publishing honest-empty via the acq/controller agreement gate (rel-diff tolerance 0.10) on the literal-TTFE basis",
+    "trust-gate": {
+      "renders_at": "warm-pool SLO-rate cluster cells (gVisor + Kata) publishing honest-empty via the acq/controller agreement gate (rel-diff tolerance 0.10) on the literal-TTFE basis; cold-path control legs PASS the same gate on both runtimes",
       "refs": [
         {
           "repo": "kubernetes-sigs/agent-sandbox",

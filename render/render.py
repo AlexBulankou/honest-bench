@@ -805,6 +805,15 @@ def render_matrix(results, kata_results=None):
                         and p95_ms / 1000.0 > bar_s
                     ):
                         return f"{_fmt_num(0)} /node · {_fmt_num(0)} /cluster"
+                    # 07-06 SLO-rate fire: the whole cell (both halves) ran and came back
+                    # honest-empty for a carried, closed-enum reason — e.g. the cold fire's
+                    # every-rung-over-bar `no-compliant-rung`, where a derived 0 is ALSO
+                    # unavailable because the row's TTFE p95 sits under the bar (a bracketed,
+                    # unmeasured interval). Refs ride INSIDE the returned string because the
+                    # data_cells comprehension only appends refs to the exact whole-cell token.
+                    cell_reason = m.get(node_key.replace("_per_node", "") + "_pend_reason")
+                    if cell_reason:
+                        return f"{_PENDING} ({cell_reason})" + upstream_cell_refs(cell_reason)
                     return pending_tok
                 node_half = f"{_fmt_num(m[node_key])} /node"
                 if cluster_key in m and _landed_cluster_x(m) is not None:
@@ -812,7 +821,18 @@ def render_matrix(results, kata_results=None):
                     if m[cluster_key] < CLUSTER_THROUGHPUT_TARGET:
                         cluster_half += " ⚠️"
                 else:
-                    cluster_half = f"{_PENDING} ({_CLUSTER_FIRE})"
+                    # 07-06 SLO-rate fire: a cluster half whose fire RAN but whose derivation
+                    # was refused for a carried, closed-enum reason (e.g. `trust-gate` — the
+                    # acq/controller agreement gate failed at every measured rung) renders
+                    # that reason + its upstream refs instead of the generic cluster-fire
+                    # pend, so a reader can't mistake ran-and-refused for not-yet-fired.
+                    cluster_reason = m.get(cluster_key + "_pend_reason")
+                    if cluster_reason:
+                        cluster_half = f"{_PENDING} ({cluster_reason})" + upstream_cell_refs(
+                            cluster_reason
+                        )
+                    else:
+                        cluster_half = f"{_PENDING} ({_CLUSTER_FIRE})"
                 return f"{node_half} · {cluster_half}"
 
             thpt5 = thpt_dual_cell("thpt_under_5s_per_node", "thpt_under_5s_per_cluster", 5.0)
@@ -898,6 +918,23 @@ def render_matrix(results, kata_results=None):
         "half awaits a schema-validated per-mode cluster-throughput fire (distinct from the "
         "whole-cluster Saturation ceiling in DETAILS, which measures the aggregate ceiling at "
         "overload, not these SLO-gated per-mode cells)."
+    )
+    lines.append(
+        "- **`pending (trust-gate)`** — the per-cluster SLO-rate fire RAN, but derivation was "
+        "refused by the acquire/controller agreement gate (rel-diff tolerance 0.10) at every "
+        "measured rung: the upstream controller startup-latency histogram double-records Ready "
+        "transitions on stale-informer replays, inflating the controller leg ~1.7–2× on "
+        "warm-pool-fulfilled paths (cold control legs PASS the same gate on both runtimes). "
+        "Publishing honest-empty beats publishing a rate the gate can't trust. "
+        "Tracked upstream: " + upstream_prose_refs("trust-gate") + "."
+    )
+    lines.append(
+        "- **`pending (no-compliant-rung)`** — the per-cluster SLO-rate fire RAN with the trust "
+        "gate PASSING, but every measured rung's p95 (on the literal-TTFE upper-bound basis) "
+        "sits over this cell's SLO bar — an SLO-gated rate can't be published as `0` from a "
+        "finite ladder unless a pre-declared floor condition holds, and the true-TTFE basis "
+        "that could tighten the bound has no production writer upstream yet. "
+        "Tracked upstream: " + upstream_prose_refs("no-compliant-rung") + "."
     )
     lines.append(
         "- **`N/A`** — `N/A` by construction: Resume-from-suspend × Kata + microVM can never be "

@@ -26,6 +26,26 @@ _Anchors and the entry set are generated from the closed pending-reason enum —
 - **ETA:** Gated on the per-mode cluster-throughput fire ([hb#132](https://github.com/AlexBulankou/honest-bench/issues/132)).
 - **Trace:** [hb#132](https://github.com/AlexBulankou/honest-bench/issues/132) (dual per-node + per-cluster throughput).
 
+<a id="trust-gate"></a>
+
+## SLO-rate fire ran; derivation refused by the trust gate (`trust-gate`)
+
+- **What:** A warm-pool per-**cluster** SLO-rate cell whose measurement fire DID run, but whose per-mode derivation was refused: the controller-side rate leg disagreed with the acquisition-side leg beyond the pre-declared tolerance (rel-diff > 0.10) at every measured rung, on both runtimes.
+- **Why absent:** **Gated (upstream, trust).** The two independent rate legs must agree before a number publishes; on the warm-pool path they do not — the controller startup-latency histogram double-records Ready transitions on stale-informer replays, inflating the controller leg ~1.7–2×. Cold-path control legs PASS the same gate on both runtimes, pinning the defect to the warm-pool path. The cell is honest-empty rather than publish a number whose cross-check fails.
+- **In flight:** Yes — tracked upstream in the agent-sandbox controller: [agent-sandbox#940](https://github.com/kubernetes-sigs/agent-sandbox/issues/940) (issue, open) → fix [agent-sandbox#1087](https://github.com/kubernetes-sigs/agent-sandbox/pull/1087) (PR, in review). Internal tracking a#4364 (gate exposure) / a#4277 (no tuning to avoid honest-empty).
+- **ETA:** Gated on the upstream histogram record-once fix. The cell graduates the moment a post-fix fire passes the agreement gate — no honest-bench-side date.
+- **Trace:** Upstream agent-sandbox controller (histogram double-record): [agent-sandbox#940](https://github.com/kubernetes-sigs/agent-sandbox/issues/940) (issue, open) → fix [agent-sandbox#1087](https://github.com/kubernetes-sigs/agent-sandbox/pull/1087) (PR, in review). Internal tracking a#4364.
+
+<a id="no-compliant-rung"></a>
+
+## SLO-rate fire ran; no rung met the bar (`no-compliant-rung`)
+
+- **What:** A cold-start per-**cluster** SLO-rate cell whose measurement fire DID run with the trust gate PASSING, but where every measured rung's p95 sits over the cell's SLO bar on the only available (literal upper-bound) basis.
+- **Why absent:** **not-yet-graduated (basis-gated).** An SLO-gated rate cannot be published as 0 from a finite ladder — a lower untested rate could still comply — so "no compliant rung ⇒ pend, never 0". The literal TTFE basis is an UPPER bound (it includes probe scheduling overhead); the tighter true-TTFE basis has no production writer upstream, so the cell may yet fill once that lands.
+- **In flight:** Yes — the true-TTFE annotation writer is tracked upstream: [agent-sandbox#751](https://github.com/kubernetes-sigs/agent-sandbox/issues/751) (issue, open) → fix [agent-sandbox#761](https://github.com/kubernetes-sigs/agent-sandbox/pull/761) (PR, open). Internal tracking a#3975 (basis fallback).
+- **ETA:** Gated on the upstream true-TTFE writer, or a future fire whose literal-basis p95 clears the bar at some measured rate.
+- **Trace:** Upstream agent-sandbox (end-to-end TTFE measurability): [agent-sandbox#751](https://github.com/kubernetes-sigs/agent-sandbox/issues/751) (issue, open) → fix [agent-sandbox#761](https://github.com/kubernetes-sigs/agent-sandbox/pull/761) (PR, open). Internal tracking a#3975 / a#4364.
+
 <a id="upstream-blocked"></a>
 
 ## Resume-from-suspend is blocked upstream (`upstream-blocked`)

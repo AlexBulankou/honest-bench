@@ -20,7 +20,9 @@
         "exec_p50_ms": 242.3,
         "exec_p95_ms": 266.0,
         "exec_success_rate": 1.0,
+        "thpt_under_1s_per_cluster_pend_reason": "trust-gate",
         "thpt_under_1s_per_node": 18.624,
+        "thpt_under_5s_per_cluster_pend_reason": "trust-gate",
         "thpt_under_5s_per_node": 18.624,
         "ttfe_p50_ms": 733.0,
         "ttfe_p95_ms": 962.8
@@ -36,6 +38,7 @@
         "exec_p50_ms": 187.2,
         "exec_p95_ms": 252.8,
         "exec_success_rate": 1.0,
+        "thpt_under_5s_pend_reason": "no-compliant-rung",
         "ttfe_p50_ms": 2853.7,
         "ttfe_p95_ms": 3126.3
       }
