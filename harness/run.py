@@ -980,6 +980,80 @@ def carry_prior_density(raw: list, prior_scenarios) -> None:
             m["density_per_vcpu"] = val
 
 
+_PER_CLUSTER_RATE_KEYS = (
+    "thpt_under_5s_per_cluster",
+    "thpt_under_1s_per_cluster",
+)
+
+
+def finalize_cluster_node_count(raw: list) -> list[str]:
+    """hb#214 part 2: verify every per-cluster SLO rate carries its measurement size.
+
+    The render pins the "at N nodes" X from `thpt_cluster_node_count`; a
+    per-cluster rate without it has no disclosed measurement size, so the
+    render's defense-in-depth silently pends/drops the block at publish time.
+    Every in-harness producer of the triple is all-or-nothing (ttfe_sla_metrics,
+    slo_sla_metrics_from_stepup, carry_prior_cluster_triples), so the leak path
+    is a manual data-only fire or a future leg emitting rates bare. This is the
+    finalize-time encode-then-merge stamp: node_count is stamped from run
+    provenance and verified present as part of finalize — never "publish now,
+    stamp later".
+
+    Stamp source is BENCH_NODE_COUNT *explicitly set* to a valid int >= 1.
+    build_provenance's silent default of 1 is deliberately NOT used here:
+    silently stamping 1 onto a multi-node fire would fabricate the measurement
+    size, which is worse than failing loud. A leg-emitted node_count always
+    wins (the leg measured it); the stamp fills only the gap.
+
+    Mutates raw in place. Returns problem lines (empty == verified). No
+    BENCH_ALLOW_* escape hatch — the fix is to set BENCH_NODE_COUNT correctly.
+    """
+    problems: list[str] = []
+    env_raw = os.environ.get("BENCH_NODE_COUNT")
+    env_node_count = None
+    env_error = None
+    if env_raw is not None:
+        try:
+            v = int(env_raw)
+        except ValueError:
+            env_error = f"BENCH_NODE_COUNT={env_raw!r} is not an int"
+        else:
+            if v < 1:
+                env_error = f"BENCH_NODE_COUNT={env_raw!r} must be >= 1"
+            else:
+                env_node_count = v
+    for cell in raw:
+        if not isinstance(cell, dict):
+            continue
+        sla = cell.get("sla_metrics")
+        if not isinstance(sla, dict):
+            continue
+        if "thpt_cluster_node_count" in sla:
+            continue
+        rate_keys = [k for k in _PER_CLUSTER_RATE_KEYS if k in sla]
+        if not rate_keys:
+            continue
+        name = cell.get("name", "<unnamed>")
+        if env_node_count is not None:
+            sla["thpt_cluster_node_count"] = env_node_count
+            log.info(
+                "stamped thpt_cluster_node_count=%d onto %s from run provenance "
+                "(BENCH_NODE_COUNT; leg emitted %s without it)",
+                env_node_count, name, "/".join(rate_keys),
+            )
+        elif env_error is not None:
+            problems.append(
+                f"{name}: {'/'.join(rate_keys)} without "
+                f"thpt_cluster_node_count; {env_error}"
+            )
+        else:
+            problems.append(
+                f"{name}: {'/'.join(rate_keys)} without thpt_cluster_node_count "
+                "and BENCH_NODE_COUNT is unset — no provenance source to stamp from"
+            )
+    return problems
+
+
 # Warm-vs-cold speedup producer. DEFAULT-OFF (rides BENCH_TTFE_EXEC).
 #
 # Unlike maybe_scale_proof (which runs its own sweep) and maybe_stepup (which reads
@@ -1166,6 +1240,25 @@ def main(argv=None) -> int:
     # measures it, the canonical refresh publishes it via env stamp — a refresh
     # without the density envs must not decay the published cell to pending.
     carry_prior_density(raw, prior_scenarios)
+    # hb#214: encode-then-merge — every per-cluster SLO rate must carry its
+    # measurement size BEFORE the write. Stamp from run provenance where the leg
+    # omitted it; refuse the write when neither source has it, so the gap fails
+    # HERE at finalize instead of silently pending at render/publish time. Runs
+    # AFTER both triple producers (merge_slo_sweeps + carry_prior_cluster_triples)
+    # so it sees final cell state, and BEFORE check_cell_downgrade (stamping only
+    # ADDS a key — never a downgrade).
+    node_count_gaps = finalize_cluster_node_count(raw)
+    if node_count_gaps:
+        for line in node_count_gaps:
+            log.error("node-count-gap: %s", line)
+        log.error(
+            "refusing to write %s: %d per-cluster rate cell(s) lack "
+            "thpt_cluster_node_count and BENCH_NODE_COUNT provides no valid "
+            "run-provenance value to stamp. Set BENCH_NODE_COUNT to the fire's "
+            "node count (the same value build_provenance records) and re-run.",
+            out, len(node_count_gaps),
+        )
+        return 1
     # Refuse a refresh that would silently downgrade ANY published cell —
     # measured→pending outcome, sla_metrics key loss, or a dropped measured row
     # (hb#206, generalizing the n-scoped guard above to cell-state transitions).
