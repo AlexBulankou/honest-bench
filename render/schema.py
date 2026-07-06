@@ -106,6 +106,21 @@ PENDING_REASONS = {
     # below-bar / in-progress cluster leg can EMIT it), guarded by the cross-contract subset
     # test in harness/test_scenario_portability.py.
     "cluster-fire",
+    # A cell whose SLO-rate fire RAN but whose per-mode derivation was REFUSED by the
+    # hb#174 acq/controller agreement gate (rel-diff > TOL 0.10 at every measured rung) —
+    # the controller-side rate leg disagrees with the acquisition leg, so no number is
+    # trustworthy enough to publish. Distinct from `cluster-fire` (no fire yet): here the
+    # fire happened and the cell is honest-empty pending the upstream controller-histogram
+    # fix. Render-only (committed-artifact reclassification path, PR-documented +
+    # peer-reviewed); no harness emit path.
+    "trust-gate",
+    # A cell whose SLO-rate fire RAN with the gate PASSING, but where EVERY measured rung's
+    # p95 sits over the cell's SLO bar — "no compliant rung ⇒ pend never 0": an SLO-gated
+    # rate cannot be published as 0 from a finite ladder (a lower untested rate could
+    # comply), so the cell is honest-empty rather than a fabricated floor. Render-only
+    # (committed-artifact reclassification path, PR-documented + peer-reviewed); no
+    # harness emit path.
+    "no-compliant-rung",
 }
 
 # provenance: only these keys render, each validated by the predicate below.
@@ -342,6 +357,13 @@ MATRIX_METRIC_FIELDS = {
     # valid producer, but the render predicate only asserts a positive int (the render-side
     # job is the coarse-p95 caption when 20 <= n < 100, not re-enforcing the floor).
     "thpt_slo_n_exec_ok": lambda v: isinstance(v, int) and not isinstance(v, bool) and v >= 1,
+    # 07-06 per-mode SLO-rate fire: a cluster-half (or whole-cell) that RAN and landed
+    # honest-empty carries an enum reason so the matrix renders `pending (<reason>)` with
+    # upstream refs instead of the never-fired `pending (cluster-fire)`. Render-only keys
+    # (no harness emit path) — values constrained to the PENDING_REASONS enum.
+    "thpt_under_5s_per_cluster_pend_reason": lambda v: v in PENDING_REASONS,
+    "thpt_under_1s_per_cluster_pend_reason": lambda v: v in PENDING_REASONS,
+    "thpt_under_5s_pend_reason": lambda v: v in PENDING_REASONS,
     "exec_success_rate": lambda v: isinstance(v, (int, float))
     and not isinstance(v, bool)
     and 0.0 <= v <= 1.0,

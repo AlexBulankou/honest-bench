@@ -49,9 +49,11 @@ STATUS_LABELS = {
 # curated label map in lockstep with the enum or rendering KeyErrors.
 assert set(STATUS_LABELS) == _STATUSES
 
-# The one class the matrix consumes today; validation requires it so the
-# rendered gVisor x Resume row can never silently lose its refs.
-_REQUIRED_CLASSES = {"upstream-blocked"}
+# The classes the matrix consumes today; validation requires them so the
+# rendered gVisor x Resume row (upstream-blocked) and the 07-06 honest-empty
+# SLO-rate cluster cells (trust-gate warm / no-compliant-rung cold) can never
+# silently lose their refs.
+_REQUIRED_CLASSES = {"upstream-blocked", "trust-gate", "no-compliant-rung"}
 
 
 def _load():
