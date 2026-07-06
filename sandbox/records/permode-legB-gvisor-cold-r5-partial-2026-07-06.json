@@ -1,0 +1,88 @@
+{
+  "rate_per_s": 5,
+  "warmpool_size": 0,
+  "duration_s": 180.0,
+  "ttfe_warm_ms": {
+    "p50": null,
+    "p95": null,
+    "p99": null
+  },
+  "ttfe_cold_ms": {
+    "p50": null,
+    "p95": null,
+    "p99": null
+  },
+  "ready_per_s": null,
+  "controller_startup_warm_ms": {
+    "p50": null,
+    "p95": null,
+    "p99": null
+  },
+  "controller_startup_cold_ms": {
+    "p50": 14712.643678160919,
+    "p95": 195705.8823529412,
+    "p99": 231141.17647058825
+  },
+  "controller_ready_per_s": null,
+  "controller_completed_per_s": 5.00702807129778,
+  "ctrl_event_count": 1506.0,
+  "ctrl_span_s": 300.77722324605566,
+  "ctrl_span_source": "acq-window",
+  "claims_created": 1500,
+  "controller_measured": false,
+  "measured": false,
+  "literal_ttfe_warm_ms": {
+    "p50": 55277.84359455109,
+    "p95": 181151.42154693604,
+    "p99": 212851.24025583267
+  },
+  "literal_ttfe_cold_ms": {
+    "p50": null,
+    "p95": null,
+    "p99": null
+  },
+  "literal_ttfe_sample": {
+    "every_n": 1,
+    "warm": {
+      "n_sampled": 1500,
+      "n_exec_ok": 1500,
+      "n_exec_fail": 0,
+      "exec_ok_rate": 1.0
+    },
+    "cold": {
+      "n_sampled": 0,
+      "n_exec_ok": 0,
+      "n_exec_fail": 0,
+      "exec_ok_rate": null
+    },
+    "probe_health": {
+      "retry_window_s": 600.0,
+      "exec_backoff_s": 6.0,
+      "n_attempts": 2721,
+      "n_retried": 413,
+      "n_recovered": 413,
+      "fail_classes": {
+        "resolve": 0,
+        "exec": 0,
+        "skew": 0
+      },
+      "n_orphan_excluded": 0
+    },
+    "n_prior_rung_excluded": 0
+  },
+  "literal_ttfe_measured": true,
+  "literal_ttfe_includes_exec_setup_overhead": true,
+  "acquisition_latency_s": {
+    "n": 1500,
+    "p50_s": 0.06578474200796336,
+    "p95_s": 0.11612226952565834,
+    "p99_s": 0.26092042537406085,
+    "min_s": 0.03791995905339718,
+    "max_s": 0.5997183569706976,
+    "p95_under_500ms": true,
+    "skipped_prebound": 2,
+    "pending": 0,
+    "window_s": 300.77722324605566
+  },
+  "partial_written_at": "2026-07-06T02:49:34Z"
+}

@@ -1,0 +1,412 @@
+{
+  "method": "stepup-backfill",
+  "params": {
+    "sld_s": 20.0,
+    "wpr": 0.75,
+    "runtime_class": "gvisor",
+    "north_star_p95_ms": 500.0,
+    "collapse_p95_ms": 2000.0,
+    "machine_type": null,
+    "cluster_nodes": 9,
+    "warmpool_size": null
+  },
+  "steps": [
+    {
+      "rate_per_s": 1,
+      "warmpool_size": 15,
+      "duration_s": 180.0,
+      "ttfe_warm_ms": {
+        "p50": null,
+        "p95": null,
+        "p99": null
+      },
+      "ttfe_cold_ms": {
+        "p50": null,
+        "p95": null,
+        "p99": null
+      },
+      "ready_per_s": null,
+      "controller_startup_warm_ms": {
+        "p50": 89.93288590604027,
+        "p95": 45962.26415094339,
+        "p99": 58098.11320754716
+      },
+      "controller_startup_cold_ms": {
+        "p50": null,
+        "p95": null,
+        "p99": null
+      },
+      "controller_ready_per_s": null,
+      "controller_completed_per_s": 1.7917493324132754,
+      "ctrl_event_count": 536.0,
+      "ctrl_span_s": 299.14898825611454,
+      "ctrl_span_source": "acq-window",
+      "claims_created": 300,
+      "controller_measured": true,
+      "measured": false,
+      "literal_ttfe_warm_ms": {
+        "p50": 3804.8406839370728,
+        "p95": 51814.666593074806,
+        "p99": 62966.60611867904
+      },
+      "literal_ttfe_cold_ms": {
+        "p50": null,
+        "p95": null,
+        "p99": null
+      },
+      "literal_ttfe_sample": {
+        "every_n": 1,
+        "warm": {
+          "n_sampled": 300,
+          "n_exec_ok": 300,
+          "n_exec_fail": 0,
+          "exec_ok_rate": 1.0
+        },
+        "cold": {
+          "n_sampled": 0,
+          "n_exec_ok": 0,
+          "n_exec_fail": 0,
+          "exec_ok_rate": null
+        },
+        "probe_health": {
+          "retry_window_s": 600.0,
+          "exec_backoff_s": 6.0,
+          "n_attempts": 626,
+          "n_retried": 78,
+          "n_recovered": 78,
+          "fail_classes": {
+            "resolve": 0,
+            "exec": 0,
+            "skew": 0
+          },
+          "n_orphan_excluded": 0
+        },
+        "n_prior_rung_excluded": 0
+      },
+      "literal_ttfe_measured": true,
+      "literal_ttfe_includes_exec_setup_overhead": true,
+      "acquisition_latency_s": {
+        "n": 300,
+        "p50_s": 0.09492770448559895,
+        "p95_s": 0.19006905637215835,
+        "p99_s": 0.3735866735235321,
+        "min_s": 0.07958835794124752,
+        "max_s": 0.42140406696125865,
+        "p95_under_500ms": true,
+        "skipped_prebound": 2,
+        "pending": 0,
+        "window_s": 299.14898825611454
+      }
+    },
+    {
+      "rate_per_s": 1.5,
+      "warmpool_size": 23,
+      "duration_s": 180.0,
+      "ttfe_warm_ms": {
+        "p50": null,
+        "p95": null,
+        "p99": null
+      },
+      "ttfe_cold_ms": {
+        "p50": null,
+        "p95": null,
+        "p99": null
+      },
+      "ready_per_s": null,
+      "controller_startup_warm_ms": {
+        "p50": 98.52941176470588,
+        "p95": 19738.095238095208,
+        "p99": 48122.72727272722
+      },
+      "controller_startup_cold_ms": {
+        "p50": 5000.0,
+        "p95": 23999.999999999985,
+        "p99": 28799.99999999999
+      },
+      "controller_ready_per_s": null,
+      "controller_completed_per_s": 2.4603087206213603,
+      "ctrl_event_count": 883.0,
+      "ctrl_span_s": 358.89804909401573,
+      "ctrl_span_source": "acq-window",
+      "claims_created": 450,
+      "controller_measured": true,
+      "measured": false,
+      "literal_ttfe_warm_ms": {
+        "p50": 4042.372226715088,
+        "p95": 33999.93021488187,
+        "p99": 54123.30735206603
+      },
+      "literal_ttfe_cold_ms": {
+        "p50": null,
+        "p95": null,
+        "p99": null
+      },
+      "literal_ttfe_sample": {
+        "every_n": 1,
+        "warm": {
+          "n_sampled": 450,
+          "n_exec_ok": 450,
+          "n_exec_fail": 0,
+          "exec_ok_rate": 1.0
+        },
+        "cold": {
+          "n_sampled": 0,
+          "n_exec_ok": 0,
+          "n_exec_fail": 0,
+          "exec_ok_rate": null
+        },
+        "probe_health": {
+          "retry_window_s": 600.0,
+          "exec_backoff_s": 6.0,
+          "n_attempts": 614,
+          "n_retried": 69,
+          "n_recovered": 69,
+          "fail_classes": {
+            "resolve": 0,
+            "exec": 0,
+            "skew": 0
+          },
+          "n_orphan_excluded": 0
+        },
+        "n_prior_rung_excluded": 0
+      },
+      "literal_ttfe_measured": true,
+      "literal_ttfe_includes_exec_setup_overhead": true,
+      "acquisition_latency_s": {
+        "n": 490,
+        "p50_s": 0.09750923397950828,
+        "p95_s": 0.4334538181137743,
+        "p99_s": 1.6359330155700451,
+        "min_s": 0.05828312400262803,
+        "max_s": 3.6375313019379973,
+        "p95_under_500ms": true,
+        "skipped_prebound": 2,
+        "pending": 2,
+        "window_s": 358.89804909401573
+      }
+    },
+    {
+      "rate_per_s": 2,
+      "warmpool_size": 30,
+      "duration_s": 180.0,
+      "ttfe_warm_ms": {
+        "p50": null,
+        "p95": null,
+        "p99": null
+      },
+      "ttfe_cold_ms": {
+        "p50": null,
+        "p95": null,
+        "p99": null
+      },
+      "ready_per_s": null,
+      "controller_startup_warm_ms": {
+        "p50": 75.34818941504177,
+        "p95": 47370.37037037032,
+        "p99": 87540.00000000019
+      },
+      "controller_startup_cold_ms": {
+        "p50": null,
+        "p95": null,
+        "p99": null
+      },
+      "controller_ready_per_s": null,
+      "controller_completed_per_s": 3.6090988401194135,
+      "ctrl_event_count": 1082.0,
+      "ctrl_span_s": 299.7978298550006,
+      "ctrl_span_source": "acq-window",
+      "claims_created": 600,
+      "controller_measured": true,
+      "measured": false,
+      "literal_ttfe_warm_ms": {
+        "p50": 4901.163101196289,
+        "p95": 58389.101803302765,
+        "p99": 84518.8309264183
+      },
+      "literal_ttfe_cold_ms": {
+        "p50": null,
+        "p95": null,
+        "p99": null
+      },
+      "literal_ttfe_sample": {
+        "every_n": 1,
+        "warm": {
+          "n_sampled": 600,
+          "n_exec_ok": 600,
+          "n_exec_fail": 0,
+          "exec_ok_rate": 1.0
+        },
+        "cold": {
+          "n_sampled": 0,
+          "n_exec_ok": 0,
+          "n_exec_fail": 0,
+          "exec_ok_rate": null
+        },
+        "probe_health": {
+          "retry_window_s": 600.0,
+          "exec_backoff_s": 6.0,
+          "n_attempts": 1131,
+          "n_retried": 136,
+          "n_recovered": 136,
+          "fail_classes": {
+            "resolve": 0,
+            "exec": 0,
+            "skew": 0
+          },
+          "n_orphan_excluded": 0
+        },
+        "n_prior_rung_excluded": 0
+      },
+      "literal_ttfe_measured": true,
+      "literal_ttfe_includes_exec_setup_overhead": true,
+      "acquisition_latency_s": {
+        "n": 600,
+        "p50_s": 0.09336952946614474,
+        "p95_s": 0.1601771404501049,
+        "p99_s": 0.2681713538244365,
+        "min_s": 0.0644122629892081,
+        "max_s": 0.5245305489515886,
+        "p95_under_500ms": true,
+        "skipped_prebound": 2,
+        "pending": 0,
+        "window_s": 299.7978298550006
+      }
+    }
+  ],
+  "saturation": {
+    "verdict": "no-measured-steps",
+    "north_star_breach_rate": null,
+    "saturation_rate": null,
+    "max_flat_rate": null,
+    "measured_steps": 0,
+    "unmeasured_steps": 3,
+    "north_star_ms": 500.0,
+    "collapse_ms": 2000.0
+  },
+  "saturation_point": {
+    "tight_ms": 1000.0,
+    "loose_ms": 5000.0,
+    "basis": "contiguous-flat max sustained rate (ttfe p95, from step-1)",
+    "warm": {
+      "max_rate_under_tight": null,
+      "max_rate_under_loose": null
+    },
+    "cold": {
+      "max_rate_under_tight": null,
+      "max_rate_under_loose": null
+    }
+  },
+  "pareto": [],
+  "controller_startup": {
+    "lower_bound": true,
+    "caveat": "agent_sandbox_claim_controller_startup_latency_ms is controller-stamped (populates) but EXCLUDES the claim-admission -> first-reconcile queueing lag, so it is a LOWER BOUND on true TTFE. True TTFE (agent_sandbox_claim_startup_latency_ms) is dead-by-construction upstream (#3975) \u2014 see steps[].ttfe_warm_ms which stay null. A 'flat' proxy verdict does NOT prove true TTFE is flat; a 'saturated' proxy verdict is a hard floor.",
+    "saturation": {
+      "verdict": "saturated",
+      "north_star_breach_rate": 1,
+      "saturation_rate": 1,
+      "max_flat_rate": null,
+      "measured_steps": 3,
+      "unmeasured_steps": 0,
+      "north_star_ms": 500.0,
+      "collapse_ms": 2000.0
+    },
+    "pareto": [
+      {
+        "offered_rate_per_s": 1,
+        "controller_ready_per_s": null,
+        "controller_startup_p95_ms": 45962.26415094339,
+        "controller_startup_p50_ms": 89.93288590604027,
+        "controller_startup_p99_ms": 58098.11320754716
+      },
+      {
+        "offered_rate_per_s": 1.5,
+        "controller_ready_per_s": null,
+        "controller_startup_p95_ms": 19738.095238095208,
+        "controller_startup_p50_ms": 98.52941176470588,
+        "controller_startup_p99_ms": 48122.72727272722
+      },
+      {
+        "offered_rate_per_s": 2,
+        "controller_ready_per_s": null,
+        "controller_startup_p95_ms": 47370.37037037032,
+        "controller_startup_p50_ms": 75.34818941504177,
+        "controller_startup_p99_ms": 87540.00000000019
+      }
+    ]
+  },
+  "literal_ttfe": {
+    "upper_bound": true,
+    "includes_exec_setup_overhead": true,
+    "caveat": "Literal-TTFE samples are exec-probe round-trips: each includes exec websocket-setup overhead, so percentiles are an UPPER BOUND on true TTFE (conservative for an SLO-compliance proof; a 'flat' verdict proves true TTFE flat, a 'saturated' verdict may be probe overhead, not true saturation). acq_fulfilled_per_s excludes pending claims (lower bound on fulfillment rate) and its bound edge may precede sandbox Ready (bound!=Ready \u2014 open hb#174 co-design question). controller_completed_per_s is the boundary count-delta of the controller-startup histogram's _count (controller-observed completions/sec). Neither is aliased to ready_per_s producer-side.",
+    "saturation": {
+      "verdict": "saturated",
+      "north_star_breach_rate": 1,
+      "saturation_rate": 1,
+      "max_flat_rate": null,
+      "measured_steps": 3,
+      "unmeasured_steps": 0,
+      "north_star_ms": 500.0,
+      "collapse_ms": 2000.0
+    },
+    "pareto": [
+      {
+        "offered_rate_per_s": 1,
+        "literal_warm_p95_ms": 51814.666593074806,
+        "literal_warm_p50_ms": 3804.8406839370728,
+        "literal_warm_p99_ms": 62966.60611867904,
+        "literal_cold_p95_ms": null,
+        "literal_cold_p50_ms": null,
+        "literal_cold_p99_ms": null,
+        "literal_every_n": 1,
+        "literal_warm_n_exec_ok": 300,
+        "literal_cold_n_exec_ok": 0,
+        "acq_fulfilled_per_s": 1.0028447756044452,
+        "acq_n": 300,
+        "acq_skipped_prebound": 2,
+        "acq_pending": 0,
+        "acq_p95_s": 0.19006905637215835,
+        "acq_window_s": 299.14898825611454,
+        "controller_completed_per_s": 1.7917493324132754
+      },
+      {
+        "offered_rate_per_s": 1.5,
+        "literal_warm_p95_ms": 33999.93021488187,
+        "literal_warm_p50_ms": 4042.372226715088,
+        "literal_warm_p99_ms": 54123.30735206603,
+        "literal_cold_p95_ms": null,
+        "literal_cold_p50_ms": null,
+        "literal_cold_p99_ms": null,
+        "literal_every_n": 1,
+        "literal_warm_n_exec_ok": 450,
+        "literal_cold_n_exec_ok": 0,
+        "acq_fulfilled_per_s": 1.3652902300163834,
+        "acq_n": 490,
+        "acq_skipped_prebound": 2,
+        "acq_pending": 2,
+        "acq_p95_s": 0.4334538181137743,
+        "acq_window_s": 358.89804909401573,
+        "controller_completed_per_s": 2.4603087206213603
+      },
+      {
+        "offered_rate_per_s": 2,
+        "literal_warm_p95_ms": 58389.101803302765,
+        "literal_warm_p50_ms": 4901.163101196289,
+        "literal_warm_p99_ms": 84518.8309264183,
+        "literal_cold_p95_ms": null,
+        "literal_cold_p50_ms": null,
+        "literal_cold_p99_ms": null,
+        "literal_every_n": 1,
+        "literal_warm_n_exec_ok": 600,
+        "literal_cold_n_exec_ok": 0,
+        "acq_fulfilled_per_s": 2.0013487098628913,
+        "acq_n": 600,
+        "acq_skipped_prebound": 2,
+        "acq_pending": 0,
+        "acq_p95_s": 0.1601771404501049,
+        "acq_window_s": 299.7978298550006,
+        "controller_completed_per_s": 3.6090988401194135
+      }
+    ]
+  },
+  "measured_at": "2026-07-06T02:36:19Z"
+}
