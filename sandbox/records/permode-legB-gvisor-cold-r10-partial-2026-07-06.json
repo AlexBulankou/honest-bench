@@ -1,0 +1,490 @@
+{
+  "rate_per_s": 10,
+  "warmpool_size": 0,
+  "duration_s": 180.0,
+  "ttfe_warm_ms": {
+    "p50": null,
+    "p95": null,
+    "p99": null
+  },
+  "ttfe_cold_ms": {
+    "p50": null,
+    "p95": null,
+    "p99": null
+  },
+  "ready_per_s": null,
+  "controller_startup_warm_ms": {
+    "p50": null,
+    "p95": null,
+    "p99": null
+  },
+  "controller_startup_cold_ms": {
+    "p50": 53215.547703180215,
+    "p95": 209496.18320610683,
+    "p99": 237013.7404580153
+  },
+  "controller_ready_per_s": null,
+  "controller_completed_per_s": 9.919731627199372,
+  "ctrl_event_count": 3004.0,
+  "ctrl_span_s": 302.8307733410038,
+  "ctrl_span_source": "acq-window",
+  "claims_created": 3000,
+  "controller_measured": false,
+  "measured": false,
+  "literal_ttfe_warm_ms": {
+    "p50": 129099.55906867981,
+    "p95": 259798.4209060669,
+    "p99": 267399.0883541107
+  },
+  "literal_ttfe_cold_ms": {
+    "p50": null,
+    "p95": null,
+    "p99": null
+  },
+  "literal_ttfe_sample": {
+    "every_n": 1,
+    "warm": {
+      "n_sampled": 3000,
+      "n_exec_ok": 2693,
+      "n_exec_fail": 307,
+      "exec_ok_rate": 0.8976666666666666
+    },
+    "cold": {
+      "n_sampled": 0,
+      "n_exec_ok": 0,
+      "n_exec_fail": 0,
+      "exec_ok_rate": null
+    },
+    "probe_health": {
+      "retry_window_s": 600.0,
+      "exec_backoff_s": 6.0,
+      "n_attempts": 6198,
+      "n_retried": 340,
+      "n_recovered": 33,
+      "fail_classes": {
+        "resolve": 0,
+        "exec": 307,
+        "skew": 0
+      },
+      "n_orphan_excluded": 0
+    },
+    "n_prior_rung_excluded": 0,
+    "fail_detail": [
+      {
+        "uid": "500d00d3-31cd-465a-95b7-20e30b959dfb",
+        "name": "stepup-claim-1646",
+        "leg": "warm",
+        "fail_class": "exec",
+        "attempts": 12,
+        "last_err": "AttributeError: 'NoneType' object has no attribute 'decode'"
+      },
+      {
+        "uid": "936261f5-e518-443d-b22d-d7f1e849cced",
+        "name": "stepup-claim-1647",
+        "leg": "warm",
+        "fail_class": "exec",
+        "attempts": 12,
+        "last_err": "AttributeError: 'NoneType' object has no attribute 'decode'"
+      },
+      {
+        "uid": "5b51dafe-66e1-40a4-bd1e-3d5de6389bc1",
+        "name": "stepup-claim-1648",
+        "leg": "warm",
+        "fail_class": "exec",
+        "attempts": 12,
+        "last_err": "AttributeError: 'NoneType' object has no attribute 'decode'"
+      },
+      {
+        "uid": "139d49c2-b73f-4b55-a24c-f4ba97e5cc7a",
+        "name": "stepup-claim-1649",
+        "leg": "warm",
+        "fail_class": "exec",
+        "attempts": 12,
+        "last_err": "AttributeError: 'NoneType' object has no attribute 'decode'"
+      },
+      {
+        "uid": "e56e268c-dc2f-4089-825f-503599403b9b",
+        "name": "stepup-claim-1650",
+        "leg": "warm",
+        "fail_class": "exec",
+        "attempts": 12,
+        "last_err": "AttributeError: 'NoneType' object has no attribute 'decode'"
+      },
+      {
+        "uid": "7f5e353a-3379-4223-ae1f-304cbe7cd762",
+        "name": "stepup-claim-1663",
+        "leg": "warm",
+        "fail_class": "exec",
+        "attempts": 12,
+        "last_err": "AttributeError: 'NoneType' object has no attribute 'decode'"
+      },
+      {
+        "uid": "9634589f-ea9b-4a5c-bc74-1f61bf6976d5",
+        "name": "stepup-claim-1664",
+        "leg": "warm",
+        "fail_class": "exec",
+        "attempts": 12,
+        "last_err": "AttributeError: 'NoneType' object has no attribute 'decode'"
+      },
+      {
+        "uid": "335c691b-ce69-4eca-9777-ec4c0ecc111e",
+        "name": "stepup-claim-1665",
+        "leg": "warm",
+        "fail_class": "exec",
+        "attempts": 12,
+        "last_err": "AttributeError: 'NoneType' object has no attribute 'decode'"
+      },
+      {
+        "uid": "b75a339f-9a16-40e2-b52c-087558ae5f82",
+        "name": "stepup-claim-1666",
+        "leg": "warm",
+        "fail_class": "exec",
+        "attempts": 12,
+        "last_err": "AttributeError: 'NoneType' object has no attribute 'decode'"
+      },
+      {
+        "uid": "87448bcd-2ca8-4e84-afc2-953add7a6b37",
+        "name": "stepup-claim-1667",
+        "leg": "warm",
+        "fail_class": "exec",
+        "attempts": 12,
+        "last_err": "AttributeError: 'NoneType' object has no attribute 'decode'"
+      },
+      {
+        "uid": "a74c3f14-ab0f-4594-b315-60ab691eaee4",
+        "name": "stepup-claim-1668",
+        "leg": "warm",
+        "fail_class": "exec",
+        "attempts": 12,
+        "last_err": "AttributeError: 'NoneType' object has no attribute 'decode'"
+      },
+      {
+        "uid": "8e36e986-b1bf-4020-bd0d-899ef8e7fc59",
+        "name": "stepup-claim-1669",
+        "leg": "warm",
+        "fail_class": "exec",
+        "attempts": 12,
+        "last_err": "AttributeError: 'NoneType' object has no attribute 'decode'"
+      },
+      {
+        "uid": "aeb44f80-5b3b-4856-a63c-7a04a039ec5c",
+        "name": "stepup-claim-1670",
+        "leg": "warm",
+        "fail_class": "exec",
+        "attempts": 12,
+        "last_err": "AttributeError: 'NoneType' object has no attribute 'decode'"
+      },
+      {
+        "uid": "a169a8ff-57f3-4d87-9459-421fead503a9",
+        "name": "stepup-claim-1671",
+        "leg": "warm",
+        "fail_class": "exec",
+        "attempts": 12,
+        "last_err": "AttributeError: 'NoneType' object has no attribute 'decode'"
+      },
+      {
+        "uid": "a57782dc-88b8-48b8-b547-cafca10d8aa1",
+        "name": "stepup-claim-1672",
+        "leg": "warm",
+        "fail_class": "exec",
+        "attempts": 12,
+        "last_err": "AttributeError: 'NoneType' object has no attribute 'decode'"
+      },
+      {
+        "uid": "da93d2b3-13d4-4b17-a1b1-f2c43b2e8ecf",
+        "name": "stepup-claim-1673",
+        "leg": "warm",
+        "fail_class": "exec",
+        "attempts": 12,
+        "last_err": "AttributeError: 'NoneType' object has no attribute 'decode'"
+      },
+      {
+        "uid": "4e88e898-f194-4d2f-865b-77bf2e047cd9",
+        "name": "stepup-claim-1674",
+        "leg": "warm",
+        "fail_class": "exec",
+        "attempts": 12,
+        "last_err": "AttributeError: 'NoneType' object has no attribute 'decode'"
+      },
+      {
+        "uid": "7a21b4c9-7198-4f63-8446-68594bcd9fcf",
+        "name": "stepup-claim-1675",
+        "leg": "warm",
+        "fail_class": "exec",
+        "attempts": 12,
+        "last_err": "AttributeError: 'NoneType' object has no attribute 'decode'"
+      },
+      {
+        "uid": "5ef365f4-fbac-41e5-9485-5b2f3dba60ff",
+        "name": "stepup-claim-1676",
+        "leg": "warm",
+        "fail_class": "exec",
+        "attempts": 12,
+        "last_err": "AttributeError: 'NoneType' object has no attribute 'decode'"
+      },
+      {
+        "uid": "524f6d35-f816-47d6-ac12-d21efd552c0e",
+        "name": "stepup-claim-1677",
+        "leg": "warm",
+        "fail_class": "exec",
+        "attempts": 12,
+        "last_err": "AttributeError: 'NoneType' object has no attribute 'decode'"
+      },
+      {
+        "uid": "d6ad63d5-ab0a-4201-b7b9-285c40409741",
+        "name": "stepup-claim-1678",
+        "leg": "warm",
+        "fail_class": "exec",
+        "attempts": 12,
+        "last_err": "AttributeError: 'NoneType' object has no attribute 'decode'"
+      },
+      {
+        "uid": "d9466fd5-d637-474c-9a1f-83703f07cc65",
+        "name": "stepup-claim-1679",
+        "leg": "warm",
+        "fail_class": "exec",
+        "attempts": 12,
+        "last_err": "AttributeError: 'NoneType' object has no attribute 'decode'"
+      },
+      {
+        "uid": "a7a977d7-3dad-4ed6-acd0-36f88b28f56c",
+        "name": "stepup-claim-1680",
+        "leg": "warm",
+        "fail_class": "exec",
+        "attempts": 12,
+        "last_err": "AttributeError: 'NoneType' object has no attribute 'decode'"
+      },
+      {
+        "uid": "6cd636d9-2110-44e7-8f58-5e74314b3157",
+        "name": "stepup-claim-1681",
+        "leg": "warm",
+        "fail_class": "exec",
+        "attempts": 12,
+        "last_err": "AttributeError: 'NoneType' object has no attribute 'decode'"
+      },
+      {
+        "uid": "088eafee-77e0-4c6f-83e8-287f4a0e08b2",
+        "name": "stepup-claim-1682",
+        "leg": "warm",
+        "fail_class": "exec",
+        "attempts": 12,
+        "last_err": "AttributeError: 'NoneType' object has no attribute 'decode'"
+      },
+      {
+        "uid": "1be224ff-fb3c-4fa0-8643-68cc98448b4e",
+        "name": "stepup-claim-1683",
+        "leg": "warm",
+        "fail_class": "exec",
+        "attempts": 12,
+        "last_err": "AttributeError: 'NoneType' object has no attribute 'decode'"
+      },
+      {
+        "uid": "1ad82e13-b5d8-4215-b4e5-b7115add41ca",
+        "name": "stepup-claim-1684",
+        "leg": "warm",
+        "fail_class": "exec",
+        "attempts": 12,
+        "last_err": "AttributeError: 'NoneType' object has no attribute 'decode'"
+      },
+      {
+        "uid": "2d6753d8-2cbe-4116-a691-97d0aada38eb",
+        "name": "stepup-claim-1685",
+        "leg": "warm",
+        "fail_class": "exec",
+        "attempts": 12,
+        "last_err": "AttributeError: 'NoneType' object has no attribute 'decode'"
+      },
+      {
+        "uid": "b52d6608-cbaa-4d2a-ac63-d868194f186d",
+        "name": "stepup-claim-1686",
+        "leg": "warm",
+        "fail_class": "exec",
+        "attempts": 12,
+        "last_err": "AttributeError: 'NoneType' object has no attribute 'decode'"
+      },
+      {
+        "uid": "942837cb-2cb5-4dc0-b5fb-7b8009a2d1df",
+        "name": "stepup-claim-1687",
+        "leg": "warm",
+        "fail_class": "exec",
+        "attempts": 12,
+        "last_err": "AttributeError: 'NoneType' object has no attribute 'decode'"
+      },
+      {
+        "uid": "60de582f-e0b5-4104-88b5-53219ba6b1b6",
+        "name": "stepup-claim-1688",
+        "leg": "warm",
+        "fail_class": "exec",
+        "attempts": 12,
+        "last_err": "AttributeError: 'NoneType' object has no attribute 'decode'"
+      },
+      {
+        "uid": "5c8b798e-f708-46ec-a2bc-37036d275561",
+        "name": "stepup-claim-1689",
+        "leg": "warm",
+        "fail_class": "exec",
+        "attempts": 12,
+        "last_err": "AttributeError: 'NoneType' object has no attribute 'decode'"
+      },
+      {
+        "uid": "f5262a00-03bb-4567-b5db-d5a1a5889fdf",
+        "name": "stepup-claim-1690",
+        "leg": "warm",
+        "fail_class": "exec",
+        "attempts": 12,
+        "last_err": "AttributeError: 'NoneType' object has no attribute 'decode'"
+      },
+      {
+        "uid": "ba61a629-9af4-471e-8827-be16f43c30d6",
+        "name": "stepup-claim-1691",
+        "leg": "warm",
+        "fail_class": "exec",
+        "attempts": 12,
+        "last_err": "AttributeError: 'NoneType' object has no attribute 'decode'"
+      },
+      {
+        "uid": "6dad9d9b-8c8b-4e5f-9a38-7806e1f731eb",
+        "name": "stepup-claim-1692",
+        "leg": "warm",
+        "fail_class": "exec",
+        "attempts": 12,
+        "last_err": "AttributeError: 'NoneType' object has no attribute 'decode'"
+      },
+      {
+        "uid": "32a3cafb-5d91-46c1-9d3d-58a11277b492",
+        "name": "stepup-claim-1693",
+        "leg": "warm",
+        "fail_class": "exec",
+        "attempts": 12,
+        "last_err": "AttributeError: 'NoneType' object has no attribute 'decode'"
+      },
+      {
+        "uid": "0a985951-ed05-4d4c-85d7-f15d671b001f",
+        "name": "stepup-claim-1694",
+        "leg": "warm",
+        "fail_class": "exec",
+        "attempts": 12,
+        "last_err": "AttributeError: 'NoneType' object has no attribute 'decode'"
+      },
+      {
+        "uid": "36c03578-2b50-4485-8ab2-7aa9abb7e7c3",
+        "name": "stepup-claim-1695",
+        "leg": "warm",
+        "fail_class": "exec",
+        "attempts": 12,
+        "last_err": "AttributeError: 'NoneType' object has no attribute 'decode'"
+      },
+      {
+        "uid": "8c735119-77af-4420-87ea-7ad1703e3b7f",
+        "name": "stepup-claim-1696",
+        "leg": "warm",
+        "fail_class": "exec",
+        "attempts": 12,
+        "last_err": "AttributeError: 'NoneType' object has no attribute 'decode'"
+      },
+      {
+        "uid": "76ad4aac-9e3d-4565-bc00-ae8aeb66d7ab",
+        "name": "stepup-claim-1697",
+        "leg": "warm",
+        "fail_class": "exec",
+        "attempts": 12,
+        "last_err": "AttributeError: 'NoneType' object has no attribute 'decode'"
+      },
+      {
+        "uid": "02dd2d37-1555-4aca-9784-500c0ccd0ba5",
+        "name": "stepup-claim-1698",
+        "leg": "warm",
+        "fail_class": "exec",
+        "attempts": 12,
+        "last_err": "AttributeError: 'NoneType' object has no attribute 'decode'"
+      },
+      {
+        "uid": "59c02477-7a8d-4f05-9200-80cd662456ea",
+        "name": "stepup-claim-1699",
+        "leg": "warm",
+        "fail_class": "exec",
+        "attempts": 12,
+        "last_err": "AttributeError: 'NoneType' object has no attribute 'decode'"
+      },
+      {
+        "uid": "5bbb6b78-2b00-4760-8419-5556df2a9347",
+        "name": "stepup-claim-1700",
+        "leg": "warm",
+        "fail_class": "exec",
+        "attempts": 12,
+        "last_err": "AttributeError: 'NoneType' object has no attribute 'decode'"
+      },
+      {
+        "uid": "bcd9ebb1-2bd2-4e0c-a403-c497ed2c6fbc",
+        "name": "stepup-claim-1701",
+        "leg": "warm",
+        "fail_class": "exec",
+        "attempts": 12,
+        "last_err": "AttributeError: 'NoneType' object has no attribute 'decode'"
+      },
+      {
+        "uid": "6682d9f7-3f25-4743-8a77-260d39aed9f6",
+        "name": "stepup-claim-1702",
+        "leg": "warm",
+        "fail_class": "exec",
+        "attempts": 12,
+        "last_err": "AttributeError: 'NoneType' object has no attribute 'decode'"
+      },
+      {
+        "uid": "72ff165d-1991-492d-bdf3-5d5de9dd7861",
+        "name": "stepup-claim-1703",
+        "leg": "warm",
+        "fail_class": "exec",
+        "attempts": 12,
+        "last_err": "AttributeError: 'NoneType' object has no attribute 'decode'"
+      },
+      {
+        "uid": "689876a2-c14b-406c-af6d-160c1bad14f0",
+        "name": "stepup-claim-1767",
+        "leg": "warm",
+        "fail_class": "exec",
+        "attempts": 12,
+        "last_err": "AttributeError: 'NoneType' object has no attribute 'decode'"
+      },
+      {
+        "uid": "2714fabb-d168-4842-b829-382d75f1db20",
+        "name": "stepup-claim-1768",
+        "leg": "warm",
+        "fail_class": "exec",
+        "attempts": 12,
+        "last_err": "AttributeError: 'NoneType' object has no attribute 'decode'"
+      },
+      {
+        "uid": "3515b256-4aad-47a3-81b1-9b183b79faa9",
+        "name": "stepup-claim-1769",
+        "leg": "warm",
+        "fail_class": "exec",
+        "attempts": 12,
+        "last_err": "AttributeError: 'NoneType' object has no attribute 'decode'"
+      },
+      {
+        "uid": "08fc73c6-ef68-4e49-8995-13c3cddf4f30",
+        "name": "stepup-claim-1770",
+        "leg": "warm",
+        "fail_class": "exec",
+        "attempts": 12,
+        "last_err": "AttributeError: 'NoneType' object has no attribute 'decode'"
+      }
+    ]
+  },
+  "literal_ttfe_measured": true,
+  "literal_ttfe_includes_exec_setup_overhead": true,
+  "acquisition_latency_s": {
+    "n": 3000,
+    "p50_s": 0.07048045098781586,
+    "p95_s": 0.11578213095199316,
+    "p99_s": 0.2132682722876775,
+    "min_s": 0.03245204105041921,
+    "max_s": 1.8297444049967453,
+    "p95_under_500ms": true,
+    "skipped_prebound": 2,
+    "pending": 0,
+    "window_s": 302.8307733410038
+  },
+  "partial_written_at": "2026-07-06T03:03:01Z"
+}

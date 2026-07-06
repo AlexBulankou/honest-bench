@@ -1,0 +1,74 @@
+{
+  "rate_per_s": 20,
+  "warmpool_size": 0,
+  "duration_s": 180.0,
+  "ttfe_warm_ms": {
+    "p50": null,
+    "p95": null,
+    "p99": null
+  },
+  "ttfe_cold_ms": {
+    "p50": null,
+    "p95": null,
+    "p99": null
+  },
+  "ready_per_s": null,
+  "controller_startup_warm_ms": {
+    "p50": 375.0,
+    "p95": 110099.99999999999,
+    "p99": 118020.00000000001
+  },
+  "controller_startup_cold_ms": {
+    "p50": 191607.14285714284,
+    "p95": 240000.0,
+    "p99": 240000.0
+  },
+  "controller_ready_per_s": null,
+  "controller_completed_per_s": 3.0631460912532096,
+  "ctrl_event_count": 2223.0,
+  "ctrl_span_s": 725.7244459700305,
+  "ctrl_span_source": "acq-window",
+  "claims_created": 6000,
+  "controller_measured": true,
+  "measured": false,
+  "literal_ttfe_warm_ms": {
+    "p50": null,
+    "p95": null,
+    "p99": null
+  },
+  "literal_ttfe_cold_ms": {
+    "p50": null,
+    "p95": null,
+    "p99": null
+  },
+  "literal_ttfe_sample": {
+    "every_n": 1,
+    "warm": {
+      "n_sampled": 0,
+      "n_exec_ok": 0,
+      "n_exec_fail": 0,
+      "exec_ok_rate": null
+    },
+    "cold": {
+      "n_sampled": 0,
+      "n_exec_ok": 0,
+      "n_exec_fail": 0,
+      "exec_ok_rate": null
+    }
+  },
+  "literal_ttfe_measured": false,
+  "literal_ttfe_includes_exec_setup_overhead": true,
+  "acquisition_latency_s": {
+    "n": 6037,
+    "p50_s": 0.07438482996076345,
+    "p95_s": 0.1052931120386347,
+    "p99_s": 0.17578615500126046,
+    "min_s": 0.023250482976436615,
+    "max_s": 14.306746480986476,
+    "p95_under_500ms": true,
+    "skipped_prebound": 2,
+    "pending": 2,
+    "window_s": 725.7244459700305
+  },
+  "partial_written_at": "2026-07-06T03:19:18Z"
+}
