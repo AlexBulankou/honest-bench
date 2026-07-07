@@ -3633,6 +3633,37 @@ def test_storage_config_byte_and_pct_formatting():
     assert "50%" in out
 
 
+def test_storage_config_payload_bytes_caption_when_valid():
+    # #4164 W disclosure: a valid top-level payload_bytes renders the identical-fixed-
+    # written-state clause in the caption, data-driven from the record (64 MiB fire W).
+    rec = _storage_record({"pd": {"n": 5, "bytes_p50": 67108864, "pass_rate": 1.0}})
+    rec["payload_bytes"] = 67108864
+    out = _unlink(render.render_storage_config(rec))
+    assert (
+        "_Measured 2026-07-07 — storage-config axis (point-in-time); "
+        "each replica carried an identical fixed written state, W = 64 MiB._"
+    ) in out
+
+
+def test_storage_config_payload_bytes_absent_caption_unchanged():
+    # Absence keeps the caption byte-identical to the pre-W form — never a pend.
+    rec = _storage_record({"pd": {"n": 5, "bytes_p50": 4096, "pass_rate": 1.0}})
+    out = _unlink(render.render_storage_config(rec))
+    assert "_Measured 2026-07-07 — storage-config axis (point-in-time)._" in out
+    assert "written state" not in out
+
+
+def test_storage_config_payload_bytes_invalid_values_omit_clause():
+    # Invalid W (bool / zero / negative / float / string) omits the clause; the table
+    # itself is untouched — the W disclosure is never a validity gate on the section.
+    for bad in (True, 0, -1, 64.0, "64MiB", None):
+        rec = _storage_record({"pd": {"n": 5, "bytes_p50": 4096, "pass_rate": 1.0}})
+        rec["payload_bytes"] = bad
+        out = _unlink(render.render_storage_config(rec))
+        assert "written state" not in out, f"clause leaked for payload_bytes={bad!r}"
+        assert "| Persistent disk | 5 | 4 KiB | 100% |" in out
+
+
 def test_storage_config_in_build_readme_ordering_and_inert():
     # Integration: the section wires into build_readme AFTER the per-product loop and BEFORE
     # "Reproduce it" (render_recipe, always present), and is INERT when no record exists.
