@@ -20,6 +20,7 @@ sys.path insert still puts render/ first so render.py's own flat `from schema im
 resolves.
 """
 
+import glob
 import importlib.util
 import json
 import os
@@ -60,6 +61,7 @@ def _load_render():
         mod.render_suspend_latency,
         mod.render_density_detail,
         mod.render_vcpu_footprint,
+        mod.render_storage_config,
         mod.render_recipe,
     )
 
@@ -70,7 +72,7 @@ def _load_render():
  render_kata_activation, render_concurrent_burst, render_warm_pool_acquisition,
  render_at_scale_contention, render_cluster_saturation, render_provisioning_rate_sweep,
  render_session_turnover, render_suspend_latency, render_density_detail, render_vcpu_footprint,
- render_recipe) = _load_render()
+ render_storage_config, render_recipe) = _load_render()
 
 # Product -> results path, relative to the repo root (parent of render/).
 # The PUBLIC customer page is SANDBOX-ONLY (alex 2026-06-28): substrate demotes from a
@@ -90,6 +92,32 @@ _PRODUCTS = (
 # that would render a duplicate full matrix + conditional blocks instead of merging rows.
 # Absent file ⇒ kata rows render pending (graceful degradation, README unchanged).
 _KATA_RESULTS_REL = "sandbox-kata/results/latest.json"
+
+# #4164 storage-config axis: dated per-fire provenance records live in sandbox/records/ (the
+# schema-validated provenance units, NOT rendered output). We pick the newest by the record's
+# own `measured_at` and hand the whole dict to render_storage_config, which fail-closes on a
+# missing/invalid date or values. Absent glob ⇒ None ⇒ the section is INERT (omitted), so this
+# is a no-op on today's page until a controlled fire lands a record (graceful degradation).
+_STORAGE_CONFIG_GLOB = "sandbox/records/storage-config-*.json"
+
+
+def _load_storage_config(root):
+    """Newest sandbox/records/storage-config-*.json by its `measured_at` instant, as a dict;
+    None when no record exists or none carries a usable date. Kept lenient here (the render is
+    the closed-schema gate) — we only need a well-enough-formed date to order candidates."""
+    candidates = []
+    for path in glob.glob(os.path.join(root, _STORAGE_CONFIG_GLOB)):
+        try:
+            with open(path) as fh:
+                rec = json.load(fh)
+        except (OSError, ValueError):
+            continue
+        if isinstance(rec, dict) and isinstance(rec.get("measured_at"), str):
+            candidates.append((rec["measured_at"], rec))
+    if not candidates:
+        return None
+    candidates.sort(key=lambda c: c[0])
+    return candidates[-1][1]
 
 # Fixed, reviewed-once customer preamble. No measured numbers here — every number on the
 # page comes from render_product, so this constant carries zero PII risk.
@@ -192,6 +220,14 @@ def build_readme(root=None):
         stepup = render_stepup(results)  # INERT today; standalone ## when a stepup object emits
         if stepup.strip():
             sections.append(stepup.rstrip())
+    # #4164 / hb#132: "Which storage class should you pick?" is a single sandbox-wide guidance
+    # section (customer-facing storage-config axis), sourced from the newest
+    # sandbox/records/storage-config-*.json — so it renders ONCE after the per-product loop, placed
+    # after "Does it hold at cluster scale?" and before "Reproduce it". Data-keyed degradation:
+    # renders NOTHING until a record carries a valid measured_at + at least one in-enum class.
+    storage_config = render_storage_config(_load_storage_config(root))
+    if storage_config.strip():
+        sections.append(storage_config.rstrip())
     # #4021: the Reproducibility Recipe is product-agnostic architecture prose, so it renders
     # ONCE after the per-product loop — the preamble forward-refs "the recipe at the bottom".
     sections.append(render_recipe().rstrip())

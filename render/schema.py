@@ -75,6 +75,22 @@ BADGE_SCOPES = {"control-plane", "enforced"}
 # standard-NP-with-label-propagation mechanism and never conflates it with managed-gke-sandbox NP.
 BADGE_CONSTRUCTIONS = {"standard-np", "managed-np"}
 
+# storage_class (#4164) is the storage backend of a sandbox's storage-bearing measurement
+# path — the axis behind the "Which storage class should you pick?" customer-guidance section.
+# "ephemeral" = node-local, non-persistent storage; "pd" = a persistent-disk-backed volume;
+# "snapshot" = a snapshot-restored volume. A closed set (STORAGE_CLASS_LABELS is the
+# ordered display map; STORAGE_CLASSES is derived from its keys). Data-keyed like WARM_REGIMES:
+# the render drops any out-of-enum key, renders `pending` for a class the record omits, and
+# stays INERT (renders nothing) until a storage-config record carries values — so the section
+# cannot rot into a stale hardcoded table. Public-safe by construction: these are generic
+# storage-tier names, never an internal label prefix (`sandbox.a4/…`), volume, or cluster name.
+STORAGE_CLASS_LABELS = {
+    "ephemeral": "Ephemeral (node-local)",
+    "pd": "Persistent disk",
+    "snapshot": "Snapshot-restored",
+}
+STORAGE_CLASSES = set(STORAGE_CLASS_LABELS)
+
 # pending/FAIL cells render an ENUM reason only — never harness free-text.
 PENDING_REASONS = {
     "requires-gvisor-runtime",
@@ -488,6 +504,23 @@ WARM_VS_COLD_FIELDS = {
     # Absent ⇒ the render falls back to the historical true-cold phrasing (byte-identical
     # to pre-#4024), so the existing locked block is unchanged.
     "cold_start_mode": lambda v: v in COLD_START_MODES,
+}
+
+# --- #4164: storage-config axis (per-class aggregates) -----------------------------------
+# The per-class object under a storage-config record's `storage_classes[<class>]`. Closed-schema
+# PII guard: the render reads ONLY these field-names, each validated by its predicate; anything
+# else is dropped on read, so an accrual writer cannot smuggle free-text (a volume name, a
+# cluster id) onto the public page. `n` is the per-class sample count (the trust gate — printed
+# per row so a reader can judge weight); `bytes_p50` is the median storage-bearing payload
+# (non-negative); `pass_rate` is the [0,1] fraction of that class's samples that PASSed. A class
+# object missing any field, or carrying an out-of-range value, is dropped whole (fail-closed) —
+# a partially-measured class never renders a half-row. The top-level record also carries a
+# `measured_at` ISO-8601 instant (validated in the render via _ISO) for the point-in-time
+# caption; it is not a per-class field.
+STORAGE_CLASS_FIELDS = {
+    "n": lambda v: isinstance(v, int) and not isinstance(v, bool) and v >= 0,
+    "bytes_p50": _nonneg,
+    "pass_rate": lambda v: isinstance(v, (int, float)) and not isinstance(v, bool) and 0.0 <= v <= 1.0,
 }
 
 # --- a#3960: Step-up backfill saturation Pareto ------------------------------------------
