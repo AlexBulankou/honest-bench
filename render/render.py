@@ -40,6 +40,9 @@ from schema import (
     SCENARIO_LABELS,
     SESSION_TURNOVER_FIELDS,
     STEPUP_PARETO_FIELDS,
+    STORAGE_CLASS_FIELDS,
+    STORAGE_CLASS_LABELS,
+    STORAGE_CLASSES,
     SUSPEND_LATENCY_FIELDS,
     TTFE_COMPARABILITY_MIN_N,
     WARM_BIND_FIELDS,
@@ -355,6 +358,21 @@ def _fmt_num(v):
 def _fmt_ratio(r):
     """A retention ratio to 2 dp, no trailing zeros: 0.989474 -> 0.99, 1.06 -> 1.06."""
     return f"{round(r, 2):g}"
+
+
+def _fmt_pct(r):
+    """A [0,1] rate as a percentage, no trailing zeros: 1.0 -> 100%, 0.97 -> 97%, 0.965 -> 96.5%."""
+    return f"{round(r * 100, 1):g}%"
+
+
+def _fmt_bytes(n):
+    """Compact IEC bytes: 512 -> 512 B, 4096 -> 4 KiB, 1572864 -> 1.5 MiB."""
+    step = 1024.0
+    units = ("B", "KiB", "MiB", "GiB", "TiB")
+    for unit in units:
+        if abs(n) < step or unit == units[-1]:
+            return f"{n:g} {unit}" if unit == "B" else f"{round(n, 2):g} {unit}"
+        n /= step
 
 
 def _fmt_secs(ms):
@@ -3173,6 +3191,61 @@ figures are the measured cells above (Core Metrics + **Concurrent Burst**) plus 
 cells rather than restate a number that could drift out of sync. TRUE-TTFE (webhook-stamped
 first-instruction) stays `pending` until the upstream stamper lands.
 """
+
+
+def render_storage_config(record):
+    """hb#132 / #4164: the "Which storage class should you pick?" customer-guidance section — a
+    3-row closed-enum table (ephemeral / pd / snapshot) of per-class Samples(n) / Payload p50 /
+    Pass rate, machine-rendered from a schema-validated `sandbox/records/storage-config-*.json`
+    controlled-fire record. It is customer guidance, not a scale property, so it renders as its
+    own top-level `##` (placed after "Does it hold at cluster scale?", before "Reproduce it").
+
+    Returns "" (INERT) when: `record` is not a dict; it lacks a valid ISO-8601 `measured_at`
+    (an undated measured block must never reach the public page); or no class carries a fully
+    valid per-class object. Otherwise it renders the full 3-row skeleton, `pending` for a class
+    the record omits (honest-skeleton, mirroring render_density_detail). Closed-schema read: an
+    out-of-enum class key or an out-of-range field is dropped (fail-closed) — a half-measured
+    class never renders a half-row. Data-keyed degradation (WARM_REGIMES idiom): the section is
+    absent until real values land and cannot rot into a stale hardcoded table. The point-in-time
+    caption is sourced from the record's fire date; the per-row n is the trust gate.
+    """
+    if not isinstance(record, dict):
+        return ""
+    measured_at = record.get("measured_at")
+    if not (isinstance(measured_at, str) and _ISO.match(measured_at)):
+        return ""
+    raw = record.get("storage_classes")
+    if not isinstance(raw, dict):
+        return ""
+    clean = {}
+    for cls, obj in raw.items():
+        if cls not in STORAGE_CLASSES or not isinstance(obj, dict):
+            continue
+        if all(k in obj and pred(obj[k]) for k, pred in STORAGE_CLASS_FIELDS.items()):
+            clean[cls] = obj
+    if not clean:
+        return ""
+    lines = ["## Which storage class should you pick?", ""]
+    lines.append(
+        "Per-class results from a controlled storage-config fire (fixed workload). An "
+        "unmeasured class renders `pending`; the per-row sample count is the trust gate."
+    )
+    lines.append("")
+    lines.append("| Storage class | Samples (n) | Payload p50 | Pass rate |")
+    lines.append("|---|---|---|---|")
+    for cls, label in STORAGE_CLASS_LABELS.items():
+        obj = clean.get(cls)
+        if obj is None:
+            n = payload = pr = link_pending(_PENDING)
+        else:
+            n = _fmt_num(obj["n"])
+            payload = _fmt_bytes(obj["bytes_p50"])
+            pr = _fmt_pct(obj["pass_rate"])
+        lines.append(f"| {label} | {n} | {payload} | {pr} |")
+    lines.append("")
+    lines.append(f"_Measured {measured_at[:10]} — storage-config axis (point-in-time)._")
+    lines.append("")
+    return "\n".join(lines) + "\n"
 
 
 def render_recipe():

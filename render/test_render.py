@@ -3504,6 +3504,167 @@ def test_north_star_in_full_readme_nested_under_what_this_means():
     assert ns_at < readme.index("## Does it hold at cluster scale?")
 
 
+# ---------------------------------------------------------------------------
+# #4164 / hb#132: render_storage_config — "Which storage class should you pick?"
+# Closed-enum ({ephemeral,pd,snapshot}) data-keyed guidance section. Fixtures use
+# only generic public-safe class names (never a sandbox.a4/ label prefix, volume,
+# or cluster name), so test_docs_public_safety stays green.
+# ---------------------------------------------------------------------------
+
+def _storage_record(classes, measured_at="2026-07-07T04:15:00Z"):
+    return {"measured_at": measured_at, "storage_classes": classes}
+
+
+def test_storage_config_inert_when_record_none_or_non_dict():
+    assert render.render_storage_config(None) == ""
+    assert render.render_storage_config([]) == ""
+    assert render.render_storage_config("nope") == ""
+
+
+def test_storage_config_inert_when_no_measured_at():
+    rec = _storage_record({"ephemeral": {"n": 5, "bytes_p50": 4096, "pass_rate": 1.0}})
+    del rec["measured_at"]
+    assert render.render_storage_config(rec) == ""
+
+
+def test_storage_config_inert_when_measured_at_not_full_iso():
+    # A bare date (no time component) must not clear the _ISO instant gate.
+    rec = _storage_record(
+        {"ephemeral": {"n": 5, "bytes_p50": 4096, "pass_rate": 1.0}},
+        measured_at="2026-07-07",
+    )
+    assert render.render_storage_config(rec) == ""
+
+
+def test_storage_config_inert_when_storage_classes_missing_or_bad():
+    assert render.render_storage_config({"measured_at": "2026-07-07T04:15:00Z"}) == ""
+    assert render.render_storage_config(
+        {"measured_at": "2026-07-07T04:15:00Z", "storage_classes": []}
+    ) == ""
+
+
+def test_storage_config_inert_when_no_valid_class():
+    # Every class object is malformed -> clean is empty -> INERT (no half-table).
+    rec = _storage_record({
+        "ephemeral": {"n": 5, "bytes_p50": 4096},              # missing pass_rate
+        "pd": {"n": -1, "bytes_p50": 4096, "pass_rate": 1.0},  # negative n
+        "snapshot": "not-a-dict",
+    })
+    assert render.render_storage_config(rec) == ""
+
+
+def test_storage_config_full_skeleton_pending_for_omitted_class():
+    # Only ephemeral measured -> all 3 rows render, pd + snapshot show pending.
+    rec = _storage_record({"ephemeral": {"n": 12, "bytes_p50": 4096, "pass_rate": 1.0}})
+    out = _unlink(render.render_storage_config(rec))
+    assert out.startswith("## Which storage class should you pick?")
+    assert "| Storage class | Samples (n) | Payload p50 | Pass rate |" in out
+    assert "| Ephemeral (node-local) | 12 | 4 KiB | 100% |" in out
+    assert "| Persistent disk | pending | pending | pending |" in out
+    assert "| Snapshot-restored | pending | pending | pending |" in out
+    # Rows render in the closed-enum declared order.
+    assert out.index("Ephemeral (node-local)") < out.index("Persistent disk") < out.index("Snapshot-restored")
+
+
+def test_storage_config_out_of_enum_class_dropped():
+    rec = _storage_record({
+        "ephemeral": {"n": 3, "bytes_p50": 512, "pass_rate": 0.97},
+        "bogus": {"n": 9, "bytes_p50": 1024, "pass_rate": 1.0},
+    })
+    out = _unlink(render.render_storage_config(rec))
+    assert "bogus" not in out
+    assert "| Ephemeral (node-local) | 3 | 512 B | 97% |" in out
+
+
+def test_storage_config_out_of_range_field_dropped_whole_class():
+    # pass_rate > 1.0 fails the [0,1] predicate -> pd dropped entirely, renders pending.
+    rec = _storage_record({
+        "ephemeral": {"n": 3, "bytes_p50": 512, "pass_rate": 1.0},
+        "pd": {"n": 4, "bytes_p50": 1024, "pass_rate": 1.5},
+    })
+    out = _unlink(render.render_storage_config(rec))
+    assert "| Persistent disk | pending | pending | pending |" in out
+
+
+def test_storage_config_bool_n_rejected():
+    # bool is not an int for n (isinstance(True, int) guard) -> class dropped.
+    rec = _storage_record({"ephemeral": {"n": True, "bytes_p50": 512, "pass_rate": 1.0}})
+    assert render.render_storage_config(rec) == ""
+
+
+def test_storage_config_n_zero_rejected_as_unmeasured():
+    # n=0 is "unmeasured": a bytes_p50 / pass_rate over zero samples is undefined and must
+    # not render a full row. The n>=1 predicate drops the class whole -> honest pending row.
+    rec = _storage_record({
+        "ephemeral": {"n": 5, "bytes_p50": 512, "pass_rate": 1.0},
+        "pd": {"n": 0, "bytes_p50": 4096, "pass_rate": 1.0},  # zero samples -> dropped
+    })
+    out = _unlink(render.render_storage_config(rec))
+    assert "| Ephemeral (node-local) | 5 | 512 B | 100% |" in out
+    assert "| Persistent disk | pending | pending | pending |" in out
+    # A single n=0 class alone (no other valid class) -> whole section INERT.
+    rec_solo = _storage_record({"pd": {"n": 0, "bytes_p50": 4096, "pass_rate": 1.0}})
+    assert render.render_storage_config(rec_solo) == ""
+
+
+def test_storage_config_caption_date_sliced_from_measured_at():
+    rec = _storage_record(
+        {"snapshot": {"n": 8, "bytes_p50": 1572864, "pass_rate": 0.875}},
+        measured_at="2026-07-07T23:59:59Z",
+    )
+    out = _unlink(render.render_storage_config(rec))
+    assert "_Measured 2026-07-07 — storage-config axis (point-in-time)._" in out
+    # The time component never leaks into the caption.
+    assert "23:59:59" not in out
+
+
+def test_storage_config_byte_and_pct_formatting():
+    rec = _storage_record({
+        "ephemeral": {"n": 1, "bytes_p50": 512, "pass_rate": 1.0},
+        "pd": {"n": 2, "bytes_p50": 1572864, "pass_rate": 0.965},
+        "snapshot": {"n": 3, "bytes_p50": 4096, "pass_rate": 0.5},
+    })
+    out = _unlink(render.render_storage_config(rec))
+    assert "512 B" in out          # sub-KiB stays bytes
+    assert "1.5 MiB" in out        # 1572864 -> 1.5 MiB
+    assert "4 KiB" in out          # 4096 -> 4 KiB, no trailing .0
+    assert "100%" in out           # 1.0 -> 100%, no trailing .0
+    assert "96.5%" in out          # one-dp retained
+    assert "50%" in out
+
+
+def test_storage_config_in_build_readme_ordering_and_inert():
+    # Integration: the section wires into build_readme AFTER the per-product loop and BEFORE
+    # "Reproduce it" (render_recipe, always present), and is INERT when no record exists.
+    # Guards the fails-late ordering class: a tmp-root fixture exercises both branches of
+    # _load_storage_config (no record -> None -> INERT; one record -> newest -> renders).
+    import json as _json
+    import os as _os
+    import tempfile as _tempfile
+    from generate import build_readme
+
+    with _tempfile.TemporaryDirectory() as tmp:
+        # No record on disk -> section absent; "Reproduce it" still renders.
+        readme_absent = build_readme(root=tmp)
+        assert "## Which storage class should you pick?" not in readme_absent
+        assert "## Reproduce it" in readme_absent
+
+        # One synthetic public-safe record -> section renders, slotted before "Reproduce it".
+        recdir = _os.path.join(tmp, "sandbox", "records")
+        _os.makedirs(recdir)
+        with open(_os.path.join(recdir, "storage-config-2026-07-07.json"), "w") as fh:
+            _json.dump({
+                "measured_at": "2026-07-07T04:15:00Z",
+                "storage_classes": {"ephemeral": {"n": 9, "bytes_p50": 4096, "pass_rate": 1.0}},
+            }, fh)
+        readme_present = build_readme(root=tmp)
+        storage_at = readme_present.find("## Which storage class should you pick?")
+        recipe_at = readme_present.find("## Reproduce it")
+        assert storage_at != -1
+        assert recipe_at != -1
+        assert storage_at < recipe_at
+
+
 def _run_all():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:
