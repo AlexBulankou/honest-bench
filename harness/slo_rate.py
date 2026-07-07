@@ -115,8 +115,11 @@ LITERAL_N_EXEC_OK_FLOOR = 20
 # rate) produces one.
 LITERAL_RATE_AGREEMENT_TOL = 0.10
 
-# hb#214 part 1 — floor-rate honest-ZERO margin (DRAFT; value is a CANDIDATE pending
-# maintainer weigh-in, do not treat as signed off). The honest-zero predicate is a
+# hb#214 part 1 — floor-rate honest-ZERO margin (PINNED at the hb#214 weigh-in).
+# Derivation note: 1.5 is chosen to dominate the max observed literal/true basis
+# ratio plus noise headroom (exec setup overhead + probe contention, quantified
+# below); revisit only via a data-cited PR, never by judgment.
+# The honest-zero predicate is a
 # strong NEGATIVE claim, and the literal basis is an UPPER bound on true TTFE — an
 # upper-bound sample exceeding the bar does NOT by itself prove the true latency
 # exceeds it (the polarity that makes the basis conservative for POSITIVE claims

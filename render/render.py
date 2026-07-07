@@ -1024,6 +1024,16 @@ def render_matrix(results, kata_results=None):
         "measured — CRIU checkpoint/restore does not transfer to the Kata VM isolation model — "
         "distinct from `pending`, which awaits a run."
     )
+    lines.append(
+        "- **Why a `pending` is not just printed as `0`** — a blunter display rule would print "
+        "`0` for any cell that cannot show compliance; each pending flavor above documents why "
+        "that would over-claim here: an upper-bound latency basis cannot prove a true miss "
+        "(`no-compliant-rung`), a failed agreement gate cannot certify a rate in either "
+        "direction (`trust-gate`), and a floor rung whose samples are majority-unevaluable "
+        "cannot establish the negative claim (the floor-zero predicate's evaluability cap). "
+        "Each such cell graduates — to a measured rate or a floor-zero `0` — the moment its "
+        "condition clears."
+    )
     lines.append("")
     # The Kata rows fill from a SEPARATE run (the sandbox-kata product) on the kata node pool —
     # a different cluster substrate + machine shape than the build banner below — so disclose
