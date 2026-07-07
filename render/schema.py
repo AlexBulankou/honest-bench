@@ -337,6 +337,10 @@ SLO_BASIS_VALUES = frozenset(
         "true_ttfe",
         "literal_ttfe_upper_bound+controller_completed",
         "literal_ttfe_upper_bound+acq_fulfilled",
+        # hb#214 part 1 (DRAFT): the pre-declared floor-rate honest-ZERO predicate — a
+        # stamped 0.0 derived from the FLOOR rung's literal warm samples sitting over the
+        # bar by a pre-declared margin. Always rides with thpt_slo_floor_zero=1.
+        "literal_ttfe_upper_bound+floor_zero_margin",
     )
 )
 
@@ -373,6 +377,12 @@ MATRIX_METRIC_FIELDS = {
     # valid producer, but the render predicate only asserts a positive int (the render-side
     # job is the coarse-p95 caption when 20 <= n < 100, not re-enforcing the floor).
     "thpt_slo_n_exec_ok": lambda v: isinstance(v, int) and not isinstance(v, bool) and v >= 1,
+    # hb#214 part 1 (DRAFT): the honest-ZERO stamp. Exactly 1 (numeric, never bool) — it
+    # exists only as the marker riding a floor-zero-derived 0.0 rate. Allow-listed so the
+    # closed-schema clean CARRIES it (dropping it while keeping the 0.0 would strip the
+    # disclosure off a negative claim — the silent trust-downgrade the pairing guard in
+    # harness results_schema forbids at build time).
+    "thpt_slo_floor_zero": lambda v: not isinstance(v, bool) and v == 1,
     # 07-06 per-mode SLO-rate fire: a cluster-half (or whole-cell) that RAN and landed
     # honest-empty carries an enum reason so the matrix renders `pending (<reason>)` with
     # upstream refs instead of the never-fired `pending (cluster-fire)`. Render-only keys

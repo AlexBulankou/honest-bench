@@ -21,11 +21,14 @@ _sys.path.insert(0, _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)
 import math
 
 from harness.slo_rate import (
+    HONEST_ZERO_BAR_MARGIN,
+    HONEST_ZERO_MAX_UNKNOWN_FRACTION,
     LITERAL_N_EXEC_OK_FLOOR,
     LITERAL_RATE_AGREEMENT_TOL,
     SLO_BASIS_ENUM,
     SLO_BASIS_LITERAL_ACQ,
     SLO_BASIS_LITERAL_CONTROLLER,
+    SLO_BASIS_LITERAL_FLOOR_ZERO,
     SLO_BASIS_TRUE_TTFE,
     slo_cluster_rate,
     slo_sla_metrics_from_stepup,
@@ -358,6 +361,7 @@ class TestSloBasisSelection:
             SLO_BASIS_TRUE_TTFE,
             SLO_BASIS_LITERAL_CONTROLLER,
             SLO_BASIS_LITERAL_ACQ,
+            SLO_BASIS_LITERAL_FLOOR_ZERO,
         )
 
     def test_true_ttfe_triple_never_carries_n_exec_ok(self):
@@ -455,6 +459,183 @@ class TestLiteralNExecOkFloor:
         assert out["thpt_under_5s_per_cluster"] == 9.9
         assert out["thpt_slo_n_exec_ok"] == 32
         assert "thpt_under_1s_per_cluster" not in out
+
+
+def _fz_rung(offered, warm_p95=8300.0, ctrl=0.48, acq=0.5, n=30, n_over=20,
+             n_unknown=0):
+    # A Kata-cold-like floor rung: p95 well over the 5s bar (so the POSITIVE
+    # literal derive never credits it), trusted dual legs in agreement, and the
+    # hb#214 part-1 count fields. Pass None to build a rung with a field ABSENT.
+    pt = {"offered_rate_per_s": offered, "literal_warm_p95_ms": warm_p95}
+    if ctrl is not None:
+        pt["controller_completed_per_s"] = ctrl
+    if acq is not None:
+        pt["acq_fulfilled_per_s"] = acq
+    if n is not None:
+        pt["literal_warm_n_exec_ok"] = n
+    if n_over is not None:
+        pt["literal_warm_n_over_bar_5s"] = n_over
+    if n_unknown is not None:
+        pt["literal_warm_n_unknown"] = n_unknown
+    return pt
+
+
+class TestLiteralFloorZero:
+    """hb#214 part 1 (DRAFT): the pre-declared floor-rate honest-ZERO predicate.
+
+    The spine under test: a 0.0 emit is rarer and more guarded than a pend —
+    every condition failing closed to {} (pend), never to a fabricated zero;
+    a positive rate anywhere always outranking the zero; and the zero always
+    riding with its thpt_slo_floor_zero=1 stamp.
+    """
+
+    ZERO_TRIPLE = {
+        "thpt_under_5s_per_cluster": 0.0,
+        # hb#214 delta: the per-node leg rides along — exactly-0 is the one case
+        # where the two denominators are interchangeable (no extrapolation), and
+        # the renderer's dual cell keys on the per-node key.
+        "thpt_under_5s_per_node": 0.0,
+        "thpt_slo_floor_zero": 1,
+        "thpt_slo_n_exec_ok": 30,
+        "thpt_cluster_node_count": 2,
+        "thpt_slo_basis": SLO_BASIS_LITERAL_FLOOR_ZERO,
+    }
+
+    def _flat(self, pts, upper_bound=True):
+        return {
+            "node_count": 2,
+            "literal_ttfe": {"upper_bound": upper_bound, "pareto_points": pts},
+        }
+
+    def test_margin_and_cap_constants(self):
+        # Pre-declared, pinned in ONE place — post-hoc tuning forbidden like
+        # bars and TOL. 1.5 is the DRAFT candidate pending maintainer weigh-in.
+        assert HONEST_ZERO_BAR_MARGIN == 1.5
+        assert HONEST_ZERO_MAX_UNKNOWN_FRACTION == 0.5
+
+    def test_fires_on_kata_cold_floor_shape(self):
+        # n=30, n_unknown=0, n_over=20 > 0.5*30: known-over-margined-bar majority
+        # even under adversarial fill of zero unknowns.
+        out = slo_sla_metrics_from_stepup(self._flat([_fz_rung(0.5)]))
+        assert out == self.ZERO_TRIPLE
+
+    def test_true_ttfe_outranks_floor_zero(self):
+        flat = self._flat([_fz_rung(0.5)])
+        flat["pareto_points"] = SWEEP
+        flat["node_count"] = 40
+        out = slo_sla_metrics_from_stepup(flat)
+        assert out["thpt_slo_basis"] == SLO_BASIS_TRUE_TTFE
+        assert out["thpt_under_5s_per_cluster"] == 28.4
+        assert "thpt_slo_floor_zero" not in out
+
+    def test_positive_literal_outranks_floor_zero(self):
+        # A higher rung clears the 5s bar with trusted legs: the positive credit
+        # wins and the floor-zero predicate is never consulted.
+        pts = [
+            _fz_rung(0.5),
+            _lit_rung(2, 3200.0, ctrl=1.9, acq=2.0, n=30),
+        ]
+        out = slo_sla_metrics_from_stepup(self._flat(pts))
+        assert out["thpt_under_5s_per_cluster"] == 2.0
+        assert out["thpt_slo_basis"] == SLO_BASIS_LITERAL_ACQ
+        assert "thpt_slo_floor_zero" not in out
+
+    def test_floor_rung_only_counts_consulted(self):
+        # The floor rung (min offered rate) is missing its count fields; a HIGHER
+        # over-bar rung carries a firing shape. Nothing derives — a higher rung's
+        # counts never rescue the floor (the predicate is about the floor rate).
+        pts = [
+            _fz_rung(0.5, n_over=None, n_unknown=None),
+            _fz_rung(2),
+        ]
+        assert slo_sla_metrics_from_stepup(self._flat(pts)) == {}
+
+    def test_floor_is_min_offered_not_list_order(self):
+        # Listed higher-rate rung first; the floor rung still selected by min
+        # offered rate, and the stamp is the FLOOR rung's n.
+        pts = [
+            _fz_rung(2, n=48, n_over=0),
+            _fz_rung(0.5, n=30),
+        ]
+        out = slo_sla_metrics_from_stepup(self._flat(pts))
+        assert out == self.ZERO_TRIPLE
+
+    def test_untrusted_floor_never_zero(self):
+        # Steady-state trust is a precondition: thin sample, a missing leg,
+        # a dead leg, or leg disagreement all pend — never zero.
+        variants = [
+            _fz_rung(0.5, n=19),                     # below n_exec_ok floor
+            _fz_rung(0.5, ctrl=None),                # missing controller leg
+            _fz_rung(0.5, acq=None),                 # missing acq leg
+            _fz_rung(0.5, ctrl=0.0),                 # dead leg
+            _fz_rung(0.5, ctrl=0.3, acq=0.5),        # |0.5-0.3|/0.5 = 0.4 > TOL
+        ]
+        for pt in variants:
+            assert slo_sla_metrics_from_stepup(self._flat([pt])) == {}, pt
+
+    def test_absent_count_fields_fail_closed(self):
+        # Pre-contract producers (no #1087 counts) can NEVER fire the zero.
+        for pt in (
+            _fz_rung(0.5, n_over=None),
+            _fz_rung(0.5, n_unknown=None),
+            _fz_rung(0.5, n_over=None, n_unknown=None),
+        ):
+            assert slo_sla_metrics_from_stepup(self._flat([pt])) == {}, pt
+
+    def test_invalid_count_values_ineligible(self):
+        for kw in (
+            {"n_over": True}, {"n_over": -1}, {"n_over": 2.5},
+            {"n_unknown": True}, {"n_unknown": -1}, {"n_unknown": 2.5},
+        ):
+            pt = _fz_rung(0.5, **kw)
+            assert slo_sla_metrics_from_stepup(self._flat([pt])) == {}, kw
+
+    def test_producer_inconsistency_ineligible(self):
+        # n_over > n_exec_ok is internally inconsistent — pend, never zero.
+        pt = _fz_rung(0.5, n=30, n_over=31)
+        assert slo_sla_metrics_from_stepup(self._flat([pt])) == {}
+
+    def test_adversarial_fill_boundary_strict(self):
+        # n=30 known + 10 unknown => n_total=40. Every unknown is granted a pass:
+        # the zero fires only when n_over > 20 STRICTLY.
+        at_half = _fz_rung(0.5, n=30, n_over=20, n_unknown=10)
+        assert slo_sla_metrics_from_stepup(self._flat([at_half])) == {}
+        past_half = _fz_rung(0.5, n=30, n_over=21, n_unknown=10)
+        out = slo_sla_metrics_from_stepup(self._flat([past_half]))
+        assert out["thpt_under_5s_per_cluster"] == 0.0
+        assert out["thpt_slo_floor_zero"] == 1
+
+    def test_evaluability_cap(self):
+        # Unknowns beyond half the total make the rung un-evaluable: pend.
+        over_cap = _fz_rung(0.5, n=20, n_over=20, n_unknown=21)
+        assert slo_sla_metrics_from_stepup(self._flat([over_cap])) == {}
+        # At EXACTLY half unknown the cap passes but the adversarial-fill bar is
+        # arithmetically unreachable (n_over <= n = n_total/2): still pend, by
+        # construction — documents the un-trippability the cap comment claims.
+        at_cap = _fz_rung(0.5, n=20, n_over=20, n_unknown=20)
+        assert slo_sla_metrics_from_stepup(self._flat([at_cap])) == {}
+
+    def test_upper_bound_gate_applies_to_floor_zero(self):
+        # The floor-zero predicate lives INSIDE the upper_bound gate: an
+        # unflagged literal block never fires it.
+        for flag in (False, None, "true", 1):
+            out = slo_sla_metrics_from_stepup(
+                self._flat([_fz_rung(0.5)], upper_bound=flag)
+            )
+            assert out == {}, f"flag={flag!r}"
+
+    def test_non_positive_offered_rungs_never_floor(self):
+        # Rungs without a finite positive offered rate can't define the floor;
+        # a sweep of only such rungs derives nothing.
+        pts = [_fz_rung(0), _fz_rung(-1), _fz_rung(math.nan), _fz_rung(True)]
+        assert slo_sla_metrics_from_stepup(self._flat(pts)) == {}
+
+    def test_zero_output_passes_scenario_sla_coercion(self):
+        from harness.results_schema import _coerce_sla_metrics
+
+        out = slo_sla_metrics_from_stepup(self._flat([_fz_rung(0.5)]))
+        assert out["thpt_slo_basis"] == SLO_BASIS_LITERAL_FLOOR_ZERO
+        assert _coerce_sla_metrics(out) == out
 
 
 def _all_tests():

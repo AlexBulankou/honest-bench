@@ -83,10 +83,15 @@ from .metrics import THRESHOLD_1S_MS, THRESHOLD_5S_MS
 SLO_BASIS_TRUE_TTFE = "true_ttfe"
 SLO_BASIS_LITERAL_CONTROLLER = "literal_ttfe_upper_bound+controller_completed"
 SLO_BASIS_LITERAL_ACQ = "literal_ttfe_upper_bound+acq_fulfilled"
+# hb#214 part 1: the pre-declared floor-rate honest-ZERO basis. Produced only by
+# _derive_literal_floor_zero_5s (see its docstring for the full predicate); always
+# paired with thpt_slo_floor_zero=1 — a 0.0 rate without that stamp is schema-invalid.
+SLO_BASIS_LITERAL_FLOOR_ZERO = "literal_ttfe_upper_bound+floor_zero_margin"
 SLO_BASIS_ENUM = (
     SLO_BASIS_TRUE_TTFE,
     SLO_BASIS_LITERAL_CONTROLLER,
     SLO_BASIS_LITERAL_ACQ,
+    SLO_BASIS_LITERAL_FLOOR_ZERO,
 )
 
 # hb#174 sign-off condition (c): a literal rung is SLO-eligible only when its warm
@@ -109,6 +114,33 @@ LITERAL_N_EXEC_OK_FLOOR = 20
 # passing rung — revisit once a low-rate fire (at/below controller refill
 # rate) produces one.
 LITERAL_RATE_AGREEMENT_TOL = 0.10
+
+# hb#214 part 1 — floor-rate honest-ZERO margin (PINNED at the hb#214 weigh-in).
+# Derivation note: 1.5 is chosen to dominate the max observed literal/true basis
+# ratio plus noise headroom (exec setup overhead + probe contention, quantified
+# below); revisit only via a data-cited PR, never by judgment.
+# The honest-zero predicate is a
+# strong NEGATIVE claim, and the literal basis is an UPPER bound on true TTFE — an
+# upper-bound sample exceeding the bar does NOT by itself prove the true latency
+# exceeds it (the polarity that makes the basis conservative for POSITIVE claims
+# inverts for negative ones). The margin restores conservatism: the producer counts a
+# known warm sample as over-bar ONLY when its literal latency exceeds
+# THRESHOLD_5S_MS * HONEST_ZERO_BAR_MARGIN (7.5s at 1.5), which absorbs the
+# ~0.5-0.7s exec websocket-setup overhead plus every_n=1 probe-contention inflation
+# with room to spare. 1.5 is chosen so the known candidate (Kata cold, p95 ~8.3-8.4s
+# at every rung, ~66% over the bar at p50) still trips while any rung whose overage
+# could plausibly be overhead/contention artifact cannot. Pre-declared here — the
+# ONE shared place — so the producer's count and this derive can never disagree on
+# what "over the bar" means; tuning it post-hoc to make a zero fire (or not fire)
+# is forbidden, same as bars and TOL.
+HONEST_ZERO_BAR_MARGIN = 1.5
+
+# hb#214 part 1 — evaluability cap on the unknown-sentinel fraction (pinned in
+# hb#214 discussion): if more than half the floor rung's samples are unknown-stamped
+# (upstream #1087 sentinels), the adversarial-fill predicate is arithmetically
+# un-trippable (over-bar knowns can never form a strict majority), so the cell stays
+# pending under the existing closed-enum reason — no new enum value.
+HONEST_ZERO_MAX_UNKNOWN_FRACTION = 0.5
 
 
 def _finite_number(v) -> Optional[float]:
@@ -233,6 +265,103 @@ def _derive_literal_5s(pareto_points) -> dict:
     }
 
 
+def _valid_count(v) -> Optional[int]:
+    """v as int if a finite, non-bool integral number >= 0; else None."""
+    fv = _finite_number(v)
+    if fv is None or fv != int(fv):
+        return None
+    n = int(fv)
+    return n if n >= 0 else None
+
+
+def _derive_literal_floor_zero_5s(pareto_points) -> dict:
+    """hb#214 part 1 (DRAFT): the pre-declared floor-rate honest-ZERO predicate, 5s bar.
+
+    The one case where a measured 0 is honest (per hb#214): the sweep's FLOOR rung —
+    the lowest offered rate probed — was fully measured and trusted, and its latency
+    distribution fails the bar so decisively that no lower rate could pass either.
+    Closed predicate over the record, decided BEFORE any fire it applies to; never a
+    post-hoc judgment call. Everything below must hold or the cell stays pending:
+
+      1. FLOOR RUNG ONLY: the rung with the minimum finite `offered_rate_per_s` > 0.
+         A mid-ladder rung failing the bar proves nothing about lower rates.
+      2. STEADY-STATE TRUST (same eligibility spine as the positive literal path,
+         minus bar compliance): `literal_warm_n_exec_ok` >= LITERAL_N_EXEC_OK_FLOOR,
+         BOTH rate legs finite > 0, agreement <= LITERAL_RATE_AGREEMENT_TOL. A zero
+         asserted from an untrusted rung would be the fabricated-0 trap in negative
+         polarity.
+      3. COUNT FIELDS PRESENT (fail-closed): `literal_warm_n_over_bar_5s` (known warm
+         samples with literal latency > THRESHOLD_5S_MS * HONEST_ZERO_BAR_MARGIN —
+         producer-computed against the shared margin constant) AND
+         `literal_warm_n_unknown` (unknown-sentinel-stamped samples; 0 until upstream
+         #1087 lands). Absence of either => ineligible: a producer that predates the
+         count contract cannot prove the distribution, so no zero.
+      4. PRODUCER CONSISTENCY: n_over_bar <= n_exec_ok (an over-bar count exceeding
+         the known-sample count is an inconsistency, not a measurement).
+      5. EVALUABILITY CAP: n_unknown / n_total <= HONEST_ZERO_MAX_UNKNOWN_FRACTION
+         (n_total = n_exec_ok + n_unknown). Beyond it the adversarial fill below is
+         arithmetically un-trippable; explicit early-out for clarity.
+      6. ADVERSARIAL FILL (the pinned hb#214 unknown semantics for NEGATIVE claims):
+         the predicate fires only when n_over_bar > 0.5 * n_total — i.e. even
+         granting EVERY unknown sample a pass, a strict majority of all samples
+         exceed the margined bar, so the full-population p50 is over the bar. Plain
+         exclusion of unknowns is NOT safe here: if fast samples disproportionately
+         land unknown, the known-subset p50 overstates and would trip the 0 too
+         easily. Adversarial fill closes that hole with no distributional assumption.
+
+    On fire: {"thpt_under_5s_per_cluster": 0.0, "thpt_under_5s_per_node": 0.0,
+    "thpt_slo_floor_zero": 1, "thpt_slo_n_exec_ok": n}. The per-node leg rides
+    along because exactly-0 is the one case where the two denominators are
+    interchangeable (a cluster rate of exactly 0 forces the per-node rate to 0 —
+    no extrapolation), and the renderer's dual cell keys on the per-node leg: a
+    cluster-only emit would be swallowed by the node-absent arm (a stamp with no
+    disclosed figure). The stamp is numeric 1 (not True) so it rides the
+    numeric-only sla_metrics coercer without a new carve-out; schema-side pairing
+    validation rejects a 0.0 rate without the stamp AND a stamp without BOTH 5s
+    legs at 0.0 — a bare zero can never publish. Empty dict when any condition
+    fails (pending).
+    """
+    if not isinstance(pareto_points, list):
+        return {}
+    floor_pt: Optional[dict] = None
+    floor_rate: Optional[float] = None
+    for pt in pareto_points:
+        if not isinstance(pt, dict):
+            continue
+        rate = _finite_number(pt.get("offered_rate_per_s"))
+        if rate is None or rate <= 0:
+            continue
+        if floor_rate is None or rate < floor_rate:
+            floor_rate = rate
+            floor_pt = pt
+    if floor_pt is None:
+        return {}
+    n = _valid_n_exec_ok(floor_pt.get("literal_warm_n_exec_ok"))
+    acq = _finite_number(floor_pt.get("acq_fulfilled_per_s"))
+    ctrl = _finite_number(floor_pt.get("controller_completed_per_s"))
+    if n is None or acq is None or ctrl is None or acq <= 0 or ctrl <= 0:
+        return {}
+    if abs(acq - ctrl) / max(acq, ctrl) > LITERAL_RATE_AGREEMENT_TOL:
+        return {}
+    n_over = _valid_count(floor_pt.get("literal_warm_n_over_bar_5s"))
+    n_unknown = _valid_count(floor_pt.get("literal_warm_n_unknown"))
+    if n_over is None or n_unknown is None:
+        return {}
+    if n_over > n:
+        return {}
+    n_total = n + n_unknown
+    if n_unknown > HONEST_ZERO_MAX_UNKNOWN_FRACTION * n_total:
+        return {}
+    if not (n_over > 0.5 * n_total):
+        return {}
+    return {
+        "thpt_under_5s_per_cluster": 0.0,
+        "thpt_under_5s_per_node": 0.0,
+        "thpt_slo_floor_zero": 1,
+        "thpt_slo_n_exec_ok": n,
+    }
+
+
 def slo_sla_metrics_from_stepup(flat) -> dict:
     """Derive the hb#132 per-cluster emit triple from a FLAT step-up record.
 
@@ -294,6 +423,12 @@ def slo_sla_metrics_from_stepup(flat) -> dict:
         if isinstance(lt, dict) and lt.get("upper_bound") is True:
             out = _derive_literal_5s(lt.get("pareto_points"))
             basis = SLO_BASIS_LITERAL_ACQ
+            if not out:
+                # hb#214 part 1 (DRAFT): only after BOTH positive bases derived
+                # nothing may the floor-zero predicate be consulted — a positive
+                # rate anywhere always outranks a zero.
+                out = _derive_literal_floor_zero_5s(lt.get("pareto_points"))
+                basis = SLO_BASIS_LITERAL_FLOOR_ZERO
     if not out:
         return {}
     out["thpt_cluster_node_count"] = int(node_count)

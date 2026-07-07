@@ -599,34 +599,60 @@ _SLO_BASIS_NOTES = {
         "excluded; trust-gated per rung on agreement with the independent controller "
         "completion rate (divergent rungs are ineligible)"
     ),
+    # hb#214 part 1 (DRAFT): the honest-ZERO basis. The polarity inversion matters — the
+    # literal warm p95 is an UPPER bound, so for a NEGATIVE claim (a zero) mere
+    # over-the-bar is NOT conservative; the predicate therefore requires the FLOOR rung's
+    # observed latencies to clear the bar by a pre-declared margin, with unknowns granted
+    # a pass (adversarial fill), before a 0.0 may be emitted. Fires only when both
+    # positive bases failed to derive — a positive rate anywhere outranks the zero.
+    "literal_ttfe_upper_bound+floor_zero_margin": (
+        "a measured ZERO, not an absence: at the LOWEST offered rate fired, the majority "
+        "of literal exec-probe warm samples exceeded the 5s bar by the pre-declared 1.5x "
+        "margin even after granting every unevaluable sample a pass — so no compliant "
+        "operating point exists at or above the floor rate; derived only after both "
+        "positive literal bases failed, from a trusted steady-state rung (dual "
+        "rate-candidate agreement, n>=20)"
+    ),
 }
 
 
 def _resolve_cluster_basis(sources):
     """hb#174: per-runtime SLO-basis stamp for the caption disclosure. Returns
-    {runtime: (basis, n_exec_ok)} for runtimes whose landed cluster figures carry a
-    NON-DEFAULT thpt_slo_basis (one with an _SLO_BASIS_NOTES entry); n_exec_ok is that same
-    metrics dict's thpt_slo_n_exec_ok (the MIN warm-exec sample count across the credited
-    rungs) or None when absent. Resolved from the SAME metrics dict that carries the landed
-    X — a basis stamp on a cell with no landed cluster figure discloses nothing (there is
-    no figure to caveat), mirroring _resolve_cluster_x's landed-X rule. First landed match
-    per runtime wins, same as the X resolver, so the basis line and the @X caption describe
-    the same measurement."""
+    {runtime: [(basis, n_exec_ok), ...]} — one entry per DISTINCT non-default
+    thpt_slo_basis (one with an _SLO_BASIS_NOTES entry) across ALL of that runtime's
+    landed-X scenarios, in scenario order. hb#214: the prior first-landed-match-wins
+    rule (mirroring the X resolver) silently SHADOWED a second scenario that landed on
+    a DIFFERENT basis — e.g. a positive literal basis in one activation mode alongside
+    a floor-zero in another — so the caption disclosed only one of the two bases a
+    reader was looking at. Every distinct basis now gets its own line. n_exec_ok is the
+    MINIMUM known thpt_slo_n_exec_ok across that basis's landed scenarios (the weakest
+    credited sample count — the conservative one to caption) or None when absent
+    everywhere. Resolved from the SAME metrics dict that carries the landed X — a basis
+    stamp on a cell with no landed cluster figure discloses nothing (there is no figure
+    to caveat), mirroring _resolve_cluster_x's landed-X rule."""
     bases = {}
     for rt, rt_scen in sources.items():
         if not rt_scen:
             continue
+        per_basis = {}
+        order = []
         for sc in rt_scen.values():
             m = (sc or {}).get("metrics") or {}
             if _landed_cluster_x(m) is None:
                 continue
             basis = m.get("thpt_slo_basis")
-            if basis in _SLO_BASIS_NOTES:
-                n = m.get("thpt_slo_n_exec_ok")
-                if not isinstance(n, int) or isinstance(n, bool):
-                    n = None
-                bases[rt] = (basis, n)
-            break
+            if basis not in _SLO_BASIS_NOTES:
+                continue
+            n = m.get("thpt_slo_n_exec_ok")
+            if not isinstance(n, int) or isinstance(n, bool):
+                n = None
+            if basis not in per_basis:
+                per_basis[basis] = n
+                order.append(basis)
+            elif n is not None and (per_basis[basis] is None or n < per_basis[basis]):
+                per_basis[basis] = n
+        if order:
+            bases[rt] = [(b, per_basis[b]) for b in order]
     return bases
 
 
@@ -719,9 +745,10 @@ def render_matrix(results, kata_results=None):
     # true_ttfe (the default) adds no line. One italic line per affected runtime.
     cluster_bases = _resolve_cluster_basis(sources)
     for rt in MATRIX_RUNTIMES:
-        hit = cluster_bases.get(rt)
-        if hit is not None:
-            basis, n_exec_ok = hit
+        # hb#214: one italic line PER DISTINCT BASIS — a runtime whose activation
+        # modes landed on different bases (e.g. a positive literal rate in one row
+        # and a floor-zero in another) discloses both, in scenario order.
+        for basis, n_exec_ok in cluster_bases.get(rt, ()):
             note = _SLO_BASIS_NOTES[basis]
             # hb#174 sign-off (c): a literal p95 over 20 <= n < 100 warm-exec samples
             # derives honestly (the harness floor is 20) but is a COARSE percentile —
@@ -943,6 +970,15 @@ def render_matrix(results, kata_results=None):
         f"reads, so a single-sample p95 yields a single-sample `0` carrying {_LOW_N_MARK}."
     )
     lines.append(
+        "- **measured `0` (floor-zero)** — the second zero provenance, distinct from the "
+        "derived `0` above: here the SLO-rate fire itself RAN and emitted a stamped zero — at "
+        "the lowest offered rate fired, the majority of samples missed the bar by a "
+        "pre-declared margin even after granting every unevaluable sample a pass, so no "
+        "compliant operating point exists at or above the floor. When this basis is in play "
+        "the italic basis line above the table names it; a derived `0` instead reads off a "
+        "measured TTFE p95 with no throughput fire behind it."
+    )
+    lines.append(
         f"- **{_LOW_N_MARK}** — measured over fewer than N={TTFE_COMPARABILITY_MIN_N} samples: "
         "read it as a single observation, not a distribution; do not rank it against a high-N row."
     )
@@ -987,6 +1023,16 @@ def render_matrix(results, kata_results=None):
         "- **`N/A`** — `N/A` by construction: Resume-from-suspend × Kata + microVM can never be "
         "measured — CRIU checkpoint/restore does not transfer to the Kata VM isolation model — "
         "distinct from `pending`, which awaits a run."
+    )
+    lines.append(
+        "- **Why a `pending` is not just printed as `0`** — a blunter display rule would print "
+        "`0` for any cell that cannot show compliance; each pending flavor above documents why "
+        "that would over-claim here: an upper-bound latency basis cannot prove a true miss "
+        "(`no-compliant-rung`), a failed agreement gate cannot certify a rate in either "
+        "direction (`trust-gate`), and a floor rung whose samples are majority-unevaluable "
+        "cannot establish the negative claim (the floor-zero predicate's evaluability cap). "
+        "Each such cell graduates — to a measured rate or a floor-zero `0` — the moment its "
+        "condition clears."
     )
     lines.append("")
     # The Kata rows fill from a SEPARATE run (the sandbox-kata product) on the kata node pool —
