@@ -167,7 +167,7 @@ Per-class results from a controlled storage-config fire (fixed workload). An unm
 | Persistent disk | 3 | 64 MiB | 100% |
 | Snapshot-restored | [pending](WORK_IN_PROGRESS.md#not-yet-measured) | [pending](WORK_IN_PROGRESS.md#not-yet-measured) | [pending](WORK_IN_PROGRESS.md#not-yet-measured) |
 
-_Measured 2026-07-07 — storage-config axis (point-in-time); each replica carried an identical fixed written state, W = 64 MiB._
+_Measured 2026-07-07 — storage-config axis (point-in-time); each class carried an identical controlled write, W = 64 MiB._
 
 ## Reproduce it
 

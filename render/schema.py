@@ -526,6 +526,25 @@ STORAGE_CLASS_FIELDS = {
     "pass_rate": lambda v: isinstance(v, (int, float)) and not isinstance(v, bool) and 0.0 <= v <= 1.0,
 }
 
+# #4164 condition-3: per-class OPTIONAL `basis` — WHICH kind of byte `bytes_p50` counts, so a
+# reader can tell that the cross-class comparison is not like-for-like. A CLOSED 2-value enum,
+# NOT free-text: same PII posture as the required fields (the render reads a known vocabulary,
+# never a smuggled volume/cluster string). "du-blocks" = allocated writable-fs blocks
+# (ephemeral / pd — a fixed pattern written to a mount, allocated blocks counted); "artifact-
+# bytes" = checkpoint-artifact object bytes (the snapshot class — process memory captured to an
+# object store, so its controlled write lives in RAM and the bytes include checkpoint overhead
+# beyond W). ABSENT ⇒ the render defaults the class to "du-blocks" (the eph/pd basis), so a
+# pre-basis record renders byte-identical. A PRESENT-but-out-of-enum basis fails the class
+# closed (dropped whole in the render, mirroring the required-field drop) — a malformed/unknown
+# basis never reaches the public page.
+STORAGE_BASIS_VALUES = ("du-blocks", "artifact-bytes")
+STORAGE_BASIS_DEFAULT = "du-blocks"
+
+
+def storage_class_basis_ok(v):
+    """True iff `v` is a member of the closed STORAGE_BASIS_VALUES enum (#4164 condition-3)."""
+    return v in STORAGE_BASIS_VALUES
+
 
 def storage_payload_bytes_ok(v):
     """Top-level OPTIONAL `payload_bytes` on a storage-config record: the fixed written

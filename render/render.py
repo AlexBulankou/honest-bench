@@ -40,9 +40,11 @@ from schema import (
     SCENARIO_LABELS,
     SESSION_TURNOVER_FIELDS,
     STEPUP_PARETO_FIELDS,
+    STORAGE_BASIS_DEFAULT,
     STORAGE_CLASS_FIELDS,
     STORAGE_CLASS_LABELS,
     STORAGE_CLASSES,
+    storage_class_basis_ok,
     storage_payload_bytes_ok,
     SUSPEND_LATENCY_FIELDS,
     TTFE_COMPARABILITY_MIN_N,
@@ -3222,8 +3224,14 @@ def render_storage_config(record):
     for cls, obj in raw.items():
         if cls not in STORAGE_CLASSES or not isinstance(obj, dict):
             continue
-        if all(k in obj and pred(obj[k]) for k, pred in STORAGE_CLASS_FIELDS.items()):
-            clean[cls] = obj
+        if not all(k in obj and pred(obj[k]) for k, pred in STORAGE_CLASS_FIELDS.items()):
+            continue
+        # #4164 condition-3: a PRESENT `basis` must be in the closed enum, else the class fails
+        # closed (dropped whole, same posture as a bad required field). ABSENT basis is fine —
+        # it defaults to du-blocks below, so a pre-basis record renders byte-identical.
+        if "basis" in obj and not storage_class_basis_ok(obj["basis"]):
+            continue
+        clean[cls] = obj
     if not clean:
         return ""
     lines = ["## Which storage class should you pick?", ""]
@@ -3232,6 +3240,11 @@ def render_storage_config(record):
         "unmeasured class renders `pending`; the per-row sample count is the trust gate."
     )
     lines.append("")
+    # #4164 condition-1: does the measured set span more than one measurement basis? When it
+    # does, the `Payload p50` column is not a like-for-like byte comparison, so the diverging
+    # (non-default) rows carry a `†` anchor and a footnote below names BOTH differences.
+    bases = {obj.get("basis", STORAGE_BASIS_DEFAULT) for obj in clean.values()}
+    basis_divergent = len(bases) > 1
     lines.append("| Storage class | Samples (n) | Payload p50 | Pass rate |")
     lines.append("|---|---|---|---|")
     for cls, label in STORAGE_CLASS_LABELS.items():
@@ -3241,6 +3254,8 @@ def render_storage_config(record):
         else:
             n = _fmt_num(obj["n"])
             payload = _fmt_bytes(obj["bytes_p50"])
+            if basis_divergent and obj.get("basis", STORAGE_BASIS_DEFAULT) != STORAGE_BASIS_DEFAULT:
+                payload += " †"
             pr = _fmt_pct(obj["pass_rate"])
         lines.append(f"| {label} | {n} | {payload} | {pr} |")
     lines.append("")
@@ -3251,12 +3266,30 @@ def render_storage_config(record):
     # the producer's W. Absent/invalid ⇒ caption unchanged (byte-identical to pre-#4164-W).
     w = record.get("payload_bytes")
     w_clause = (
-        f"; each replica carried an identical fixed written state, W = {_fmt_bytes(w)}"
+        f"; each class carried an identical controlled write, W = {_fmt_bytes(w)}"
         if storage_payload_bytes_ok(w)
         else ""
     )
     lines.append(f"_Measured {measured_at[:10]} — storage-config axis (point-in-time){w_clause}._")
     lines.append("")
+    # #4164 condition-1: when the measured classes span MORE THAN ONE measurement basis (i.e. at
+    # least one class counts artifact-bytes while others count du-blocks), the cross-class
+    # `Payload p50` column is not like-for-like — the reader must be told BOTH why the numbers
+    # differ in kind. Absent divergence (all measured classes share one basis) the footnote is
+    # noise and is omitted. Public-safe: generic mechanism prose, no internal names.
+    if basis_divergent:
+        lines.append(
+            "† Payload p50 is not measured the same way across classes, so the column is not a "
+            "like-for-like byte comparison. Ephemeral and persistent-disk write a fixed pattern "
+            "to a mount and count the **allocated writable-fs blocks** (`du`). The snapshot class "
+            "instead counts the **checkpoint-artifact object bytes**: a snapshot captures process "
+            "memory, not the writable-fs layer, so its identical W lives in an incompressible "
+            "in-memory buffer (a zero-filled buffer would be dropped by the checkpointer's "
+            "zero-page optimization and never appear in the artifact), and the artifact bytes "
+            "include checkpoint overhead beyond W. Same controlled W per class; different bytes "
+            "counted."
+        )
+        lines.append("")
     return "\n".join(lines) + "\n"
 
 

@@ -3634,14 +3634,15 @@ def test_storage_config_byte_and_pct_formatting():
 
 
 def test_storage_config_payload_bytes_caption_when_valid():
-    # #4164 W disclosure: a valid top-level payload_bytes renders the identical-fixed-
-    # written-state clause in the caption, data-driven from the record (64 MiB fire W).
+    # #4164 W disclosure + condition-2: a valid top-level payload_bytes renders the
+    # identical-controlled-write-per-class clause in the caption, data-driven from the
+    # record (64 MiB fire W).
     rec = _storage_record({"pd": {"n": 5, "bytes_p50": 67108864, "pass_rate": 1.0}})
     rec["payload_bytes"] = 67108864
     out = _unlink(render.render_storage_config(rec))
     assert (
         "_Measured 2026-07-07 — storage-config axis (point-in-time); "
-        "each replica carried an identical fixed written state, W = 64 MiB._"
+        "each class carried an identical controlled write, W = 64 MiB._"
     ) in out
 
 
@@ -3662,6 +3663,79 @@ def test_storage_config_payload_bytes_invalid_values_omit_clause():
         out = _unlink(render.render_storage_config(rec))
         assert "written state" not in out, f"clause leaked for payload_bytes={bad!r}"
         assert "| Persistent disk | 5 | 4 KiB | 100% |" in out
+
+
+def test_storage_config_basis_footnote_and_anchor_when_divergent():
+    # #4164 condition-1: snapshot carries basis=artifact-bytes while pd defaults to du-blocks,
+    # so the measured set spans two bases -> the footnote renders, names BOTH differences, and
+    # the diverging (snapshot) payload cell carries the `†` anchor. The du-blocks (pd) cell does
+    # NOT carry the anchor.
+    rec = _storage_record({
+        "pd": {"n": 5, "bytes_p50": 67108864, "pass_rate": 1.0},
+        "snapshot": {"n": 3, "bytes_p50": 67117056, "pass_rate": 1.0, "basis": "artifact-bytes"},
+    })
+    rec["payload_bytes"] = 67108864
+    out = _unlink(render.render_storage_config(rec))
+    # anchor only on the diverging row
+    assert "†" in [c.strip() for c in
+                   [ln for ln in out.splitlines() if "Snapshot-restored" in ln][0].split("|")][3]
+    assert "†" not in [ln for ln in out.splitlines() if "Persistent disk" in ln][0]
+    # footnote names BOTH differences (WHERE the bytes come from + WHY / the incompressibility)
+    assert "allocated writable-fs blocks" in out
+    assert "checkpoint-artifact object bytes" in out
+    assert "incompressible" in out and "zero-page optimization" in out
+    assert "Same controlled W per class; different bytes counted." in out
+
+
+def test_storage_config_no_footnote_when_single_basis():
+    # All measured classes share one basis (pd + ephemeral, both default du-blocks) -> the
+    # cross-class comparison IS like-for-like, so no footnote and no `†` anchor render.
+    rec = _storage_record({
+        "pd": {"n": 5, "bytes_p50": 67108864, "pass_rate": 1.0},
+        "ephemeral": {"n": 9, "bytes_p50": 67108864, "pass_rate": 1.0},
+    })
+    out = _unlink(render.render_storage_config(rec))
+    assert "†" not in out
+    assert "not measured the same way" not in out
+
+
+def test_storage_config_explicit_matching_basis_no_footnote():
+    # An explicit du-blocks basis on every measured class matches the default -> single basis,
+    # no footnote (the divergence check is on VALUES, not on presence of the key).
+    rec = _storage_record({
+        "pd": {"n": 5, "bytes_p50": 4096, "pass_rate": 1.0, "basis": "du-blocks"},
+        "ephemeral": {"n": 9, "bytes_p50": 4096, "pass_rate": 1.0, "basis": "du-blocks"},
+    })
+    out = _unlink(render.render_storage_config(rec))
+    assert "†" not in out
+
+
+def test_storage_config_bad_basis_drops_class_fail_closed():
+    # #4164 condition-3: a PRESENT-but-out-of-enum basis fails the class closed (dropped whole,
+    # falls through to the honest `pending` row) — mirrors the required-field drop.
+    rec = _storage_record({
+        "pd": {"n": 5, "bytes_p50": 4096, "pass_rate": 1.0},
+        "snapshot": {"n": 3, "bytes_p50": 67117056, "pass_rate": 1.0, "basis": "bogus"},
+    })
+    out = _unlink(render.render_storage_config(rec))
+    assert "| Persistent disk | 5 | 4 KiB | 100% |" in out
+    # snapshot dropped -> renders pending, and no footnote (single surviving basis)
+    snap_line = [ln for ln in out.splitlines() if "Snapshot-restored" in ln][0]
+    assert "pending" in snap_line and "67" not in snap_line
+    assert "†" not in out
+
+
+def test_storage_config_basis_enum_tokens_never_printed_verbatim():
+    # PII/clarity hygiene: the closed-enum tokens are internal vocabulary — the page discloses
+    # the basis difference in PROSE, never by leaking the raw "artifact-bytes"/"du-blocks" token.
+    rec = _storage_record({
+        "pd": {"n": 5, "bytes_p50": 67108864, "pass_rate": 1.0},
+        "snapshot": {"n": 3, "bytes_p50": 67117056, "pass_rate": 1.0, "basis": "artifact-bytes"},
+    })
+    rec["payload_bytes"] = 67108864
+    out = _unlink(render.render_storage_config(rec))
+    assert "artifact-bytes" not in out
+    assert "du-blocks" not in out
 
 
 def test_storage_config_in_build_readme_ordering_and_inert():
