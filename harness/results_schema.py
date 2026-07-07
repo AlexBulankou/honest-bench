@@ -123,6 +123,10 @@ SLO_BASIS_ENUM = (
     "true_ttfe",
     "literal_ttfe_upper_bound+controller_completed",
     "literal_ttfe_upper_bound+acq_fulfilled",
+    # hb#214 part 1 (DRAFT): the pre-declared floor-rate honest-ZERO basis — always
+    # paired with thpt_slo_floor_zero=1 + a 0.0 cluster rate (pairing enforced in
+    # _coerce_sla_metrics, fail-closed both directions).
+    "literal_ttfe_upper_bound+floor_zero_margin",
 )
 
 # #3954 sibling warm-vs-cold — the emitter's INDEPENDENT copies of render's WARM_VS_COLD_FIELDS
@@ -247,6 +251,29 @@ def _coerce_sla_metrics(raw) -> dict:
         if fv != fv or fv in (float("inf"), float("-inf")):  # NaN / inf
             continue
         out[k] = fv
+    # hb#214 part 1 (DRAFT) — floor-zero pairing guard, fail-closed BOTH directions.
+    # A 0.0 per-cluster SLO rate is publishable ONLY as the pre-declared floor-zero
+    # verdict (stamp thpt_slo_floor_zero=1); a bare 0.0 is exactly the fabricated-0
+    # class the honesty spine forbids, and a stamp without its 0.0 is an inconsistent
+    # producer. Either shape RAISES (a real bug, matching the module's closed-value
+    # posture) rather than silently dropping — a silent drop would let the record
+    # publish with the dishonest half removed.
+    zero_rate = any(
+        out.get(rk) == 0.0
+        for rk in ("thpt_under_5s_per_cluster", "thpt_under_1s_per_cluster")
+    )
+    has_stamp = out.get("thpt_slo_floor_zero") == 1.0
+    if zero_rate and not has_stamp:
+        raise ValueError(
+            "sla_metrics: 0.0 per-cluster SLO rate without thpt_slo_floor_zero=1 "
+            "(bare zero is a fabricated-0; only the hb#214 floor-zero predicate "
+            "may emit 0.0, and it always stamps)"
+        )
+    if has_stamp and not zero_rate:
+        raise ValueError(
+            "sla_metrics: thpt_slo_floor_zero=1 without a 0.0 per-cluster SLO rate "
+            "(inconsistent floor-zero pairing)"
+        )
     return out
 
 
@@ -529,7 +556,15 @@ def _coerce_literal_ttfe(raw, clean_nonneg):
                 ov = clean_nonneg(p[opt])
                 if ov is not None:
                     cp[opt] = ov
-        for opt in ("literal_every_n", "literal_warm_n_exec_ok", "literal_cold_n_exec_ok"):
+        # literal_warm_n_over_bar_5s + literal_warm_n_unknown: hb#214 part 1 (DRAFT)
+        # floor-zero count contract — over-margined-bar known samples (producer counts
+        # against THRESHOLD_5S_MS * HONEST_ZERO_BAR_MARGIN) + unknown-sentinel samples
+        # (0 until upstream #1087 lands). Both nonneg ints; the derive fails closed
+        # when either is absent, so a pre-contract record can never fire the zero.
+        for opt in (
+            "literal_every_n", "literal_warm_n_exec_ok", "literal_cold_n_exec_ok",
+            "literal_warm_n_over_bar_5s", "literal_warm_n_unknown",
+        ):
             v = p.get(opt)
             if not isinstance(v, bool) and isinstance(v, int) and v >= 0:
                 cp[opt] = v

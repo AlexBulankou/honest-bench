@@ -1049,6 +1049,58 @@ def test_slo_basis_enum_matches_slo_rate_canonical():
     _check(tuple(rs.SLO_BASIS_ENUM) == tuple(CANON),
            f"results_schema enum drifted from slo_rate: {rs.SLO_BASIS_ENUM} != {CANON}")
 
+def test_sla_floor_zero_pairing_guard():
+    # hb#214 part 1 (DRAFT): the schema-side fabricated-0 tripwire, fail-closed BOTH ways.
+    # A 0.0 per-cluster SLO rate may exist ONLY as the stamped output of the floor-zero
+    # predicate; a stamp may exist ONLY alongside its 0.0. Either half alone RAISES.
+    valid = {"thpt_under_5s_per_cluster": 0.0, "thpt_slo_floor_zero": 1,
+             "thpt_slo_n_exec_ok": 30, "thpt_cluster_node_count": 2,
+             "thpt_slo_basis": "literal_ttfe_upper_bound+floor_zero_margin"}
+    r = rs.build_results([{"name": "x", "outcome": "pass", "sla_metrics": dict(valid)}],
+                         _prov(), GEN_AT)
+    sla = r["scenarios"][0]["sla_metrics"]
+    _check(sla["thpt_under_5s_per_cluster"] == 0.0, "stamped 0.0 rate carried")
+    _check(sla["thpt_slo_floor_zero"] == 1.0, "floor-zero stamp carried with its 0.0")
+    _check(sla["thpt_slo_basis"] == "literal_ttfe_upper_bound+floor_zero_margin",
+           "floor-zero basis carried")
+    for rate_key in ("thpt_under_5s_per_cluster", "thpt_under_1s_per_cluster"):
+        try:
+            rs.build_results(
+                [{"name": "x", "outcome": "pass", "sla_metrics": {rate_key: 0.0}}],
+                _prov(), GEN_AT)
+            _check(False, f"bare 0.0 on {rate_key} without the stamp must raise")
+        except ValueError:
+            pass
+    for stamp_only in ({"thpt_slo_floor_zero": 1},
+                       {"thpt_slo_floor_zero": 1, "thpt_under_5s_per_cluster": 9.9}):
+        try:
+            rs.build_results(
+                [{"name": "x", "outcome": "pass", "sla_metrics": dict(stamp_only)}],
+                _prov(), GEN_AT)
+            _check(False, f"stamp without a 0.0 rate must raise: {stamp_only}")
+        except ValueError:
+            pass
+
+def test_literal_floor_zero_count_fields_coerced():
+    # hb#214 part 1 (DRAFT): the two per-point count fields the floor-zero predicate
+    # requires ride the optional nonneg-int loop — kept when valid, dropped on bad values
+    # (bool/negative), same honest-partial discipline as test_..._optional_fields_dropped.
+    blk = _lit_block()
+    blk["pareto_points"][0].update(
+        {"literal_warm_n_over_bar_5s": 7, "literal_warm_n_unknown": 0})
+    su = {"pareto_points": [], "verdict": "no-measured-steps", "literal_ttfe": blk}
+    p0 = rs.build_results([], _prov(), GEN_AT, stepup=su)["stepup"]["literal_ttfe"]["pareto_points"][0]
+    _check(p0["literal_warm_n_over_bar_5s"] == 7, "over-bar count kept")
+    _check(p0["literal_warm_n_unknown"] == 0, "zero unknown count kept (0 is valid)")
+    blk = _lit_block()
+    blk["pareto_points"][0].update(
+        {"literal_warm_n_over_bar_5s": True, "literal_warm_n_unknown": -3})
+    su = {"pareto_points": [], "verdict": "no-measured-steps", "literal_ttfe": blk}
+    p0 = rs.build_results([], _prov(), GEN_AT, stepup=su)["stepup"]["literal_ttfe"]["pareto_points"][0]
+    _check("literal_warm_n_over_bar_5s" not in p0, "bool count dropped")
+    _check("literal_warm_n_unknown" not in p0, "negative count dropped")
+    _check(p0["offered_rate_per_s"] == 0.5, "required spine intact")
+
 
 # --- #3954 sibling: warm_vs_cold ingestion coercer --------------------------------------
 

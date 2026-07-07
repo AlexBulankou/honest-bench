@@ -599,6 +599,20 @@ _SLO_BASIS_NOTES = {
         "excluded; trust-gated per rung on agreement with the independent controller "
         "completion rate (divergent rungs are ineligible)"
     ),
+    # hb#214 part 1 (DRAFT): the honest-ZERO basis. The polarity inversion matters — the
+    # literal warm p95 is an UPPER bound, so for a NEGATIVE claim (a zero) mere
+    # over-the-bar is NOT conservative; the predicate therefore requires the FLOOR rung's
+    # observed latencies to clear the bar by a pre-declared margin, with unknowns granted
+    # a pass (adversarial fill), before a 0.0 may be emitted. Fires only when both
+    # positive bases failed to derive — a positive rate anywhere outranks the zero.
+    "literal_ttfe_upper_bound+floor_zero_margin": (
+        "a measured ZERO, not an absence: at the LOWEST offered rate fired, the majority "
+        "of literal exec-probe warm samples exceeded the 5s bar by the pre-declared 1.5x "
+        "margin even after granting every unevaluable sample a pass — so no compliant "
+        "operating point exists at or above the floor rate; derived only after both "
+        "positive literal bases failed, from a trusted steady-state rung (dual "
+        "rate-candidate agreement, n>=20)"
+    ),
 }
 
 
