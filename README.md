@@ -165,11 +165,11 @@ Per-class results from a controlled storage-config fire (fixed workload). An unm
 |---|---|---|---|
 | Ephemeral (node-local) | 3 | 64 MiB | 100% |
 | Persistent disk | 3 | 64 MiB | 100% |
-| Snapshot-restored | 3 | 64.5 MiB † | 100% |
+| Snapshot-restored | 3 | 64.51 MiB † | 100% |
 
 _Measured 2026-07-07 — storage-config axis (point-in-time); each class carried an identical controlled write, W = 64 MiB._
 
-_† Ephemeral and persistent-disk p50 are filesystem-used bytes (`du`) after the controlled write. The snapshot-restored p50 measures a different quantity — the **checkpoint artifact bytes** (the CRIU save of the same W = 64 MiB written into tmpfs), so it carries ~0.5 MiB of checkpoint metadata over W and is labelled `basis: artifact-bytes` in the record. It is not directly comparable to the two `du`-based rows; it is the honest cost of the snapshot itself._
+† Payload p50 is not measured the same way across classes, so the column is not a like-for-like byte comparison. Ephemeral and persistent-disk write a fixed pattern to a mount and count the **allocated writable-fs blocks** (`du`). The snapshot class instead counts the **checkpoint-artifact object bytes**: a snapshot captures process memory, not the writable-fs layer, so its identical W lives in an incompressible in-memory buffer (a zero-filled buffer would be dropped by the checkpointer's zero-page optimization and never appear in the artifact), and the artifact bytes include checkpoint overhead beyond W. Same controlled W per class; different bytes counted.
 
 ## Reproduce it
 
