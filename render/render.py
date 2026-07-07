@@ -994,6 +994,9 @@ def render_matrix(results, kata_results=None):
         "- **`pending (upstream-blocked)`** — the run DID land, but an upstream controller gap "
         "(the resume path's Suspended condition never clears) holds it; it graduates to a real "
         "number the moment the upstream fix lands, not merely when a run is scheduled. "
+        "The probe did record a figure — the wall-clock ceiling spent waiting out the "
+        "never-clearing condition — and that figure is deliberately withheld: it measures the "
+        "probe's timeout, not a resume, and would rank falsely against real distributions. "
         "Tracked upstream: " + upstream_prose_refs("upstream-blocked") + "."
     )
     lines.append(
