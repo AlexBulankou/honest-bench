@@ -116,6 +116,10 @@ def _load_storage_config(root):
             candidates.append((rec["measured_at"], rec))
     if not candidates:
         return None
+    # Lexicographic sort == chronological only while every record uses the same offset form
+    # (the single controlled writer emits a `Z`-suffixed instant). A future `+00:00`-form
+    # record would sort differently than its true chronology — revisit (parse to a datetime)
+    # if the writer ever emits mixed offset forms.
     candidates.sort(key=lambda c: c[0])
     return candidates[-1][1]
 

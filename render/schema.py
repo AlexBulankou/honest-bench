@@ -511,14 +511,17 @@ WARM_VS_COLD_FIELDS = {
 # PII guard: the render reads ONLY these field-names, each validated by its predicate; anything
 # else is dropped on read, so an accrual writer cannot smuggle free-text (a volume name, a
 # cluster id) onto the public page. `n` is the per-class sample count (the trust gate — printed
-# per row so a reader can judge weight); `bytes_p50` is the median storage-bearing payload
-# (non-negative); `pass_rate` is the [0,1] fraction of that class's samples that PASSed. A class
-# object missing any field, or carrying an out-of-range value, is dropped whole (fail-closed) —
-# a partially-measured class never renders a half-row. The top-level record also carries a
+# per row so a reader can judge weight — must be >= 1: n=0 is "unmeasured", so a `bytes_p50` /
+# `pass_rate` derived from zero samples is undefined and must not render a full row; an n=0 class
+# fails the predicate, is dropped whole, and falls through to the honest `pending` row);
+# `bytes_p50` is the median storage-bearing payload (non-negative); `pass_rate` is the [0,1]
+# fraction of that class's samples that PASSed. A class object missing any field, or carrying an
+# out-of-range value, is dropped whole (fail-closed) — a partially-measured class never renders a
+# half-row. The top-level record also carries a
 # `measured_at` ISO-8601 instant (validated in the render via _ISO) for the point-in-time
 # caption; it is not a per-class field.
 STORAGE_CLASS_FIELDS = {
-    "n": lambda v: isinstance(v, int) and not isinstance(v, bool) and v >= 0,
+    "n": lambda v: isinstance(v, int) and not isinstance(v, bool) and v >= 1,
     "bytes_p50": _nonneg,
     "pass_rate": lambda v: isinstance(v, (int, float)) and not isinstance(v, bool) and 0.0 <= v <= 1.0,
 }

@@ -3592,6 +3592,21 @@ def test_storage_config_bool_n_rejected():
     assert render.render_storage_config(rec) == ""
 
 
+def test_storage_config_n_zero_rejected_as_unmeasured():
+    # n=0 is "unmeasured": a bytes_p50 / pass_rate over zero samples is undefined and must
+    # not render a full row. The n>=1 predicate drops the class whole -> honest pending row.
+    rec = _storage_record({
+        "ephemeral": {"n": 5, "bytes_p50": 512, "pass_rate": 1.0},
+        "pd": {"n": 0, "bytes_p50": 4096, "pass_rate": 1.0},  # zero samples -> dropped
+    })
+    out = _unlink(render.render_storage_config(rec))
+    assert "| Ephemeral (node-local) | 5 | 512 B | 100% |" in out
+    assert "| Persistent disk | pending | pending | pending |" in out
+    # A single n=0 class alone (no other valid class) -> whole section INERT.
+    rec_solo = _storage_record({"pd": {"n": 0, "bytes_p50": 4096, "pass_rate": 1.0}})
+    assert render.render_storage_config(rec_solo) == ""
+
+
 def test_storage_config_caption_date_sliced_from_measured_at():
     rec = _storage_record(
         {"snapshot": {"n": 8, "bytes_p50": 1572864, "pass_rate": 0.875}},
@@ -3616,6 +3631,38 @@ def test_storage_config_byte_and_pct_formatting():
     assert "100%" in out           # 1.0 -> 100%, no trailing .0
     assert "96.5%" in out          # one-dp retained
     assert "50%" in out
+
+
+def test_storage_config_in_build_readme_ordering_and_inert():
+    # Integration: the section wires into build_readme AFTER the per-product loop and BEFORE
+    # "Reproduce it" (render_recipe, always present), and is INERT when no record exists.
+    # Guards the fails-late ordering class: a tmp-root fixture exercises both branches of
+    # _load_storage_config (no record -> None -> INERT; one record -> newest -> renders).
+    import json as _json
+    import os as _os
+    import tempfile as _tempfile
+    from generate import build_readme
+
+    with _tempfile.TemporaryDirectory() as tmp:
+        # No record on disk -> section absent; "Reproduce it" still renders.
+        readme_absent = build_readme(root=tmp)
+        assert "## Which storage class should you pick?" not in readme_absent
+        assert "## Reproduce it" in readme_absent
+
+        # One synthetic public-safe record -> section renders, slotted before "Reproduce it".
+        recdir = _os.path.join(tmp, "sandbox", "records")
+        _os.makedirs(recdir)
+        with open(_os.path.join(recdir, "storage-config-2026-07-07.json"), "w") as fh:
+            _json.dump({
+                "measured_at": "2026-07-07T04:15:00Z",
+                "storage_classes": {"ephemeral": {"n": 9, "bytes_p50": 4096, "pass_rate": 1.0}},
+            }, fh)
+        readme_present = build_readme(root=tmp)
+        storage_at = readme_present.find("## Which storage class should you pick?")
+        recipe_at = readme_present.find("## Reproduce it")
+        assert storage_at != -1
+        assert recipe_at != -1
+        assert storage_at < recipe_at
 
 
 def _run_all():
