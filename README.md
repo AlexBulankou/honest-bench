@@ -165,9 +165,11 @@ Per-class results from a controlled storage-config fire (fixed workload). An unm
 |---|---|---|---|
 | Ephemeral (node-local) | 3 | 64 MiB | 100% |
 | Persistent disk | 3 | 64 MiB | 100% |
-| Snapshot-restored | [pending](WORK_IN_PROGRESS.md#not-yet-measured) | [pending](WORK_IN_PROGRESS.md#not-yet-measured) | [pending](WORK_IN_PROGRESS.md#not-yet-measured) |
+| Snapshot-restored | 3 | 64.5 MiB † | 100% |
 
 _Measured 2026-07-07 — storage-config axis (point-in-time); each class carried an identical controlled write, W = 64 MiB._
+
+_† Ephemeral and persistent-disk p50 are filesystem-used bytes (`du`) after the controlled write. The snapshot-restored p50 measures a different quantity — the **checkpoint artifact bytes** (the CRIU save of the same W = 64 MiB written into tmpfs), so it carries ~0.5 MiB of checkpoint metadata over W and is labelled `basis: artifact-bytes` in the record. It is not directly comparable to the two `du`-based rows; it is the honest cost of the snapshot itself._
 
 ## Reproduce it
 

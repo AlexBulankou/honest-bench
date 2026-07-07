@@ -1,5 +1,5 @@
 {
-  "measured_at": "2026-07-07T03:33:02Z",
+  "measured_at": "2026-07-07T08:26:28Z",
   "payload_bytes": 67108864,
   "storage_classes": {
     "ephemeral": {
@@ -9,6 +9,12 @@
     },
     "pd": {
       "bytes_p50": 67112960,
+      "n": 3,
+      "pass_rate": 1.0
+    },
+    "snapshot": {
+      "basis": "artifact-bytes",
+      "bytes_p50": 67639164,
       "n": 3,
       "pass_rate": 1.0
     }
