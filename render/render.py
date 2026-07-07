@@ -43,6 +43,7 @@ from schema import (
     STORAGE_CLASS_FIELDS,
     STORAGE_CLASS_LABELS,
     STORAGE_CLASSES,
+    storage_payload_bytes_ok,
     SUSPEND_LATENCY_FIELDS,
     TTFE_COMPARABILITY_MIN_N,
     WARM_BIND_FIELDS,
@@ -3243,7 +3244,18 @@ def render_storage_config(record):
             pr = _fmt_pct(obj["pass_rate"])
         lines.append(f"| {label} | {n} | {payload} | {pr} |")
     lines.append("")
-    lines.append(f"_Measured {measured_at[:10]} — storage-config axis (point-in-time)._")
+    # #4164 W disclosure: when the record carries a valid top-level payload_bytes, name the
+    # identical fixed written state so bytes_p50 is interpretable cross-class (eph/pd read
+    # ~W; snapshot's delta vs W is the checkpoint overhead — the genuine cross-class signal).
+    # Data-driven from the record, never a hardcoded render constant that could drift from
+    # the producer's W. Absent/invalid ⇒ caption unchanged (byte-identical to pre-#4164-W).
+    w = record.get("payload_bytes")
+    w_clause = (
+        f"; each replica carried an identical fixed written state, W = {_fmt_bytes(w)}"
+        if storage_payload_bytes_ok(w)
+        else ""
+    )
+    lines.append(f"_Measured {measured_at[:10]} — storage-config axis (point-in-time){w_clause}._")
     lines.append("")
     return "\n".join(lines) + "\n"
 

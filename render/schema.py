@@ -526,6 +526,18 @@ STORAGE_CLASS_FIELDS = {
     "pass_rate": lambda v: isinstance(v, (int, float)) and not isinstance(v, bool) and 0.0 <= v <= 1.0,
 }
 
+
+def storage_payload_bytes_ok(v):
+    """Top-level OPTIONAL `payload_bytes` on a storage-config record: the fixed written
+    state W (bytes) every replica in every measured class carried before measurement —
+    the disclosure that makes `bytes_p50` interpretable ("bytes actually stored for an
+    identical W-byte written state"). Carried in the RECORD, not as a render constant,
+    so the caption is data-driven from the fire that produced the numbers and cannot
+    drift from the producer's W. Positive int only (a bool is not a byte count). Absent
+    or invalid ⇒ the caption simply omits the W clause — never a pend; the table's
+    honesty gates are the per-class fields above."""
+    return isinstance(v, int) and not isinstance(v, bool) and v > 0
+
 # --- a#3960: Step-up backfill saturation Pareto ------------------------------------------
 # The proven "300 sandboxes in <1s" story is a THROUGHPUT-SATURATION study, not single-
 # sandbox latency: a SandboxWarmPool sustaining a creation RATE, swept step-by-step
