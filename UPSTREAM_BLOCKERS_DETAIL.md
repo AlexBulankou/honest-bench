@@ -16,6 +16,8 @@ _Last hand-refresh: 2026-07-03 (rev 2 — issue-first actions, fork-ready branch
 
 **Fork state at this refresh (2026-07-03):** both forks synced to upstream `main` (agent-sandbox → `0be472b`); branches pushed: [`adoption-completion-bounded-requeue`](https://github.com/AlexBulankou/agent-sandbox/tree/adoption-completion-bounded-requeue) (§S4 — READY), [`resume-clears-suspended-condition`](https://github.com/AlexBulankou/agent-sandbox/tree/resume-clears-suspended-condition) (§S1 — PARKED, superseded in direction by KEP 119; do not file).
 
+**Tip-advance note (2026-07-07):** upstream agent-sandbox `main` advanced `0be472b` → `9239c0f` (2026-07-05). Staged-patch re-sweep vs `9239c0f`: the a#3641, a#3957 and both a#4064 patches still `git apply --check` clean; **the a#1347 patch (PodTemplate immutability) no longer applies — rebase required.** Upstream extracted `PodTemplate` + `VolumeClaimTemplates` out of `SandboxSpec` into a shared `SandboxBlueprint` struct inlined into both `SandboxSpec` and `SandboxTemplateSpec`, so a CEL marker on the shared field would freeze the template type too. Rebase direction settled: **per-type immutability** — a CEL transition rule at the Sandbox usage site (Deployment-template-mutable / Pod-spec-immutable precedent), leaving `SandboxTemplate` editable. Forks not re-synced yet; per-section apply-clean claims below are as-of `0be472b` unless noted.
+
 ---
 
 ## Sandbox upstream blockers
@@ -839,6 +841,6 @@ Prepared and sign-ready, but holding no benchmark metric — file/land opportuni
 
 - **Internal tracking a#3957** — sandbox router gVisor toleration (`sandbox_router.yaml`); patch staged sign-ready alongside the §S artifacts (same pod retrieval pattern as the Steps blocks above).
 - **Internal tracking a#4064** — e2e-harness explicit-timeout + VCT-reject pre-wait (two patches; compile re-verified 2026-07-03).
-- **Internal tracking a#1347** — PodTemplate immutability; patch git-tracked internally under `kb/sandbox/references/patches/` (sign-ready; rebase-check before signing).
+- **Internal tracking a#1347** — PodTemplate immutability; patch git-tracked internally under `kb/sandbox/references/patches/`. **REBASE-REQUIRED as of tip `9239c0f`** (see the Tip-advance note up top: the shared-`SandboxBlueprint` extraction makes the original shared-field CEL marker over-broad; per-type rebase — Sandbox-side immutable, template-side mutable — in progress). Do not sign until the rebased patch re-checks clean.
 - **agent-substrate/substrate status-discipline set** — [#1069](https://github.com/agent-substrate/substrate/issues/1069) (observedGeneration), [#1127](https://github.com/agent-substrate/substrate/issues/1127) / [#1128](https://github.com/agent-substrate/substrate/issues/1128) / [#1134](https://github.com/agent-substrate/substrate/issues/1134) (WorkerPool/ActorTemplate status + Events + print columns); clone branches staged; charter-gated.
 - **Excluded:** internal tracking a#2082 (netpol template-ref-hash) — superseded by in-flight upstream [kubernetes-sigs/agent-sandbox#793](https://github.com/kubernetes-sigs/agent-sandbox/issues/793) / [#1067](https://github.com/kubernetes-sigs/agent-sandbox/issues/1067); do not sign.
