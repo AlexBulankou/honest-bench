@@ -46,6 +46,15 @@ blocker — diagnosis plus file-ready patches and comments — is hand-maintaine
 | Kata + microVM | Unique-image cold (RL reality) | [pending (no-compliant-rung)](WORK_IN_PROGRESS.md#no-compliant-rung) [#751](https://github.com/kubernetes-sigs/agent-sandbox/issues/751)→[#761 open](https://github.com/kubernetes-sigs/agent-sandbox/pull/761) | 0 /node · 0 /cluster | 2.8537s (count=30) | 3.1263s (count=30) | 100% |
 | Kata + microVM | Resume-from-suspend | [N/A](WORK_IN_PROGRESS.md#na-by-construction) | [N/A](WORK_IN_PROGRESS.md#na-by-construction) | [N/A](WORK_IN_PROGRESS.md#na-by-construction) | [N/A](WORK_IN_PROGRESS.md#na-by-construction) | [N/A](WORK_IN_PROGRESS.md#na-by-construction) |
 
+### Max Density (sandboxes per vCPU)
+
+Density is per-**runtime** — constant across a runtime's activation-mode rows above, so it renders as a compact per-runtime sub-table here rather than a matrix column (a column would repeat each value down the mode rows and imply a mode-dependence that does not exist). Full methodology (per-vCPU denominator, saturation source) is in [DETAILS.md](DETAILS.md).
+
+| Runtime | Max Density (sb/vCPU) |
+|---|---|
+| gVisor | 5.98 |
+| Kata + microVM | 1.26 |
+
 **How to read the cells**
 
 - **TTFE** — Time-To-First-Instruction: wall-clock from asking for a sandbox until your agent's first instruction has run and returned a result — not merely pod-Ready.

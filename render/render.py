@@ -880,6 +880,32 @@ def render_matrix(results, kata_results=None):
             )
     lines.append("")
 
+    # hb#134 refinement (GOAL-2.1 gap-1): Max Density is a spec Core-Metrics figure, so it
+    # belongs in this section — but it is per-RUNTIME (constant across a runtime's three
+    # activation-mode rows), NOT per-mode. A literal matrix column would repeat each value 3x
+    # down the mode rows and falsely imply mode-dependence, so it renders as a compact
+    # per-runtime sub-table directly under the matrix rather than a 7th column. This surfaces
+    # the spec figure in core (the hb#134 relocation had dropped it to DETAILS-only) while
+    # keeping the per-runtime shape honest; the full methodology deep-dive stays in DETAILS.
+    lines.append("### Max Density (sandboxes per vCPU)")
+    lines.append("")
+    lines.append(
+        "Density is per-**runtime** — constant across a runtime's activation-mode rows above, "
+        "so it renders as a compact per-runtime sub-table here rather than a matrix column (a "
+        "column would repeat each value down the mode rows and imply a mode-dependence that "
+        "does not exist). Full methodology (per-vCPU denominator, saturation source) is in "
+        "[DETAILS.md](DETAILS.md)."
+    )
+    lines.append("")
+    lines.append("| Runtime | Max Density (sb/vCPU) |")
+    lines.append("|---|---|")
+    for rt in MATRIX_RUNTIMES:
+        rt_scen = sources.get(rt)
+        density = _runtime_density(rt_scen) if rt_scen is not None else None
+        cell = _fmt_num(density) if density is not None else link_pending(_PENDING)
+        lines.append(f"| {RUNTIME_LABELS[rt]} | {cell} |")
+    lines.append("")
+
     # honesty / provenance legend (no internal refs — public PII fence). A compact
     # "How to read the cells" glossary replaces the prior loose footnote stack: every honesty
     # semantic (TTFE basis, honest-0, dual throughput, low-N †, ⚠️ miss-flag, the three pending

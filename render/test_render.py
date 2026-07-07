@@ -958,9 +958,11 @@ def test_matrix_pass_scenario_still_shows_metrics_after_pending_guard():
 def test_matrix_density_sourced_from_warmpool_not_stale_burst_create():
     # a4s2 Q3 lock (PR #28): DENSITY_SOURCE_SCENARIOS = (warmpool_cold_start,). A stale
     # burst_create row carrying the OLD cluster-wide-capacity 0.45 must NOT shadow warmpool's
-    # corrected per-node-allocatable 1.88. hb#134 relocated Max Density off the headline
-    # matrix into render_density_detail (DETAILS.md), so the sourcing guard now asserts
-    # against that block: the gVisor row sources 1.88, never 0.45.
+    # corrected per-node-allocatable 1.88. hb#134 relocated Max Density off the headline matrix
+    # into render_density_detail (DETAILS.md); GOAL-2.1 gap-1 then surfaced it back into the
+    # Core-Metrics section as a per-runtime SUB-TABLE (not a matrix column). The sourcing guard
+    # holds on BOTH surfaces: gVisor sources 1.88, never the stale 0.45, in the matrix
+    # sub-table AND the DETAILS deep-dive.
     scen = _full_gvisor_scenarios() + [
         {
             "name": "burst_create", "outcome": "PASS", "n": 10,
@@ -970,9 +972,12 @@ def test_matrix_density_sourced_from_warmpool_not_stale_burst_create():
     detail = render.render_density_detail(_matrix_results(scen))
     assert "| gVisor | 1.88 |" in detail
     assert "0.45" not in detail
-    # and the headline matrix no longer carries any density cell at all
+    # the Core-Metrics matrix now carries the per-runtime density sub-table — same sourcing
+    # guard: 1.88 present, stale 0.45 never shadows it.
     out = render.render_matrix(_matrix_results(scen))
-    assert "1.88" not in out and "0.45" not in out and "Max Density" not in out
+    assert "### Max Density (sandboxes per vCPU)" in out
+    assert "| gVisor | 1.88 |" in out
+    assert "0.45" not in out
 
 
 def test_matrix_kata_warm_cold_rows_pending():
@@ -982,6 +987,9 @@ def test_matrix_kata_warm_cold_rows_pending():
     kata_measurable = [
         l for l in out.splitlines()
         if l.startswith("| Kata + microVM |") and "Resume-from-suspend" not in l
+        # exclude the 2-column per-runtime density sub-table row (GOAL-2.1 gap-1); a full
+        # 7-column matrix data row splits to 9 fields on "|", the density row to 4.
+        and len(l.split("|")) == 9
     ]
     assert len(kata_measurable) == 2
     for l in kata_measurable:
