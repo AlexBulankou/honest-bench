@@ -5,8 +5,8 @@ only question this page answers. The metric is **TTFE (Time-To-First-Instruction
 from "create this sandbox" to "it ran my first instruction and returned a result." Not pod-Ready (a
 pod can look ready seconds before it can run your code) — the real wait.
 
-**North Star:** a warm sandbox with **TTFE p95 under 1s** — the bar the scorecard below grades
-against (a stricter **0.5s stretch bar** is tracked separately, below the scorecard). The **scale
+**North Star:** a warm sandbox with **TTFE p95 under 1s** — the bar the caption under the matrix
+grades each runtime against (a stricter **0.5s stretch bar** is graded on the same line). The **scale
 target** is to hold **sub-1s at 300+ creations/sec**, on a stock GKE cluster you can provision
 yourself.
 
@@ -78,6 +78,10 @@ _Kata + microVM rows are measured in a separate run on the kata node pool: clust
 _build: cluster_substrate=gke-sandbox · run_id=c95500d1be8f439fb3a149b68aab707a · node_count=1_
 _generated-at: 2026-07-04T18:32:56Z_
 
+_**North Star** — warm-pool-hit TTFE p95 < 1s (the spec doc bar): gVisor 0.9222s (count=30) ✅ met (0.0778s headroom); Kata + microVM 0.9628s (count=30) ✅ met (0.0372s headroom). An honest ❌ prints the measured gap to the bar (tagged `within sampling noise` when the miss sits inside the sample spread — it stays a ❌, the tag never flips a miss to a pass); `pending` = unmeasured (never a guess); † marks a p95 over fewer than N=30 samples._
+
+_**Stretch bar** — warm-pool-hit TTFE p95 < 0.5s (an aspiration above the North Star, not the North Star itself; the step-up curve grades sustained creation-rate against it — see [DETAILS.md](DETAILS.md)): gVisor 0.9222s (count=30) ❌ not met (0.4222s above the bar); Kata + microVM 0.9628s (count=30) ❌ not met (0.4628s above the bar)._
+
 ## What this means for you
 
 The tables above are the raw measurements. If you build *on* sandboxes but do not run the cluster yourself, here is what they mean in practice:
@@ -100,26 +104,6 @@ Find the row closest to **your** load; the p50 is the wait to plan around. The *
 | Bursty — pool oversubscribed 2:1 (60 claims / 30 ready) | ~1.7s | full start → first result |
 | 300 sandboxes requested at once (1:1 pool) | ~6.9s | full start → first result |
 | Sustained 300/sec churn | ~2.9s | pool hand-off only (before exec) |
-
-### How close to the North Star?
-
-The North Star is the bar in the spec doc: a warm-pool hit with TTFE p95 under 1s (spec doc: _Our North Star is < 1 second Time-To-First-Instruction_). This scorecard prints the measured distance to that target rather than leaving it implied. The 5s/1s throughput bars in the matrix above are today's operating envelope; the stricter 0.5s stretch bar (below) is an aspiration, not the North Star.
-
-| Runtime | Warm-pool-hit TTFE p95 (measured) | North Star (p95 < 1s) |
-|---|---|---|
-| gVisor | 0.9222s (count=30) | ✅ met (0.0778s headroom) |
-| Kata + microVM | 0.9628s (count=30) | ✅ met (0.0372s headroom) |
-
-_An honest ❌ beats an implied pass: the page prints the measured distance to the target it misses, and a met bar prints its measured headroom. A miss that sits inside the sample spread is tagged `within sampling noise` (it stays a ❌ — the tag never flips a miss to a pass). An unmeasured runtime reads `pending` — never a guess. † marks a p95 measured over fewer than N=30 samples (a single observation, not a distribution)._
-
-### Stretch bar — warm-pool TTFE p95 < 0.5s
-
-Beyond the North Star, the page tracks a stricter 0.5s stretch target (landed via hb#148). It is an aspiration the runtimes are climbing toward — **not** the North Star, and a miss here is expected while the North Star is the live bar. The step-up curve's verdict grades sustained creation rate against this same stretch bar (reported in [DETAILS.md](DETAILS.md)).
-
-| Runtime | Warm-pool-hit TTFE p95 (measured) | Stretch (p95 < 0.5s) |
-|---|---|---|
-| gVisor | 0.9222s (count=30) | ❌ not met (0.4222s above the bar) |
-| Kata + microVM | 0.9628s (count=30) | ❌ not met (0.4628s above the bar) |
 
 ## Does it hold at cluster scale?
 

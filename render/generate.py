@@ -41,7 +41,7 @@ def _load_render():
     spec.loader.exec_module(mod)
     return (
         mod.render_matrix,
-        mod.render_north_star,
+        mod.render_north_star_caption,
         mod.render_operating_envelope,
         mod.render_what_this_means,
         mod.render_burst_corroboration,
@@ -66,7 +66,7 @@ def _load_render():
     )
 
 
-(render_matrix, render_north_star, render_operating_envelope, render_what_this_means,
+(render_matrix, render_north_star_caption, render_operating_envelope, render_what_this_means,
  render_burst_corroboration, render_warm_bind_decomposition, render_cold_bind_decomposition,
  render_warm_vs_cold, render_scale_proof, render_cluster_scale, render_stepup,
  render_kata_activation, render_concurrent_burst, render_warm_pool_acquisition,
@@ -133,8 +133,8 @@ only question this page answers. The metric is **TTFE (Time-To-First-Instruction
 from "create this sandbox" to "it ran my first instruction and returned a result." Not pod-Ready (a
 pod can look ready seconds before it can run your code) — the real wait.
 
-**North Star:** a warm sandbox with **TTFE p95 under 1s** — the bar the scorecard below grades
-against (a stricter **0.5s stretch bar** is tracked separately, below the scorecard). The **scale
+**North Star:** a warm sandbox with **TTFE p95 under 1s** — the bar the caption under the matrix
+grades each runtime against (a stricter **0.5s stretch bar** is graded on the same line). The **scale
 target** is to hold **sub-1s at 300+ creations/sec**, on a stock GKE cluster you can provision
 yourself.
 
@@ -201,20 +201,22 @@ def build_readme(root=None):
             results = json.load(fh)
         kr = kata_results if product == "sandbox" else None
         sections.append(render_matrix(results, kata_results=kr).rstrip())
+        # hb#227 (GOAL-2.1, DROP-2): the former "How close to the North Star?" + "Stretch bar"
+        # scorecards fold to two one-line measured-verdict captions placed directly UNDER the
+        # Core Metrics matrix (render_north_star_caption). Same _north_star_rows source +
+        # _p95_verdict grading, so the per-runtime verdicts are byte-identical to the retired
+        # scorecard; derived entirely from the matrix's already-emitted warm-hit p95 (zero
+        # emit-key change; the locked schema contract untouched).
+        north_star = render_north_star_caption(results, kata_results=kr)
+        if north_star.strip():
+            sections.append(north_star.rstrip())
         # hb#134 H2-fold: the reader-facing interpretation is ONE top-level block. The
-        # plain-English "What this means for you" synthesis leads, then the two supporting
-        # scorecards fold UNDER it as `###` sub-blocks — "what wait should I budget?" (operating
-        # envelope) and "how close to the North Star?" (the p95-vs-bar scorecard). This collapses
-        # three former H2s into one, so the page skims as: matrix → what-it-means → does-it-scale.
+        # plain-English "What this means for you" synthesis leads, then the operating-envelope
+        # scorecard folds UNDER it as a `###` sub-block — "what wait should I budget?". This
+        # keeps the page skimming as: matrix → north-star captions → what-it-means → does-it-scale.
         sections.append(render_what_this_means(results).rstrip())
         sections.append(render_operating_envelope(
             results, heading="### What wait should I budget?").rstrip())
-        # #4162 Option A: North-Star scorecard — render-derived from the matrix's measured
-        # warm-hit p95 (zero emit-key change; the locked schema contract untouched).
-        north_star = render_north_star(
-            results, kata_results=kr, heading="### How close to the North Star?")
-        if north_star.strip():
-            sections.append(north_star.rstrip())
         # hb#134: Scale-Proof + Concurrent-Burst + Saturation + at-scale Contention merge into ONE
         # user-facing "Does it hold at cluster scale?" section (render_cluster_scale demotes each
         # to a ### sub-block, including the honest over-subscription retraction as the 4th).

@@ -3437,51 +3437,56 @@ def test_recipe_in_full_readme_after_data_sections():
         assert recipe_at > contention_at
 
 
-# --- #4162 / hb#202: North-Star scorecard (warm-hit p95 vs the spec doc's <1s bar) -----------
-# hb#202 ruling (B): the North Star is the spec doc's <1s TTFE; the 0.5s bar (hb#148) survives
-# as a separate, clearly-labeled STRETCH row that no longer wears the "North Star" label.
+# --- hb#227 (GOAL-2.1, DROP-2): North-Star + Stretch caption (folded from the H3 scorecards) ---
+# The former standalone "How close to the North Star?" + "Stretch bar" tables fold to two
+# one-line measured-verdict captions placed directly UNDER the Core Metrics matrix. Same
+# _north_star_rows source + _p95_verdict grading, so the per-runtime verdicts (headroom/gap,
+# within-sampling-noise tag, low-N dagger, `pending`) are byte-identical to the retired scorecard —
+# just rendered inline. hb#202 ruling (B) preserved: the <1s spec-doc bar IS the North Star; the
+# 0.5s bar (hb#148) stays an explicitly-labeled STRETCH aspiration, not the North Star.
 
 
-def test_north_star_bar_is_spec_doc_one_second():
-    out = render.render_north_star(_matrix_results(_full_gvisor_scenarios()))
-    assert "## North-Star check — warm-pool TTFE p95 < 1s" in out
-    # gVisor warm-hit p95=900ms now MEETS the <1s North Star with 0.1s headroom.
-    assert "| gVisor | 0.9s (count=200) | ✅ met (0.1s headroom) |" in out
+def test_north_star_caption_bar_is_spec_doc_one_second():
+    out = render.render_north_star_caption(_matrix_results(_full_gvisor_scenarios()))
+    assert "**North Star** — warm-pool-hit TTFE p95 < 1s (the spec doc bar):" in out
+    # gVisor warm-hit p95=900ms MEETS the <1s North Star with 0.1s headroom.
+    assert "gVisor 0.9s (count=200) ✅ met (0.1s headroom)" in out
 
 
-def test_stretch_bar_kept_as_labeled_row():
-    out = render.render_north_star(_matrix_results(_full_gvisor_scenarios()))
-    # The 0.5s bar is now a distinct, explicitly-labeled stretch section (not "North Star").
-    assert "### Stretch bar — warm-pool TTFE p95 < 0.5s" in out
+def test_stretch_bar_kept_as_labeled_caption():
+    out = render.render_north_star_caption(_matrix_results(_full_gvisor_scenarios()))
+    # The 0.5s bar is a distinct, explicitly-labeled stretch caption (not "North Star").
+    assert "**Stretch bar** — warm-pool-hit TTFE p95 < 0.5s" in out
     # gVisor warm-hit p95=900ms misses the 0.5s stretch bar by 0.4s — honest ❌, clearly outside
     # the sample spread (gap 400ms >> half-width (900-600)/sqrt(200) ≈ 21ms), so no noise tag.
-    assert "| gVisor | 0.9s (count=200) | ❌ not met (0.4s above the bar) |" in out
+    assert "gVisor 0.9s (count=200) ❌ not met (0.4s above the bar)" in out
+    assert "· within N=" not in out
 
 
-def test_north_star_met_bar_prints_headroom():
+def test_north_star_caption_met_bar_prints_headroom():
     scen = [{
         "name": "warmpool_cold_start", "outcome": "PASS", "n": 200,
         "sla_metrics": {"ttfe_p95_ms": 400},
     }]
-    out = render.render_north_star(_matrix_results(scen))
+    out = render.render_north_star_caption(_matrix_results(scen))
     # 400ms clears BOTH bars: <1s North Star (0.6s headroom) and <0.5s stretch (0.1s headroom).
-    assert "| gVisor | 0.4s (count=200) | ✅ met (0.6s headroom) |" in out
-    assert "| gVisor | 0.4s (count=200) | ✅ met (0.1s headroom) |" in out
+    assert "gVisor 0.4s (count=200) ✅ met (0.6s headroom)" in out
+    assert "gVisor 0.4s (count=200) ✅ met (0.1s headroom)" in out
 
 
-def test_stretch_exact_bar_is_not_met():
+def test_stretch_caption_exact_bar_is_not_met():
     # Strict `<`: p95 == 500ms does NOT meet the "< 0.5s" stretch bar (never round toward the
     # claim). It DOES meet the <1s North Star (0.5s headroom).
     scen = [{
         "name": "warmpool_cold_start", "outcome": "PASS", "n": 200,
         "sla_metrics": {"ttfe_p95_ms": 500},
     }]
-    out = render.render_north_star(_matrix_results(scen))
-    assert "| gVisor | 0.5s (count=200) | ✅ met (0.5s headroom) |" in out
+    out = render.render_north_star_caption(_matrix_results(scen))
+    assert "gVisor 0.5s (count=200) ✅ met (0.5s headroom)" in out
     assert "❌ not met (0s above the bar)" in out
 
 
-def test_north_star_within_noise_annotates_marginal_miss():
+def test_north_star_caption_within_noise_annotates_marginal_miss():
     # Kata warm p95=1002ms misses the <1s North Star by 2ms — inside the sample spread (n=30:
     # half-width (1002-820)/sqrt(30) ≈ 33ms), so the honest ❌ carries a within-noise tag. The
     # tag NEVER flips the miss to a pass.
@@ -3489,75 +3494,75 @@ def test_north_star_within_noise_annotates_marginal_miss():
         "name": "warmpool_cold_start", "outcome": "PASS", "n": 30,
         "sla_metrics": {"ttfe_p50_ms": 820, "ttfe_p95_ms": 1002},
     }]
-    out = render.render_north_star(
+    out = render.render_north_star_caption(
         _matrix_results(_full_gvisor_scenarios()),
         kata_results=_kata_results(scenarios=kata_scen),
     )
     assert (
-        "| Kata + microVM | 1.002s (count=30) | ❌ not met (0.002s above the bar) "
-        "· within N=30 sampling noise |"
+        "Kata + microVM 1.002s (count=30) ❌ not met (0.002s above the bar) "
+        "· within N=30 sampling noise"
     ) in out
 
 
-def test_north_star_clear_miss_not_tagged_within_noise():
+def test_north_star_caption_clear_miss_not_tagged_within_noise():
     # A miss well outside the sample spread carries NO within-noise verdict tag.
     scen = [{
         "name": "warmpool_cold_start", "outcome": "PASS", "n": 30,
         "sla_metrics": {"ttfe_p50_ms": 600, "ttfe_p95_ms": 1500},
     }]
-    out = render.render_north_star(_matrix_results(scen))
+    out = render.render_north_star_caption(_matrix_results(scen))
     # gap=500ms >> half-width (1500-600)/sqrt(30) ≈ 164ms → clear miss, no verdict tag.
-    assert "❌ not met (0.5s above the bar)" in out
+    assert "gVisor 1.5s (count=30) ❌ not met (0.5s above the bar)" in out
     assert "· within N=" not in out
 
 
-def test_north_star_low_n_dagger_on_p95_cell():
+def test_north_star_caption_low_n_dagger_on_p95_cell():
     scen = [{
         "name": "warmpool_cold_start", "outcome": "PASS", "n": 5,
         "sla_metrics": {"ttfe_p95_ms": 900},
     }]
-    out = render.render_north_star(_matrix_results(scen))
+    out = render.render_north_star_caption(_matrix_results(scen))
     # <1s North Star: 900ms met with 0.1s headroom; the low-N dagger rides the p95 cell.
-    assert "| gVisor | 0.9s (count=5) † | ✅ met (0.1s headroom) |" in out
+    assert "gVisor 0.9s (count=5) † ✅ met (0.1s headroom)" in out
     # 0.5s stretch: honest ❌ 0.4s above; dagger preserved on the p95 cell.
-    assert "| gVisor | 0.9s (count=5) † | ❌ not met (0.4s above the bar) |" in out
+    assert "gVisor 0.9s (count=5) † ❌ not met (0.4s above the bar)" in out
 
 
-def test_north_star_unmeasured_runtime_pends():
-    # No kata companion artifact ⇒ the kata row pends on both cells — never a guess.
-    out = render.render_north_star(_matrix_results(_full_gvisor_scenarios()))
+def test_north_star_caption_unmeasured_runtime_pends():
+    # No kata companion artifact ⇒ the kata entry pends — never a guess.
+    out = render.render_north_star_caption(_matrix_results(_full_gvisor_scenarios()))
     out = _unlink(out)
-    assert "| Kata + microVM | pending | pending |" in out
+    assert "Kata + microVM pending" in out
 
 
-def test_north_star_kata_pending_warm_scenario_falls_through_to_pending():
+def test_north_star_caption_kata_pending_warm_scenario_falls_through():
     # The default kata fixture's warm-pool scenario is pending (pool-topology-constrained):
     # its suppressed metrics must fall through to `pending`, not leak a number.
-    out = render.render_north_star(
+    out = render.render_north_star_caption(
         _matrix_results(_full_gvisor_scenarios()), kata_results=_kata_results()
     )
     out = _unlink(out)
-    assert "| Kata + microVM | pending | pending |" in out
+    assert "Kata + microVM pending" in out
 
 
-def test_north_star_kata_results_fills_kata_row():
+def test_north_star_caption_kata_results_fills_kata_entry():
     kata_scen = [{
         "name": "warmpool_cold_start", "outcome": "PASS", "n": 30,
         "sla_metrics": {"ttfe_p95_ms": 986.7},
     }]
-    out = render.render_north_star(
+    out = render.render_north_star_caption(
         _matrix_results(_full_gvisor_scenarios()),
         kata_results=_kata_results(scenarios=kata_scen),
     )
     # Kata p95=986.7ms: meets the <1s North Star (0.0133s headroom); misses the 0.5s stretch.
-    assert "| Kata + microVM | 0.9867s (count=30) | ✅ met (0.0133s headroom) |" in out
-    assert "| Kata + microVM | 0.9867s (count=30) | ❌ not met (0.4867s above the bar) |" in out
-    # gVisor row unchanged by the companion artifact.
-    assert "| gVisor | 0.9s (count=200) | ✅ met (0.1s headroom) |" in out
-    assert "| gVisor | 0.9s (count=200) | ❌ not met (0.4s above the bar) |" in out
+    assert "Kata + microVM 0.9867s (count=30) ✅ met (0.0133s headroom)" in out
+    assert "Kata + microVM 0.9867s (count=30) ❌ not met (0.4867s above the bar)" in out
+    # gVisor entry unchanged by the companion artifact.
+    assert "gVisor 0.9s (count=200) ✅ met (0.1s headroom)" in out
+    assert "gVisor 0.9s (count=200) ❌ not met (0.4s above the bar)" in out
 
 
-def test_north_star_kata_results_wrong_product_or_runtime_ignored():
+def test_north_star_caption_kata_wrong_product_or_runtime_ignored():
     kata_scen = [{
         "name": "warmpool_cold_start", "outcome": "PASS", "n": 30,
         "sla_metrics": {"ttfe_p95_ms": 400},
@@ -3566,29 +3571,32 @@ def test_north_star_kata_results_wrong_product_or_runtime_ignored():
         _kata_results(scenarios=kata_scen, product="sandbox"),
         _kata_results(scenarios=kata_scen, provenance={"runtime": "gvisor"}),
     ):
-        out = render.render_north_star(_matrix_results(_full_gvisor_scenarios()), kata_results=kr)
+        out = render.render_north_star_caption(
+            _matrix_results(_full_gvisor_scenarios()), kata_results=kr)
         out = _unlink(out)
-        assert "| Kata + microVM | pending | pending |" in out
+        assert "Kata + microVM pending" in out
 
 
-def test_north_star_unknown_product_renders_nothing():
-    out = render.render_north_star({"product": "not-a-product", "scenarios": []})
+def test_north_star_caption_unknown_product_renders_nothing():
+    out = render.render_north_star_caption({"product": "not-a-product", "scenarios": []})
     assert out == ""
 
 
-def test_north_star_in_full_readme_nested_under_what_this_means():
-    # #134 fold: North-Star + Operating Envelope are demoted to ### sub-blocks under
-    # "## What this means for you"; the envelope ("### What wait should I budget?") renders first,
-    # the North-Star ("### How close to the North Star?") second.
+def test_north_star_caption_in_full_readme_under_core_matrix():
+    # hb#227 DROP-2: the "How close to the North Star?" + "Stretch bar" H3 scorecards are GONE;
+    # the measured verdicts fold to two one-line captions placed directly UNDER the Core Metrics
+    # matrix, BEFORE the "What this means for you" interpretation block.
     from generate import build_readme
     readme = build_readme()
-    ns_at = readme.find("### How close to the North Star?")
+    assert "### How close to the North Star?" not in readme
+    assert "## North-Star check" not in readme
+    ns_at = readme.find("**North Star** — warm-pool-hit TTFE p95 <")
     assert ns_at != -1
-    envelope_at = readme.find("### What wait should I budget?")
-    assert envelope_at != -1
-    assert readme.index("## What this means for you") < envelope_at
-    assert envelope_at < ns_at
-    assert ns_at < readme.index("## Does it hold at cluster scale?")
+    matrix_at = readme.index("## Agent Sandbox — Core Metrics")
+    means_at = readme.index("## What this means for you")
+    envelope_at = readme.index("### What wait should I budget?")
+    # matrix → North-Star/Stretch captions → what-it-means → operating envelope
+    assert matrix_at < ns_at < means_at < envelope_at
 
 
 # ---------------------------------------------------------------------------
