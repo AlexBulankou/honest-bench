@@ -1150,83 +1150,48 @@ def _north_star_rows(results, kata_results=None):
     return rows
 
 
-def render_north_star(results, kata_results=None, heading=None):
-    """Headline scorecard: measured warm-pool-hit TTFE p95 vs the spec doc's <1s North Star.
+def render_north_star_caption(results, kata_results=None):
+    """One-line measured-verdict captions for the <1s North Star + 0.5s stretch bar.
 
-    hb#202 ruling (B): the North-Star bar is the spec doc's <1s TTFE. The 0.5s bar landed via
-    hb#148 survives as a separate, explicitly-labeled STRETCH row — it no longer wears the
-    "North Star" label. Same per-runtime sourcing as the matrix (primary results claim their
-    measured runtime; kata_results may fill the kata-microvm slot; primary wins on conflict). A
-    runtime with no measured warm-hit p95 renders `pending` — never a guess. A met bar renders
-    ✅ with the measured headroom; a missed bar renders an honest ❌ with the measured gap
-    (annotated `within sampling noise` when the miss sits inside the sample spread). Low-N p95
-    cells inherit the matrix's small-sample dagger.
+    hb#227 (GOAL-2.1, keep/drop DROP-2): the former full-table "How close to the North Star?"
+    scorecard + "Stretch bar" section fold to two compact caption lines placed directly under
+    the Core Metrics matrix. The measured per-runtime verdicts are PRESERVED — same
+    `_north_star_rows` source + `_p95_verdict` grading (headroom/gap, within-sampling-noise tag,
+    low-N dagger, `pending` for unmeasured) as the retired scorecard — just rendered inline
+    instead of as two standalone H3 tables. The bar is the spec doc's <1s warm-pool-hit TTFE
+    p95; the 0.5s stretch stays an explicitly-labeled aspiration, not the North Star. Derived
+    entirely from the already-emitted warm-hit ttfe_p95_ms — no new emit key (the locked
+    emitter⇄renderer schema contract is untouched).
     """
     product = results.get("product")
     if product not in PRODUCTS:
         return ""
     rows = _north_star_rows(results, kata_results)
-
     ns_bar = _fmt_secs(NORTH_STAR_TTFE_P95_MS)
     stretch_bar = _fmt_secs(STRETCH_TTFE_P95_MS)
-    heading = heading or f"## North-Star check — warm-pool TTFE p95 < {ns_bar}"
-    lines = [heading, ""]
-    lines.append(
-        f"The North Star is the bar in the spec doc: a warm-pool hit with TTFE p95 under "
-        f"{ns_bar} (spec doc: _Our North Star is < 1 second Time-To-First-Instruction_). This "
-        "scorecard prints the measured distance to that target rather than leaving it implied. "
-        "The 5s/1s throughput bars in the matrix above are today's operating envelope; the "
-        f"stricter {stretch_bar} stretch bar (below) is an aspiration, not the North Star."
-    )
-    lines.append("")
-    lines.append(
-        f"| Runtime | Warm-pool-hit TTFE p95 (measured) | North Star (p95 < {ns_bar}) |"
-    )
-    lines.append("|---|---|---|")
-    for label, p95, p95_cell, p50, n_val in rows:
-        if p95 is None:
-            pend = link_pending(_PENDING)
-            lines.append(f"| {label} | {pend} | {pend} |")
-            continue
-        verdict = _p95_verdict(p95, NORTH_STAR_TTFE_P95_MS, p50, n_val)
-        lines.append(f"| {label} | {p95_cell} | {verdict} |")
-    lines.append("")
-    lines.append(
-        "_An honest ❌ beats an implied pass: the page prints the measured distance to the "
-        "target it misses, and a met bar prints its measured headroom. A miss that sits inside "
-        "the sample spread is tagged `within sampling noise` (it stays a ❌ — the tag never "
-        "flips a miss to a pass). An unmeasured runtime reads `pending` — never a guess. "
-        f"{_LOW_N_MARK} marks a p95 measured over fewer than N={TTFE_COMPARABILITY_MIN_N} "
-        "samples (a single observation, not a distribution)._"
-    )
-    lines.append("")
 
-    # hb#148 / hb#202: the 0.5s STRETCH bar, kept as a distinct, clearly-labeled aspiration
-    # row — visually separated from the North-Star scorecard above, and no longer labeled
-    # "North Star" (the spec doc's North Star is <1s; 0.5s is a stretch the page climbs toward).
-    lines.append(f"### Stretch bar — warm-pool TTFE p95 < {stretch_bar}")
-    lines.append("")
-    lines.append(
-        f"Beyond the North Star, the page tracks a stricter {stretch_bar} stretch target "
-        "(landed via hb#148). It is an aspiration the runtimes are climbing toward — **not** "
-        "the North Star, and a miss here is expected while the North Star is the live bar. The "
-        "step-up curve's verdict grades sustained creation rate against this same stretch bar "
-        "(reported in [DETAILS.md](DETAILS.md))."
+    def _entries(bar_ms):
+        parts = []
+        for label, p95, p95_cell, p50, n_val in rows:
+            if p95 is None:
+                parts.append(f"{label} {link_pending(_PENDING)}")
+            else:
+                parts.append(f"{label} {p95_cell} {_p95_verdict(p95, bar_ms, p50, n_val)}")
+        return "; ".join(parts)
+
+    north_star = (
+        f"_**North Star** — warm-pool-hit TTFE p95 < {ns_bar} (the spec doc bar): "
+        f"{_entries(NORTH_STAR_TTFE_P95_MS)}. An honest ❌ prints the measured gap to the bar "
+        "(tagged `within sampling noise` when the miss sits inside the sample spread — it stays "
+        "a ❌, the tag never flips a miss to a pass); `pending` = unmeasured (never a guess); "
+        f"{_LOW_N_MARK} marks a p95 over fewer than N={TTFE_COMPARABILITY_MIN_N} samples._"
     )
-    lines.append("")
-    lines.append(
-        f"| Runtime | Warm-pool-hit TTFE p95 (measured) | Stretch (p95 < {stretch_bar}) |"
+    stretch = (
+        f"_**Stretch bar** — warm-pool-hit TTFE p95 < {stretch_bar} (an aspiration above the "
+        "North Star, not the North Star itself; the step-up curve grades sustained creation-rate "
+        f"against it — see [DETAILS.md](DETAILS.md)): {_entries(STRETCH_TTFE_P95_MS)}._"
     )
-    lines.append("|---|---|---|")
-    for label, p95, p95_cell, p50, n_val in rows:
-        if p95 is None:
-            pend = link_pending(_PENDING)
-            lines.append(f"| {label} | {pend} | {pend} |")
-            continue
-        verdict = _p95_verdict(p95, STRETCH_TTFE_P95_MS, p50, n_val)
-        lines.append(f"| {label} | {p95_cell} | {verdict} |")
-    lines.append("")
-    return "\n".join(lines)
+    return north_star + "\n\n" + stretch
 
 
 # --- hb#134: operating-envelope headline table -------------------------------------------
