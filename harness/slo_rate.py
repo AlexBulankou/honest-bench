@@ -306,11 +306,17 @@ def _derive_literal_floor_zero_5s(pareto_points) -> dict:
          land unknown, the known-subset p50 overstates and would trip the 0 too
          easily. Adversarial fill closes that hole with no distributional assumption.
 
-    On fire: {"thpt_under_5s_per_cluster": 0.0, "thpt_slo_floor_zero": 1,
-    "thpt_slo_n_exec_ok": n}. The stamp is numeric 1 (not True) so it rides the
+    On fire: {"thpt_under_5s_per_cluster": 0.0, "thpt_under_5s_per_node": 0.0,
+    "thpt_slo_floor_zero": 1, "thpt_slo_n_exec_ok": n}. The per-node leg rides
+    along because exactly-0 is the one case where the two denominators are
+    interchangeable (a cluster rate of exactly 0 forces the per-node rate to 0 —
+    no extrapolation), and the renderer's dual cell keys on the per-node leg: a
+    cluster-only emit would be swallowed by the node-absent arm (a stamp with no
+    disclosed figure). The stamp is numeric 1 (not True) so it rides the
     numeric-only sla_metrics coercer without a new carve-out; schema-side pairing
-    validation rejects a 0.0 rate without the stamp AND a stamp without the 0.0 —
-    a bare zero can never publish. Empty dict when any condition fails (pending).
+    validation rejects a 0.0 rate without the stamp AND a stamp without BOTH 5s
+    legs at 0.0 — a bare zero can never publish. Empty dict when any condition
+    fails (pending).
     """
     if not isinstance(pareto_points, list):
         return {}
@@ -347,6 +353,7 @@ def _derive_literal_floor_zero_5s(pareto_points) -> dict:
         return {}
     return {
         "thpt_under_5s_per_cluster": 0.0,
+        "thpt_under_5s_per_node": 0.0,
         "thpt_slo_floor_zero": 1,
         "thpt_slo_n_exec_ok": n,
     }

@@ -491,6 +491,10 @@ class TestLiteralFloorZero:
 
     ZERO_TRIPLE = {
         "thpt_under_5s_per_cluster": 0.0,
+        # hb#214 delta: the per-node leg rides along — exactly-0 is the one case
+        # where the two denominators are interchangeable (no extrapolation), and
+        # the renderer's dual cell keys on the per-node key.
+        "thpt_under_5s_per_node": 0.0,
         "thpt_slo_floor_zero": 1,
         "thpt_slo_n_exec_ok": 30,
         "thpt_cluster_node_count": 2,

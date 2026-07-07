@@ -837,6 +837,85 @@ def test_matrix_invalid_n_exec_ok_dropped_no_coarse_caption():
     assert "coarse p95" not in out
 
 
+def test_matrix_floor_zero_triple_renders_measured_zero_cell():
+    # hb#214 part 1 (DRAFT): a stamped floor-zero record renders a MEASURED dual zero —
+    # `0 /node · 0 /cluster ⚠️` (0.0 sits below the sizing target, so the honest
+    # under-target flag stays), the @X caption resolves, the floor-zero basis note
+    # renders with its coarse-n caption, and the legend carries the
+    # second-zero-provenance bullet distinguishing it from the derived `0`.
+    scen = _full_gvisor_scenarios()
+    scen[0]["sla_metrics"].update(
+        {
+            "thpt_under_5s_per_cluster": 0.0,
+            "thpt_under_5s_per_node": 0.0,
+            "thpt_slo_floor_zero": 1,
+            "thpt_slo_n_exec_ok": 30,
+            "thpt_cluster_node_count": 2,
+            "thpt_slo_basis": "literal_ttfe_upper_bound+floor_zero_margin",
+        }
+    )
+    out = render.render_matrix(_matrix_results(scen))
+    warm_line = [l for l in out.splitlines() if "Warm-pool hit" in l][0]
+    cells = [_unlink(c.strip()) for c in warm_line.strip("|").split("|")]
+    assert cells[2] == "0 /node · 0 /cluster ⚠️"
+    assert "at 2 nodes" in out  # X caption resolved from the floor-zero triple
+    assert "a measured ZERO, not an absence" in out  # basis note discloses the zero
+    assert "coarse p95 (n=30 warm-exec samples)" in out  # 20 <= 30 < 100
+    assert "measured `0` (floor-zero)" in out  # legend bullet (second zero provenance)
+
+
+def test_matrix_two_distinct_bases_render_two_note_lines():
+    # hb#214: two activation modes landing on DIFFERENT bases must disclose BOTH —
+    # the prior first-landed-match-wins resolver silently shadowed the second basis
+    # (e.g. a positive literal rate in one row next to a floor-zero in another).
+    scen = _full_gvisor_scenarios()
+    scen[0]["sla_metrics"].update(
+        {
+            "thpt_under_5s_per_cluster": 27.1,
+            "thpt_cluster_node_count": 40,
+            "thpt_slo_basis": "literal_ttfe_upper_bound+controller_completed",
+            "thpt_slo_n_exec_ok": 150,
+        }
+    )
+    scen[1]["sla_metrics"].update(
+        {
+            "thpt_under_5s_per_cluster": 0.0,
+            "thpt_under_5s_per_node": 0.0,
+            "thpt_slo_floor_zero": 1,
+            "thpt_slo_n_exec_ok": 30,
+            "thpt_cluster_node_count": 40,
+            "thpt_slo_basis": "literal_ttfe_upper_bound+floor_zero_margin",
+        }
+    )
+    out = render.render_matrix(_matrix_results(scen))
+    note_lines = [l for l in out.splitlines() if "per-cluster rates:" in l]
+    assert len(note_lines) == 2  # one italic line PER DISTINCT basis, scenario order
+    assert "derived from the literal exec-probe warm p95" in note_lines[0]
+    assert "coarse p95" not in note_lines[0]  # n=150 is fine-grained
+    assert "a measured ZERO, not an absence" in note_lines[1]
+    assert "coarse p95 (n=30 warm-exec samples)" in note_lines[1]
+
+
+def test_matrix_same_basis_two_scenarios_one_line_min_n():
+    # hb#214: two scenarios landing on the SAME basis still disclose ONE line, and the
+    # coarse caption carries the MINIMUM known n — the weakest credited sample count
+    # is the conservative one to caption.
+    scen = _full_gvisor_scenarios()
+    for i, n in ((0, 150), (1, 24)):
+        scen[i]["sla_metrics"].update(
+            {
+                "thpt_under_5s_per_cluster": 27.1,
+                "thpt_cluster_node_count": 40,
+                "thpt_slo_basis": "literal_ttfe_upper_bound+controller_completed",
+                "thpt_slo_n_exec_ok": n,
+            }
+        )
+    out = render.render_matrix(_matrix_results(scen))
+    note_lines = [l for l in out.splitlines() if "per-cluster rates:" in l]
+    assert len(note_lines) == 1
+    assert "coarse p95 (n=24 warm-exec samples)" in note_lines[0]
+
+
 def test_matrix_mixed_x_caption_names_each_runtime():
     # hb#132 mixed-X: gVisor's cluster leg at X=40 and kata's at X=20 must NOT share a single
     # first-match X — the caption names each runtime's X and flags non-comparability.

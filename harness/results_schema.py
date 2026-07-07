@@ -252,27 +252,42 @@ def _coerce_sla_metrics(raw) -> dict:
             continue
         out[k] = fv
     # hb#214 part 1 (DRAFT) — floor-zero pairing guard, fail-closed BOTH directions.
-    # A 0.0 per-cluster SLO rate is publishable ONLY as the pre-declared floor-zero
-    # verdict (stamp thpt_slo_floor_zero=1); a bare 0.0 is exactly the fabricated-0
-    # class the honesty spine forbids, and a stamp without its 0.0 is an inconsistent
-    # producer. Either shape RAISES (a real bug, matching the module's closed-value
-    # posture) rather than silently dropping — a silent drop would let the record
-    # publish with the dishonest half removed.
+    # A 0.0 PER-CLUSTER SLO rate is publishable ONLY as the pre-declared floor-zero
+    # verdict (stamp thpt_slo_floor_zero=1); a bare per-cluster 0.0 is exactly the
+    # fabricated-0 class the honesty spine forbids, and a stamp without its 0.0 is an
+    # inconsistent producer. Either shape RAISES (a real bug, matching the module's
+    # closed-value posture) rather than silently dropping — a silent drop would let
+    # the record publish with the dishonest half removed.
+    # Deliberately NARROW: the per-NODE keys are excluded because a bare per-node 0.0
+    # is the hb#142 honest measured-0 class (a real fire whose p95 missed the bar,
+    # over a real per-node denominator — live latest.json carries several) — a
+    # different quantity from the SLO-sweep per-cluster rates this guard protects.
     zero_rate = any(
         out.get(rk) == 0.0
-        for rk in ("thpt_under_5s_per_cluster", "thpt_under_1s_per_cluster")
+        for rk in (
+            "thpt_under_5s_per_cluster",
+            "thpt_under_1s_per_cluster",
+        )
     )
     has_stamp = out.get("thpt_slo_floor_zero") == 1.0
     if zero_rate and not has_stamp:
         raise ValueError(
             "sla_metrics: 0.0 per-cluster SLO rate without thpt_slo_floor_zero=1 "
-            "(bare zero is a fabricated-0; only the hb#214 floor-zero predicate "
-            "may emit 0.0, and it always stamps)"
+            "(bare per-cluster zero is a fabricated-0; only the hb#214 floor-zero "
+            "predicate may emit 0.0, and it always stamps)"
         )
-    if has_stamp and not zero_rate:
+    # The predicate emits the 5s pair together (exactly-0 is the one case where the
+    # per-node and per-cluster denominators are interchangeable), so a stamp must be
+    # accompanied by BOTH 5s legs at 0.0 — a stamp with only one leg is a producer
+    # that dropped half the pair, exactly the swallowed-figure shape hb#214 closes.
+    if has_stamp and not (
+        out.get("thpt_under_5s_per_cluster") == 0.0
+        and out.get("thpt_under_5s_per_node") == 0.0
+    ):
         raise ValueError(
-            "sla_metrics: thpt_slo_floor_zero=1 without a 0.0 per-cluster SLO rate "
-            "(inconsistent floor-zero pairing)"
+            "sla_metrics: thpt_slo_floor_zero=1 without BOTH 5s legs at 0.0 "
+            "(thpt_under_5s_per_cluster AND thpt_under_5s_per_node; "
+            "inconsistent floor-zero pairing)"
         )
     return out
 

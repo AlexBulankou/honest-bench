@@ -1051,15 +1051,22 @@ def test_slo_basis_enum_matches_slo_rate_canonical():
 
 def test_sla_floor_zero_pairing_guard():
     # hb#214 part 1 (DRAFT): the schema-side fabricated-0 tripwire, fail-closed BOTH ways.
-    # A 0.0 per-cluster SLO rate may exist ONLY as the stamped output of the floor-zero
-    # predicate; a stamp may exist ONLY alongside its 0.0. Either half alone RAISES.
-    valid = {"thpt_under_5s_per_cluster": 0.0, "thpt_slo_floor_zero": 1,
+    # A 0.0 PER-CLUSTER SLO rate may exist ONLY as the stamped output of the floor-zero
+    # predicate; a stamp may exist ONLY alongside BOTH its 5s legs at 0.0 (the predicate
+    # emits the pair together — exactly-0 is the one case where the per-node and
+    # per-cluster denominators are interchangeable). Either half alone RAISES.
+    # The per-NODE keys are deliberately OUTSIDE the zero-rate direction: a bare
+    # per-node 0.0 is the hb#142 honest measured-0 class (real fire, p95 over bar,
+    # real per-node denominator) — live latest.json carries several.
+    valid = {"thpt_under_5s_per_cluster": 0.0, "thpt_under_5s_per_node": 0.0,
+             "thpt_slo_floor_zero": 1,
              "thpt_slo_n_exec_ok": 30, "thpt_cluster_node_count": 2,
              "thpt_slo_basis": "literal_ttfe_upper_bound+floor_zero_margin"}
     r = rs.build_results([{"name": "x", "outcome": "pass", "sla_metrics": dict(valid)}],
                          _prov(), GEN_AT)
     sla = r["scenarios"][0]["sla_metrics"]
-    _check(sla["thpt_under_5s_per_cluster"] == 0.0, "stamped 0.0 rate carried")
+    _check(sla["thpt_under_5s_per_cluster"] == 0.0, "stamped 0.0 cluster rate carried")
+    _check(sla["thpt_under_5s_per_node"] == 0.0, "stamped 0.0 per-node leg carried")
     _check(sla["thpt_slo_floor_zero"] == 1.0, "floor-zero stamp carried with its 0.0")
     _check(sla["thpt_slo_basis"] == "literal_ttfe_upper_bound+floor_zero_margin",
            "floor-zero basis carried")
@@ -1071,13 +1078,26 @@ def test_sla_floor_zero_pairing_guard():
             _check(False, f"bare 0.0 on {rate_key} without the stamp must raise")
         except ValueError:
             pass
+    # Positive: a bare per-NODE 0.0 with no stamp is ACCEPTED — the hb#142 measured-0
+    # class must not be swept up by the fabricated-0 tripwire (regression guard against
+    # re-widening the zero-rate direction to the per-node keys).
+    for node_key in ("thpt_under_5s_per_node", "thpt_under_1s_per_node"):
+        r = rs.build_results(
+            [{"name": "x", "outcome": "pass", "sla_metrics": {node_key: 0.0}}],
+            _prov(), GEN_AT)
+        _check(r["scenarios"][0]["sla_metrics"][node_key] == 0.0,
+               f"bare measured per-node 0.0 on {node_key} must be accepted (hb#142 class)")
     for stamp_only in ({"thpt_slo_floor_zero": 1},
-                       {"thpt_slo_floor_zero": 1, "thpt_under_5s_per_cluster": 9.9}):
+                       {"thpt_slo_floor_zero": 1, "thpt_under_5s_per_cluster": 9.9},
+                       # a stamp with only ONE of the two 5s legs at 0.0 is a producer
+                       # that dropped half the pair — the swallowed-figure shape.
+                       {"thpt_slo_floor_zero": 1, "thpt_under_5s_per_cluster": 0.0},
+                       {"thpt_slo_floor_zero": 1, "thpt_under_5s_per_node": 0.0}):
         try:
             rs.build_results(
                 [{"name": "x", "outcome": "pass", "sla_metrics": dict(stamp_only)}],
                 _prov(), GEN_AT)
-            _check(False, f"stamp without a 0.0 rate must raise: {stamp_only}")
+            _check(False, f"stamp without BOTH 5s legs at 0.0 must raise: {stamp_only}")
         except ValueError:
             pass
 
