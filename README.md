@@ -157,6 +157,18 @@ Under this contention, TTFE degrades to **1.6589s p50** / **2.0169s p95** — bu
 
 _Measured 2026-07-01 — warm-pool at-scale contention ceiling (point-in-time)._
 
+## Which storage class should you pick?
+
+Per-class results from a controlled storage-config fire (fixed workload). An unmeasured class renders `pending`; the per-row sample count is the trust gate.
+
+| Storage class | Samples (n) | Payload p50 | Pass rate |
+|---|---|---|---|
+| Ephemeral (node-local) | 3 | 64 MiB | 100% |
+| Persistent disk | 3 | 64 MiB | 100% |
+| Snapshot-restored | [pending](WORK_IN_PROGRESS.md#not-yet-measured) | [pending](WORK_IN_PROGRESS.md#not-yet-measured) | [pending](WORK_IN_PROGRESS.md#not-yet-measured) |
+
+_Measured 2026-07-07 — storage-config axis (point-in-time); each replica carried an identical fixed written state, W = 64 MiB._
+
 ## Reproduce it
 
 Every number above comes from a *vanilla* GKE cluster you can provision yourself — no private

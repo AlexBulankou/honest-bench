@@ -1,0 +1,16 @@
+{
+  "measured_at": "2026-07-07T03:33:02Z",
+  "payload_bytes": 67108864,
+  "storage_classes": {
+    "ephemeral": {
+      "bytes_p50": 67112960,
+      "n": 3,
+      "pass_rate": 1.0
+    },
+    "pd": {
+      "bytes_p50": 67112960,
+      "n": 3,
+      "pass_rate": 1.0
+    }
+  }
+}
