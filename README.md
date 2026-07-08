@@ -197,7 +197,7 @@ Proxy curve verdict: 🛑 saturated (at least one step crossed the collapse band
 | 6 | 22.669s | 158.643s | 223.729s | — |
 | 8 | 71.3839s | 220.411s | 236.082s | — |
 
-_The gap between the upper (literal-TTFE) and lower (controller-startup) bounds is exec-readiness queueing (pod-startup / exec-readiness). Both bounds are already in collapse at the bottom of this bracket, so the TTFE 1s/5s crossing sits BELOW the lowest swept rung — the published Warm-Pool Acquisition ceiling above remains the TTFE-compliant rate, not these acquisition-compliant rungs._
+_The gap between the upper (literal-TTFE) and lower (controller-startup) bounds is exec-readiness queueing (pod-startup / exec-readiness). The measured bounds are in collapse at the bottom of this bracket, so the TTFE 1s/5s crossing sits BELOW the lowest swept rung — the published Warm-Pool Acquisition ceiling above remains the TTFE-compliant rate, not these acquisition-compliant rungs._
 
 _Sweep: 30 nodes, SLD 20s, WPR 0.75 — measured 2026-07-08 (point-in-time; refreshed on the next sweep)._
 

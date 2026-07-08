@@ -3416,16 +3416,34 @@ def render_stepup(results):
             lines.append("| " + " | ".join(cells) + " |")
         lines.append("")
 
-    # End-to-end readiness (TTFE) collapse — pinned between two DISTINCT named bounds (a#4560),
+    # End-to-end readiness (TTFE) window — pinned between two DISTINCT named bounds (a#4560),
     # never rendered as a single range: the literal-TTFE UPPER bound (includes exec-setup) and
     # the controller-startup LOWER bound (excludes it). The gap between them is exec-readiness
     # queueing (pod-startup / exec-readiness), which readers want to see.
+    #
+    # The collapse framing is VERDICT-gated, not presence-gated (a#4560 fast-follow): the prose
+    # keys on verdict == "saturated" (either bound), so a future sweep at lower rungs that folds
+    # verdict: "compliant" blocks into latest.json renders neutral "stays within band" prose
+    # instead of a silent-false "has already collapsed" publish on a trust surface. The
+    # count-word ("two distinct" vs "a single") also tracks how many bounds actually survive the
+    # schema predicate, so a dropped bound can't leave a stale "two" behind.
     lt = su.get("literal_ttfe")
-    if lt or su.get("controller_startup"):
-        lines.append(
-            "**End-to-end readiness (TTFE) has already collapsed across this bracket** — the "
-            "binding constraint is warm controller-startup queueing, not claim acquisition. The "
-            "collapse is pinned between two distinct measured bounds:")
+    cs = su.get("controller_startup")
+    _ttfe_bounds = [b for b in (lt, cs) if b]
+    _ttfe_saturated = any(b.get("verdict") == "saturated" for b in _ttfe_bounds)
+    if _ttfe_bounds:
+        _window = ("pinned between two distinct measured bounds" if len(_ttfe_bounds) == 2
+                   else "reported by a single measured bound")
+        if _ttfe_saturated:
+            lines.append(
+                "**End-to-end readiness (TTFE) has already collapsed across this bracket** — the "
+                "binding constraint is warm controller-startup queueing, not claim acquisition. The "
+                f"collapse is {_window}:")
+        else:
+            lines.append(
+                "**End-to-end readiness (TTFE) stays within the measured band across this bracket** "
+                "— no collapse knee is measured here. The end-to-end readiness window is "
+                f"{_window}:")
         lines.append("")
 
     # Literal-TTFE UPPER bound — explicit caveat keyed off upper_bound (load-bearing: the schema
@@ -3459,8 +3477,7 @@ def render_stepup(results):
 
     # Controller-startup LOWER-BOUND proxy (#3975) — separate table, explicit caveat keyed
     # off lower_bound (load-bearing: the schema requires lower_bound=true, so this caveat can
-    # never be dropped while the proxy renders).
-    cs = su.get("controller_startup")
+    # never be dropped while the proxy renders). `cs` is resolved with `lt` above the TTFE window.
     if cs:
         lines.append(
             "_Controller-startup lower bound: controller-first-observed → Ready, which "
@@ -3489,12 +3506,20 @@ def render_stepup(results):
     # 1s/5s crossing sits BELOW the lowest swept rung: these rungs are acquisition-compliant but
     # TTFE-non-compliant, so they never replace the published Warm-Pool Acquisition ceiling.
     if lt and cs:
-        lines.append(
-            "_The gap between the upper (literal-TTFE) and lower (controller-startup) bounds is "
-            "exec-readiness queueing (pod-startup / exec-readiness). Both bounds are already in "
-            "collapse at the bottom of this bracket, so the TTFE 1s/5s crossing sits BELOW the "
-            "lowest swept rung — the published Warm-Pool Acquisition ceiling above remains the "
-            "TTFE-compliant rate, not these acquisition-compliant rungs._")
+        _gap = ("_The gap between the upper (literal-TTFE) and lower (controller-startup) bounds is "
+                "exec-readiness queueing (pod-startup / exec-readiness).")
+        if _ttfe_saturated:
+            # lt >= cs by construction, so a saturated verdict on either implies the literal
+            # (upper) ceiling is over the collapse band — the 1s/5s crossing sits below the rung.
+            _gap += (" The measured bounds are in collapse at the bottom of this bracket, so the "
+                     "TTFE 1s/5s crossing sits BELOW the lowest swept rung — the published "
+                     "Warm-Pool Acquisition ceiling above remains the TTFE-compliant rate, not "
+                     "these acquisition-compliant rungs._")
+        else:
+            _gap += (" Both bounds stay within the measured TTFE band across this bracket, so no "
+                     "collapse knee is measured here — the published Warm-Pool Acquisition ceiling "
+                     "above remains the reference TTFE-compliant rate._")
+        lines.append(_gap)
         lines.append("")
 
     # Sweep-parameter subline (Little's-law inputs + date) — public-safe scalars.
