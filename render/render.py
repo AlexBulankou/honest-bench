@@ -1051,6 +1051,13 @@ def render_matrix(results, kata_results=None):
             )
     lines.append("")
 
+    # hb#230 (alex doctrine flip): snapshot whether ANY matrix cell earned a *** caveat
+    # BEFORE the glossary/footnote text below (which itself contains a literal `***` in the
+    # reconciled upstream-blocked line and the consolidated block). Gating the footnote on
+    # this snapshot — not on `any("***" in lines)` at append time — keeps the block from
+    # self-triggering off its own prose when the matrix has no caveated cell.
+    matrix_has_starstar = any("***" in ln for ln in lines)
+
     # hb#134 refinement (GOAL-2.1 gap-1): Max Density is a spec Core-Metrics figure, so it
     # belongs in this section — but it is per-RUNTIME (constant across a runtime's three
     # activation-mode rows), NOT per-mode. A literal matrix column would repeat each value 3x
@@ -1136,11 +1143,12 @@ def render_matrix(results, kata_results=None):
     )
     lines.append(
         "- **`pending (upstream-blocked)`** — the run DID land, but an upstream controller gap "
-        "(the resume path's Suspended condition never clears) holds it; it graduates to a real "
-        "number the moment the upstream fix lands, not merely when a run is scheduled. "
-        "The probe did record a figure — the wall-clock ceiling spent waiting out the "
-        "never-clearing condition — and that figure is deliberately withheld: it measures the "
-        "probe's timeout, not a resume, and would rank falsely against real distributions. "
+        "(the resume path's Suspended condition never clears) holds the SLO-compliant figure; it "
+        "graduates to a real number the moment the upstream fix lands, not merely when a run is "
+        "scheduled. When the probe recorded a wall-clock ceiling (the time spent waiting out the "
+        "never-clearing condition), that ceiling now PRINTS as `≥N.Ns***` — a floor the resume "
+        "never beat, not a resume time; see the `***` block below. A cell with no recorded "
+        "ceiling stays `pending (upstream-blocked)`. "
         "Tracked upstream: " + upstream_prose_refs("upstream-blocked") + "."
     )
     lines.append(
@@ -1182,6 +1190,65 @@ def render_matrix(results, kata_results=None):
         "condition clears."
     )
     lines.append("")
+
+    # hb#230 (alex doctrine flip, 2026-07-08): the ONE consolidated *** caveat block. Every
+    # `***`-tagged cell above publishes the best number we measured rather than an honest-empty
+    # `pending` — a caveated number always beats a blank cell. Each caveat class is named ONCE
+    # here with its measured basis + the upstream fix that graduates it to a clean number, and
+    # its upstream link lives ONLY here (the cells carry the bare `***`, no inline ref). Gated
+    # on the matrix-only snapshot so the block never renders when no cell earned a caveat.
+    if matrix_has_starstar:
+        lines.append("**Published-with-caveat cells (`***`)**")
+        lines.append("")
+        lines.append(
+            "A cell tagged `***` prints the best figure we measured, not an honest-empty "
+            "`pending`: the measurement exists but carries a bound or a single-source caveat, "
+            "spelled out below. The number is real — read it with its caveat. Each class "
+            "graduates to a clean figure when its upstream fix lands."
+        )
+        lines.append("")
+        lines.append(
+            "- **Uncorroborated acquire-side rate** (warm-pool-hit SLO-rate cells) — the "
+            "published rate is fulfilled (claim→bound)/s at the highest rung whose acquisition "
+            "p95 cleared the bar, with the independent controller-completion cross-check DROPPED. "
+            "It is SINGLE-SOURCE, so it can read HIGHER than a cross-corroborated cell (the "
+            "two-trust-tier split) — and it is the highest OFFERED rung, NOT a saturation "
+            "ceiling: the ladder was not driven to saturation, so the true sustainable rate is at "
+            "least this and likely higher. Controller corroboration is unavailable because the "
+            "upstream controller startup-latency histogram double-records Ready transitions on "
+            "stale-informer replays, inflating the controller leg ~1.7–2× on warm-pool-fulfilled "
+            "paths (cold control legs PASS the same gate). "
+            "Tracked upstream: " + upstream_prose_refs("trust-gate") + "."
+        )
+        lines.append(
+            "- **Cold-start floor zero** (unique-image-cold SLO-rate cells) — a MEASURED zero, "
+            "not an absence: the controller cold-start floor (~14.7s p50) exceeds BOTH throughput "
+            "bars at every offered rate (rate-independent), so no compliant operating point "
+            "exists. The zero is the sandbox cold-start floor, not an acquire-path miss — the "
+            "acquire-side latency is clean sub-second (~5/s) at every rung. Corroborated by a "
+            "controller-MEASURED (trusted) rung whose cold p50 is also over both bars, so it is "
+            "never asserted from the controller-untrusted floor rung alone. "
+            "Tracked upstream: " + upstream_prose_refs("no-compliant-rung") + "."
+        )
+        lines.append(
+            "- **Unresolved bounds** (`unk.***`, Kata + microVM unique-image-cold 5s cell) — a "
+            "measurement was taken, but the true TTFE p95 is bounded in [~2.5s, ~8.4s] at "
+            "0.05–0.07/s: the controller-cold proxy (lower bound) does not breach the 5s bar and "
+            "the literal exec-probe (upper bound) does not clear it, so no claim is supportable "
+            "either direction. The exec-probe upper bound includes Kata exec websocket setup "
+            "overhead; the 5s bar sits INSIDE the bracket — no supportable claim either way. "
+            "Tracked upstream: " + upstream_prose_refs("no-compliant-rung") + "."
+        )
+        lines.append(
+            "- **Resume probe ceiling** (`≥N.Ns***`, Resume-from-suspend × gVisor cells) — the "
+            "resume never completed (the upstream Suspended condition never clears), so the probe "
+            "recorded only the wall-clock ceiling it spent waiting. That ceiling PRINTS as a "
+            "floor (`≥N.Ns`) — the resume takes AT LEAST this long — not a resume time; do not "
+            "rank it against a real completion distribution. "
+            "Tracked upstream: " + upstream_prose_refs("upstream-blocked") + "."
+        )
+        lines.append("")
+
     # The Kata rows fill from a SEPARATE run (the sandbox-kata product) on the kata node pool —
     # a different cluster substrate + machine shape than the build banner below — so disclose
     # that run's own closed-schema provenance rather than letting the gVisor banner silently

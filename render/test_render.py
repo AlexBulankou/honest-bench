@@ -869,6 +869,59 @@ def test_matrix_resume_kata_na_unaffected_by_ceiling():
         assert cells[i] == render._NA, f"cell {i} = {cells[i]!r}"
 
 
+def test_starstar_footnote_renders_all_classes_with_upstream_links():
+    # hb#230 (doctrine flip): once ANY matrix cell earns a `***`, the ONE consolidated caveat
+    # block renders below the matrix, naming ALL FOUR caveat classes once each with their
+    # upstream refs (the cells carry a bare `***`; the links live only in this block). Trigger
+    # it via the resume ceiling (Class C) — the block is all-or-nothing, so every class prose
+    # must appear regardless of which single cell tripped it.
+    scen = _full_gvisor_scenarios()
+    scen[2] = {
+        "name": "suspend_resume", "outcome": "pending",
+        "pending_reason": "upstream-blocked",
+        "resume_probe_ceiling_ms": 34604.4, "n": 1376,
+    }
+    out = render.render_matrix(_matrix_results(scen))
+    assert "**Published-with-caveat cells (`***`)**" in out
+    # all four class bullets present, once each
+    assert "**Uncorroborated acquire-side rate**" in out
+    assert "**Cold-start floor zero**" in out
+    assert "**Unresolved bounds**" in out
+    assert "**Resume probe ceiling**" in out
+    # each class carries its upstream refs (link label survives; _unlink only strips WIP links)
+    assert "agent-sandbox#940" in out and "agent-sandbox#1087" in out  # trust-gate (Class A)
+    assert "agent-sandbox#751" in out and "agent-sandbox#761" in out  # no-compliant-rung (B/Kata)
+    assert "agent-sandbox#873" in out and "agent-sandbox#893" in out  # upstream-blocked (Class C)
+
+
+def test_starstar_footnote_absent_when_no_caveat_cell():
+    # a plain matrix with no `***`-earning cell must NOT render the consolidated caveat block —
+    # gated on the matrix-only snapshot, so it never appears empty-handed. (The glossary prose
+    # references `***` unconditionally, so gate the assertion on the block heading, not on the
+    # bare `***` substring.)
+    out = render.render_matrix(_matrix_results(_full_gvisor_scenarios()))
+    matrix_rows = [l for l in out.splitlines() if l.startswith("| gVisor")]
+    assert not any("***" in r for r in matrix_rows)
+    assert "Published-with-caveat cells" not in out
+
+
+def test_starstar_footnote_triggered_by_acq_uncorroborated_basis():
+    # the gate keys on ANY matrix `***`, not just the resume ceiling: an uncorroborated
+    # acquire-side cluster cell (Class A basis) also renders the block.
+    scen = _full_gvisor_scenarios()
+    scen[0]["sla_metrics"].update(
+        {
+            "thpt_under_5s_per_cluster": 27.1,
+            "thpt_cluster_node_count": 40,
+            "thpt_slo_basis": "acq_fulfilled+acq_p95_uncorroborated",
+        }
+    )
+    out = render.render_matrix(_matrix_results(scen))
+    warm_line = [l for l in out.splitlines() if "Warm-pool hit" in l][0]
+    assert "***" in warm_line  # the cell earned the caveat mark
+    assert "**Published-with-caveat cells (`***`)**" in out
+
+
 def test_matrix_literal_basis_note_with_coarse_p95_caption():
     # hb#174 sign-off (c): a literal-controller triple whose credited rungs' MIN warm-exec
     # sample count is 20 <= n < 100 renders the basis disclosure line PLUS the coarse-p95
