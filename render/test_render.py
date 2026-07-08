@@ -773,8 +773,10 @@ def test_matrix_per_bar_basis_starstar_only_on_uncorroborated_bar():
     out = render.render_matrix(_matrix_results(scen))
     warm_line = [l for l in out.splitlines() if "Warm-pool hit" in l][0]
     cells = [_unlink(c.strip()) for c in warm_line.strip("|").split("|")]
-    assert cells[2] == "4 /node · 38 /cluster ⚠️"       # corroborated bar: NO ***
-    assert cells[3] == "4 /node · 1.2 /cluster ⚠️***"   # uncorroborated bar: ***
+    # hb#230 ask (a): both bases are certification FLOORS (literal-upper-bound and
+    # uncorroborated-acq), so both cluster figures carry the `≥` prefix.
+    assert cells[2] == "4 /node · ≥38 /cluster ⚠️"       # corroborated floor bar: ≥, NO ***
+    assert cells[3] == "4 /node · ≥1.2 /cluster ⚠️***"   # uncorroborated floor bar: ≥ + ***
 
 
 def test_matrix_per_bar_basis_unresolved_bounds_renders_unk():
@@ -813,8 +815,30 @@ def test_matrix_per_bar_invalid_basis_drops_that_bars_cluster_figure():
     warm_line = [l for l in out.splitlines() if "Warm-pool hit" in l][0]
     cells = [_unlink(c.strip()) for c in warm_line.strip("|").split("|")]
     assert cells[2] == f"4 /node · pending ({render._CLUSTER_FIRE})"  # 5s figure dropped
-    assert cells[3] == "4 /node · 320 /cluster***"                    # 1s figure kept + ***
+    # hb#230 ask (a): the surviving 1s figure is an uncorroborated-acq floor → `≥` prefix
+    # (320 > sizing target, so no ⚠️).
+    assert cells[3] == "4 /node · ≥320 /cluster***"                   # 1s floor figure kept + ***
     assert "made_up_basis" not in out
+
+
+def test_matrix_true_ttfe_cluster_figure_no_floor_prefix():
+    # hb#230 ask (a) discrimination: a true_ttfe basis is a GRADUATED real number, not a
+    # lower-bound construction, so its per-cluster figure renders CLEAN — no `≥` floor prefix
+    # and no `***` caveat. Contrasts the floor bases (literal-upper-bound / uncorroborated-acq)
+    # which DO carry `≥`.
+    scen = _full_gvisor_scenarios()
+    scen[0]["sla_metrics"].update(
+        {
+            "thpt_under_5s_per_cluster": 250,
+            "thpt_cluster_node_count": 10,
+            "thpt_slo_basis": "true_ttfe",
+        }
+    )
+    out = render.render_matrix(_matrix_results(scen))
+    warm_line = [l for l in out.splitlines() if "Warm-pool hit" in l][0]
+    cells = [_unlink(c.strip()) for c in warm_line.strip("|").split("|")]
+    assert cells[2] == "4 /node · 250 /cluster ⚠️"  # graduated: NO ≥, NO ***
+    assert "≥" not in cells[2]
 
 
 def test_matrix_resume_gvisor_ceiling_publishes_all_five_cells():
@@ -955,7 +979,8 @@ def test_matrix_literal_basis_note_with_coarse_p95_caption():
     out = render.render_matrix(_matrix_results(scen))
     warm_line = [l for l in out.splitlines() if "Warm-pool hit" in l][0]
     cells = [_unlink(c.strip()) for c in warm_line.strip("|").split("|")]
-    assert cells[2] == "4 /node · 27.1 /cluster ⚠️"  # figure renders real (below target)
+    # hb#230 ask (a): literal-upper-bound is a certification floor → `≥` prefix (below target ⚠️).
+    assert cells[2] == "4 /node · ≥27.1 /cluster ⚠️"  # floor figure, below target
     assert "at 40 nodes" in out
     assert "gVisor per-cluster rates: derived from the literal exec-probe warm p95" in out
     assert "controller completion rate" in out  # window disclosure (sign-off a)
