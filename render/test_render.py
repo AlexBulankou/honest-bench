@@ -2898,6 +2898,38 @@ def test_stepup_acquisition_missing_upper_bound_flag_drops_literal():
     assert "Controller-startup lower bound" in out
 
 
+def test_stepup_ttfe_compliant_uses_neutral_prose():
+    # a#4560 fast-follow: the collapse prose is VERDICT-gated, not presence-gated. A future sweep
+    # that folds compliant TTFE bounds must render neutral "stays within band" prose — never a
+    # silent-false "has already collapsed" publish while the per-table verdict lines say compliant.
+    knee = _knee()
+    knee["literal_ttfe"]["verdict"] = "flat-through-sweep"
+    knee["controller_startup"]["verdict"] = "flat-through-sweep"
+    out = render.render_stepup(_matrix_results(_full_gvisor_scenarios(), stepup=knee))
+    assert "has already collapsed across this bracket" not in out
+    assert "**End-to-end readiness (TTFE) stays within the measured band across this bracket**" in out
+    # closing statement drops the collapse/crossing claim and uses the neutral fallback.
+    assert "TTFE 1s/5s crossing sits BELOW the lowest swept rung" not in out
+    assert "no collapse knee is measured here" in out
+    assert "reference TTFE-compliant rate" in out
+    # the gap-naming sentence still renders (it describes the two bounds, not the verdict).
+    assert "exec-readiness queueing (pod-startup / exec-readiness)" in out
+
+
+def test_stepup_collapse_count_word_tracks_surviving_bounds():
+    # a#4560 fast-follow nit: the count-word tracks how many bounds survive the schema predicate,
+    # so a dropped bound can't leave a stale "two distinct" behind. Drop the literal (upper) via
+    # its load-bearing flag → only the controller lower bound (saturated) survives.
+    knee = _knee()
+    del knee["literal_ttfe"]["upper_bound"]
+    out = render.render_stepup(_matrix_results(_full_gvisor_scenarios(), stepup=knee))
+    assert "pinned between two distinct measured bounds" not in out
+    assert "collapse is reported by a single measured bound" in out
+    # two-bound path keeps the "two distinct" wording (control).
+    out_both = render.render_stepup(_matrix_results(_full_gvisor_scenarios(), stepup=_knee()))
+    assert "collapse is pinned between two distinct measured bounds" in out_both
+
+
 def _cb(**over):
     base = {
         "legs": [
