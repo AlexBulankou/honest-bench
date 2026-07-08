@@ -127,6 +127,12 @@ SLO_BASIS_ENUM = (
     # paired with thpt_slo_floor_zero=1 + a 0.0 cluster rate (pairing enforced in
     # _coerce_sla_metrics, fail-closed both directions).
     "literal_ttfe_upper_bound+floor_zero_margin",
+    # hb#230 (alex doctrine flip, 2026-07-08): the UNCORROBORATED acq-side basis —
+    # gated on acq_p95_s with the controller cross-check DROPPED, so single-source.
+    # Consulted only after the corroborated bases derive nothing; emits the Class A
+    # *** caveat at render. Rides the enum-gated thpt_slo_basis carve-out (the '+'
+    # is fine — the value is never key-regex-validated, only enum-membership-checked).
+    "acq_fulfilled+acq_p95_uncorroborated",
 )
 
 # #3954 sibling warm-vs-cold — the emitter's INDEPENDENT copies of render's WARM_VS_COLD_FIELDS

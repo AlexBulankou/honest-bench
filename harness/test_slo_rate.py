@@ -25,11 +25,13 @@ from harness.slo_rate import (
     HONEST_ZERO_MAX_UNKNOWN_FRACTION,
     LITERAL_N_EXEC_OK_FLOOR,
     LITERAL_RATE_AGREEMENT_TOL,
+    SLO_BASIS_ACQ_P95_UNCORROBORATED,
     SLO_BASIS_ENUM,
     SLO_BASIS_LITERAL_ACQ,
     SLO_BASIS_LITERAL_CONTROLLER,
     SLO_BASIS_LITERAL_FLOOR_ZERO,
     SLO_BASIS_TRUE_TTFE,
+    _derive_acq_p95_uncorroborated,
     slo_cluster_rate,
     slo_sla_metrics_from_stepup,
 )
@@ -362,6 +364,7 @@ class TestSloBasisSelection:
             SLO_BASIS_LITERAL_CONTROLLER,
             SLO_BASIS_LITERAL_ACQ,
             SLO_BASIS_LITERAL_FLOOR_ZERO,
+            SLO_BASIS_ACQ_P95_UNCORROBORATED,
         )
 
     def test_true_ttfe_triple_never_carries_n_exec_ok(self):
@@ -635,6 +638,123 @@ class TestLiteralFloorZero:
 
         out = slo_sla_metrics_from_stepup(self._flat([_fz_rung(0.5)]))
         assert out["thpt_slo_basis"] == SLO_BASIS_LITERAL_FLOOR_ZERO
+        assert _coerce_sla_metrics(out) == out
+
+
+def _acq_rung(offered, acq, p95_s):
+    # A pareto rung carrying the acquisition-side fields the UNCORROBORATED basis reads.
+    # No controller/literal fields — the acq basis ignores them by construction.
+    return {
+        "offered_rate_per_s": offered,
+        "acq_fulfilled_per_s": acq,
+        "acq_p95_s": p95_s,
+    }
+
+
+class TestAcqP95Uncorroborated:
+    """hb#230 (alex doctrine flip, 2026-07-08): the UNCORROBORATED acq-side basis —
+    best acq_fulfilled_per_s among rungs whose acq_p95_s clears the bar, controller
+    cross-check DROPPED, fills BOTH bars."""
+
+    def test_both_bars_fill_when_all_rungs_subsecond(self):
+        # The legA warm shape: acq p95 sub-second at every rung -> best acq fills BOTH bars.
+        pts = [
+            _acq_rung(1.0, 1.003, 0.190),
+            _acq_rung(1.5, 1.365, 0.433),
+            _acq_rung(2.0, 2.001, 0.160),
+        ]
+        out = _derive_acq_p95_uncorroborated(pts)
+        assert out == {
+            "thpt_under_5s_per_cluster": 2.001,
+            "thpt_under_1s_per_cluster": 2.001,
+        }
+
+    def test_unit_conversion_seconds_to_ms_bar(self):
+        # acq_p95_s is SECONDS; the bars are MILLISECONDS. A 1.5s-p95 rung clears the 5s
+        # bar (1500 <= 5000) but NOT the 1s bar (1500 > 1000) -> 5s-only fill. A raw
+        # seconds<=ms comparison bug (2.5 <= 1000) would wrongly admit it to the 1s bar.
+        pts = [
+            _acq_rung(1.0, 1.0, 0.5),   # clears both
+            _acq_rung(2.0, 3.0, 1.5),   # clears 5s only (p95 1.5s)
+        ]
+        out = _derive_acq_p95_uncorroborated(pts)
+        assert out == {
+            "thpt_under_5s_per_cluster": 3.0,  # best among {1.0, 3.0} that clear 5s
+            "thpt_under_1s_per_cluster": 1.0,  # only the 0.5s rung clears 1s
+        }
+
+    def test_over_5s_p95_qualifies_for_neither_bar(self):
+        pts = [_acq_rung(5.0, 9.9, 6.0)]  # 6000ms > 5000ms
+        assert _derive_acq_p95_uncorroborated(pts) == {}
+
+    def test_best_acq_selected_not_last(self):
+        # The MAX qualifying acq wins, regardless of rung order.
+        pts = [
+            _acq_rung(3.0, 3.0, 0.2),
+            _acq_rung(1.0, 1.0, 0.2),
+            _acq_rung(2.0, 2.0, 0.2),
+        ]
+        out = _derive_acq_p95_uncorroborated(pts)
+        assert out["thpt_under_5s_per_cluster"] == 3.0
+        assert out["thpt_under_1s_per_cluster"] == 3.0
+
+    def test_empty_and_malformed_inputs(self):
+        assert _derive_acq_p95_uncorroborated([]) == {}
+        assert _derive_acq_p95_uncorroborated(None) == {}
+        assert _derive_acq_p95_uncorroborated("nope") == {}
+        # rungs missing acq or p95, or with non-finite / non-positive acq, are skipped.
+        assert _derive_acq_p95_uncorroborated([{"offered_rate_per_s": 1.0}]) == {}
+        assert _derive_acq_p95_uncorroborated([_acq_rung(1.0, 0.0, 0.2)]) == {}
+        assert _derive_acq_p95_uncorroborated(
+            [{"acq_fulfilled_per_s": 2.0, "acq_p95_s": None}]
+        ) == {}
+
+    def test_chain_fires_acq_basis_when_corroboration_fails(self):
+        # The 07-06 warm shape: literal p95 garbage AND controller diverges from acq by
+        # >tol on every rung -> the corroborated _derive_literal_5s drops all rungs, so
+        # the chain falls through to the UNCORROBORATED acq basis (both bars) BEFORE any
+        # floor-zero. Rungs carry BOTH the literal/ctrl fields (that the corroborated leg
+        # reads and rejects) AND the acq fields (that this basis reads).
+        rungs = []
+        for offered, acq, p95_s, ctrl in (
+            (1.0, 1.003, 0.190, 1.79),
+            (1.5, 1.365, 0.433, 2.46),
+            (2.0, 2.001, 0.160, 3.61),
+        ):
+            r = _lit_rung(offered, 40000.0, ctrl=ctrl, acq=acq)  # p95 garbage 40s
+            r["acq_p95_s"] = p95_s
+            rungs.append(r)
+        flat = {
+            "node_count": 9,
+            "literal_ttfe": {"upper_bound": True, "pareto_points": rungs},
+        }
+        out = slo_sla_metrics_from_stepup(flat)
+        assert out["thpt_slo_basis"] == SLO_BASIS_ACQ_P95_UNCORROBORATED
+        assert out["thpt_under_5s_per_cluster"] == 2.001
+        assert out["thpt_under_1s_per_cluster"] == 2.001
+        assert out["thpt_cluster_node_count"] == 9
+        # UNCORROBORATED basis carries no floor-zero stamp (positive rates, not a zero).
+        assert "thpt_slo_floor_zero" not in out
+
+    def test_acq_basis_output_passes_sla_coercion(self):
+        # The emitted triple must survive the closed-schema coercer (enum-gated basis,
+        # positive rates -> no floor-zero pairing guard trips).
+        from harness.results_schema import _coerce_sla_metrics
+
+        rungs = []
+        for offered, acq, p95_s, ctrl in (
+            (1.0, 1.003, 0.190, 1.79),
+            (2.0, 2.001, 0.160, 3.61),
+        ):
+            r = _lit_rung(offered, 40000.0, ctrl=ctrl, acq=acq)
+            r["acq_p95_s"] = p95_s
+            rungs.append(r)
+        flat = {
+            "node_count": 9,
+            "literal_ttfe": {"upper_bound": True, "pareto_points": rungs},
+        }
+        out = slo_sla_metrics_from_stepup(flat)
+        assert out["thpt_slo_basis"] == SLO_BASIS_ACQ_P95_UNCORROBORATED
         assert _coerce_sla_metrics(out) == out
 
 

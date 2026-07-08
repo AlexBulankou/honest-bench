@@ -613,6 +613,21 @@ _SLO_BASIS_NOTES = {
         "positive literal bases failed, from a trusted steady-state rung (dual "
         "rate-candidate agreement, n>=20)"
     ),
+    # hb#230 (alex doctrine flip, 2026-07-08): the Class A *** caveat prose. Consulted
+    # only after the corroborated bases derive nothing; it publishes the best measured
+    # acquire-side rate SINGLE-SOURCE (controller cross-check dropped), which is exactly
+    # why it can read HIGHER than a corroborated cell (Fork 3 two-trust-tiers). The
+    # upstream link (#940 -> fix #1087) lives in the consolidated *** footnote block, not
+    # inline here (matching the URL-free style of the other notes).
+    "acq_fulfilled+acq_p95_uncorroborated": (
+        "the UNCORROBORATED acquire-side rate: fulfilled (claim->bound)/s at the highest "
+        "rung whose acquisition p95 cleared the bar, with the independent controller-"
+        "completion cross-check DROPPED — single-source, so it can read HIGHER than a "
+        "cross-corroborated cell; controller corroboration is unavailable pending the "
+        "upstream metric fix. The figure is the highest OFFERED rung, NOT a saturation "
+        "ceiling — the ladder was not driven to saturation, so the true sustainable rate "
+        "is at least this and likely higher"
+    ),
 }
 
 

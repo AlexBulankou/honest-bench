@@ -341,6 +341,10 @@ SLO_BASIS_VALUES = frozenset(
         # stamped 0.0 derived from the FLOOR rung's literal warm samples sitting over the
         # bar by a pre-declared margin. Always rides with thpt_slo_floor_zero=1.
         "literal_ttfe_upper_bound+floor_zero_margin",
+        # hb#230 (alex doctrine flip, 2026-07-08): the UNCORROBORATED acq-side basis —
+        # best acq_fulfilled_per_s among rungs whose acq_p95_s clears the bar, with the
+        # controller cross-check DROPPED (single-source). Renders the Class A *** caveat.
+        "acq_fulfilled+acq_p95_uncorroborated",
     )
 )
 
