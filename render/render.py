@@ -928,24 +928,35 @@ def render_matrix(results, kata_results=None):
             # hb#230 Fork 5 (resume Class-C ceiling): the gVisor resume row DID record a probe
             # ceiling — the wall-clock it waited out against a never-clearing Suspended
             # condition (upstream #873 → #893). Per alex's doctrine flip (a caveated measured
-            # number always beats an empty cell), publish that ceiling across ALL FIVE metric
-            # cells as `≥<X>s***` rather than five `pending (upstream-blocked)` cells. The `***`
-            # points at the consolidated footnote (Class C — probe ceiling, resume never
-            # completed). Scoped to the gVisor resume row (Kata resume is N/A-by-construction,
+            # number always beats an empty cell), publish that ceiling as `≥<X>s***` — but
+            # ONLY in the two TTFE columns, where a duration is the correct unit. The earlier
+            # revision filled the ceiling across ALL FIVE cells, which stamped a *duration*
+            # (`≥34.6s`) into the two THROUGHPUT columns (a rate, sb/s) and the EXECUTION-SUCCESS
+            # column (a %) — a units mismatch (hb#230 nit, a4z1). The correct per-column render:
+            #   - throughput (<5s / <1s):  `0*** (upstream-blocked)` — zero sandboxes reached a
+            #     TTFE bar because the resume never completed; the rate is a true zero, not a floor.
+            #   - TTFE p50 / p95:          `≥<X>s***` — the honest measured wall-clock floor.
+            #   - execution success:       `0/N completed***` — zero of N probe attempts completed.
+            # The `***` on each points at the consolidated Class-C footnote (probe ceiling, resume
+            # never completed). Scoped to the gVisor resume row (Kata resume is N/A-by-construction,
             # handled above); a resume row with no recorded ceiling falls through to the normal
-            # pending path. It is NOT a resume TTFE (the operation never completes) — the `≥`
-            # and the footnote carry that; the number is the honest measured wall-clock floor.
+            # pending path. It is NOT a resume TTFE (the operation never completes) — the `≥` and
+            # the footnote carry that; the number is the honest measured wall-clock floor.
             # a#4420 transition-guard: gate the ceiling override on `sc_pending`. The override
             # is an honest-empty→caveated-measured UPGRADE that only holds while the row is
             # pending; if the resume row ever GRADUATES (outcome=="pass") but still carries a
             # vestigial `resume_probe_ceiling_ms`, an ungated override would MASK the five real
-            # graduated metrics behind a stale `≥Xs***` ceiling — a silent trust downgrade. A
-            # graduated row must fall through to normal per-cell metric rendering.
+            # graduated metrics behind a stale ceiling — a silent trust downgrade. A graduated
+            # row must fall through to normal per-cell metric rendering.
             resume_ceiling_ms = sc.get("resume_probe_ceiling_ms") if sc else None
             if is_resume and rt == "gvisor" and resume_ceiling_ms is not None and sc_pending:
                 ceiling_tok = f"≥{resume_ceiling_ms / 1000.0:.1f}s***"
+                thpt_tok = "0*** (upstream-blocked)"
+                n_attempts = sc["n"] if (sc and sc.get("n")) else 0
+                success_tok = f"0/{n_attempts} completed***"
+                resume_cells = [thpt_tok, thpt_tok, ceiling_tok, ceiling_tok, success_tok]
                 lines.append(
-                    "| " + " | ".join([rt_label, mode_label] + [ceiling_tok] * 5) + " |"
+                    "| " + " | ".join([rt_label, mode_label] + resume_cells) + " |"
                 )
                 continue
 
@@ -1306,11 +1317,14 @@ def render_matrix(results, kata_results=None):
             "Tracked upstream: " + upstream_prose_refs("no-compliant-rung") + "."
         )
         lines.append(
-            "- **Resume probe ceiling** (`≥N.Ns***`, Resume-from-suspend × gVisor cells) — the "
-            "resume never completed (the upstream Suspended condition never clears), so the probe "
-            "recorded only the wall-clock ceiling it spent waiting. That ceiling PRINTS as a "
-            "floor (`≥N.Ns`) — the resume takes AT LEAST this long — not a resume time; do not "
-            "rank it against a real completion distribution. "
+            "- **Resume probe ceiling** (`≥N.Ns***`, the two TTFE cells of the Resume-from-suspend "
+            "× gVisor row) — the resume never completed (the upstream Suspended condition never "
+            "clears), so the probe recorded only the wall-clock ceiling it spent waiting. That "
+            "ceiling PRINTS as a floor (`≥N.Ns`) in the TTFE columns — the resume takes AT LEAST "
+            "this long — not a resume time; do not rank it against a real completion distribution. "
+            "The two throughput columns read `0*** (upstream-blocked)` and execution success reads "
+            "`0/N completed***`: zero of N probe attempts completed, so the true rate is zero (a "
+            "duration is not a rate). "
             "Tracked upstream: " + upstream_prose_refs("upstream-blocked") + "."
         )
         lines.append("")

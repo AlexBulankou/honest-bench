@@ -841,12 +841,14 @@ def test_matrix_true_ttfe_cluster_figure_no_floor_prefix():
     assert "≥" not in cells[2]
 
 
-def test_matrix_resume_gvisor_ceiling_publishes_all_five_cells():
-    # hb#230 Fork 5: the gVisor resume row DID record a probe ceiling (the wall-clock it
-    # waited out against a never-clearing Suspended condition). Per alex's doctrine flip a
-    # caveated measured number always beats an empty cell, so publish `≥<X>s***` across ALL
-    # FIVE metric cells rather than five `pending (upstream-blocked)` cells. The `***` points
-    # at the consolidated footnote (Class C — probe ceiling, resume never completed).
+def test_matrix_resume_gvisor_ceiling_per_column_units():
+    # hb#230 Fork 5 (nit fix, a4z1): the gVisor resume row DID record a probe ceiling (the
+    # wall-clock it waited out against a never-clearing Suspended condition). Per alex's
+    # doctrine flip a caveated measured number always beats an empty cell — but the ceiling is
+    # a DURATION, so it may only land in the two TTFE columns. The earlier revision filled it
+    # across all five cells, stamping `≥34.6s` into the two THROUGHPUT columns (a rate) and the
+    # EXECUTION-SUCCESS column (a %) — a units mismatch. Correct per-column render: throughput
+    # `0*** (upstream-blocked)`, TTFE `≥34.6s***`, success `0/N completed***`.
     scen = _full_gvisor_scenarios()
     scen[2] = {
         "name": "suspend_resume", "outcome": "pending",
@@ -856,9 +858,13 @@ def test_matrix_resume_gvisor_ceiling_publishes_all_five_cells():
     out = render.render_matrix(_matrix_results(scen))
     resume_line = [l for l in out.splitlines() if "Resume-from-suspend" in l and "gVisor" in l][0]
     cells = [_unlink(c.strip()) for c in resume_line.strip("|").split("|")]
-    # cells[0]=Runtime, cells[1]=Mode, cells[2..6]=the five metric cells.
-    for i in range(2, 7):
-        assert cells[i] == "≥34.6s***", f"cell {i} = {cells[i]!r}"
+    # cells[0]=Runtime, cells[1]=Mode, cells[2..6]=the five metric cells:
+    # [2]=throughput<5s, [3]=throughput<1s, [4]=TTFE p50, [5]=TTFE p95, [6]=execution success.
+    assert cells[2] == "0*** (upstream-blocked)", f"throughput<5s = {cells[2]!r}"
+    assert cells[3] == "0*** (upstream-blocked)", f"throughput<1s = {cells[3]!r}"
+    assert cells[4] == "≥34.6s***", f"TTFE p50 = {cells[4]!r}"
+    assert cells[5] == "≥34.6s***", f"TTFE p95 = {cells[5]!r}"
+    assert cells[6] == "0/1376 completed***", f"execution success = {cells[6]!r}"
 
 
 def test_matrix_resume_gvisor_no_ceiling_falls_back_to_pending():
