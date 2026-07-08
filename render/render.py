@@ -713,6 +713,30 @@ _STARSTAR_BASES = frozenset(
 )
 
 
+# hb#230 ask (a) — certification-floor prefix. A per-cluster figure produced by one of
+# these bases is a LOWER BOUND on the true sustainable rate, not the rate itself, so it
+# renders `≥y /cluster` (not a bare `y`). Two floor constructions qualify:
+#   - literal_ttfe_upper_bound+* : a TTFE UPPER bound yields a rate LOWER bound by
+#     construction ("TTFE ≤ t ⇒ rate ≥ 1/t"). Both the controller-corroborated and the
+#     acq-corroborated literal variants are floors.
+#   - acq_fulfilled+acq_p95_uncorroborated : the uncorroborated acquire-side rate — the
+#     highest rung whose acq p95 cleared the bar, controller cross-check dropped; the
+#     consolidated *** footnote already states the true rate is "at least this and
+#     likely higher". These are trust-gate-capped (upstream #940 disqualifies the higher
+#     rungs), so the ladder did NOT saturate — a `≥` is the honest read.
+# EXCLUDED (never get `≥`): the floor-ZERO bases (a `≥0` is meaningless / misleading),
+# unresolved_bounds_bar_bracketed (renders `unk.`), and true_ttfe (a graduated real
+# number, not a bound). The value>0 guard in thpt_dual_cell is belt-and-suspenders so a
+# zero can never render `≥0` even if a floor basis were mis-stamped onto it.
+_FLOOR_BASES = frozenset(
+    {
+        "literal_ttfe_upper_bound+controller_completed",
+        "literal_ttfe_upper_bound+acq_fulfilled",
+        "acq_fulfilled+acq_p95_uncorroborated",
+    }
+)
+
+
 def _bar_basis(m, bar_s):
     """hb#230 Gap B: the basis governing ONE bar of a dual cell. The per-bar stamp
     (thpt_slo_basis_5s / _1s) wins; absent it, the whole-triple thpt_slo_basis governs
@@ -1023,7 +1047,14 @@ def render_matrix(results, kata_results=None):
                     return pending_tok
                 node_half = f"{_fmt_num(m[node_key])} /node"
                 if cluster_key in m and _landed_cluster_x(m) is not None:
-                    cluster_half = f"{_fmt_num(m[cluster_key])} /cluster"
+                    # hb#230 ask (a): a per-cluster figure from a certification-FLOOR basis
+                    # is a LOWER BOUND on the true sustainable rate (trust-gate-capped, so
+                    # the ladder did not saturate) — render `≥y`, not a bare `y`, so a
+                    # reader can't mistake the certification floor for the capability.
+                    # value>0 guard: a floor-zero can never render `≥0`.
+                    floor = bar_basis in _FLOOR_BASES and m[cluster_key] > 0
+                    pfx = "≥" if floor else ""
+                    cluster_half = f"{pfx}{_fmt_num(m[cluster_key])} /cluster"
                     if m[cluster_key] < CLUSTER_THROUGHPUT_TARGET:
                         cluster_half += " ⚠️"
                 else:
@@ -1127,6 +1158,27 @@ def render_matrix(results, kata_results=None):
         "named in the bold caption above the table — the per-cluster fire is separate from the "
         "per-node fire, so the build line's `node_count` (the per-node fire's shape) does not "
         "apply to it — never a per-node × N extrapolation."
+    )
+    lines.append(
+        "- **Why the per-node rate can repeat across the `<5s` and `<1s` columns** — the two "
+        "throughput columns are SLO-gated: a per-node figure fills a column when the row's TTFE "
+        "p95 clears THAT column's bar. When p95 clears BOTH bars (p95 < 1s ⇒ p95 < 5s too), the "
+        "same per-node rate legitimately satisfies both, so it renders identically in both "
+        "columns — not a copy-paste. The two per-CLUSTER halves can still differ (or carry "
+        "different caveats) because each bar's cluster figure is credited under its own basis."
+    )
+    lines.append(
+        "- **`≥y /cluster` (certification floor)** — a per-cluster figure prefixed `≥` is a LOWER "
+        "BOUND on the true sustainable rate, not the rate itself. Two floor constructions carry "
+        "it: a literal-TTFE-upper-bound basis (a TTFE ceiling `t` yields a rate floor `≥1/t` by "
+        "construction), and the uncorroborated acquire-side basis (the highest rung whose acquire "
+        "p95 cleared the bar, with the controller cross-check dropped). Both are trust-gate-capped "
+        "— upstream #940 double-records warm-path Ready transitions, disqualifying the higher "
+        "rungs, so the ladder never saturated and a higher real rate exists but is presently "
+        "uncertifiable. The floor graduates to a bare measured rate the moment the upstream fix "
+        "(agent-sandbox#1087) lands and the ladder is re-fired. A `≥` figure below the cluster "
+        "sizing target still carries ⚠️ (the floor itself is under target); an uncorroborated "
+        "floor also carries `***` (see the caveat block below)."
     )
     lines.append(
         "- **honest `0`** — the measurement ran and could not hold the bar: the measured TTFE p95 misses "
