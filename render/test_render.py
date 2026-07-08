@@ -817,6 +817,58 @@ def test_matrix_per_bar_invalid_basis_drops_that_bars_cluster_figure():
     assert "made_up_basis" not in out
 
 
+def test_matrix_resume_gvisor_ceiling_publishes_all_five_cells():
+    # hb#230 Fork 5: the gVisor resume row DID record a probe ceiling (the wall-clock it
+    # waited out against a never-clearing Suspended condition). Per alex's doctrine flip a
+    # caveated measured number always beats an empty cell, so publish `≥<X>s***` across ALL
+    # FIVE metric cells rather than five `pending (upstream-blocked)` cells. The `***` points
+    # at the consolidated footnote (Class C — probe ceiling, resume never completed).
+    scen = _full_gvisor_scenarios()
+    scen[2] = {
+        "name": "suspend_resume", "outcome": "pending",
+        "pending_reason": "upstream-blocked",
+        "resume_probe_ceiling_ms": 34604.4, "n": 1376,
+    }
+    out = render.render_matrix(_matrix_results(scen))
+    resume_line = [l for l in out.splitlines() if "Resume-from-suspend" in l and "gVisor" in l][0]
+    cells = [_unlink(c.strip()) for c in resume_line.strip("|").split("|")]
+    # cells[0]=Runtime, cells[1]=Mode, cells[2..6]=the five metric cells.
+    for i in range(2, 7):
+        assert cells[i] == "≥34.6s***", f"cell {i} = {cells[i]!r}"
+
+
+def test_matrix_resume_gvisor_no_ceiling_falls_back_to_pending():
+    # a pending gVisor resume row with NO recorded ceiling falls through to the normal
+    # pending render — the Fork 5 override fires only when a ceiling is carried.
+    scen = _full_gvisor_scenarios()
+    scen[2] = {
+        "name": "suspend_resume", "outcome": "pending",
+        "pending_reason": "upstream-blocked", "n": 1376,
+    }
+    out = render.render_matrix(_matrix_results(scen))
+    resume_line = [l for l in out.splitlines() if "Resume-from-suspend" in l and "gVisor" in l][0]
+    assert "≥" not in resume_line
+    assert "pending (upstream-blocked)" in _unlink(resume_line)
+
+
+def test_matrix_resume_kata_na_unaffected_by_ceiling():
+    # Kata resume is N/A-by-construction (CRIU checkpoint/restore does not transfer to the VM
+    # model); the Fork 5 ceiling override is gated on rt == gvisor and must never touch it,
+    # even when a gVisor ceiling is present in the same run.
+    scen = _full_gvisor_scenarios()
+    scen[2] = {
+        "name": "suspend_resume", "outcome": "pending",
+        "pending_reason": "upstream-blocked",
+        "resume_probe_ceiling_ms": 34604.4, "n": 1376,
+    }
+    out = render.render_matrix(_matrix_results(scen))
+    kata_resume = [l for l in out.splitlines() if "Resume-from-suspend" in l and "Kata" in l][0]
+    cells = [_unlink(c.strip()) for c in kata_resume.strip("|").split("|")]
+    assert "≥" not in kata_resume
+    for i in range(2, 7):
+        assert cells[i] == render._NA, f"cell {i} = {cells[i]!r}"
+
+
 def test_matrix_literal_basis_note_with_coarse_p95_caption():
     # hb#174 sign-off (c): a literal-controller triple whose credited rungs' MIN warm-exec
     # sample count is 20 <= n < 100 renders the basis disclosure line PLUS the coarse-p95

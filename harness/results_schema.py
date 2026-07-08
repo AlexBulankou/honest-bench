@@ -211,6 +211,7 @@ SCENARIO_FIELDS = (
     "name",
     "outcome",
     "pending_reason",
+    "resume_probe_ceiling_ms",
     "badge_scope",
     "badge_construction",
     "n",
@@ -377,6 +378,19 @@ def _coerce_scenario(raw: dict) -> dict:
                 f"{PENDING_REASON_ENUM}, got {reason!r}"
             )
         out["pending_reason"] = reason
+
+    # resume_probe_ceiling_ms (hb#230 Fork 5): the wall-clock ceiling the resume probe waited
+    # out against a never-clearing Suspended condition (upstream #873 → #893). It is NOT a
+    # resume TTFE — the operation never completes — but per alex's doctrine flip (a caveated
+    # measured number beats an empty cell) render publishes it across the gVisor resume row as
+    # `≥<X>s***`. Carried TOP-LEVEL (a SCENARIO field, not sla_metrics) so it survives render's
+    # pending-cell metric suppression. Optional; a positive finite number, dropped otherwise
+    # (fail-open — a malformed value simply falls back to the pending render, not a raise).
+    ceiling = raw.get("resume_probe_ceiling_ms")
+    if isinstance(ceiling, Real) and not isinstance(ceiling, bool):
+        fc = float(ceiling)
+        if fc == fc and fc not in (float("inf"), float("-inf")) and fc > 0:
+            out["resume_probe_ceiling_ms"] = fc
 
     # badge_scope is optional and per-scenario; when present it MUST be in the closed
     # enum (fail-closed — a non-enum value is a misconfiguration, not a leak, mirroring

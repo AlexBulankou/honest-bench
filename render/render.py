@@ -490,11 +490,25 @@ def _matrix_scenarios(scenarios):
         # pending -> real the moment its outcome flips to PASS.
         if outcome == "pending":
             metrics = {}
+        # hb#230 Fork 5: the resume probe ceiling is carried TOP-LEVEL (not in sla_metrics)
+        # precisely so it survives the pending-cell metric suppression above — a pending
+        # resume row still publishes its recorded ceiling. Positive finite number only; any
+        # other shape drops to None and the row falls back to the normal pending render.
+        ceiling = s.get("resume_probe_ceiling_ms")
+        if not (
+            isinstance(ceiling, (int, float))
+            and not isinstance(ceiling, bool)
+            and ceiling == ceiling
+            and ceiling not in (float("inf"), float("-inf"))
+            and ceiling > 0
+        ):
+            ceiling = None
         out[name] = {
             "outcome": outcome,
             "n": n,
             "metrics": metrics,
             "pending_reason": reason,
+            "resume_probe_ceiling_ms": ceiling,
         }
     return out
 
@@ -878,6 +892,24 @@ def render_matrix(results, kata_results=None):
             sc = rt_scen.get(scen_name) if measured else None
             sc_pending = bool(sc) and sc.get("outcome") == "pending"
             m = sc["metrics"] if sc else {}
+
+            # hb#230 Fork 5 (resume Class-C ceiling): the gVisor resume row DID record a probe
+            # ceiling — the wall-clock it waited out against a never-clearing Suspended
+            # condition (upstream #873 → #893). Per alex's doctrine flip (a caveated measured
+            # number always beats an empty cell), publish that ceiling across ALL FIVE metric
+            # cells as `≥<X>s***` rather than five `pending (upstream-blocked)` cells. The `***`
+            # points at the consolidated footnote (Class C — probe ceiling, resume never
+            # completed). Scoped to the gVisor resume row (Kata resume is N/A-by-construction,
+            # handled above); a resume row with no recorded ceiling falls through to the normal
+            # pending path. It is NOT a resume TTFE (the operation never completes) — the `≥`
+            # and the footnote carry that; the number is the honest measured wall-clock floor.
+            resume_ceiling_ms = sc.get("resume_probe_ceiling_ms") if sc else None
+            if is_resume and rt == "gvisor" and resume_ceiling_ms is not None:
+                ceiling_tok = f"≥{resume_ceiling_ms / 1000.0:.1f}s***"
+                lines.append(
+                    "| " + " | ".join([rt_label, mode_label] + [ceiling_tok] * 5) + " |"
+                )
+                continue
 
             # A pending cell distinguishes WHY it is pending. The canonical case is the
             # gVisor resume row: its run DID land, but an upstream controller bug (the

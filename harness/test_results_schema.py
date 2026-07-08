@@ -159,6 +159,31 @@ def test_pending_reason_dropped_when_not_pending():
     _check("pending_reason" not in r["scenarios"][0], "pending_reason only on pending cells")
 
 
+def test_resume_probe_ceiling_ms_coerced():
+    # hb#230 Fork 5: a positive finite resume_probe_ceiling_ms is carried as a top-level
+    # SCENARIO field (so it survives render's pending-cell metric suppression); it is in the
+    # closed SCENARIO_FIELDS whitelist.
+    _check("resume_probe_ceiling_ms" in rs.SCENARIO_FIELDS, "field in SCENARIO_FIELDS")
+    r = rs.build_results(
+        [{"name": "g", "outcome": "pending", "pending_reason": "upstream-blocked",
+          "resume_probe_ceiling_ms": 34604.4}],
+        _prov(), GEN_AT,
+    )
+    s = r["scenarios"][0]
+    _check(s["resume_probe_ceiling_ms"] == 34604.4, "positive finite ceiling kept")
+    # fail-open: bool / non-positive / non-finite values are dropped, not raised.
+    for bad in (True, 0, -5, float("inf"), float("nan")):
+        r = rs.build_results(
+            [{"name": "g", "outcome": "pending", "pending_reason": "upstream-blocked",
+              "resume_probe_ceiling_ms": bad}],
+            _prov(), GEN_AT,
+        )
+        _check(
+            "resume_probe_ceiling_ms" not in r["scenarios"][0],
+            f"malformed ceiling {bad!r} dropped (fail-open)",
+        )
+
+
 def test_unknown_outcome_raises():
     try:
         rs.build_results([{"name": "x", "outcome": "FLAKY"}], _prov(), GEN_AT)
