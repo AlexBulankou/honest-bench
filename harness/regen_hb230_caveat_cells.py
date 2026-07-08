@@ -75,7 +75,11 @@ GVISOR_COLD_LEG_RECORDS = [
 # but the predicate requires a positive int to fire and stamps it as the "@X nodes"
 # caption).
 GVISOR_COLD_NODE_COUNT_RECORD = "sandbox/records/permode-legA-gvisor-warm-2026-07-06.json"
-KATA_WARM_RECORD = "sandbox/records/permode-legC-kata-warm-2026-07-06.json"
+KATA_WARM_RECORD = "sandbox/records/permode-ladder-kata-warm-2026-07-08.json"
+# The 07-08 ladder record's params.cluster_nodes carries the producer's stale
+# prior-shape default (6); the ladder actually ran on the 2-node Kata pool.
+# Carry the fire-time node_count explicitly rather than trusting the stale stamp.
+KATA_WARM_NODE_COUNT = 2
 
 GVISOR_LATEST = "sandbox/results/latest.json"
 KATA_LATEST = "sandbox-kata/results/latest.json"
@@ -178,11 +182,11 @@ def convert_kata_warm(results: dict) -> None:
     one_s = acq["thpt_under_1s_per_cluster"]
     assert five_s > 0 and one_s > 0, f"Kata warm acq non-positive: {acq}"
     # The acq derivation returns per-CLUSTER rate keys only; render gates the
-    # per-cluster figure behind thpt_cluster_node_count, so carry the record's
-    # node_count explicitly or the 0.103/cluster value falls back to
+    # per-cluster figure behind thpt_cluster_node_count, so carry the fire-time
+    # node_count explicitly or the per-cluster value falls back to
     # ``pending (cluster-fire)`` (same node_count carry the gVisor cold
     # floor-zero derivation stamps for its per-cluster bars).
-    node_count = int(record["params"]["cluster_nodes"])
+    node_count = KATA_WARM_NODE_COUNT
     sc = _scenario(results, "warmpool_cold_start")
     sc["sla_metrics"] = _apply(
         sc["sla_metrics"],

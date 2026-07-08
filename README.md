@@ -34,7 +34,7 @@ blocker — diagnosis plus file-ready patches and comments — is hand-maintaine
 
 ## Agent Sandbox — Core Metrics
 
-**Throughput is dual — `per-node · per-cluster`.** Per-cluster figures are measured per runtime at DIFFERENT node counts — gVisor at 10 nodes; Kata + microVM at 6 nodes — so they are NOT comparable across runtimes here (different X); see the legend below.
+**Throughput is dual — `per-node · per-cluster`.** Per-cluster figures are measured per runtime at DIFFERENT node counts — gVisor at 10 nodes; Kata + microVM at 2 nodes — so they are NOT comparable across runtimes here (different X); see the legend below.
 *gVisor per-cluster rates: derived from the literal exec-probe warm p95 — an UPPER bound on TTFE (includes exec setup overhead), so compliance at the bar is conservative; fills the <5s cell ONLY (the <1s cell stays honest-empty under this basis) — throughput is the acquisition rate: fulfilled (claim->bound)/s, steady-state, pending claims excluded; trust-gated per rung on agreement with the independent controller completion rate (divergent rungs are ineligible).*
 *gVisor per-cluster rates: the UNCORROBORATED acquire-side rate: fulfilled (claim->bound)/s at the highest rung whose acquisition p95 cleared the bar, with the independent controller-completion cross-check DROPPED — single-source, so it can read HIGHER than a cross-corroborated cell; controller corroboration is unavailable pending the upstream metric fix. The figure is the highest OFFERED rung, NOT a saturation ceiling — the ladder was not driven to saturation, so the true sustainable rate is at least this and likely higher.*
 *gVisor per-cluster rates: a measured ZERO, not an absence: the controller cold-start floor exceeds BOTH bars at every offered rate (rate-independent), so no compliant operating point exists — the zero is the sandbox cold-start floor, not an acquire-path miss (the acquire-side latency is clean sub-second at every rung). Corroborated by a controller-MEASURED (trusted) rung whose cold p50 is also over both bars, so it is never asserted from the controller-untrusted floor rung alone.*
@@ -46,7 +46,7 @@ blocker — diagnosis plus file-ready patches and comments — is hand-maintaine
 | gVisor | Warm-pool hit (Base image) | 38.026 /node · ≥1.204 /cluster ⚠️ | 38.026 /node · ≥1.204 /cluster ⚠️*** | 0.7556s (count=30) | 0.9222s (count=30) | 100% |
 | gVisor | Unique-image cold (RL reality) | 0 /node · 0 /cluster ⚠️*** | 0 /node · 0 /cluster ⚠️*** | 3.4518s (count=30) | 3.7599s (count=30) | 100% |
 | gVisor | Resume-from-suspend | 0*** (upstream-blocked) | 0*** (upstream-blocked) | ≥34.6s*** | ≥34.6s*** | 0/1 completed*** |
-| Kata + microVM | Warm-pool hit (Base image) | 18.624 /node · ≥0.103 /cluster ⚠️*** | 18.624 /node · ≥0.103 /cluster ⚠️*** | 0.733s (count=30) | 0.9628s (count=30) | 100% |
+| Kata + microVM | Warm-pool hit (Base image) | 18.624 /node · ≥0.133 /cluster ⚠️*** | 18.624 /node · ≥0.133 /cluster ⚠️*** | 0.733s (count=30) | 0.9628s (count=30) | 100% |
 | Kata + microVM | Unique-image cold (RL reality) | unk.*** | 0 /node · 0 /cluster | 2.8537s (count=30) | 3.1263s (count=30) | 100% |
 | Kata + microVM | Resume-from-suspend | [N/A](WORK_IN_PROGRESS.md#na-by-construction) | [N/A](WORK_IN_PROGRESS.md#na-by-construction) | [N/A](WORK_IN_PROGRESS.md#na-by-construction) | [N/A](WORK_IN_PROGRESS.md#na-by-construction) | [N/A](WORK_IN_PROGRESS.md#na-by-construction) |
 

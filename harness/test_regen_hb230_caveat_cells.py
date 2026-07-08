@@ -113,7 +113,9 @@ def test_kata_warm_acq_both_bars_with_node_count():
     out = _cells()
     record = regen._load(regen.KATA_WARM_RECORD)
     acq = _derive_acq_p95_uncorroborated(regen._pareto(record))
-    node_count = int(record["params"]["cluster_nodes"])
+    # Not record["params"]["cluster_nodes"] — the 07-08 record carries the
+    # producer's stale prior-shape default (6); the fire ran on 2 nodes.
+    node_count = regen.KATA_WARM_NODE_COUNT
     sla = _sc(out, regen.KATA_LATEST, "warmpool_cold_start")["sla_metrics"]
     _check(sla["thpt_under_5s_per_cluster"] == acq["thpt_under_5s_per_cluster"],
            "Kata warm 5s per-cluster must match derivation")
