@@ -97,12 +97,23 @@ SLO_BASIS_LITERAL_FLOOR_ZERO = "literal_ttfe_upper_bound+floor_zero_margin"
 # render marks it with the Class A *** caveat (upstream #940 -> fix #1087). A caveated
 # measured number beats an honest-empty cell — publish best measured, not withheld.
 SLO_BASIS_ACQ_P95_UNCORROBORATED = "acq_fulfilled+acq_p95_uncorroborated"
+# hb#230 Fork 4 (alex doctrine flip, 2026-07-08): the COLD-START honest-ZERO basis.
+# The cold-start controller floor exceeds BOTH bars at every offered rate, so the
+# compliant rate is an honest 0 at both bars (rate-independent) — NOT a Class-B
+# upper-bound-pending. Produced only by _derive_cold_floor_zero (see its docstring for
+# the full two-signal predicate); always paired with thpt_slo_floor_zero=1. Distinct
+# from SLO_BASIS_LITERAL_FLOOR_ZERO (the warm 5s-only floor-zero over exec-probe
+# samples) — this one is over the controller cold-start distribution and fills BOTH
+# bars, with a trusted-rung corroboration requirement. render marks it with the Fork-4
+# caveat (cold-start floor ~p50 controller-measured; acq clean; upstream #751 -> #761).
+SLO_BASIS_COLD_FLOOR_ZERO = "controller_cold_floor_zero_corroborated"
 SLO_BASIS_ENUM = (
     SLO_BASIS_TRUE_TTFE,
     SLO_BASIS_LITERAL_CONTROLLER,
     SLO_BASIS_LITERAL_ACQ,
     SLO_BASIS_LITERAL_FLOOR_ZERO,
     SLO_BASIS_ACQ_P95_UNCORROBORATED,
+    SLO_BASIS_COLD_FLOOR_ZERO,
 )
 
 # hb#174 sign-off condition (c): a literal rung is SLO-eligible only when its warm
@@ -419,6 +430,125 @@ def _derive_acq_p95_uncorroborated(pareto_points) -> dict:
         if best is not None:
             out[cluster_key] = round(best, 3)
     return out
+
+
+def _cold_p50_ms(pt) -> Optional[float]:
+    """The controller cold-start p50 (ms) from a flat per-rung cold record, or None.
+
+    Reads `controller_startup_cold_ms.p50`. Absent block / non-dict / non-finite p50
+    => None (the rung carries no usable cold-floor signal).
+    """
+    if not isinstance(pt, dict):
+        return None
+    csc = pt.get("controller_startup_cold_ms")
+    if not isinstance(csc, dict):
+        return None
+    return _finite_number(csc.get("p50"))
+
+
+def _derive_cold_floor_zero(records, node_count) -> dict:
+    """hb#230 Fork 4: the COLD-START honest-ZERO predicate — both bars, corroborated.
+
+    The cold-start case (per Fork 4, a4s1-ruled 2026-07-08): the controller cold-start
+    floor is so far over the bar that NO offered rate could bring a compliant fraction
+    under either bar — the compliant rate is an honest 0 at BOTH bars, rate-independent.
+    This is the honest-ZERO polarity (a strong NEGATIVE claim), so — like the warm
+    floor-zero — it must clear a closed, pre-declared predicate, never a post-hoc call.
+
+    Input is a LIST of FLAT per-rung cold records (one dict per offered rate; the
+    permode-legB cold shape), NOT the pareto_points-bearing flat that
+    slo_sla_metrics_from_stepup consumes. Each rung carries `rate_per_s`,
+    `controller_measured` (bool), and `controller_startup_cold_ms.{p50,...}`.
+
+    TWO-SIGNAL predicate — BOTH required (a4s1 ruling, verbatim intent):
+
+      (a) FLOOR RUNG over BOTH margined bars: the rung with the minimum finite
+          `rate_per_s` > 0 has a finite `controller_startup_cold_ms.p50` > 0 that
+          exceeds BOTH THRESHOLD_5S_MS * HONEST_ZERO_BAR_MARGIN AND
+          THRESHOLD_1S_MS * HONEST_ZERO_BAR_MARGIN. The floor rung establishes "no
+          lower rate could pass". But the floor rung MAY be controller-untrusted
+          (`controller_measured` False) — on its own it is a latency proxy, not proof,
+          so signal (a) alone must NOT assert an honest 0.
+
+      (b) TRUSTED CORROBORATOR: >= 1 rung in the SAME set with `controller_measured`
+          is True whose cold p50 is ALSO finite > 0 and over BOTH margined bars. A
+          trusted rung confirms the cold-start floor is real, not an artifact of the
+          untrusted floor rung's measurement. If NO trusted rung clears both bars, the
+          cell stays UNKNOWN (empty dict) — an untrusted floor alone never fabricates a
+          zero (the negative-polarity fabricated-0 trap).
+
+    The margin (HONEST_ZERO_BAR_MARGIN, 1.5x) is the SAME shared conservatism the warm
+    floor-zero uses: a cold p50 counts as over-bar only when it clears the margined bar,
+    so no plausible overhead/noise artifact can trip the zero.
+
+    On fire: honest 0 at BOTH bars —
+      {"thpt_under_5s_per_cluster": 0.0, "thpt_under_5s_per_node": 0.0,
+       "thpt_under_1s_per_cluster": 0.0, "thpt_under_1s_per_node": 0.0,
+       "thpt_slo_floor_zero": 1, "thpt_slo_basis": SLO_BASIS_COLD_FLOOR_ZERO,
+       "thpt_cluster_node_count": <n>}.
+    Both per-node legs ride along because exactly-0 makes the two denominators
+    interchangeable (the renderer's dual cell keys on the per-node leg), and BOTH bars
+    are zeroed because a cold floor over the 5s bar is a fortiori over the 1s bar. The
+    floor_zero stamp + basis are stamped here (this is a distinct entry point, not
+    routed through slo_sla_metrics_from_stepup), so the caller merges the dict as-is.
+    The controller-untrusted-floor / trusted-corroborator disclosure lives in the
+    render *** footnote (the cell shows 0 /node · 0 /cluster ***). Empty dict when
+    either signal fails (the cell stays pending — never a fabricated zero).
+    """
+    if not isinstance(records, list):
+        return {}
+    if isinstance(node_count, bool) or not isinstance(node_count, Real):
+        return {}
+    nc = float(node_count)
+    if nc != nc or nc in (float("inf"), float("-inf")):  # NaN / inf
+        return {}
+    if nc != int(nc) or int(nc) < 1:
+        return {}
+    bar5 = THRESHOLD_5S_MS * HONEST_ZERO_BAR_MARGIN
+    bar1 = THRESHOLD_1S_MS * HONEST_ZERO_BAR_MARGIN
+    # Signal (a): locate the floor rung (min positive rate_per_s) and gate its cold p50.
+    floor_pt: Optional[dict] = None
+    floor_rate: Optional[float] = None
+    for pt in records:
+        if not isinstance(pt, dict):
+            continue
+        rate = _finite_number(pt.get("rate_per_s"))
+        if rate is None or rate <= 0:
+            continue
+        if floor_rate is None or rate < floor_rate:
+            floor_rate = rate
+            floor_pt = pt
+    if floor_pt is None:
+        return {}
+    floor_p50 = _cold_p50_ms(floor_pt)
+    if floor_p50 is None or floor_p50 <= 0:
+        return {}
+    if not (floor_p50 > bar5 and floor_p50 > bar1):
+        return {}
+    # Signal (b): >= 1 controller_measured=True rung whose cold p50 also clears both bars.
+    corroborated = False
+    for pt in records:
+        if not isinstance(pt, dict):
+            continue
+        if pt.get("controller_measured") is not True:
+            continue
+        p50 = _cold_p50_ms(pt)
+        if p50 is None or p50 <= 0:
+            continue
+        if p50 > bar5 and p50 > bar1:
+            corroborated = True
+            break
+    if not corroborated:
+        return {}
+    return {
+        "thpt_under_5s_per_cluster": 0.0,
+        "thpt_under_5s_per_node": 0.0,
+        "thpt_under_1s_per_cluster": 0.0,
+        "thpt_under_1s_per_node": 0.0,
+        "thpt_slo_floor_zero": 1,
+        "thpt_slo_basis": SLO_BASIS_COLD_FLOOR_ZERO,
+        "thpt_cluster_node_count": int(node_count),
+    }
 
 
 def slo_sla_metrics_from_stepup(flat) -> dict:

@@ -628,6 +628,22 @@ _SLO_BASIS_NOTES = {
         "ceiling — the ladder was not driven to saturation, so the true sustainable rate "
         "is at least this and likely higher"
     ),
+    # hb#230 Fork 4 (alex doctrine flip, 2026-07-08): the cold-start honest-ZERO note.
+    # A measured ZERO, not an absence — the controller cold-start floor exceeds BOTH
+    # bars at every offered rate (rate-independent), so no operating point complies. The
+    # floor rung may be controller-untrusted, so the predicate additionally requires a
+    # controller-MEASURED (trusted) rung whose cold p50 is also over both bars — the
+    # zero is corroborated, never asserted from an untrusted floor alone. The specific
+    # cold-floor p50 + the clean acquire-side rate + the upstream link (#751 -> #761)
+    # live in the consolidated *** footnote block, URL-free here (matching the others).
+    "controller_cold_floor_zero_corroborated": (
+        "a measured ZERO, not an absence: the controller cold-start floor exceeds BOTH "
+        "bars at every offered rate (rate-independent), so no compliant operating point "
+        "exists — the zero is the sandbox cold-start floor, not an acquire-path miss "
+        "(the acquire-side latency is clean sub-second at every rung). Corroborated by a "
+        "controller-MEASURED (trusted) rung whose cold p50 is also over both bars, so it "
+        "is never asserted from the controller-untrusted floor rung alone"
+    ),
 }
 
 

@@ -133,6 +133,12 @@ SLO_BASIS_ENUM = (
     # *** caveat at render. Rides the enum-gated thpt_slo_basis carve-out (the '+'
     # is fine — the value is never key-regex-validated, only enum-membership-checked).
     "acq_fulfilled+acq_p95_uncorroborated",
+    # hb#230 Fork 4 (alex doctrine flip, 2026-07-08): the COLD-START honest-ZERO basis
+    # — the controller cold-start floor exceeds BOTH bars at every rate, so 0 is honest
+    # at both. Paired with thpt_slo_floor_zero=1 + 0.0 legs (pairing enforced below).
+    # Distinct from the warm floor_zero_margin basis: over the controller cold-start
+    # distribution, fills BOTH bars, trusted-rung-corroborated.
+    "controller_cold_floor_zero_corroborated",
 )
 
 # #3954 sibling warm-vs-cold — the emitter's INDEPENDENT copies of render's WARM_VS_COLD_FIELDS
@@ -294,6 +300,20 @@ def _coerce_sla_metrics(raw) -> dict:
             "sla_metrics: thpt_slo_floor_zero=1 without BOTH 5s legs at 0.0 "
             "(thpt_under_5s_per_cluster AND thpt_under_5s_per_node; "
             "inconsistent floor-zero pairing)"
+        )
+    # hb#230 Fork 4 — the COLD-START floor-zero fills BOTH bars (a cold floor over the
+    # 5s bar is a fortiori over the 1s bar). When the 1s per-cluster leg PARTICIPATES
+    # (is zeroed under the stamp), its per-node partner must be zeroed too — the same
+    # swallowed-figure guard as the 5s pair, applied conditionally so the warm 5s-only
+    # floor-zero (which omits the 1s legs entirely) stays inert. A stamp with a 0.0 1s
+    # per-cluster leg but a non-zero/absent 1s per-node leg is the dropped-half shape.
+    if has_stamp and out.get("thpt_under_1s_per_cluster") == 0.0 and (
+        out.get("thpt_under_1s_per_node") != 0.0
+    ):
+        raise ValueError(
+            "sla_metrics: thpt_slo_floor_zero=1 with 1s per-cluster leg at 0.0 but "
+            "1s per-node leg not at 0.0 (thpt_under_1s_per_node; inconsistent "
+            "cold-floor-zero 1s pairing)"
         )
     return out
 

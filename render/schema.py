@@ -345,6 +345,13 @@ SLO_BASIS_VALUES = frozenset(
         # best acq_fulfilled_per_s among rungs whose acq_p95_s clears the bar, with the
         # controller cross-check DROPPED (single-source). Renders the Class A *** caveat.
         "acq_fulfilled+acq_p95_uncorroborated",
+        # hb#230 Fork 4 (alex doctrine flip, 2026-07-08): the COLD-START honest-ZERO
+        # basis — the controller cold-start floor exceeds BOTH bars at every rate, so 0
+        # is honest at both. Rides with thpt_slo_floor_zero=1 + 0.0 legs on BOTH bars.
+        # Distinct from the warm floor_zero_margin basis (over exec-probe samples, 5s
+        # only); this is over the controller cold-start distribution, both bars,
+        # trusted-rung-corroborated. Renders the Fork-4 cold-floor caveat.
+        "controller_cold_floor_zero_corroborated",
     )
 )
 
