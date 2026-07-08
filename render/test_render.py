@@ -851,6 +851,23 @@ def test_matrix_resume_gvisor_no_ceiling_falls_back_to_pending():
     assert "pending (upstream-blocked)" in _unlink(resume_line)
 
 
+def test_matrix_resume_gvisor_graduated_row_ignores_vestigial_ceiling():
+    # hb#230 finding #1 (a#4420 transition-guard): the Fork-5 ceiling override is gated on
+    # sc_pending. If the gVisor resume row ever GRADUATES (outcome=="PASS") but still carries a
+    # vestigial resume_probe_ceiling_ms, an ungated override would MASK the five real graduated
+    # metrics behind a stale `≥Xs***` — a silent trust downgrade. A graduated row must fall
+    # through to the normal per-cell metric rendering, ceiling ignored.
+    scen = _full_gvisor_scenarios()  # scen[2] suspend_resume is PASS n=1376 with real metrics
+    scen[2]["resume_probe_ceiling_ms"] = 34604.4  # vestigial, must NOT mask the graduated cells
+    out = render.render_matrix(_matrix_results(scen))
+    resume_line = [l for l in out.splitlines() if "Resume-from-suspend" in l and "gVisor" in l][0]
+    assert "≥" not in resume_line, f"graduated row masked by vestigial ceiling: {resume_line!r}"
+    unl = _unlink(resume_line)
+    # the real graduated metrics render, exactly as the no-ceiling PASS fixture does
+    assert "3.5s (count=1376)" in unl and "5s (count=1376)" in unl
+    assert "92.8% (1277/1376) ⚠️" in unl
+
+
 def test_matrix_resume_kata_na_unaffected_by_ceiling():
     # Kata resume is N/A-by-construction (CRIU checkpoint/restore does not transfer to the VM
     # model); the Fork 5 ceiling override is gated on rt == gvisor and must never touch it,

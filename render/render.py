@@ -587,7 +587,15 @@ def _resolve_cluster_x(sources):
     each runtime's scenarios). Returns {runtime: X}; empty ⇒ no cluster figure has landed yet
     (caption says cluster halves pend). Per-runtime because two runtimes' cluster fires may land
     at DIFFERENT X — a single first-match X would silently caption one runtime's figures with the
-    other runtime's node count (the mixed-X ambiguity)."""
+    other runtime's node count (the mixed-X ambiguity).
+
+    hb#230 finding #2 (within-runtime mixed-X): the per-runtime resolution is still FIRST-LANDED —
+    if a single runtime's scenarios landed cluster figures at two different node counts (e.g. gVisor
+    warm at 10 nodes, cold at 9), the caption reports whichever scenario's X iterated first, not a
+    per-scenario X. This is IMMATERIAL today because the only within-runtime divergence is the gVisor
+    cold floor-zero (both per-cluster bars are a measured 0.0 — a caption node count cannot mislead a
+    reader about a 0). If a within-runtime row ever lands a NON-zero cluster figure at an X different
+    from the captioned one, this resolver must become per-scenario; until then first-landed is fine."""
     xs = {}
     for rt, rt_scen in sources.items():
         if not rt_scen:
@@ -903,8 +911,14 @@ def render_matrix(results, kata_results=None):
             # handled above); a resume row with no recorded ceiling falls through to the normal
             # pending path. It is NOT a resume TTFE (the operation never completes) — the `≥`
             # and the footnote carry that; the number is the honest measured wall-clock floor.
+            # a#4420 transition-guard: gate the ceiling override on `sc_pending`. The override
+            # is an honest-empty→caveated-measured UPGRADE that only holds while the row is
+            # pending; if the resume row ever GRADUATES (outcome=="pass") but still carries a
+            # vestigial `resume_probe_ceiling_ms`, an ungated override would MASK the five real
+            # graduated metrics behind a stale `≥Xs***` ceiling — a silent trust downgrade. A
+            # graduated row must fall through to normal per-cell metric rendering.
             resume_ceiling_ms = sc.get("resume_probe_ceiling_ms") if sc else None
-            if is_resume and rt == "gvisor" and resume_ceiling_ms is not None:
+            if is_resume and rt == "gvisor" and resume_ceiling_ms is not None and sc_pending:
                 ceiling_tok = f"≥{resume_ceiling_ms / 1000.0:.1f}s***"
                 lines.append(
                     "| " + " | ".join([rt_label, mode_label] + [ceiling_tok] * 5) + " |"
