@@ -739,6 +739,80 @@ def _stepup_saturation_point_ok(v):
     return any_rate
 
 
+# The literal-TTFE UPPER-BOUND block (a#4560). The symmetric partner of controller_startup:
+# literal-TTFE samples are exec-probe round-trips (claim → Ready → first exec instruction), so
+# each carries exec websocket-setup overhead ON TOP of true TTFE — the percentiles are an UPPER
+# BOUND on true TTFE. `upper_bound: true` is REQUIRED and load-bearing — render keys the fixed
+# upper-bound caveat boilerplate off it, so the public page can never present this probe as a
+# true-TTFE measurement. Per point: offered_rate_per_s + literal_p95_ms REQUIRED (x-axis + proxy
+# honesty spine); the p50/p99 percentiles, over-5s sample counts, and fulfillment rate OPTIONAL
+# (partial scrape → partial point honestly). A malformed point drops the whole block.
+def _stepup_literal_ok(v):
+    if not isinstance(v, dict):
+        return False
+    if v.get("upper_bound") is not True:
+        return False
+    pts = v.get("pareto_points")
+    if not isinstance(pts, list) or not pts:
+        return False
+    for p in pts:
+        if not isinstance(p, dict):
+            return False
+        if not _stepup_rate_ok(p.get("offered_rate_per_s")):
+            return False
+        p95 = p.get("literal_p95_ms")
+        if not (isinstance(p95, (int, float)) and not isinstance(p95, bool) and p95 >= 0):
+            return False
+        for opt in ("literal_p50_ms", "literal_p99_ms", "n_over_bar_5s", "n_sampled", "acq_fulfilled_per_s"):
+            if opt in p:
+                ov = p[opt]
+                if not (isinstance(ov, (int, float)) and not isinstance(ov, bool) and ov >= 0):
+                    return False
+    if "verdict" in v and v["verdict"] not in STEPUP_VERDICTS:
+        return False
+    return True
+
+
+# The claim-ACQUISITION-latency block (a#4560). The DISTINCT third axis: how long claim
+# acquisition (submit → claim bound) takes, measured directly (not a TTFE proxy). Its compliance
+# semantics are SEPARATE from TTFE by construction — a sweep can be acquisition-compliant (acq p95
+# under the north-star bar, no knee) AND TTFE-non-compliant (end-to-end readiness collapsed)
+# simultaneously; that split IS the finding, so render must never average the two into one verdict.
+# Per point: offered_rate_per_s + acq_p95_ms REQUIRED; the p50/p99 percentiles, per-point
+# under-bar flag, and fulfillment rate OPTIONAL. Top-level `compliant` / `no_knee_in_range` are
+# OPTIONAL booleans (the acq-axis verdict, kept OFF the TTFE verdict); `north_star_p95_ms` OPTIONAL
+# non-neg bar. A malformed point drops the whole block.
+def _stepup_acquisition_ok(v):
+    if not isinstance(v, dict):
+        return False
+    for flag in ("compliant", "no_knee_in_range"):
+        if flag in v and not isinstance(v[flag], bool):
+            return False
+    if "north_star_p95_ms" in v:
+        ns = v["north_star_p95_ms"]
+        if not (isinstance(ns, (int, float)) and not isinstance(ns, bool) and ns >= 0):
+            return False
+    pts = v.get("pareto_points")
+    if not isinstance(pts, list) or not pts:
+        return False
+    for p in pts:
+        if not isinstance(p, dict):
+            return False
+        if not _stepup_rate_ok(p.get("offered_rate_per_s")):
+            return False
+        p95 = p.get("acq_p95_ms")
+        if not (isinstance(p95, (int, float)) and not isinstance(p95, bool) and p95 >= 0):
+            return False
+        if "p95_under_500ms" in p and not isinstance(p["p95_under_500ms"], bool):
+            return False
+        for opt in ("acq_p50_ms", "acq_p99_ms", "acq_fulfilled_per_s"):
+            if opt in p:
+                ov = p[opt]
+                if not (isinstance(ov, (int, float)) and not isinstance(ov, bool) and ov >= 0):
+                    return False
+    return True
+
+
 STEPUP_PARETO_FIELDS = {
     # The true-TTFE Pareto table. OMITTED (not emitted as []) when no step measured a true
     # TTFE warm p95 — the #3975 gap — in which case the controller_startup proxy below carries
@@ -750,6 +824,10 @@ STEPUP_PARETO_FIELDS = {
     "saturation_point": _stepup_saturation_point_ok,
     # The controller-startup LOWER-BOUND proxy block (#3975) — see _stepup_controller_ok.
     "controller_startup": _stepup_controller_ok,
+    # The literal-TTFE UPPER-BOUND block (a#4560) — symmetric partner of controller_startup.
+    "literal_ttfe": _stepup_literal_ok,
+    # The claim-ACQUISITION axis (a#4560) — the DISTINCT compliant axis, verdict kept off TTFE.
+    "acquisition": _stepup_acquisition_ok,
     # The three characteristic rates (all optional — absent when the curve never crossed that
     # band). north_star_breach_rate (key name locked for schema-contract stability) = first
     # rate with p95 >= 500ms, i.e. the first breach of the 0.5s stretch bar; saturation_rate =

@@ -3285,7 +3285,7 @@ def _clean_stepup(results):
                     clean[key] = su[key]
             except (TypeError, ValueError):
                 pass
-    if not any(k in clean for k in ("saturation_point", "pareto_points", "controller_startup")):
+    if not any(k in clean for k in ("saturation_point", "pareto_points", "controller_startup", "literal_ttfe", "acquisition")):
         return None
     return clean
 
@@ -3382,6 +3382,81 @@ def render_stepup(results):
             lines.append("| " + " | ".join(cells) + " |")
         lines.append("")
 
+    # Claim-ACQUISITION axis (a#4560) — the DISTINCT compliant axis, rendered SEPARATELY from
+    # TTFE so the page never averages the two into one verdict: a bracket can be acq-compliant
+    # AND TTFE-non-compliant at once, and that split is the finding.
+    acq = su.get("acquisition")
+    if acq:
+        ns = acq.get("north_star_p95_ms")
+        bar = f" (north-star p95 < {_fmt_secs(ns)})" if isinstance(ns, (int, float)) and not isinstance(ns, bool) else ""
+        if acq.get("compliant") and acq.get("no_knee_in_range"):
+            lines.append(
+                f"**Claim acquisition stays compliant across the swept bracket{bar} — no knee.** "
+                "Acquisition (submit → claim bound) is measured directly, not via a TTFE proxy; "
+                "its compliance is a SEPARATE axis from the end-to-end readiness bounds below.")
+        else:
+            lines.append(
+                f"Claim-acquisition latency (submit → claim bound){bar} — measured directly, a "
+                "SEPARATE axis from the end-to-end readiness bounds below.")
+        lines.append("")
+        header = ["Offered rate (/s)", "Acq p50", "Acq p95", "Acq p99", "p95 < bar", "Fulfilled /s"]
+        lines.append("| " + " | ".join(header) + " |")
+        lines.append("|" + "|".join(["---"] * len(header)) + "|")
+        for p in sorted(acq["pareto_points"], key=lambda q: q["offered_rate_per_s"]):
+            under = p.get("p95_under_500ms")
+            under_cell = "✅" if under is True else ("🛑" if under is False else "—")
+            cells = [
+                _fmt_num(p["offered_rate_per_s"]),
+                _fmt_secs(p["acq_p50_ms"]) if "acq_p50_ms" in p else "—",
+                _fmt_secs(p["acq_p95_ms"]),
+                _fmt_secs(p["acq_p99_ms"]) if "acq_p99_ms" in p else "—",
+                under_cell,
+                _fmt_num(p["acq_fulfilled_per_s"]) if "acq_fulfilled_per_s" in p else "—",
+            ]
+            lines.append("| " + " | ".join(cells) + " |")
+        lines.append("")
+
+    # End-to-end readiness (TTFE) collapse — pinned between two DISTINCT named bounds (a#4560),
+    # never rendered as a single range: the literal-TTFE UPPER bound (includes exec-setup) and
+    # the controller-startup LOWER bound (excludes it). The gap between them is exec-readiness
+    # queueing (pod-startup / exec-readiness), which readers want to see.
+    lt = su.get("literal_ttfe")
+    if lt or su.get("controller_startup"):
+        lines.append(
+            "**End-to-end readiness (TTFE) has already collapsed across this bracket** — the "
+            "binding constraint is warm controller-startup queueing, not claim acquisition. The "
+            "collapse is pinned between two distinct measured bounds:")
+        lines.append("")
+
+    # Literal-TTFE UPPER bound — explicit caveat keyed off upper_bound (load-bearing: the schema
+    # requires upper_bound=true, so this caveat can never be dropped while the block renders).
+    if lt:
+        lines.append(
+            "_Literal-TTFE upper bound: exec-probe round-trip (claim → Ready → first exec "
+            "instruction), which INCLUDES exec websocket-setup overhead — it OVER-reports true "
+            "TTFE, so treat it as a ceiling, not a TTFE measurement._")
+        lines.append("")
+        if "verdict" in lt:
+            lines.append(f"Upper-bound curve verdict: {_STEPUP_VERDICT_LABELS[lt['verdict']]}.")
+            lines.append("")
+        header = ["Offered rate (/s)", "Literal-TTFE p50", "Literal-TTFE p95", "Literal-TTFE p99", "Over-5s", "Fulfilled /s"]
+        lines.append("| " + " | ".join(header) + " |")
+        lines.append("|" + "|".join(["---"] * len(header)) + "|")
+        for p in sorted(lt["pareto_points"], key=lambda q: q["offered_rate_per_s"]):
+            over_cell = "—"
+            if "n_over_bar_5s" in p and p.get("n_sampled"):
+                over_cell = f"{_fmt_num(p['n_over_bar_5s'])}/{_fmt_num(p['n_sampled'])}"
+            cells = [
+                _fmt_num(p["offered_rate_per_s"]),
+                _fmt_secs(p["literal_p50_ms"]) if "literal_p50_ms" in p else "—",
+                _fmt_secs(p["literal_p95_ms"]),
+                _fmt_secs(p["literal_p99_ms"]) if "literal_p99_ms" in p else "—",
+                over_cell,
+                _fmt_num(p["acq_fulfilled_per_s"]) if "acq_fulfilled_per_s" in p else "—",
+            ]
+            lines.append("| " + " | ".join(cells) + " |")
+        lines.append("")
+
     # Controller-startup LOWER-BOUND proxy (#3975) — separate table, explicit caveat keyed
     # off lower_bound (load-bearing: the schema requires lower_bound=true, so this caveat can
     # never be dropped while the proxy renders).
@@ -3407,6 +3482,19 @@ def render_stepup(results):
                 _fmt_num(p["controller_ready_per_s"]) if "controller_ready_per_s" in p else "—",
             ]
             lines.append("| " + " | ".join(cells) + " |")
+        lines.append("")
+
+    # Knee-below-ceiling statement (a#4560) — tie the two axes together. The published ceiling
+    # is the TTFE-compliant rate (referenced BY POINTER, never a stale literal), and the TTFE
+    # 1s/5s crossing sits BELOW the lowest swept rung: these rungs are acquisition-compliant but
+    # TTFE-non-compliant, so they never replace the published Warm-Pool Acquisition ceiling.
+    if lt and cs:
+        lines.append(
+            "_The gap between the upper (literal-TTFE) and lower (controller-startup) bounds is "
+            "exec-readiness queueing (pod-startup / exec-readiness). Both bounds are already in "
+            "collapse at the bottom of this bracket, so the TTFE 1s/5s crossing sits BELOW the "
+            "lowest swept rung — the published Warm-Pool Acquisition ceiling above remains the "
+            "TTFE-compliant rate, not these acquisition-compliant rungs._")
         lines.append("")
 
     # Sweep-parameter subline (Little's-law inputs + date) — public-safe scalars.
