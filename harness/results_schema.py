@@ -249,17 +249,26 @@ def _coerce_sla_metrics(raw) -> dict:
     enum-gated fail-closed — present-but-non-enum RAISES (a real bug, matching the
     module's closed-value-set posture), so the numeric-only guard is never weakened
     to "any string on this key". Free text still cannot ride sla_metrics.
+
+    hb#230 Gap B (per-bar basis): the two OPTIONAL keys `thpt_slo_basis_5s` and
+    `thpt_slo_basis_1s` carry the SAME closed enum, per-bar, so a cell whose two bars
+    were credited under DIFFERENT bases (e.g. gVisor warm: 5s corroborated-literal, 1s
+    uncorroborated-acq Class-A ***) can stamp each bar independently. Same fail-closed
+    enum gate. A record MUST NOT mix conventions — carrying BOTH the single
+    `thpt_slo_basis` AND either per-bar field RAISES (mixed-basis REFUSE, below), so a
+    reader is never left guessing which stamp is authoritative for a given bar.
     """
+    _BASIS_KEYS = ("thpt_slo_basis", "thpt_slo_basis_5s", "thpt_slo_basis_1s")
     out: dict = {}
     if not isinstance(raw, dict):
         return out
     for k, v in raw.items():
         if not isinstance(k, str) or not _METRIC_KEY_RE.match(k):
             continue
-        if k == "thpt_slo_basis":
+        if k in _BASIS_KEYS:
             if v not in SLO_BASIS_ENUM:
                 raise ValueError(
-                    f"sla_metrics.thpt_slo_basis {v!r} not in {SLO_BASIS_ENUM}"
+                    f"sla_metrics.{k} {v!r} not in {SLO_BASIS_ENUM}"
                 )
             out[k] = v
             continue
@@ -270,6 +279,22 @@ def _coerce_sla_metrics(raw) -> dict:
         if fv != fv or fv in (float("inf"), float("-inf")):  # NaN / inf
             continue
         out[k] = fv
+    # hb#230 Gap B — mixed-basis REFUSE, fail-closed. A record either stamps ONE basis
+    # for the whole triple (`thpt_slo_basis`, the pre-Gap-B convention) OR stamps each
+    # bar independently (`thpt_slo_basis_5s` / `_1s`) — never both. Carrying the single
+    # key alongside EITHER per-bar key is an ambiguous producer (which stamp governs the
+    # 5s bar?); it RAISES rather than silently preferring one, matching the module's
+    # closed-value posture. A record with only per-bar keys, or only the single key, is
+    # fine. (A per-bar key present alone, without its sibling, is also fine — a cell may
+    # legitimately credit only one bar under a distinct basis.)
+    if "thpt_slo_basis" in out and (
+        "thpt_slo_basis_5s" in out or "thpt_slo_basis_1s" in out
+    ):
+        raise ValueError(
+            "sla_metrics: mixed basis convention — thpt_slo_basis (whole-triple) present "
+            "alongside a per-bar thpt_slo_basis_5s/_1s; a record must use exactly one "
+            "convention (hb#230 Gap B fail-closed)"
+        )
     # hb#214 part 1 (DRAFT) — floor-zero pairing guard, fail-closed BOTH directions.
     # A 0.0 PER-CLUSTER SLO rate is publishable ONLY as the pre-declared floor-zero
     # verdict (stamp thpt_slo_floor_zero=1); a bare per-cluster 0.0 is exactly the

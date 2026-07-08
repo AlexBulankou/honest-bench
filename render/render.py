@@ -435,6 +435,18 @@ def _clean_matrix_metrics(metrics):
             "thpt_slo_n_exec_ok",
         ):
             out.pop(key, None)
+    # hb#230 Gap B: the SAME fail-closed posture, per bar. A per-bar basis PRESENT in
+    # input but dropped (outside SLO_BASIS_VALUES) drops THAT bar's cluster figure — a
+    # bar's SLO rate must never render with an undisclosed/invalid basis. Only the one
+    # bar's cluster figure is dropped (the shared node-count / n stamp may still caveat a
+    # valid sibling bar). The coercer already RAISES on a non-enum per-bar basis at emit,
+    # so this is defense-in-depth mirroring the whole-triple gate above.
+    for bar_key, cluster_key in (
+        ("thpt_slo_basis_5s", "thpt_under_5s_per_cluster"),
+        ("thpt_slo_basis_1s", "thpt_under_1s_per_cluster"),
+    ):
+        if bar_key in metrics and bar_key not in out:
+            out.pop(cluster_key, None)
     return out
 
 
@@ -662,6 +674,33 @@ _SLO_BASIS_NOTES = {
 }
 
 
+# hb#230 (alex doctrine flip, 2026-07-08): the bases that carry a per-cell *** caveat.
+# NOT every non-default basis — the cross-corroborated literal bases (acq~controller
+# agreement) are the TRUSTED tier and render clean (Fork 3). The *** marks the
+# single-source / bounded / cold bases whose figure is published-with-a-caveat:
+#   - Class A: the uncorroborated acquire-side rate (controller cross-check dropped)
+#   - Fork 4: the cold-start honest-ZERO (cold floor over both bars, acq clean)
+#   - Kata-cold: the unresolved-bounds cell (bar inside the [lower, upper] bracket)
+# All three point at the ONE consolidated *** footnote block below the matrix.
+_STARSTAR_BASES = frozenset(
+    {
+        "acq_fulfilled+acq_p95_uncorroborated",
+        "controller_cold_floor_zero_corroborated",
+        "unresolved_bounds_bar_bracketed",
+    }
+)
+
+
+def _bar_basis(m, bar_s):
+    """hb#230 Gap B: the basis governing ONE bar of a dual cell. The per-bar stamp
+    (thpt_slo_basis_5s / _1s) wins; absent it, the whole-triple thpt_slo_basis governs
+    both bars (the pre-Gap-B convention). The emitter fail-closes on carrying both, so
+    exactly one convention is ever present. Returns the basis string or None."""
+    key = "thpt_slo_basis_5s" if bar_s == 5.0 else "thpt_slo_basis_1s"
+    pb = (m or {}).get(key)
+    return pb if pb is not None else (m or {}).get("thpt_slo_basis")
+
+
 def _resolve_cluster_basis(sources):
     """hb#174: per-runtime SLO-basis stamp for the caption disclosure. Returns
     {runtime: [(basis, n_exec_ok), ...]} — one entry per DISTINCT non-default
@@ -684,19 +723,33 @@ def _resolve_cluster_basis(sources):
         order = []
         for sc in rt_scen.values():
             m = (sc or {}).get("metrics") or {}
-            if _landed_cluster_x(m) is None:
-                continue
-            basis = m.get("thpt_slo_basis")
-            if basis not in _SLO_BASIS_NOTES:
-                continue
             n = m.get("thpt_slo_n_exec_ok")
             if not isinstance(n, int) or isinstance(n, bool):
                 n = None
-            if basis not in per_basis:
-                per_basis[basis] = n
-                order.append(basis)
-            elif n is not None and (per_basis[basis] is None or n < per_basis[basis]):
-                per_basis[basis] = n
+            # hb#230 Gap B: a cell may carry the whole-triple basis OR per-bar bases
+            # (never both — the emitter fail-closes on mixing). Disclose EVERY distinct
+            # non-default basis a reader will see, so the caption never omits the Class-A
+            # *** basis on a mixed-basis cell. The whole-triple basis keeps its landed-X
+            # gate (a basis on a cell with no landed cluster figure caveats nothing); a
+            # per-bar stamp is the producer's own assertion that THAT bar resolved to the
+            # basis (including the no-number honest-0 / unresolved-bounds cases the regen
+            # script emits), so its presence alone qualifies it for disclosure.
+            for basis, eligible in (
+                (m.get("thpt_slo_basis"), _landed_cluster_x(m) is not None),
+                (m.get("thpt_slo_basis_5s"), True),
+                (m.get("thpt_slo_basis_1s"), True),
+            ):
+                if not eligible:
+                    continue
+                if basis not in _SLO_BASIS_NOTES:
+                    continue
+                if basis not in per_basis:
+                    per_basis[basis] = n
+                    order.append(basis)
+                elif n is not None and (
+                    per_basis[basis] is None or n < per_basis[basis]
+                ):
+                    per_basis[basis] = n
         if order:
             bases[rt] = [(b, per_basis[b]) for b in order]
     return bases
@@ -882,7 +935,20 @@ def render_matrix(results, kata_results=None):
             # rather than rendering a real rate under a caption that can't pin its X
             # (defense-in-depth: the emit side already couples the triple all-or-nothing).
             def thpt_dual_cell(node_key, cluster_key, bar_s):
+                # hb#230 Gap B: the basis governing THIS bar (per-bar stamp wins). A
+                # non-corroborated / bounded / cold basis earns the per-cell *** caveat
+                # (pointing at the consolidated footnote); the corroborated literal bases
+                # stay clean (Fork 3). Computed once, applied to whichever token renders.
+                bar_basis = _bar_basis(m, bar_s)
+                star = "***" if bar_basis in _STARSTAR_BASES else ""
                 if node_key not in m:
+                    # hb#230 Kata-cold ruling: the unresolved-bounds cell — a measurement
+                    # WAS taken but the bar sits inside the [lower, upper] bracket, so no
+                    # claim is supportable either direction. Render `unk.***` (NOT pending
+                    # — pending implies unmeasured). Keyed off the per-bar basis stamp the
+                    # regen script emits for exactly this cell.
+                    if bar_basis == "unresolved_bounds_bar_bracketed":
+                        return f"unk.{star}"
                     # Derivable honest-0 (hb#142.1): the throughput fire has not run, but if the
                     # TTFE p95 IS measured and exceeds this cell's bar, then p95 misses the bar —
                     # the SAME condition under which a real fire emits `0` (see the honesty
@@ -898,7 +964,7 @@ def render_matrix(results, kata_results=None):
                         and not isinstance(p95_ms, bool)
                         and p95_ms / 1000.0 > bar_s
                     ):
-                        return f"{_fmt_num(0)} /node · {_fmt_num(0)} /cluster"
+                        return f"{_fmt_num(0)} /node · {_fmt_num(0)} /cluster{star}"
                     # 07-06 SLO-rate fire: the whole cell (both halves) ran and came back
                     # honest-empty for a carried, closed-enum reason — e.g. the cold fire's
                     # every-rung-over-bar `no-compliant-rung`, where a derived 0 is ALSO
@@ -927,7 +993,7 @@ def render_matrix(results, kata_results=None):
                         )
                     else:
                         cluster_half = f"{_PENDING} ({_CLUSTER_FIRE})"
-                return f"{node_half} · {cluster_half}"
+                return f"{node_half} · {cluster_half}{star}"
 
             thpt5 = thpt_dual_cell("thpt_under_5s_per_node", "thpt_under_5s_per_cluster", 5.0)
             thpt1 = thpt_dual_cell("thpt_under_1s_per_node", "thpt_under_1s_per_cluster", 1.0)

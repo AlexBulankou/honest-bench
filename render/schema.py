@@ -392,6 +392,13 @@ MATRIX_METRIC_FIELDS = {
     # true_ttfe is the default basis and renders nothing extra; the two literal upper-bound
     # bases key the per-runtime disclosure caption in render_matrix.
     "thpt_slo_basis": lambda v: v in SLO_BASIS_VALUES,
+    # hb#230 Gap B: OPTIONAL per-bar basis stamps — a cell whose two bars were credited
+    # under DIFFERENT bases (e.g. gVisor warm: 5s corroborated-literal, 1s uncorroborated-
+    # acq Class-A ***) stamps each bar independently. Same closed enum. The harness emitter
+    # fail-closes on mixing these with the whole-triple thpt_slo_basis; render prefers the
+    # per-bar stamp for a given bar and falls back to thpt_slo_basis when absent.
+    "thpt_slo_basis_5s": lambda v: v in SLO_BASIS_VALUES,
+    "thpt_slo_basis_1s": lambda v: v in SLO_BASIS_VALUES,
     # hb#174 sign-off (c): MIN warm-exec sample count across the rungs credited by a
     # literal-basis derivation — the harness floor (>= 20) makes sub-20 unreachable from a
     # valid producer, but the render predicate only asserts a positive int (the render-side

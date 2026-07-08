@@ -754,6 +754,69 @@ def test_matrix_unknown_slo_basis_drops_cluster_triple_fail_closed():
     assert "made_up_basis" not in out  # the unknown stamp itself never leaks to the page
 
 
+def test_matrix_per_bar_basis_starstar_only_on_uncorroborated_bar():
+    # hb#230 Gap B: a cell whose two bars are credited under DIFFERENT bases stamps each
+    # bar independently. The corroborated literal basis (trusted tier, Fork 3) stays CLEAN
+    # on its bar; only the *** bases (Class-A uncorroborated-acq here) earn the per-cell
+    # *** caveat pointing at the consolidated footnote. Per-bar stamp wins over any
+    # whole-triple basis (none present here).
+    scen = _full_gvisor_scenarios()
+    scen[0]["sla_metrics"].update(
+        {
+            "thpt_under_5s_per_cluster": 38.0,
+            "thpt_under_1s_per_cluster": 1.2,
+            "thpt_cluster_node_count": 10,
+            "thpt_slo_basis_5s": "literal_ttfe_upper_bound+acq_fulfilled",  # trusted → clean
+            "thpt_slo_basis_1s": "acq_fulfilled+acq_p95_uncorroborated",    # Class A → ***
+        }
+    )
+    out = render.render_matrix(_matrix_results(scen))
+    warm_line = [l for l in out.splitlines() if "Warm-pool hit" in l][0]
+    cells = [_unlink(c.strip()) for c in warm_line.strip("|").split("|")]
+    assert cells[2] == "4 /node · 38 /cluster ⚠️"       # corroborated bar: NO ***
+    assert cells[3] == "4 /node · 1.2 /cluster ⚠️***"   # uncorroborated bar: ***
+
+
+def test_matrix_per_bar_basis_unresolved_bounds_renders_unk():
+    # hb#230 Kata-cold ruling: a bar whose measurement WAS taken but whose bar sits inside
+    # the [lower, upper] TTFE bracket carries the unresolved-bounds basis and NO landed
+    # number. It renders `unk.***` (NOT `pending` — pending implies unmeasured), keyed off
+    # the per-bar stamp for exactly that bar. The sibling bar with a real honest-0 basis is
+    # unaffected.
+    scen = _full_gvisor_scenarios()
+    # drop the 5s per-node figure so the 5s bar has no landed number, and stamp it unresolved.
+    del scen[0]["sla_metrics"]["thpt_under_5s_per_node"]
+    scen[0]["sla_metrics"]["thpt_slo_basis_5s"] = "unresolved_bounds_bar_bracketed"
+    out = render.render_matrix(_matrix_results(scen))
+    warm_line = [l for l in out.splitlines() if "Warm-pool hit" in l][0]
+    cells = [_unlink(c.strip()) for c in warm_line.strip("|").split("|")]
+    assert cells[2] == "unk.***"           # unresolved bar: unk. + ***
+    assert cells[3] == "4 /node · pending (cluster-fire)"  # sibling bar untouched
+
+
+def test_matrix_per_bar_invalid_basis_drops_that_bars_cluster_figure():
+    # hb#230 Gap B fail-closed (defense-in-depth, mirrors the hb#174 whole-triple gate):
+    # a per-bar basis PRESENT but outside the enum drops ONLY that bar's cluster figure —
+    # a bar's SLO rate must never render with an invalid/undisclosed basis. The sibling
+    # bar's cluster figure survives.
+    scen = _full_gvisor_scenarios()
+    scen[0]["sla_metrics"].update(
+        {
+            "thpt_under_5s_per_cluster": 350,
+            "thpt_under_1s_per_cluster": 320,
+            "thpt_cluster_node_count": 40,
+            "thpt_slo_basis_5s": "made_up_basis",                       # invalid → drop 5s figure
+            "thpt_slo_basis_1s": "acq_fulfilled+acq_p95_uncorroborated",  # valid → keep 1s figure
+        }
+    )
+    out = render.render_matrix(_matrix_results(scen))
+    warm_line = [l for l in out.splitlines() if "Warm-pool hit" in l][0]
+    cells = [_unlink(c.strip()) for c in warm_line.strip("|").split("|")]
+    assert cells[2] == f"4 /node · pending ({render._CLUSTER_FIRE})"  # 5s figure dropped
+    assert cells[3] == "4 /node · 320 /cluster***"                    # 1s figure kept + ***
+    assert "made_up_basis" not in out
+
+
 def test_matrix_literal_basis_note_with_coarse_p95_caption():
     # hb#174 sign-off (c): a literal-controller triple whose credited rungs' MIN warm-exec
     # sample count is 20 <= n < 100 renders the basis disclosure line PLUS the coarse-p95
