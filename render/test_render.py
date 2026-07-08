@@ -2776,6 +2776,128 @@ def test_stepup_sweep_params_subline():
     assert "measured 2026-06-30" in out
 
 
+# --- a#4560 knee-bracket: two-axis (acquisition-compliant + TTFE-collapsed) render ---------
+def _knee(**over):
+    # The #4560 knee-bracket shape: NO true-TTFE pareto_points / saturation_point (both null in
+    # the record), an acquisition axis that stays compliant (no knee in [4,8]), and a TTFE
+    # measured-collapse pinned between a literal-TTFE UPPER bound and a controller-startup LOWER
+    # bound. Mirrors sandbox/results/latest.json's folded `stepup` object.
+    base = {
+        "acquisition": {
+            "compliant": True, "no_knee_in_range": True, "north_star_p95_ms": 500.0,
+            "pareto_points": [
+                {"offered_rate_per_s": 4, "acq_p50_ms": 120.0, "acq_p95_ms": 246.0,
+                 "acq_p99_ms": 300.0, "p95_under_500ms": True, "acq_fulfilled_per_s": 3.99},
+                {"offered_rate_per_s": 6, "acq_p50_ms": 200.0, "acq_p95_ms": 420.0,
+                 "acq_p99_ms": 480.0, "p95_under_500ms": True, "acq_fulfilled_per_s": 5.98},
+                {"offered_rate_per_s": 8, "acq_p50_ms": 190.0, "acq_p95_ms": 395.0,
+                 "acq_p99_ms": 470.0, "p95_under_500ms": True, "acq_fulfilled_per_s": 7.96},
+            ],
+        },
+        "literal_ttfe": {
+            "upper_bound": True, "verdict": "saturated",
+            "pareto_points": [
+                {"offered_rate_per_s": 4, "literal_p50_ms": 40000.0, "literal_p95_ms": 97240.0,
+                 "literal_p99_ms": 120000.0, "n_over_bar_5s": 32, "n_sampled": 120,
+                 "acq_fulfilled_per_s": 3.99},
+                {"offered_rate_per_s": 6, "literal_p50_ms": 90000.0, "literal_p95_ms": 153860.0,
+                 "literal_p99_ms": 175000.0, "n_over_bar_5s": 110, "n_sampled": 180,
+                 "acq_fulfilled_per_s": 5.98},
+                {"offered_rate_per_s": 8, "literal_p50_ms": 120000.0, "literal_p95_ms": 189320.0,
+                 "literal_p99_ms": 210000.0, "n_over_bar_5s": 192, "n_sampled": 240,
+                 "acq_fulfilled_per_s": 7.96},
+            ],
+        },
+        "controller_startup": {
+            "lower_bound": True, "verdict": "saturated",
+            "pareto_points": [
+                {"offered_rate_per_s": 4, "controller_startup_p95_ms": 83740.0},
+                {"offered_rate_per_s": 6, "controller_startup_p95_ms": 158640.0},
+                {"offered_rate_per_s": 8, "controller_startup_p95_ms": 220410.0},
+            ],
+        },
+        "sld_s": 20.0, "wpr": 0.75, "node_count": 30,
+        "measured_at": "2026-07-08T19:59:11Z",
+    }
+    base.update(over)
+    return base
+
+
+def test_stepup_acquisition_compliant_axis_renders_separately():
+    # #4560 note (1): the acquisition axis renders its OWN compliance verdict, SEPARATE from the
+    # TTFE bounds — the page must never average acq-compliant + TTFE-non-compliant into one call.
+    out = render.render_stepup(_matrix_results(_full_gvisor_scenarios(), stepup=_knee()))
+    assert "**Claim acquisition stays compliant across the swept bracket (north-star p95 < 0.5s) — no knee.**" in out
+    assert "SEPARATE axis from the end-to-end readiness bounds below" in out
+    # acq table: all three rungs sub-bar (✅), fulfilled-rate tracks offered.
+    assert "| Offered rate (/s) | Acq p50 | Acq p95 | Acq p99 | p95 < bar | Fulfilled /s |" in out
+    assert "| 4 | 0.12s | 0.246s | 0.3s | ✅ | 3.99 |" in out
+    assert "| 6 | 0.2s | 0.42s | 0.48s | ✅ | 5.98 |" in out
+    assert "| 8 | 0.19s | 0.395s | 0.47s | ✅ | 7.96 |" in out
+
+
+def test_stepup_ttfe_collapse_two_distinct_bounds():
+    # #4560 note (2): literal-TTFE UPPER and controller-startup LOWER render as two DISTINCT
+    # named bound tables (never a single range); the transition line names the binding constraint.
+    out = render.render_stepup(_matrix_results(_full_gvisor_scenarios(), stepup=_knee()))
+    assert "**End-to-end readiness (TTFE) has already collapsed across this bracket**" in out
+    assert "binding constraint is warm controller-startup queueing, not claim acquisition" in out
+    # literal-TTFE UPPER bound table + caveat + saturated verdict.
+    assert "Literal-TTFE upper bound: exec-probe round-trip" in out
+    assert "OVER-reports true" in out
+    assert "Upper-bound curve verdict: 🛑 saturated (at least one step crossed the collapse band)." in out
+    assert "| Offered rate (/s) | Literal-TTFE p50 | Literal-TTFE p95 | Literal-TTFE p99 | Over-5s | Fulfilled /s |" in out
+    assert "| 4 | 40s | 97.24s | 120s | 32/120 | 3.99 |" in out
+    assert "| 8 | 120s | 189.32s | 210s | 192/240 | 7.96 |" in out
+    # controller-startup LOWER bound table + caveat.
+    assert "Controller-startup lower bound: controller-first-observed" in out
+    assert "UNDER-reports true" in out
+    assert "| 4 | — | 83.74s | — | — |" in out
+    assert "| 8 | — | 220.41s | — | — |" in out
+
+
+def test_stepup_knee_below_ceiling_statement():
+    # #4560: with BOTH bounds present the closing statement names the exec-readiness gap AND
+    # defers to the published ceiling BY POINTER (no stale literal rate baked into the page).
+    out = render.render_stepup(_matrix_results(_full_gvisor_scenarios(), stepup=_knee()))
+    assert "exec-readiness queueing (pod-startup / exec-readiness)" in out
+    assert "TTFE 1s/5s crossing sits BELOW the lowest swept rung" in out
+    assert "published Warm-Pool Acquisition ceiling above remains the TTFE-compliant rate" in out
+    # never a fabricated literal ceiling rate in the deferral clause.
+    assert "2.0/s" not in out
+
+
+def test_stepup_knee_no_saturation_point_uses_study_heading():
+    # #4560 record has NO saturation_point / true-TTFE pareto_points, so the operator headline
+    # table must NOT appear — the block renders under the neutral study heading.
+    out = render.render_stepup(_matrix_results(_full_gvisor_scenarios(), stepup=_knee()))
+    assert "## Saturation — step-up throughput study" in out
+    assert "## Saturation Point — max sustained creation rate" not in out
+
+
+def test_stepup_acquisition_non_compliant_uses_neutral_framing():
+    # If acquisition is present but NOT flagged compliant/no-knee, the headline drops the
+    # "stays compliant — no knee" claim and uses the neutral measured-axis framing instead.
+    knee = _knee()
+    knee["acquisition"]["compliant"] = False
+    knee["acquisition"]["no_knee_in_range"] = False
+    out = render.render_stepup(_matrix_results(_full_gvisor_scenarios(), stepup=knee))
+    assert "stays compliant across the swept bracket" not in out
+    assert "Claim-acquisition latency (submit → claim bound)" in out
+
+
+def test_stepup_acquisition_missing_upper_bound_flag_drops_literal():
+    # Load-bearing: literal_ttfe requires upper_bound=true. Without it the block fails the
+    # predicate and is dropped on read — the OVER-reports caveat can never render unkeyed.
+    knee = _knee()
+    del knee["literal_ttfe"]["upper_bound"]
+    out = render.render_stepup(_matrix_results(_full_gvisor_scenarios(), stepup=knee))
+    assert "Literal-TTFE upper bound: exec-probe round-trip" not in out
+    # acquisition axis + controller lower bound still render (independent blocks).
+    assert "Claim acquisition stays compliant" in out
+    assert "Controller-startup lower bound" in out
+
+
 def _cb(**over):
     base = {
         "legs": [

@@ -165,6 +165,42 @@ Under this contention, TTFE degrades to **1.6589s p50** / **2.0169s p95** — bu
 
 _Measured 2026-07-01 — warm-pool at-scale contention ceiling (point-in-time)._
 
+## Saturation — step-up throughput study
+
+**Claim acquisition stays compliant across the swept bracket (north-star p95 < 0.5s) — no knee.** Acquisition (submit → claim bound) is measured directly, not via a TTFE proxy; its compliance is a SEPARATE axis from the end-to-end readiness bounds below.
+
+| Offered rate (/s) | Acq p50 | Acq p95 | Acq p99 | p95 < bar | Fulfilled /s |
+|---|---|---|---|---|---|
+| 4 | 0.117263s | 0.245674s | 0.410301s | ✅ | 3.98986 |
+| 6 | 0.17971s | 0.420187s | 0.621767s | ✅ | 5.97682 |
+| 8 | 0.181669s | 0.395046s | 0.491353s | ✅ | 7.95654 |
+
+**End-to-end readiness (TTFE) has already collapsed across this bracket** — the binding constraint is warm controller-startup queueing, not claim acquisition. The collapse is pinned between two distinct measured bounds:
+
+_Literal-TTFE upper bound: exec-probe round-trip (claim → Ready → first exec instruction), which INCLUDES exec websocket-setup overhead — it OVER-reports true TTFE, so treat it as a ceiling, not a TTFE measurement._
+
+Upper-bound curve verdict: 🛑 saturated (at least one step crossed the collapse band).
+
+| Offered rate (/s) | Literal-TTFE p50 | Literal-TTFE p95 | Literal-TTFE p99 | Over-5s | Fulfilled /s |
+|---|---|---|---|---|---|
+| 4 | 3.6096s | 97.2414s | 131.146s | 32/120 | 3.98986 |
+| 6 | 13.2016s | 153.859s | 165.229s | 110/180 | 5.97682 |
+| 8 | 33.3646s | 189.318s | 195.088s | 192/240 | 7.95654 |
+
+_Controller-startup lower bound: controller-first-observed → Ready, which EXCLUDES the claim-admission → first-reconcile queueing lag — it UNDER-reports true TTFE, so treat it as a floor, not a TTFE measurement._
+
+Proxy curve verdict: 🛑 saturated (at least one step crossed the collapse band).
+
+| Offered rate (/s) | Ctrl-startup p50 | Ctrl-startup p95 | Ctrl-startup p99 | Ready /s |
+|---|---|---|---|---|
+| 4 | 0.158818s | 83.741s | 120s | — |
+| 6 | 22.669s | 158.643s | 223.729s | — |
+| 8 | 71.3839s | 220.411s | 236.082s | — |
+
+_The gap between the upper (literal-TTFE) and lower (controller-startup) bounds is exec-readiness queueing (pod-startup / exec-readiness). Both bounds are already in collapse at the bottom of this bracket, so the TTFE 1s/5s crossing sits BELOW the lowest swept rung — the published Warm-Pool Acquisition ceiling above remains the TTFE-compliant rate, not these acquisition-compliant rungs._
+
+_Sweep: 30 nodes, SLD 20s, WPR 0.75 — measured 2026-07-08 (point-in-time; refreshed on the next sweep)._
+
 ## Which storage class should you pick?
 
 Per-class results from a controlled storage-config fire (fixed workload). An unmeasured class renders `pending`; the per-row sample count is the trust gate.
