@@ -87,11 +87,48 @@ SLO_BASIS_LITERAL_ACQ = "literal_ttfe_upper_bound+acq_fulfilled"
 # _derive_literal_floor_zero_5s (see its docstring for the full predicate); always
 # paired with thpt_slo_floor_zero=1 — a 0.0 rate without that stamp is schema-invalid.
 SLO_BASIS_LITERAL_FLOOR_ZERO = "literal_ttfe_upper_bound+floor_zero_margin"
+# hb#230 (alex doctrine flip, 2026-07-08): the UNCORROBORATED acq-side basis. Gated on
+# the acquisition p95 (acq_p95_s, the clean sub-second signal), crediting
+# acq_fulfilled_per_s, with the controller-agreement cross-check DROPPED — so it is
+# single-source. Consulted AFTER the corroborated bases derive nothing (the every_n=1
+# exec-probe contention that garbages literal_warm_p95_ms leaves acq~ctrl divergent, so
+# the dual-leg gate drops every rung). Fills BOTH bars (the acq p95 is sub-second at
+# every gVisor warm rung, so the 1s cell is no longer honest-empty-by-construction).
+# render marks it with the Class A *** caveat (upstream #940 -> fix #1087). A caveated
+# measured number beats an honest-empty cell — publish best measured, not withheld.
+SLO_BASIS_ACQ_P95_UNCORROBORATED = "acq_fulfilled+acq_p95_uncorroborated"
+# hb#230 Fork 4 (alex doctrine flip, 2026-07-08): the COLD-START honest-ZERO basis.
+# The cold-start controller floor exceeds BOTH bars at every offered rate, so the
+# compliant rate is an honest 0 at both bars (rate-independent) — NOT a Class-B
+# upper-bound-pending. Produced only by _derive_cold_floor_zero (see its docstring for
+# the full two-signal predicate); always paired with thpt_slo_floor_zero=1. Distinct
+# from SLO_BASIS_LITERAL_FLOOR_ZERO (the warm 5s-only floor-zero over exec-probe
+# samples) — this one is over the controller cold-start distribution and fills BOTH
+# bars, with a trusted-rung corroboration requirement. render marks it with the Fork-4
+# caveat (cold-start floor ~p50 controller-measured; acq clean; upstream #751 -> #761).
+SLO_BASIS_COLD_FLOOR_ZERO = "controller_cold_floor_zero_corroborated"
+# hb#230 (a4s1 Kata-cold ruling, 2026-07-08): the HONEST-UNKNOWN basis — no number,
+# either direction. The symmetry rule the whole doctrine rests on: a NEGATIVE claim (an
+# honest 0) requires the controller LOWER bound to breach the bar by margin; a POSITIVE
+# claim (a compliant rate) requires the literal exec-probe UPPER bound to clear it. When
+# the bar falls INSIDE the proven [lower, upper] TTFE bracket, NEITHER claim is
+# supportable — the cell is genuinely unresolved despite measurement (e.g. Kata cold at
+# the 5s bar: ctrl-cold p50 ~2.3s < 7.5s so no honest-0, literal p95 ~8.4s > 5s so no
+# positive claim, 5s bar bracketed). This basis carries NO per-cluster/per-node figure;
+# render emits `unk.` + the *** footnote (bracket disclosed there). It is DISTINCT from
+# every measured basis AND from the floor-zero bases, so the fail-closed mixed-basis
+# aggregation guard excludes it — an unresolved cell contributes no number to any
+# caption. NOT a `pending` (which implies a future measurement); the measurement WAS
+# taken and the bar is provably unresolvable at the offered rungs.
+SLO_BASIS_UNRESOLVED_BOUNDS = "unresolved_bounds_bar_bracketed"
 SLO_BASIS_ENUM = (
     SLO_BASIS_TRUE_TTFE,
     SLO_BASIS_LITERAL_CONTROLLER,
     SLO_BASIS_LITERAL_ACQ,
     SLO_BASIS_LITERAL_FLOOR_ZERO,
+    SLO_BASIS_ACQ_P95_UNCORROBORATED,
+    SLO_BASIS_COLD_FLOOR_ZERO,
+    SLO_BASIS_UNRESOLVED_BOUNDS,
 )
 
 # hb#174 sign-off condition (c): a literal rung is SLO-eligible only when its warm
@@ -362,6 +399,173 @@ def _derive_literal_floor_zero_5s(pareto_points) -> dict:
     }
 
 
+def _derive_acq_p95_uncorroborated(pareto_points) -> dict:
+    """Both-bar UNCORROBORATED acq-side fill: gated on acq_p95_s, NO controller cross-check.
+
+    hb#230 doctrine flip (alex, 2026-07-08): where the corroborated basis derives
+    nothing — the dual-leg agreement gate drops every rung because the every_n=1
+    exec-probe contention that garbages `literal_warm_p95_ms` (34-58s) leaves the two
+    rate legs acq~ctrl divergent — publish the best MEASURED acquisition rate rather
+    than an honest-empty cell. This basis:
+
+      - credits `acq_fulfilled_per_s` (fulfilled claim->bound per s, steady-state), the
+        SAME quantity the corroborated literal_acq basis credits;
+      - gates on the ACQUISITION p95 `acq_p95_s` (SECONDS; converted to ms against the
+        shared THRESHOLD_*_MS bars) rather than the literal-TTFE exec-probe p95 — the
+        acq p95 is the clean sub-second signal, the literal-TTFE p95 is the garbage;
+      - DROPS the controller-agreement cross-check (that gate becoming a caveat IS the
+        doctrine flip) — so the result is single-source, uncorroborated. render marks
+        it with the Class A *** caveat (upstream #940 -> fix #1087).
+
+    Fills BOTH bars independently (unlike the 5s-only corroborated literal_acq): the acq
+    p95 is sub-second at every gVisor warm rung, so the 1s cell is no longer
+    honest-empty-by-construction (that construction was about literal-TTFE exec overhead
+    eating the 1s budget, which the acq basis sidesteps). Each bar credits the max
+    `acq_fulfilled_per_s` among rungs whose `acq_p95_s` clears that bar. `offered_rate_per_s`
+    is NEVER credited — offered is the load knob, not a measurement. Empty dict when no
+    rung clears either bar (the cell stays pending — never fabricated).
+    """
+    if not isinstance(pareto_points, list):
+        return {}
+    out: dict = {}
+    for bar_ms, cluster_key in (
+        (THRESHOLD_5S_MS, "thpt_under_5s_per_cluster"),
+        (THRESHOLD_1S_MS, "thpt_under_1s_per_cluster"),
+    ):
+        best: Optional[float] = None
+        for pt in pareto_points:
+            if not isinstance(pt, dict):
+                continue
+            acq = _finite_number(pt.get("acq_fulfilled_per_s"))
+            p95_s = _finite_number(pt.get("acq_p95_s"))
+            if acq is None or p95_s is None or acq <= 0 or p95_s < 0:
+                continue
+            if p95_s * 1000.0 <= bar_ms and (best is None or acq > best):
+                best = acq
+        if best is not None:
+            out[cluster_key] = round(best, 3)
+    return out
+
+
+def _cold_p50_ms(pt) -> Optional[float]:
+    """The controller cold-start p50 (ms) from a flat per-rung cold record, or None.
+
+    Reads `controller_startup_cold_ms.p50`. Absent block / non-dict / non-finite p50
+    => None (the rung carries no usable cold-floor signal).
+    """
+    if not isinstance(pt, dict):
+        return None
+    csc = pt.get("controller_startup_cold_ms")
+    if not isinstance(csc, dict):
+        return None
+    return _finite_number(csc.get("p50"))
+
+
+def _derive_cold_floor_zero(records, node_count) -> dict:
+    """hb#230 Fork 4: the COLD-START honest-ZERO predicate — both bars, corroborated.
+
+    The cold-start case (per Fork 4, a4s1-ruled 2026-07-08): the controller cold-start
+    floor is so far over the bar that NO offered rate could bring a compliant fraction
+    under either bar — the compliant rate is an honest 0 at BOTH bars, rate-independent.
+    This is the honest-ZERO polarity (a strong NEGATIVE claim), so — like the warm
+    floor-zero — it must clear a closed, pre-declared predicate, never a post-hoc call.
+
+    Input is a LIST of FLAT per-rung cold records (one dict per offered rate; the
+    permode-legB cold shape), NOT the pareto_points-bearing flat that
+    slo_sla_metrics_from_stepup consumes. Each rung carries `rate_per_s`,
+    `controller_measured` (bool), and `controller_startup_cold_ms.{p50,...}`.
+
+    TWO-SIGNAL predicate — BOTH required (a4s1 ruling, verbatim intent):
+
+      (a) FLOOR RUNG over BOTH margined bars: the rung with the minimum finite
+          `rate_per_s` > 0 has a finite `controller_startup_cold_ms.p50` > 0 that
+          exceeds BOTH THRESHOLD_5S_MS * HONEST_ZERO_BAR_MARGIN AND
+          THRESHOLD_1S_MS * HONEST_ZERO_BAR_MARGIN. The floor rung establishes "no
+          lower rate could pass". But the floor rung MAY be controller-untrusted
+          (`controller_measured` False) — on its own it is a latency proxy, not proof,
+          so signal (a) alone must NOT assert an honest 0.
+
+      (b) TRUSTED CORROBORATOR: >= 1 rung in the SAME set with `controller_measured`
+          is True whose cold p50 is ALSO finite > 0 and over BOTH margined bars. A
+          trusted rung confirms the cold-start floor is real, not an artifact of the
+          untrusted floor rung's measurement. If NO trusted rung clears both bars, the
+          cell stays UNKNOWN (empty dict) — an untrusted floor alone never fabricates a
+          zero (the negative-polarity fabricated-0 trap).
+
+    The margin (HONEST_ZERO_BAR_MARGIN, 1.5x) is the SAME shared conservatism the warm
+    floor-zero uses: a cold p50 counts as over-bar only when it clears the margined bar,
+    so no plausible overhead/noise artifact can trip the zero.
+
+    On fire: honest 0 at BOTH bars —
+      {"thpt_under_5s_per_cluster": 0.0, "thpt_under_5s_per_node": 0.0,
+       "thpt_under_1s_per_cluster": 0.0, "thpt_under_1s_per_node": 0.0,
+       "thpt_slo_floor_zero": 1, "thpt_slo_basis": SLO_BASIS_COLD_FLOOR_ZERO,
+       "thpt_cluster_node_count": <n>}.
+    Both per-node legs ride along because exactly-0 makes the two denominators
+    interchangeable (the renderer's dual cell keys on the per-node leg), and BOTH bars
+    are zeroed because a cold floor over the 5s bar is a fortiori over the 1s bar. The
+    floor_zero stamp + basis are stamped here (this is a distinct entry point, not
+    routed through slo_sla_metrics_from_stepup), so the caller merges the dict as-is.
+    The controller-untrusted-floor / trusted-corroborator disclosure lives in the
+    render *** footnote (the cell shows 0 /node · 0 /cluster ***). Empty dict when
+    either signal fails (the cell stays pending — never a fabricated zero).
+    """
+    if not isinstance(records, list):
+        return {}
+    if isinstance(node_count, bool) or not isinstance(node_count, Real):
+        return {}
+    nc = float(node_count)
+    if nc != nc or nc in (float("inf"), float("-inf")):  # NaN / inf
+        return {}
+    if nc != int(nc) or int(nc) < 1:
+        return {}
+    bar5 = THRESHOLD_5S_MS * HONEST_ZERO_BAR_MARGIN
+    bar1 = THRESHOLD_1S_MS * HONEST_ZERO_BAR_MARGIN
+    # Signal (a): locate the floor rung (min positive rate_per_s) and gate its cold p50.
+    floor_pt: Optional[dict] = None
+    floor_rate: Optional[float] = None
+    for pt in records:
+        if not isinstance(pt, dict):
+            continue
+        rate = _finite_number(pt.get("rate_per_s"))
+        if rate is None or rate <= 0:
+            continue
+        if floor_rate is None or rate < floor_rate:
+            floor_rate = rate
+            floor_pt = pt
+    if floor_pt is None:
+        return {}
+    floor_p50 = _cold_p50_ms(floor_pt)
+    if floor_p50 is None or floor_p50 <= 0:
+        return {}
+    if not (floor_p50 > bar5 and floor_p50 > bar1):
+        return {}
+    # Signal (b): >= 1 controller_measured=True rung whose cold p50 also clears both bars.
+    corroborated = False
+    for pt in records:
+        if not isinstance(pt, dict):
+            continue
+        if pt.get("controller_measured") is not True:
+            continue
+        p50 = _cold_p50_ms(pt)
+        if p50 is None or p50 <= 0:
+            continue
+        if p50 > bar5 and p50 > bar1:
+            corroborated = True
+            break
+    if not corroborated:
+        return {}
+    return {
+        "thpt_under_5s_per_cluster": 0.0,
+        "thpt_under_5s_per_node": 0.0,
+        "thpt_under_1s_per_cluster": 0.0,
+        "thpt_under_1s_per_node": 0.0,
+        "thpt_slo_floor_zero": 1,
+        "thpt_slo_basis": SLO_BASIS_COLD_FLOOR_ZERO,
+        "thpt_cluster_node_count": int(node_count),
+    }
+
+
 def slo_sla_metrics_from_stepup(flat) -> dict:
     """Derive the hb#132 per-cluster emit triple from a FLAT step-up record.
 
@@ -424,11 +628,19 @@ def slo_sla_metrics_from_stepup(flat) -> dict:
             out = _derive_literal_5s(lt.get("pareto_points"))
             basis = SLO_BASIS_LITERAL_ACQ
             if not out:
-                # hb#214 part 1 (DRAFT): only after BOTH positive bases derived
-                # nothing may the floor-zero predicate be consulted — a positive
-                # rate anywhere always outranks a zero.
-                out = _derive_literal_floor_zero_5s(lt.get("pareto_points"))
-                basis = SLO_BASIS_LITERAL_FLOOR_ZERO
+                # hb#230 (alex doctrine flip, 2026-07-08): the corroborated dual-leg
+                # gate (_derive_literal_5s) dropped every rung -> fall through to the
+                # UNCORROBORATED acq-side basis (gated on acq_p95_s, controller
+                # cross-check dropped) before conceding a zero. A positive measured
+                # rate, even single-source, always outranks a floor-zero.
+                out = _derive_acq_p95_uncorroborated(lt.get("pareto_points"))
+                basis = SLO_BASIS_ACQ_P95_UNCORROBORATED
+                if not out:
+                    # hb#214 part 1 (DRAFT): only after ALL positive bases derived
+                    # nothing may the floor-zero predicate be consulted — a positive
+                    # rate anywhere always outranks a zero.
+                    out = _derive_literal_floor_zero_5s(lt.get("pareto_points"))
+                    basis = SLO_BASIS_LITERAL_FLOOR_ZERO
     if not out:
         return {}
     out["thpt_cluster_node_count"] = int(node_count)

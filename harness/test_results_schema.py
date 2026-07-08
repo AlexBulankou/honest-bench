@@ -159,6 +159,31 @@ def test_pending_reason_dropped_when_not_pending():
     _check("pending_reason" not in r["scenarios"][0], "pending_reason only on pending cells")
 
 
+def test_resume_probe_ceiling_ms_coerced():
+    # hb#230 Fork 5: a positive finite resume_probe_ceiling_ms is carried as a top-level
+    # SCENARIO field (so it survives render's pending-cell metric suppression); it is in the
+    # closed SCENARIO_FIELDS whitelist.
+    _check("resume_probe_ceiling_ms" in rs.SCENARIO_FIELDS, "field in SCENARIO_FIELDS")
+    r = rs.build_results(
+        [{"name": "g", "outcome": "pending", "pending_reason": "upstream-blocked",
+          "resume_probe_ceiling_ms": 34604.4}],
+        _prov(), GEN_AT,
+    )
+    s = r["scenarios"][0]
+    _check(s["resume_probe_ceiling_ms"] == 34604.4, "positive finite ceiling kept")
+    # fail-open: bool / non-positive / non-finite values are dropped, not raised.
+    for bad in (True, 0, -5, float("inf"), float("nan")):
+        r = rs.build_results(
+            [{"name": "g", "outcome": "pending", "pending_reason": "upstream-blocked",
+              "resume_probe_ceiling_ms": bad}],
+            _prov(), GEN_AT,
+        )
+        _check(
+            "resume_probe_ceiling_ms" not in r["scenarios"][0],
+            f"malformed ceiling {bad!r} dropped (fail-open)",
+        )
+
+
 def test_unknown_outcome_raises():
     try:
         rs.build_results([{"name": "x", "outcome": "FLAKY"}], _prov(), GEN_AT)
@@ -1120,6 +1145,59 @@ def test_literal_floor_zero_count_fields_coerced():
     _check("literal_warm_n_over_bar_5s" not in p0, "bool count dropped")
     _check("literal_warm_n_unknown" not in p0, "negative count dropped")
     _check(p0["offered_rate_per_s"] == 0.5, "required spine intact")
+
+
+def test_sla_per_bar_basis_enum_carveout_and_mixed_refuse():
+    # hb#230 Gap B: the two OPTIONAL per-bar keys thpt_slo_basis_5s / thpt_slo_basis_1s
+    # ride the SAME closed-enum carve-out as the whole-triple thpt_slo_basis. Every enum
+    # member passes on each per-bar key; a non-enum value RAISES (fail-closed).
+    for basis in rs.SLO_BASIS_ENUM:
+        for key in ("thpt_slo_basis_5s", "thpt_slo_basis_1s"):
+            r = rs.build_results(
+                [{"name": "x", "outcome": "pass",
+                  "sla_metrics": {"thpt_under_5s_per_cluster": 28.4, key: basis}}],
+                _prov(), GEN_AT)
+            sla = r["scenarios"][0]["sla_metrics"]
+            _check(sla[key] == basis, f"per-bar enum basis carried: {key}={basis}")
+            _check(sla["thpt_under_5s_per_cluster"] == 28.4, "numeric sibling unaffected")
+    for bad in ("controller_startup", "", 1, None, True, "TRUE_TTFE"):
+        for key in ("thpt_slo_basis_5s", "thpt_slo_basis_1s"):
+            try:
+                rs.build_results(
+                    [{"name": "x", "outcome": "pass", "sla_metrics": {key: bad}}],
+                    _prov(), GEN_AT)
+                _check(False, f"non-enum {key} must raise, accepted: {bad!r}")
+            except ValueError:
+                pass
+    # A per-bar key present ALONE (without its sibling) is fine — a cell may legitimately
+    # credit only one bar under a distinct basis (e.g. gVisor warm 1s Class-A ***).
+    r = rs.build_results(
+        [{"name": "x", "outcome": "pass",
+          "sla_metrics": {"thpt_slo_basis_1s": "acq_fulfilled+acq_p95_uncorroborated"}}],
+        _prov(), GEN_AT)
+    _check(r["scenarios"][0]["sla_metrics"]["thpt_slo_basis_1s"]
+           == "acq_fulfilled+acq_p95_uncorroborated", "lone per-bar key accepted")
+    # Both per-bar keys together (the mixed-per-bar warm cell) is fine.
+    r = rs.build_results(
+        [{"name": "x", "outcome": "pass",
+          "sla_metrics": {"thpt_slo_basis_5s": "literal_ttfe_upper_bound+acq_fulfilled",
+                          "thpt_slo_basis_1s": "acq_fulfilled+acq_p95_uncorroborated"}}],
+        _prov(), GEN_AT)
+    sla = r["scenarios"][0]["sla_metrics"]
+    _check(sla["thpt_slo_basis_5s"] == "literal_ttfe_upper_bound+acq_fulfilled", "5s per-bar kept")
+    _check(sla["thpt_slo_basis_1s"] == "acq_fulfilled+acq_p95_uncorroborated", "1s per-bar kept")
+    # Mixed-basis REFUSE: the whole-triple thpt_slo_basis present ALONGSIDE either per-bar
+    # key is an ambiguous producer (which stamp governs the 5s bar?) → RAISES fail-closed.
+    for per_bar in ("thpt_slo_basis_5s", "thpt_slo_basis_1s"):
+        try:
+            rs.build_results(
+                [{"name": "x", "outcome": "pass",
+                  "sla_metrics": {"thpt_slo_basis": "literal_ttfe_upper_bound+acq_fulfilled",
+                                  per_bar: "acq_fulfilled+acq_p95_uncorroborated"}}],
+                _prov(), GEN_AT)
+            _check(False, f"mixed thpt_slo_basis + {per_bar} must raise")
+        except ValueError:
+            pass
 
 
 # --- #3954 sibling: warm_vs_cold ingestion coercer --------------------------------------

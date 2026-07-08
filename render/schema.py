@@ -341,6 +341,26 @@ SLO_BASIS_VALUES = frozenset(
         # stamped 0.0 derived from the FLOOR rung's literal warm samples sitting over the
         # bar by a pre-declared margin. Always rides with thpt_slo_floor_zero=1.
         "literal_ttfe_upper_bound+floor_zero_margin",
+        # hb#230 (alex doctrine flip, 2026-07-08): the UNCORROBORATED acq-side basis —
+        # best acq_fulfilled_per_s among rungs whose acq_p95_s clears the bar, with the
+        # controller cross-check DROPPED (single-source). Renders the Class A *** caveat.
+        "acq_fulfilled+acq_p95_uncorroborated",
+        # hb#230 Fork 4 (alex doctrine flip, 2026-07-08): the COLD-START honest-ZERO
+        # basis — the controller cold-start floor exceeds BOTH bars at every rate, so 0
+        # is honest at both. Rides with thpt_slo_floor_zero=1 + 0.0 legs on BOTH bars.
+        # Distinct from the warm floor_zero_margin basis (over exec-probe samples, 5s
+        # only); this is over the controller cold-start distribution, both bars,
+        # trusted-rung-corroborated. Renders the Fork-4 cold-floor caveat.
+        "controller_cold_floor_zero_corroborated",
+        # hb#230 Kata-cold <5s ruling (2026-07-08): the UNRESOLVED-BOUNDS basis — a
+        # measurement WAS taken but the bar sits INSIDE the [lower-bound, upper-bound]
+        # bracket, so no claim is supportable either direction (neither honest-0 nor a
+        # positive rate). Negative claims need the LOWER bound to breach; positive claims
+        # need the UPPER bound to clear; bar-inside-bracket ⇒ unknown. DISTINCT from every
+        # measured basis AND from cold_floor_zero, so the fail-closed mixed-basis guard
+        # EXCLUDES it from aggregation. Renders "unk.***" (not "pending" — measurement was
+        # taken, the bar is provably unresolvable).
+        "unresolved_bounds_bar_bracketed",
     )
 )
 
@@ -372,6 +392,13 @@ MATRIX_METRIC_FIELDS = {
     # true_ttfe is the default basis and renders nothing extra; the two literal upper-bound
     # bases key the per-runtime disclosure caption in render_matrix.
     "thpt_slo_basis": lambda v: v in SLO_BASIS_VALUES,
+    # hb#230 Gap B: OPTIONAL per-bar basis stamps — a cell whose two bars were credited
+    # under DIFFERENT bases (e.g. gVisor warm: 5s corroborated-literal, 1s uncorroborated-
+    # acq Class-A ***) stamps each bar independently. Same closed enum. The harness emitter
+    # fail-closes on mixing these with the whole-triple thpt_slo_basis; render prefers the
+    # per-bar stamp for a given bar and falls back to thpt_slo_basis when absent.
+    "thpt_slo_basis_5s": lambda v: v in SLO_BASIS_VALUES,
+    "thpt_slo_basis_1s": lambda v: v in SLO_BASIS_VALUES,
     # hb#174 sign-off (c): MIN warm-exec sample count across the rungs credited by a
     # literal-basis derivation — the harness floor (>= 20) makes sub-20 unreachable from a
     # valid producer, but the render predicate only asserts a positive int (the render-side

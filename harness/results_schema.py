@@ -127,6 +127,25 @@ SLO_BASIS_ENUM = (
     # paired with thpt_slo_floor_zero=1 + a 0.0 cluster rate (pairing enforced in
     # _coerce_sla_metrics, fail-closed both directions).
     "literal_ttfe_upper_bound+floor_zero_margin",
+    # hb#230 (alex doctrine flip, 2026-07-08): the UNCORROBORATED acq-side basis —
+    # gated on acq_p95_s with the controller cross-check DROPPED, so single-source.
+    # Consulted only after the corroborated bases derive nothing; emits the Class A
+    # *** caveat at render. Rides the enum-gated thpt_slo_basis carve-out (the '+'
+    # is fine — the value is never key-regex-validated, only enum-membership-checked).
+    "acq_fulfilled+acq_p95_uncorroborated",
+    # hb#230 Fork 4 (alex doctrine flip, 2026-07-08): the COLD-START honest-ZERO basis
+    # — the controller cold-start floor exceeds BOTH bars at every rate, so 0 is honest
+    # at both. Paired with thpt_slo_floor_zero=1 + 0.0 legs (pairing enforced below).
+    # Distinct from the warm floor_zero_margin basis: over the controller cold-start
+    # distribution, fills BOTH bars, trusted-rung-corroborated.
+    "controller_cold_floor_zero_corroborated",
+    # hb#230 (a4s1 Kata-cold ruling, 2026-07-08): the HONEST-UNKNOWN basis — the bar
+    # falls INSIDE the proven [ctrl-lower, exec-upper] TTFE bracket, so neither an
+    # honest-0 (needs the lower bound to breach) nor a positive rate (needs the upper
+    # bound to clear) is supportable. Carries NO per-cluster/per-node figure; render
+    # emits `unk.` + the *** footnote. DISTINCT from every measured/floor-zero basis so
+    # the fail-closed mixed-basis guard excludes it from aggregation.
+    "unresolved_bounds_bar_bracketed",
 )
 
 # #3954 sibling warm-vs-cold — the emitter's INDEPENDENT copies of render's WARM_VS_COLD_FIELDS
@@ -192,6 +211,7 @@ SCENARIO_FIELDS = (
     "name",
     "outcome",
     "pending_reason",
+    "resume_probe_ceiling_ms",
     "badge_scope",
     "badge_construction",
     "n",
@@ -230,17 +250,26 @@ def _coerce_sla_metrics(raw) -> dict:
     enum-gated fail-closed — present-but-non-enum RAISES (a real bug, matching the
     module's closed-value-set posture), so the numeric-only guard is never weakened
     to "any string on this key". Free text still cannot ride sla_metrics.
+
+    hb#230 Gap B (per-bar basis): the two OPTIONAL keys `thpt_slo_basis_5s` and
+    `thpt_slo_basis_1s` carry the SAME closed enum, per-bar, so a cell whose two bars
+    were credited under DIFFERENT bases (e.g. gVisor warm: 5s corroborated-literal, 1s
+    uncorroborated-acq Class-A ***) can stamp each bar independently. Same fail-closed
+    enum gate. A record MUST NOT mix conventions — carrying BOTH the single
+    `thpt_slo_basis` AND either per-bar field RAISES (mixed-basis REFUSE, below), so a
+    reader is never left guessing which stamp is authoritative for a given bar.
     """
+    _BASIS_KEYS = ("thpt_slo_basis", "thpt_slo_basis_5s", "thpt_slo_basis_1s")
     out: dict = {}
     if not isinstance(raw, dict):
         return out
     for k, v in raw.items():
         if not isinstance(k, str) or not _METRIC_KEY_RE.match(k):
             continue
-        if k == "thpt_slo_basis":
+        if k in _BASIS_KEYS:
             if v not in SLO_BASIS_ENUM:
                 raise ValueError(
-                    f"sla_metrics.thpt_slo_basis {v!r} not in {SLO_BASIS_ENUM}"
+                    f"sla_metrics.{k} {v!r} not in {SLO_BASIS_ENUM}"
                 )
             out[k] = v
             continue
@@ -251,6 +280,22 @@ def _coerce_sla_metrics(raw) -> dict:
         if fv != fv or fv in (float("inf"), float("-inf")):  # NaN / inf
             continue
         out[k] = fv
+    # hb#230 Gap B — mixed-basis REFUSE, fail-closed. A record either stamps ONE basis
+    # for the whole triple (`thpt_slo_basis`, the pre-Gap-B convention) OR stamps each
+    # bar independently (`thpt_slo_basis_5s` / `_1s`) — never both. Carrying the single
+    # key alongside EITHER per-bar key is an ambiguous producer (which stamp governs the
+    # 5s bar?); it RAISES rather than silently preferring one, matching the module's
+    # closed-value posture. A record with only per-bar keys, or only the single key, is
+    # fine. (A per-bar key present alone, without its sibling, is also fine — a cell may
+    # legitimately credit only one bar under a distinct basis.)
+    if "thpt_slo_basis" in out and (
+        "thpt_slo_basis_5s" in out or "thpt_slo_basis_1s" in out
+    ):
+        raise ValueError(
+            "sla_metrics: mixed basis convention — thpt_slo_basis (whole-triple) present "
+            "alongside a per-bar thpt_slo_basis_5s/_1s; a record must use exactly one "
+            "convention (hb#230 Gap B fail-closed)"
+        )
     # hb#214 part 1 (DRAFT) — floor-zero pairing guard, fail-closed BOTH directions.
     # A 0.0 PER-CLUSTER SLO rate is publishable ONLY as the pre-declared floor-zero
     # verdict (stamp thpt_slo_floor_zero=1); a bare per-cluster 0.0 is exactly the
@@ -289,6 +334,20 @@ def _coerce_sla_metrics(raw) -> dict:
             "(thpt_under_5s_per_cluster AND thpt_under_5s_per_node; "
             "inconsistent floor-zero pairing)"
         )
+    # hb#230 Fork 4 — the COLD-START floor-zero fills BOTH bars (a cold floor over the
+    # 5s bar is a fortiori over the 1s bar). When the 1s per-cluster leg PARTICIPATES
+    # (is zeroed under the stamp), its per-node partner must be zeroed too — the same
+    # swallowed-figure guard as the 5s pair, applied conditionally so the warm 5s-only
+    # floor-zero (which omits the 1s legs entirely) stays inert. A stamp with a 0.0 1s
+    # per-cluster leg but a non-zero/absent 1s per-node leg is the dropped-half shape.
+    if has_stamp and out.get("thpt_under_1s_per_cluster") == 0.0 and (
+        out.get("thpt_under_1s_per_node") != 0.0
+    ):
+        raise ValueError(
+            "sla_metrics: thpt_slo_floor_zero=1 with 1s per-cluster leg at 0.0 but "
+            "1s per-node leg not at 0.0 (thpt_under_1s_per_node; inconsistent "
+            "cold-floor-zero 1s pairing)"
+        )
     return out
 
 
@@ -319,6 +378,19 @@ def _coerce_scenario(raw: dict) -> dict:
                 f"{PENDING_REASON_ENUM}, got {reason!r}"
             )
         out["pending_reason"] = reason
+
+    # resume_probe_ceiling_ms (hb#230 Fork 5): the wall-clock ceiling the resume probe waited
+    # out against a never-clearing Suspended condition (upstream #873 → #893). It is NOT a
+    # resume TTFE — the operation never completes — but per alex's doctrine flip (a caveated
+    # measured number beats an empty cell) render publishes it across the gVisor resume row as
+    # `≥<X>s***`. Carried TOP-LEVEL (a SCENARIO field, not sla_metrics) so it survives render's
+    # pending-cell metric suppression. Optional; a positive finite number, dropped otherwise
+    # (fail-open — a malformed value simply falls back to the pending render, not a raise).
+    ceiling = raw.get("resume_probe_ceiling_ms")
+    if isinstance(ceiling, Real) and not isinstance(ceiling, bool):
+        fc = float(ceiling)
+        if fc == fc and fc not in (float("inf"), float("-inf")) and fc > 0:
+            out["resume_probe_ceiling_ms"] = fc
 
     # badge_scope is optional and per-scenario; when present it MUST be in the closed
     # enum (fail-closed — a non-enum value is a misconfiguration, not a leak, mirroring

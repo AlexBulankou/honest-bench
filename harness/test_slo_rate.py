@@ -25,11 +25,16 @@ from harness.slo_rate import (
     HONEST_ZERO_MAX_UNKNOWN_FRACTION,
     LITERAL_N_EXEC_OK_FLOOR,
     LITERAL_RATE_AGREEMENT_TOL,
+    SLO_BASIS_ACQ_P95_UNCORROBORATED,
+    SLO_BASIS_COLD_FLOOR_ZERO,
     SLO_BASIS_ENUM,
     SLO_BASIS_LITERAL_ACQ,
     SLO_BASIS_LITERAL_CONTROLLER,
     SLO_BASIS_LITERAL_FLOOR_ZERO,
     SLO_BASIS_TRUE_TTFE,
+    SLO_BASIS_UNRESOLVED_BOUNDS,
+    _derive_acq_p95_uncorroborated,
+    _derive_cold_floor_zero,
     slo_cluster_rate,
     slo_sla_metrics_from_stepup,
 )
@@ -362,6 +367,9 @@ class TestSloBasisSelection:
             SLO_BASIS_LITERAL_CONTROLLER,
             SLO_BASIS_LITERAL_ACQ,
             SLO_BASIS_LITERAL_FLOOR_ZERO,
+            SLO_BASIS_ACQ_P95_UNCORROBORATED,
+            SLO_BASIS_COLD_FLOOR_ZERO,
+            SLO_BASIS_UNRESOLVED_BOUNDS,
         )
 
     def test_true_ttfe_triple_never_carries_n_exec_ok(self):
@@ -636,6 +644,333 @@ class TestLiteralFloorZero:
         out = slo_sla_metrics_from_stepup(self._flat([_fz_rung(0.5)]))
         assert out["thpt_slo_basis"] == SLO_BASIS_LITERAL_FLOOR_ZERO
         assert _coerce_sla_metrics(out) == out
+
+
+def _acq_rung(offered, acq, p95_s):
+    # A pareto rung carrying the acquisition-side fields the UNCORROBORATED basis reads.
+    # No controller/literal fields — the acq basis ignores them by construction.
+    return {
+        "offered_rate_per_s": offered,
+        "acq_fulfilled_per_s": acq,
+        "acq_p95_s": p95_s,
+    }
+
+
+class TestAcqP95Uncorroborated:
+    """hb#230 (alex doctrine flip, 2026-07-08): the UNCORROBORATED acq-side basis —
+    best acq_fulfilled_per_s among rungs whose acq_p95_s clears the bar, controller
+    cross-check DROPPED, fills BOTH bars."""
+
+    def test_both_bars_fill_when_all_rungs_subsecond(self):
+        # The legA warm shape: acq p95 sub-second at every rung -> best acq fills BOTH bars.
+        pts = [
+            _acq_rung(1.0, 1.003, 0.190),
+            _acq_rung(1.5, 1.365, 0.433),
+            _acq_rung(2.0, 2.001, 0.160),
+        ]
+        out = _derive_acq_p95_uncorroborated(pts)
+        assert out == {
+            "thpt_under_5s_per_cluster": 2.001,
+            "thpt_under_1s_per_cluster": 2.001,
+        }
+
+    def test_unit_conversion_seconds_to_ms_bar(self):
+        # acq_p95_s is SECONDS; the bars are MILLISECONDS. A 1.5s-p95 rung clears the 5s
+        # bar (1500 <= 5000) but NOT the 1s bar (1500 > 1000) -> 5s-only fill. A raw
+        # seconds<=ms comparison bug (2.5 <= 1000) would wrongly admit it to the 1s bar.
+        pts = [
+            _acq_rung(1.0, 1.0, 0.5),   # clears both
+            _acq_rung(2.0, 3.0, 1.5),   # clears 5s only (p95 1.5s)
+        ]
+        out = _derive_acq_p95_uncorroborated(pts)
+        assert out == {
+            "thpt_under_5s_per_cluster": 3.0,  # best among {1.0, 3.0} that clear 5s
+            "thpt_under_1s_per_cluster": 1.0,  # only the 0.5s rung clears 1s
+        }
+
+    def test_over_5s_p95_qualifies_for_neither_bar(self):
+        pts = [_acq_rung(5.0, 9.9, 6.0)]  # 6000ms > 5000ms
+        assert _derive_acq_p95_uncorroborated(pts) == {}
+
+    def test_best_acq_selected_not_last(self):
+        # The MAX qualifying acq wins, regardless of rung order.
+        pts = [
+            _acq_rung(3.0, 3.0, 0.2),
+            _acq_rung(1.0, 1.0, 0.2),
+            _acq_rung(2.0, 2.0, 0.2),
+        ]
+        out = _derive_acq_p95_uncorroborated(pts)
+        assert out["thpt_under_5s_per_cluster"] == 3.0
+        assert out["thpt_under_1s_per_cluster"] == 3.0
+
+    def test_empty_and_malformed_inputs(self):
+        assert _derive_acq_p95_uncorroborated([]) == {}
+        assert _derive_acq_p95_uncorroborated(None) == {}
+        assert _derive_acq_p95_uncorroborated("nope") == {}
+        # rungs missing acq or p95, or with non-finite / non-positive acq, are skipped.
+        assert _derive_acq_p95_uncorroborated([{"offered_rate_per_s": 1.0}]) == {}
+        assert _derive_acq_p95_uncorroborated([_acq_rung(1.0, 0.0, 0.2)]) == {}
+        assert _derive_acq_p95_uncorroborated(
+            [{"acq_fulfilled_per_s": 2.0, "acq_p95_s": None}]
+        ) == {}
+
+    def test_chain_fires_acq_basis_when_corroboration_fails(self):
+        # The 07-06 warm shape: literal p95 garbage AND controller diverges from acq by
+        # >tol on every rung -> the corroborated _derive_literal_5s drops all rungs, so
+        # the chain falls through to the UNCORROBORATED acq basis (both bars) BEFORE any
+        # floor-zero. Rungs carry BOTH the literal/ctrl fields (that the corroborated leg
+        # reads and rejects) AND the acq fields (that this basis reads).
+        rungs = []
+        for offered, acq, p95_s, ctrl in (
+            (1.0, 1.003, 0.190, 1.79),
+            (1.5, 1.365, 0.433, 2.46),
+            (2.0, 2.001, 0.160, 3.61),
+        ):
+            r = _lit_rung(offered, 40000.0, ctrl=ctrl, acq=acq)  # p95 garbage 40s
+            r["acq_p95_s"] = p95_s
+            rungs.append(r)
+        flat = {
+            "node_count": 9,
+            "literal_ttfe": {"upper_bound": True, "pareto_points": rungs},
+        }
+        out = slo_sla_metrics_from_stepup(flat)
+        assert out["thpt_slo_basis"] == SLO_BASIS_ACQ_P95_UNCORROBORATED
+        assert out["thpt_under_5s_per_cluster"] == 2.001
+        assert out["thpt_under_1s_per_cluster"] == 2.001
+        assert out["thpt_cluster_node_count"] == 9
+        # UNCORROBORATED basis carries no floor-zero stamp (positive rates, not a zero).
+        assert "thpt_slo_floor_zero" not in out
+
+    def test_acq_basis_output_passes_sla_coercion(self):
+        # The emitted triple must survive the closed-schema coercer (enum-gated basis,
+        # positive rates -> no floor-zero pairing guard trips).
+        from harness.results_schema import _coerce_sla_metrics
+
+        rungs = []
+        for offered, acq, p95_s, ctrl in (
+            (1.0, 1.003, 0.190, 1.79),
+            (2.0, 2.001, 0.160, 3.61),
+        ):
+            r = _lit_rung(offered, 40000.0, ctrl=ctrl, acq=acq)
+            r["acq_p95_s"] = p95_s
+            rungs.append(r)
+        flat = {
+            "node_count": 9,
+            "literal_ttfe": {"upper_bound": True, "pareto_points": rungs},
+        }
+        out = slo_sla_metrics_from_stepup(flat)
+        assert out["thpt_slo_basis"] == SLO_BASIS_ACQ_P95_UNCORROBORATED
+        assert _coerce_sla_metrics(out) == out
+
+
+def _cold_rung(rate, cold_p50_ms, measured):
+    # A FLAT per-rung cold record (the permode-legB cold shape): an offered rate, a
+    # controller-measured trust bit, and a controller_startup_cold_ms block whose p50
+    # is the cold-start floor the predicate reads. cold_p50_ms is MILLISECONDS.
+    return {
+        "rate_per_s": rate,
+        "controller_measured": measured,
+        "controller_startup_cold_ms": {"p50": cold_p50_ms},
+    }
+
+
+class TestColdFloorZero:
+    """hb#230 Fork 4 (a4s1-ruled 2026-07-08): the COLD-START honest-ZERO predicate.
+
+    A cold-start floor so far over the bar that NO offered rate brings a compliant
+    fraction under either bar — an honest 0 at BOTH bars, rate-independent. The
+    negative polarity (a strong claim) demands a TWO-SIGNAL predicate: (a) the floor
+    rung's cold p50 clears both margined bars, AND (b) >=1 controller_MEASURED=True
+    rung corroborates (its cold p50 also over both margined bars). An untrusted floor
+    alone never fabricates a zero. Bars: 5s*1.5=7500ms, 1s*1.5=1500ms (binding: 7500).
+    """
+
+    # The gVisor cold record set (permode-legB, 2026-07-06): r5 floor untrusted, r10
+    # untrusted, r20 the controller-MEASURED trusted corroborator. All cold p50s are
+    # far over 7500ms, so the honest-0 fires at both bars.
+    GVISOR_COLD = [
+        _cold_rung(5, 14712.6, measured=False),
+        _cold_rung(10, 53215.5, measured=False),
+        _cold_rung(20, 191607.1, measured=True),
+    ]
+    ZERO_BOTH_BARS = {
+        "thpt_under_5s_per_cluster": 0.0,
+        "thpt_under_5s_per_node": 0.0,
+        "thpt_under_1s_per_cluster": 0.0,
+        "thpt_under_1s_per_node": 0.0,
+        "thpt_slo_floor_zero": 1,
+        "thpt_slo_basis": SLO_BASIS_COLD_FLOOR_ZERO,
+        "thpt_cluster_node_count": 9,
+    }
+
+    def test_fires_on_gvisor_cold_record_set(self):
+        # Both signals present: untrusted floor r5 over both bars, trusted r20 corroborates.
+        out = _derive_cold_floor_zero(self.GVISOR_COLD, 9)
+        assert out == self.ZERO_BOTH_BARS
+
+    def test_untrusted_floor_alone_never_zero(self):
+        # Signal (a) holds (floor over bar) but NO controller_measured=True rung exists
+        # — the untrusted floor alone must not fabricate a zero (negative-polarity trap).
+        records = [
+            _cold_rung(5, 14712.6, measured=False),
+            _cold_rung(10, 53215.5, measured=False),
+        ]
+        assert _derive_cold_floor_zero(records, 9) == {}
+
+    def test_trusted_corroborator_under_bar_does_not_corroborate(self):
+        # Untrusted floor over the bar, but the only trusted rung's cold p50 is UNDER a
+        # margined bar — it fails signal (b), so the cell stays unknown.
+        records = [
+            _cold_rung(5, 14712.6, measured=False),
+            _cold_rung(20, 7000.0, measured=True),  # 7000 < 7500 (5s margined bar)
+        ]
+        assert _derive_cold_floor_zero(records, 9) == {}
+
+    def test_trusted_floor_self_corroborates(self):
+        # The floor rung is ITSELF controller_measured=True and over both bars: it
+        # satisfies both signals on its own — fires.
+        out = _derive_cold_floor_zero([_cold_rung(5, 14712.6, measured=True)], 9)
+        assert out == self.ZERO_BOTH_BARS
+
+    def test_floor_rung_under_bar_pends(self):
+        # The floor rung's cold p50 is under the 5s margined bar (7500ms): signal (a)
+        # fails even with a trusted over-bar corroborator — no honest-0.
+        records = [
+            _cold_rung(5, 6000.0, measured=False),   # 6000 < 7500
+            _cold_rung(20, 191607.1, measured=True),
+        ]
+        assert _derive_cold_floor_zero(records, 9) == {}
+
+    def test_floor_is_min_rate_not_list_order(self):
+        # Trusted higher-rate rung listed first; the floor is still selected by MIN
+        # rate_per_s (r5), and the trusted r20 corroborates -> fires regardless of order.
+        records = [
+            _cold_rung(20, 191607.1, measured=True),
+            _cold_rung(5, 14712.6, measured=False),
+        ]
+        assert _derive_cold_floor_zero(records, 9) == self.ZERO_BOTH_BARS
+
+    def test_boundary_strict_over_margined_bar(self):
+        # The floor p50 must be STRICTLY over the margined 5s bar (7500ms). Exactly at
+        # the bar pends; just over fires (with a trusted corroborator well over).
+        at_bar = [
+            _cold_rung(5, 7500.0, measured=False),
+            _cold_rung(20, 191607.1, measured=True),
+        ]
+        assert _derive_cold_floor_zero(at_bar, 9) == {}
+        just_over = [
+            _cold_rung(5, 7500.1, measured=False),
+            _cold_rung(20, 191607.1, measured=True),
+        ]
+        assert _derive_cold_floor_zero(just_over, 9)["thpt_slo_floor_zero"] == 1
+
+    def test_corroborator_must_be_strict_true(self):
+        # controller_measured must be the bool True, not a truthy proxy (1, "true").
+        for truthy in (1, "true", "True", 1.0):
+            records = [
+                _cold_rung(5, 14712.6, measured=False),
+                _cold_rung(20, 191607.1, measured=truthy),
+            ]
+            assert _derive_cold_floor_zero(records, 9) == {}, truthy
+
+    def test_floor_p50_missing_or_nonpositive_pends(self):
+        # Floor rung with no cold block, no p50, or a non-positive p50 carries no signal.
+        for floor in (
+            {"rate_per_s": 5, "controller_measured": False},          # no cold block
+            {"rate_per_s": 5, "controller_measured": False,
+             "controller_startup_cold_ms": {}},                        # no p50
+            _cold_rung(5, 0.0, measured=False),                        # p50 == 0
+            _cold_rung(5, -1.0, measured=False),                       # p50 < 0
+            _cold_rung(5, float("nan"), measured=False),               # non-finite
+        ):
+            records = [floor, _cold_rung(20, 191607.1, measured=True)]
+            assert _derive_cold_floor_zero(records, 9) == {}, floor
+
+    def test_no_positive_rate_rung_pends(self):
+        # Without a finite positive rate_per_s no floor can be defined -> unknown.
+        records = [
+            _cold_rung(0, 14712.6, measured=False),
+            _cold_rung(-1, 53215.5, measured=False),
+            _cold_rung(True, 191607.1, measured=True),  # bool rate excluded
+        ]
+        assert _derive_cold_floor_zero(records, 9) == {}
+
+    def test_node_count_validation(self):
+        for bad in (True, "9", 9.5, 0, -1, None, float("nan")):
+            assert _derive_cold_floor_zero(self.GVISOR_COLD, bad) == {}, bad
+
+    def test_integral_float_node_count_coerced(self):
+        out = _derive_cold_floor_zero(self.GVISOR_COLD, 9.0)
+        assert out["thpt_cluster_node_count"] == 9
+        assert isinstance(out["thpt_cluster_node_count"], int)
+
+    def test_non_list_records_pend(self):
+        for bad in (None, {}, "records", 5):
+            assert _derive_cold_floor_zero(bad, 9) == {}, bad
+
+    def test_output_passes_scenario_sla_coercion(self):
+        # The honest-0 both-bars triple must survive the closed-schema coercer: the
+        # stamp + both zeroed 1s legs satisfy the new cold-floor-zero pairing guard.
+        from harness.results_schema import _coerce_sla_metrics
+
+        out = _derive_cold_floor_zero(self.GVISOR_COLD, 9)
+        assert out["thpt_slo_basis"] == SLO_BASIS_COLD_FLOOR_ZERO
+        assert _coerce_sla_metrics(out) == out
+
+    def test_coercer_raises_on_dropped_1s_per_node_leg(self):
+        # hb#230 Fork 4 coercer guard: a stamp with a 0.0 1s per-CLUSTER leg but a
+        # non-zero 1s per-NODE leg is the dropped-half shape -> RAISE.
+        from harness.results_schema import _coerce_sla_metrics
+
+        bad = {
+            "thpt_under_5s_per_cluster": 0.0,
+            "thpt_under_5s_per_node": 0.0,
+            "thpt_under_1s_per_cluster": 0.0,
+            "thpt_under_1s_per_node": 3.0,  # inconsistent partner
+            "thpt_slo_floor_zero": 1,
+            "thpt_slo_basis": SLO_BASIS_COLD_FLOOR_ZERO,
+            "thpt_cluster_node_count": 9,
+        }
+        try:
+            _coerce_sla_metrics(bad)
+            assert False, "expected ValueError on dropped 1s per-node leg"
+        except ValueError as e:
+            assert "1s per-node leg" in str(e)
+
+    def test_coercer_raises_on_absent_1s_per_node_leg(self):
+        # 1s per-cluster leg zeroed but its per-node partner ABSENT is the same
+        # dropped-half shape -> RAISE (None != 0.0).
+        from harness.results_schema import _coerce_sla_metrics
+
+        bad = {
+            "thpt_under_5s_per_cluster": 0.0,
+            "thpt_under_5s_per_node": 0.0,
+            "thpt_under_1s_per_cluster": 0.0,
+            # thpt_under_1s_per_node deliberately absent
+            "thpt_slo_floor_zero": 1,
+            "thpt_slo_basis": SLO_BASIS_COLD_FLOOR_ZERO,
+            "thpt_cluster_node_count": 9,
+        }
+        try:
+            _coerce_sla_metrics(bad)
+            assert False, "expected ValueError on absent 1s per-node leg"
+        except ValueError as e:
+            assert "1s per-node leg" in str(e)
+
+    def test_coercer_warm_5s_only_floor_zero_stays_inert(self):
+        # The WARM 5s-only floor-zero omits the 1s legs entirely; the conditional
+        # cold-floor guard must not trip on it (1s per-cluster leg absent -> skipped).
+        from harness.results_schema import _coerce_sla_metrics
+
+        warm = {
+            "thpt_under_5s_per_cluster": 0.0,
+            "thpt_under_5s_per_node": 0.0,
+            "thpt_slo_floor_zero": 1,
+            "thpt_slo_n_exec_ok": 30,
+            "thpt_slo_basis": SLO_BASIS_LITERAL_FLOOR_ZERO,
+            "thpt_cluster_node_count": 2,
+        }
+        assert _coerce_sla_metrics(warm) == warm
 
 
 def _all_tests():
