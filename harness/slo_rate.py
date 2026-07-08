@@ -107,6 +107,20 @@ SLO_BASIS_ACQ_P95_UNCORROBORATED = "acq_fulfilled+acq_p95_uncorroborated"
 # bars, with a trusted-rung corroboration requirement. render marks it with the Fork-4
 # caveat (cold-start floor ~p50 controller-measured; acq clean; upstream #751 -> #761).
 SLO_BASIS_COLD_FLOOR_ZERO = "controller_cold_floor_zero_corroborated"
+# hb#230 (a4s1 Kata-cold ruling, 2026-07-08): the HONEST-UNKNOWN basis — no number,
+# either direction. The symmetry rule the whole doctrine rests on: a NEGATIVE claim (an
+# honest 0) requires the controller LOWER bound to breach the bar by margin; a POSITIVE
+# claim (a compliant rate) requires the literal exec-probe UPPER bound to clear it. When
+# the bar falls INSIDE the proven [lower, upper] TTFE bracket, NEITHER claim is
+# supportable — the cell is genuinely unresolved despite measurement (e.g. Kata cold at
+# the 5s bar: ctrl-cold p50 ~2.3s < 7.5s so no honest-0, literal p95 ~8.4s > 5s so no
+# positive claim, 5s bar bracketed). This basis carries NO per-cluster/per-node figure;
+# render emits `unk.` + the *** footnote (bracket disclosed there). It is DISTINCT from
+# every measured basis AND from the floor-zero bases, so the fail-closed mixed-basis
+# aggregation guard excludes it — an unresolved cell contributes no number to any
+# caption. NOT a `pending` (which implies a future measurement); the measurement WAS
+# taken and the bar is provably unresolvable at the offered rungs.
+SLO_BASIS_UNRESOLVED_BOUNDS = "unresolved_bounds_bar_bracketed"
 SLO_BASIS_ENUM = (
     SLO_BASIS_TRUE_TTFE,
     SLO_BASIS_LITERAL_CONTROLLER,
@@ -114,6 +128,7 @@ SLO_BASIS_ENUM = (
     SLO_BASIS_LITERAL_FLOOR_ZERO,
     SLO_BASIS_ACQ_P95_UNCORROBORATED,
     SLO_BASIS_COLD_FLOOR_ZERO,
+    SLO_BASIS_UNRESOLVED_BOUNDS,
 )
 
 # hb#174 sign-off condition (c): a literal rung is SLO-eligible only when its warm

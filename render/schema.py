@@ -352,6 +352,15 @@ SLO_BASIS_VALUES = frozenset(
         # only); this is over the controller cold-start distribution, both bars,
         # trusted-rung-corroborated. Renders the Fork-4 cold-floor caveat.
         "controller_cold_floor_zero_corroborated",
+        # hb#230 Kata-cold <5s ruling (2026-07-08): the UNRESOLVED-BOUNDS basis — a
+        # measurement WAS taken but the bar sits INSIDE the [lower-bound, upper-bound]
+        # bracket, so no claim is supportable either direction (neither honest-0 nor a
+        # positive rate). Negative claims need the LOWER bound to breach; positive claims
+        # need the UPPER bound to clear; bar-inside-bracket ⇒ unknown. DISTINCT from every
+        # measured basis AND from cold_floor_zero, so the fail-closed mixed-basis guard
+        # EXCLUDES it from aggregation. Renders "unk.***" (not "pending" — measurement was
+        # taken, the bar is provably unresolvable).
+        "unresolved_bounds_bar_bracketed",
     )
 )
 

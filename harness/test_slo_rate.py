@@ -32,6 +32,7 @@ from harness.slo_rate import (
     SLO_BASIS_LITERAL_CONTROLLER,
     SLO_BASIS_LITERAL_FLOOR_ZERO,
     SLO_BASIS_TRUE_TTFE,
+    SLO_BASIS_UNRESOLVED_BOUNDS,
     _derive_acq_p95_uncorroborated,
     _derive_cold_floor_zero,
     slo_cluster_rate,
@@ -368,6 +369,7 @@ class TestSloBasisSelection:
             SLO_BASIS_LITERAL_FLOOR_ZERO,
             SLO_BASIS_ACQ_P95_UNCORROBORATED,
             SLO_BASIS_COLD_FLOOR_ZERO,
+            SLO_BASIS_UNRESOLVED_BOUNDS,
         )
 
     def test_true_ttfe_triple_never_carries_n_exec_ok(self):

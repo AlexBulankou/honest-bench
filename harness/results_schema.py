@@ -139,6 +139,13 @@ SLO_BASIS_ENUM = (
     # Distinct from the warm floor_zero_margin basis: over the controller cold-start
     # distribution, fills BOTH bars, trusted-rung-corroborated.
     "controller_cold_floor_zero_corroborated",
+    # hb#230 (a4s1 Kata-cold ruling, 2026-07-08): the HONEST-UNKNOWN basis — the bar
+    # falls INSIDE the proven [ctrl-lower, exec-upper] TTFE bracket, so neither an
+    # honest-0 (needs the lower bound to breach) nor a positive rate (needs the upper
+    # bound to clear) is supportable. Carries NO per-cluster/per-node figure; render
+    # emits `unk.` + the *** footnote. DISTINCT from every measured/floor-zero basis so
+    # the fail-closed mixed-basis guard excludes it from aggregation.
+    "unresolved_bounds_bar_bracketed",
 )
 
 # #3954 sibling warm-vs-cold — the emitter's INDEPENDENT copies of render's WARM_VS_COLD_FIELDS

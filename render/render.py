@@ -644,6 +644,21 @@ _SLO_BASIS_NOTES = {
         "controller-MEASURED (trusted) rung whose cold p50 is also over both bars, so it "
         "is never asserted from the controller-untrusted floor rung alone"
     ),
+    # hb#230 Kata-cold <5s ruling (2026-07-08): the unresolved-bounds note. A
+    # measurement WAS taken, but the true value is bounded in a bracket that STRADDLES
+    # the bar — the controller-cold proxy (lower bound) does not breach and the literal
+    # exec-probe (upper bound) does not clear — so no claim is supportable either
+    # direction. Rendered "unk.***", NOT "pending" (which would imply no measurement).
+    # The specific bracket + the exec-probe-overhead explanation live in the
+    # consolidated *** footnote block, URL-free here (matching the others).
+    "unresolved_bounds_bar_bracketed": (
+        "neither a compliant rate nor an honest zero: a measurement was taken, but the "
+        "true TTFE p95 is bounded in a bracket that STRADDLES the bar — the lower-bound "
+        "proxy does not breach the bar (so no honest-zero) and the upper-bound literal "
+        "exec-probe does not clear it (so no positive rate), leaving the claim unresolved "
+        "by construction. Distinct from a pending cell: the measurement exists, the bar is "
+        "provably unresolvable at this operating point, not merely unmeasured"
+    ),
 }
 
 
