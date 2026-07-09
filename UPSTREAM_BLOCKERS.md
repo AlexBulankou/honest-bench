@@ -2,7 +2,7 @@
 
 **Model (alex, 2026-07-07):** alex engages upstream approvers directly; this page is the single interface — kept concise and current (a4z1 curates). **No new filings in the agent-sandbox / substrate repos from our side**; reference patches stay parked on alex's forks and are offered only if a maintainer asks. Engineering depth per item: [**UPSTREAM_BLOCKERS_DETAIL.md**](UPSTREAM_BLOCKERS_DETAIL.md). Machine-readable mirror: [`render/upstream_links.json`](render/upstream_links.json) — update it in the same commit as any blocker-state change here.
 
-_Last verified live: 2026-07-09 ~05:05Z (8 of 9 anchors open — substrate [PR #353](https://github.com/agent-substrate/substrate/pull/353) MERGED 07-08; separately substrate #370 merged 07-08 while #356 stays open, arming row 9's second trigger; 👍 done on #940 + #952; comments 3–5 not yet posted)._
+_Last verified live: 2026-07-09 ~04:25Z (8 of 9 anchors open — substrate [PR #353](https://github.com/agent-substrate/substrate/pull/353) MERGED 07-08; separately substrate #370 merged 07-08 while #356 stays open, arming row 9's second trigger; 👍 done on #940 + #952; comments 3–5 not yet posted)._
 
 ## Live asks (5)
 
