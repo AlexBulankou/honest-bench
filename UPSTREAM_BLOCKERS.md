@@ -2,7 +2,7 @@
 
 **Model (alex, 2026-07-07):** alex engages upstream approvers directly; this page is the single interface — kept concise and current (a4z1 curates). **No new filings in the agent-sandbox / substrate repos from our side**; reference patches stay parked on alex's forks and are offered only if a maintainer asks. Engineering depth per item: [**UPSTREAM_BLOCKERS_DETAIL.md**](UPSTREAM_BLOCKERS_DETAIL.md). Machine-readable mirror: [`render/upstream_links.json`](render/upstream_links.json) — update it in the same commit as any blocker-state change here.
 
-_Last verified live: 2026-07-07 ~17:20Z (all 9 anchors open; 👍 done on #940 + #952; comments 3–5 not yet posted; no merges)._
+_Last verified live: 2026-07-09 ~05:05Z (8 of 9 anchors open — substrate [PR #353](https://github.com/agent-substrate/substrate/pull/353) MERGED 07-08; separately substrate #370 merged 07-08 while #356 stays open, arming row 9's second trigger; 👍 done on #940 + #952; comments 3–5 not yet posted)._
 
 ## Live asks (5)
 
@@ -11,7 +11,7 @@ _Last verified live: 2026-07-07 ~17:20Z (all 9 anchors open; 👍 done on #940 +
 | 1 | **gVisor resume row (5 cells):** a resumed sandbox reports `Suspended` forever, so resume reliability (~93% previously measured) can't be validated. | [asbx#873](https://github.com/kubernetes-sigs/agent-sandbox/issues/873) → fix [PR #893](https://github.com/kubernetes-sigs/agent-sandbox/pull/893) | **#893 is stalled**: author inactive since 05-29 (~5.6w), unit presubmit failing. Ask an approver to **adopt or supersede**; our regression test is on offer (07-03 comment on #873, no response). |
 | 2 | **True TTFE unmeasurable** → the <1s North Star publishes only as an upper bound; 2 cold cells stuck at `no-compliant-rung`. | [asbx#751](https://github.com/kubernetes-sigs/agent-sandbox/issues/751) → fix [PR #761](https://github.com/kubernetes-sigs/agent-sandbox/pull/761) | #761 approved 05-08, **held since 05-20; lgtm auto-dropped on the 06-05 rebase**; only red check = autogen presubmit. Ask: **hold-cancel + re-lgtm** (igooch authored it — can lift his own hold, cannot self-lgtm; barney-s or aditya-shantanu re-lgtm). |
 | 3 | **5–7% of snapshot restores are blank-but-Ready** → no restore-backed metric is trustworthy. | [asbx#952](https://github.com/kubernetes-sigs/agent-sandbox/issues/952) | 👍 done (07-07). Paste **comment 3** below. |
-| 4 | **Actors wedge permanently mid-suspend** (3× in 2 days, manual recovery each time). | [substrate#50](https://github.com/agent-substrate/substrate/issues/50) → fix [PR #353](https://github.com/agent-substrate/substrate/pull/353) (converging, mergeable-clean) | **Before #353 merges:** paste **comment 4** on the PR — worker-release-on-terminal-failure is still an in-code TODO in its `crash.go`. 👍 both. |
+| 4 | **Actors wedge permanently mid-suspend** (3× in 2 days, manual recovery each time). | [substrate#50](https://github.com/agent-substrate/substrate/issues/50) → fix [PR #353](https://github.com/agent-substrate/substrate/pull/353) **merged 2026-07-08** | **#353 merged** — terminal `CRASHED` classification lands (ends the retry-forever loop), but worker-release-on-terminal-failure remains an in-code TODO in the merged `crash.go` (upstream tracks it under [#119](https://github.com/agent-substrate/substrate/issues/119)), so today's manual recovery (recycle the worker) is still needed on terminal failure. Paste **comment 4** on [#50](https://github.com/agent-substrate/substrate/issues/50) so the follow-up carries the wedge context. 👍 both. |
 | 5 | **Controller startup-histogram overcounts (~1.7–2× at fire scale)** → warm per-cluster throughput cells trust-gated on both runtimes. | [asbx#940](https://github.com/kubernetes-sigs/agent-sandbox/issues/940) → fix [PR #1087](https://github.com/kubernetes-sigs/agent-sandbox/pull/1087) | 👍 done (07-07). Paste **comment 5** on #940 (tested replay-leg finding + flap-test blindness), then ask an approver for **`/ok-to-test` on #1087 — its CI has never run**. Do **not** endorse #1087 as-is: our tested finding shows the revised tip still double-records. |
 
 Posted for the record (no longer asks): comment 1 → #873 and comment 2 → #751, both 2026-07-03.
@@ -20,9 +20,9 @@ Posted for the record (no longer asks): comment 1 → #873 and comment 2 → #75
 
 > Data point: across ~800 restores per path we see 5–7% of snapshot-backed sandboxes served blank-but-Ready. Until readiness gates on "restore verified", no restore-backed metric is trustworthy. Happy to share the measurement detail.
 
-**Comment 4** — on [substrate PR #353](https://github.com/agent-substrate/substrate/pull/353):
+**Comment 4** — on [substrate#50](https://github.com/agent-substrate/substrate/issues/50) (fix PR #353 merged 07-08 with the worker-release leg still an in-code TODO):
 
-> We've hit this exact wedge 3× in 2 days; every recovery required manually recycling the worker. The terminal CRASHED classification here fixes the retry-forever loop — worth also releasing the worker assignment on terminal failure so the actor re-runs on a fresh worker (that's the manual recovery that works today).
+> We've hit this exact wedge 3× in 2 days; every recovery required manually recycling the worker. The terminal CRASHED classification merged in #353 fixes the retry-forever loop — worth also releasing the worker assignment on terminal failure so the actor re-runs on a fresh worker (that's the manual recovery that works today).
 
 **Comment 5** — on [asbx#940](https://github.com/kubernetes-sigs/agent-sandbox/issues/940):
 
@@ -37,7 +37,7 @@ No upstream issue exists for these (dup-search verified). Raise directly if the 
 | 6 | agent-sandbox warm-pool claims stall under concurrency — internal retry rides exponential backoff, inflating tail latency (p95 ~9s at N=300 burst); tested fix staged as reference. (Adjacent-but-distinct: asbx#1059, #478 — cross-link, don't dup.) | [§S4](UPSTREAM_BLOCKERS_DETAIL.md#s4-adoption-completion-cache-race) |
 | 7 | substrate golden-actor bring-up treats a transient state as fatal — templates wedge forever; activation-latency metric has zero clean records ever. | [§U1](UPSTREAM_BLOCKERS_DETAIL.md#u1-snapshot-type-unspecified) |
 | 8 | substrate DurableDir broke snapshotting for simple actors — e2e suite red since Jun 27 (~8 new FAILs/day). | [§U2](UPSTREAM_BLOCKERS_DETAIL.md#u2-data-snapshot-zero-ddv) |
-| 9 | substrate bricks its actor-listing API after any proto field rename on a long-lived cluster — second trigger already in review. | [§U3](UPSTREAM_BLOCKERS_DETAIL.md#u3-ateredis-strict-protojson) |
+| 9 | substrate bricks its actor-listing API after any proto field rename on a long-lived cluster — **second trigger now live**: [#370](https://github.com/agent-substrate/substrate/pull/370) merged 07-08 while the structural fix ([#356](https://github.com/agent-substrate/substrate/pull/356)) is still open, so any pre-#370 row with a non-zero snapshot type bricks the post-#370 decoder. | [§U3](UPSTREAM_BLOCKERS_DETAIL.md#u3-ateredis-strict-protojson) |
 
 ## Reference patches (offer only if a maintainer asks)
 

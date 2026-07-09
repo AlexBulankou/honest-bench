@@ -484,14 +484,14 @@ Target project: [agent-substrate/substrate](https://github.com/agent-substrate/s
 
 | # | What | Action | Steps |
 |---|---|---|---|
-| U1 | Golden-actor reconcile **hard-errors on transient `SNAPSHOT_TYPE_UNSPECIFIED`** instead of requeueing → the activation-latency SLA store has **zero clean records ever** (metric honestly PENDING by construction); compounds with the manifest-migration stranding of pre-migration goldens. Internal tracking a#3210. | **GH issue** — file-ready below with suggested fix (requeue-on-UNSPECIFIED, or stamp EXTERNAL before the gate); dup-search: no existing report. | [→ §U1 file-ready text](#u1-snapshot-type-unspecified) |
+| U1 | Golden-actor reconcile **hard-errors on the transient not-yet-snapshotted state** instead of requeueing (pre-#370: `SNAPSHOT_TYPE_UNSPECIFIED`; post-#370: unpopulated `SnapshotInfo.data` oneof — **survives [#370](https://github.com/agent-substrate/substrate/pull/370) 1:1**) → the activation-latency SLA store has **zero clean records ever** (metric honestly PENDING by construction); compounds with the manifest-migration stranding of pre-migration goldens. Internal tracking a#3210. | **GH issue** — file-ready below with suggested fix (requeue on unpopulated oneof, or populate `external` before the gate); dup-search: no existing report. | [→ §U1 file-ready text](#u1-snapshot-type-unspecified) |
 | U2 | DATA-scope golden snapshot **hard-fails on zero durable-dir volumes** (regression in upstream #295) → golden-snapshot e2e leg deterministically RED since 2026-06-27 (45 of 46 fires FAIL as of 07-03). Internal tracking a#3842. | **GH issue** — file-ready below; recommends a caller-side scope gate (admission validation) as the primary fix; explains why a naive callee no-op just moves the brick to restore. Dup-search: no existing report. | [→ §U2 file-ready text](#u2-data-snapshot-zero-ddv) |
-| U3 | Strict `protojson.Unmarshal` of persisted rows **bricks `ListActors`** across any proto field rename on a long-lived cluster; imminent second trigger: upstream [#370](https://github.com/agent-substrate/substrate/issues/370) reserves `SnapshotInfo.type`. Internal tracking a#2921. | **GH issue** — file-ready below; proposes `DiscardUnknown` on read paths; carries a paste-ready addendum for the post-#370 case ([#356](https://github.com/agent-substrate/substrate/issues/356) is the structural fix; merge order decides). Dup-search: no existing report of the decode-brick itself. | [→ §U3 file-ready text](#u3-ateredis-strict-protojson) |
+| U3 | Strict `protojson.Unmarshal` of persisted rows **bricks `ListActors`** across any proto field rename on a long-lived cluster; **second trigger now LIVE**: upstream [#370](https://github.com/agent-substrate/substrate/pull/370) (reserves `SnapshotInfo.type`) merged 2026-07-08 while the structural fix [#356](https://github.com/agent-substrate/substrate/pull/356) is still open. Internal tracking a#2921. | **GH issue** — file-ready below; proposes `DiscardUnknown` on read paths; the post-#370 addendum's condition is **MET** — include it. Dup-search: no existing report of the decode-brick itself. | [→ §U3 file-ready text](#u3-ateredis-strict-protojson) |
 | U4 | `runsc checkpoint` against an exited/destroyed container **retried forever** (exit 128 → permanent SUSPENDING wedge); 3 independent occurrences in 2 days, 3/3 recovered only by manual worker recycle. Internal tracking a#4189. | **GH issue — use existing [#50](https://github.com/agent-substrate/substrate/issues/50)** ("Actor stuck in STATUS_SUSPENDING" — the identical exit-128 wedge, verified from its logs) — comment our 3-occurrence evidence there; fix in flight: PR [#353](https://github.com/agent-substrate/substrate/pull/353) (terminal `CRASHED` classification during checkpoint — matches our fix #1); add the recycle-not-retry follow-through as a #353 comment. | [→ §U4 file-ready text](#u4-checkpoint-exit-128) |
 
 <a id="u1-snapshot-type-unspecified"></a>
 
-### §U1 — Golden-actor reconcile hard-errors on SNAPSHOT_TYPE_UNSPECIFIED
+### §U1 — Golden-actor reconcile hard-errors on the transient not-yet-snapshotted state
 
 **Internal tracking a#3210 · file-ready issue for agent-substrate/substrate**
 
@@ -500,9 +500,10 @@ Target project: [agent-substrate/substrate](https://github.com/agent-substrate/s
 - **Activation-latency SLA** (internal tracking a#2998): the daily golden-actor probe has **never** produced a clean first-attempt Ready — the durable latency store has zero records (verified 2026-07-03), so the substrate health report's golden-actor activation-latency check stays honestly PENDING **by construction**.
 - The snapshot-correctness payload (internal tracking a#3637) rides the same golden-actor path this bug bricks.
 - **Impact widened 2026-07-02:** the snapshot `manifest.json` format migration stranded pre-migration goldens (unresumable, no backfill), and the only remediation — a fresh golden re-commit — is exactly the path this bug bricks. The two defects compound.
-- Pre-existing brick (not a regression). A requeue-on-UNSPECIFIED fix is locally patch-validated internally (applies clean, no new imports, behaviorally sound against the phase machine), but behavioral proof needs a cluster build+run via fork-push capability (internal tracking a#2691) — so today this files as an **issue with a suggested fix**, not a PR.
+- Pre-existing brick (not a regression). A requeue-on-transient fix is locally patch-validated internally (applies clean, no new imports, behaviorally sound against the phase machine; re-cut to the post-#370 oneof form 2026-07-09), but behavioral proof needs a cluster build+run via fork-push capability (internal tracking a#2691) — so today this files as an **issue with a suggested fix**, not a PR.
+- **Survives #370 1:1 (2026-07-09):** upstream [#370](https://github.com/agent-substrate/substrate/pull/370) (merged 2026-07-08, `b66b5c20`) deleted the `SnapshotType` enum and rewrote the gate surface to a `SnapshotInfo.data` protobuf oneof — the gate is now `GetLatestSnapshotInfo().GetExternal() == nil` at `actortemplate_controller.go:154-155` @ `af1f005`, and the transient state is the **unpopulated oneof** (`GetData() == nil`), the exact analogue of the deleted `SNAPSHOT_TYPE_UNSPECIFIED`. Same error site, same wedge.
 
-**Related upstream (dup-search 2026-07-03 — no existing report; new issue is correct):** [#189](https://github.com/agent-substrate/substrate/pull/189) *(open PR — per-template `GoldenSnapshotWait`; same flow, doesn't touch the hard-error)* · [#362](https://github.com/agent-substrate/substrate/issues/362) *(open — post-checkpoint upload-failure fallback; different failure point)* · [#16](https://github.com/agent-substrate/substrate/issues/16) *(open — ActorTemplate lifecycle/mutability design)*
+**Related upstream (dup-search 2026-07-03 — no existing report; new issue is correct):** [#189](https://github.com/agent-substrate/substrate/pull/189) *(open PR — per-template `GoldenSnapshotWait`; same flow, doesn't touch the hard-error)* · [#362](https://github.com/agent-substrate/substrate/issues/362) *(open — post-checkpoint upload-failure fallback; different failure point)* · [#16](https://github.com/agent-substrate/substrate/issues/16) *(open — ActorTemplate lifecycle/mutability design)* · [#370](https://github.com/agent-substrate/substrate/pull/370) *(merged 2026-07-08 — rewrote the gate surface to a oneof; this bug survives 1:1)*
 
 **Steps**
 
@@ -510,14 +511,14 @@ Copy the title + fenced body below into a new issue at agent-substrate/substrate
 
 ```bash
 gh issue create --repo agent-substrate/substrate \
-  --title "golden-actor reconcile hard-errors on SNAPSHOT_TYPE_UNSPECIFIED instead of requeueing (transient state treated as fatal)" \
+  --title "golden-actor reconcile hard-errors on a transient not-yet-snapshotted state instead of requeueing" \
   --body-file u1-body.md
 ```
 
 **Issue body (copy-paste)**
 
 ````markdown
-Repo: agent-substrate/substrate · first observed on build-from-main sha bbafda0d; STILL PRESENT on the current build sha 2304dfe1 (controller image `…@sha256:2304dfe1…`) — unfixed across multiple advancing builds (private build-from-main dev cluster). Source line re-verified present (now `actortemplate_controller.go:154-155`) at upstream `main` b755ae73 — the latest HEAD behind the 2026-06-30 e2e fires — as of 2026-06-30 (read-only checkout). **The brick is exercised deterministically by the daily golden actor-probe** (`reconcile-probe-actor`): the durable in-repo `actor-probe-latency-history.jsonl` store has **zero clean records** — the gVisor golden-actor take has never once produced a clean first-attempt Ready, i.e. the take-gate has been failing on this `UNSPECIFIED` hard-error for its entire recorded history. This is a **pre-existing** brick, not a recent regression. The ate-controller log carries the matching `unexpected snapshot type for golden actor: SNAPSHOT_TYPE_UNSPECIFIED` on every probe reconcile. **Scope note — this is DISTINCT from the 2026-06-27 e2e-suite reds.** The six 37b5006 e2e `TestActorLifecycle` fires (03:17Z onward) fail on a *different, co-occurring* brick — the DATA-scope golden-suspend hard-error `no durable-dir volumes found for DATA snapshot` (`cmd/ateom-gvisor/main.go:273`), which fires at `actortemplate_controller.go:151` (`while suspending golden actor: %w`), one step *before* this take-gate at lines 154-155 ever runs. That second brick is NEW at 37b5006 (the demo `counter` declares zero durable-dir volumes and was PASSING pre-37b5006) and is filed separately (see the companion zero-durable-dir DATA-snapshot draft). Both are real and both should be filed; the e2e suite happens to surface the suspend-path brick first because the suspend fails before the take-gate is reached.
+Repo: agent-substrate/substrate · first observed on build-from-main sha bbafda0d; STILL PRESENT on the current build sha 2304dfe1 (controller image `…@sha256:2304dfe1…`) — unfixed across multiple advancing builds (private build-from-main dev cluster). Source line re-verified present (`actortemplate_controller.go:154-155`) at upstream `main` af1f005 as of 2026-07-09 (read-only checkout) — **post-#370**: PR #370 (merged 2026-07-08) deleted the `SnapshotType` enum and rewrote the gate to a `SnapshotInfo.data` oneof, but the bug survives 1:1 (same lines, same wedge; details in Source below). **The brick is exercised deterministically by the daily golden actor-probe** (`reconcile-probe-actor`): the durable in-repo `actor-probe-latency-history.jsonl` store has **zero clean records** — the gVisor golden-actor take has never once produced a clean first-attempt Ready, i.e. the take-gate has been failing on this `UNSPECIFIED` hard-error for its entire recorded history. This is a **pre-existing** brick, not a recent regression. The ate-controller log carries the matching `unexpected snapshot type for golden actor: SNAPSHOT_TYPE_UNSPECIFIED` on every probe reconcile. **Scope note — this is DISTINCT from the 2026-06-27 e2e-suite reds.** The six 37b5006 e2e `TestActorLifecycle` fires (03:17Z onward) fail on a *different, co-occurring* brick — the DATA-scope golden-suspend hard-error `no durable-dir volumes found for DATA snapshot` (`cmd/ateom-gvisor/main.go:271` @ af1f005; was `:273` at b755ae73), which fires at `actortemplate_controller.go:151` (`while suspending golden actor: %w`), one step *before* this take-gate at lines 154-155 ever runs. That second brick is NEW at 37b5006 (the demo `counter` declares zero durable-dir volumes and was PASSING pre-37b5006) and is filed separately (see the companion zero-durable-dir DATA-snapshot draft). Both are real and both should be filed; the e2e suite happens to surface the suspend-path brick first because the suspend fails before the take-gate is reached.
 
 ## Symptom
 An ActorTemplate that declares `spec.snapshotsConfig.location: gs://…` (external/GCS golden snapshot) never reaches `status.phase=Ready`. `ate-controller` errors on every reconcile (exp-backoff, indefinitely):
@@ -527,26 +528,37 @@ ERROR Reconciler error controller=actortemplate ActorTemplate=<name>
   error="unexpected snapshot type for golden actor: SNAPSHOT_TYPE_UNSPECIFIED"
 ```
 
+(That is the pre-#370 enum rendering, observed on builds ≤ b755ae73. Post-#370 builds render the `%T` of the unpopulated oneof instead — e.g. `unexpected snapshot type for golden actor: <nil>` — same error site, same wedge.)
+
 The controller hard-error is the invariant across builds (observed on both bbafda0d and the current 2304dfe1). The `status`-field vantage varies by build: on the earlier bbafda0d build `status.goldenActorID` was assigned but the actor never went Ready; on the current 2304dfe1 build a fresh cold-take stalls at `WaitGoldenActor` with `goldenActorID` never assigned this run. Either way the actor never reaches Ready — the reconcile hard-error on the transient `UNSPECIFIED` snapshot type is the root cause, not the precise status-field state.
 
 ## Source
-`cmd/atecontroller/internal/controllers/actortemplate_controller.go`:
+`cmd/atecontroller/internal/controllers/actortemplate_controller.go:154-155` @ `main` af1f005 (post-#370):
 ```go
-if resp.GetActor().GetLatestSnapshotInfo().GetType() != ateapipb.SnapshotType_SNAPSHOT_TYPE_EXTERNAL {
-    return ctrl.Result{}, fmt.Errorf("unexpected snapshot type for golden actor: %v",
-        resp.GetActor().GetLatestSnapshotInfo().GetType())
+if resp.GetActor().GetLatestSnapshotInfo().GetExternal() == nil {
+    return ctrl.Result{}, fmt.Errorf("unexpected snapshot type for golden actor: %T",
+        resp.GetActor().GetLatestSnapshotInfo().GetData())
 }
 ```
-`SnapshotType` (pkg/proto/ateapipb/ateapi.proto): `UNSPECIFIED=0`, `LOCAL`, `EXTERNAL`. The golden-actor reconcile requires `EXTERNAL`; the actor's `LatestSnapshotInfo` is the zero value (`UNSPECIFIED`) because the external golden snapshot has not been taken-and-typed yet.
+Post-#370 proto shape (pkg/proto/ateapipb/ateapi.proto): `message SnapshotInfo { oneof data { ExternalSnapshotInfo external = 2; LocalSnapshotInfo local = 3; } reserved 1; reserved "type"; }` — the `SnapshotType` enum is deleted. The golden-actor reconcile requires the `external` oneof member; a not-yet-committed golden snapshot leaves the oneof **unpopulated** (`GetData() == nil`), the exact analogue of the pre-#370 zero-value `SNAPSHOT_TYPE_UNSPECIFIED` (which the pre-#370 gate `GetType() != SNAPSHOT_TYPE_EXTERNAL` rejected the same way).
 
 ## Why this is a bug, not a config error
-- `UNSPECIFIED` = "golden snapshot not yet externally committed", a **transient** state — but the reconcile returns a hard `error`, not `ctrl.Result{Requeue:true}` / a wait condition. The ActorTemplate is wedged permanently on a state that should self-resolve once the golden snapshot lands as EXTERNAL.
-- A plain actor (no gVisor checkpoint) with the same `snapshotsConfig` shape reaches Ready fine — so the gap is specific to the external/checkpoint golden-snapshot take path either not stamping `Type=EXTERNAL` or not completing before the reconcile gates on it.
-- This is a strict proto-enum write/read disagreement: the write path and the read path disagree on whether the field is populated, and the reader treats the unpopulated zero value as fatal rather than not-yet-ready.
+- An unpopulated `SnapshotInfo.data` oneof (`GetData() == nil`) = "golden snapshot not yet externally committed", a **transient** state — but the reconcile returns a hard `error`, not `ctrl.Result{Requeue:true}` / a wait condition. The ActorTemplate is wedged permanently on a state that should self-resolve once the golden snapshot lands as `external`. (Pre-#370, this same transient state was the `SNAPSHOT_TYPE_UNSPECIFIED` zero value — #370 changed the encoding, not the semantics.)
+- A plain actor (no gVisor checkpoint) with the same `snapshotsConfig` shape reaches Ready fine — so the gap is specific to the external/checkpoint golden-snapshot take path either not populating `SnapshotInfo.external` or not completing before the reconcile gates on it.
+- This is a write/read disagreement on population: the write path and the read path disagree on whether the oneof is populated, and the reader treats not-yet-populated as fatal rather than not-yet-ready.
 
 ## Suggested fix (one of)
-1. Treat `UNSPECIFIED` as not-ready → requeue with backoff (wait for the golden snapshot to commit) rather than erroring.
-2. Ensure the golden-snapshot take path stamps `SnapshotType_SNAPSHOT_TYPE_EXTERNAL` before the actor is reported back to the reconcile.
+1. Treat the unpopulated oneof as not-ready → requeue with backoff (wait for the golden snapshot to commit) rather than erroring:
+```go
+info := resp.GetActor().GetLatestSnapshotInfo()
+if info.GetData() == nil {
+    return ctrl.Result{RequeueAfter: 10 * time.Second}, nil // transient: golden snapshot not yet committed
+}
+if info.GetExternal() == nil {
+    return ctrl.Result{}, fmt.Errorf("unexpected snapshot type for golden actor: %T", info.GetData())
+}
+```
+2. Ensure the golden-snapshot take path populates `SnapshotInfo.external` before the actor is reported back to the reconcile.
 
 ## Repro
 Apply an ActorTemplate with `snapshotsConfig.location: gs://…` whose golden snapshot must be taken externally; watch `ate-controller` logs + `status.phase` (never Ready).
@@ -555,14 +567,14 @@ Apply an ActorTemplate with `snapshotsConfig.location: gs://…` whose golden sn
 The snapshot layout migrated to a manifest-based format (observed between 06-12 and 06-28 in our bucket): every fresh snapshot dir now carries 4 objects including a `manifest.json` that pins the runsc build (e.g. `gs://gvisor/releases/release/20260622/x86_64/runsc` + sha256), while a pre-migration golden dir has only the 3 image objects and **no manifest.json**. The current resume path hard-requires the manifest — resuming from a pre-migration golden fails with `storage: object doesn't exist` on `manifest.json`. Consequences:
 
 - **Pre-migration goldens are silently unresumable.** No migration/backfill path shipped with the format change; an ActorTemplate whose recorded goldenSnapshot predates the migration stays Ready-looking but structurally cannot resume.
-- **The only remediation is a fresh golden re-commit — which is exactly the path this bug bricks.** A new golden commit hits the `SNAPSHOT_TYPE_UNSPECIFIED` hard-error above, so operators of pre-migration templates have **no working path back to a resumable golden** until this is fixed. The two defects compound: the migration strands old goldens, and this bug blocks minting new ones.
+- **The only remediation is a fresh golden re-commit — which is exactly the path this bug bricks.** A new golden commit hits the unpopulated-oneof hard-error above (pre-#370: `SNAPSHOT_TYPE_UNSPECIFIED`), so operators of pre-migration templates have **no working path back to a resumable golden** until this is fixed. The two defects compound: the migration strands old goldens, and this bug blocks minting new ones.
 - Synthesizing a manifest for an old golden is unsound by design — the manifest is a restore-compatibility record pinning the runsc build the snapshot was taken under, which is unknown for pre-migration dirs.
 ````
 
 **Page-side notes (not part of the paste body)**
 
-- Source pins re-verified at upstream `main` `b755ae73` (2026-06-30): the take-gate moved lines 145-146 → 154-155 across the 37b5006 → b755ae73 advance. **Re-verify line numbers at filing time.**
-- The suggested-fix hunk (requeue-on-UNSPECIFIED) is locally patch-validated internally — applies clean, well-formed Go, no new imports; phase not advanced on the new branch so a requeue self-resolves once the golden commits EXTERNAL. Behavioral proof (the daily golden take going clean) requires a cluster build+run; the repo has no pure unit test on this reconcile gate.
+- Source pins re-verified at upstream `main` `af1f005` (2026-07-09, post-#370): same lines 154-155, now the oneof form (`GetExternal() == nil` gate; the take-gate previously moved 145-146 → 154-155 across the 37b5006 → b755ae73 advance). **Re-verify line numbers at filing time.**
+- The suggested-fix hunk (requeue-on-unpopulated-oneof; re-cut to the post-#370 oneof form 2026-07-09) is locally patch-validated internally — applies clean, well-formed Go, no new imports; phase not advanced on the new branch so a requeue self-resolves once the golden commits `external`. Behavioral proof (the daily golden take going clean) requires a cluster build+run; the repo has no pure unit test on this reconcile gate.
 - The body's "filed separately" companion is §U2 — if U2 files first, add its upstream issue number where the body says "see the companion zero-durable-dir DATA-snapshot draft".
 
 <a id="u2-data-snapshot-zero-ddv"></a>
@@ -613,7 +625,7 @@ case ateompb.SnapshotScope_SNAPSHOT_SCOPE_DATA:
 
 Propagation to the controller (`cmd/atecontroller/internal/controllers/actortemplate_controller.go`, `PhaseWaitGoldenActor`):
 - the error returns from `SuspendActor` and is wrapped at **line 151** (HEAD b755ae73; `if err != nil` at 150 → `return` at 151; was line 140 at 37b5006): `while suspending golden actor: %w` → ActorTemplate never leaves `WaitGoldenActor`.
-- (Contrast internal tracking a#3210, which fails one step later at **lines 154-155** (HEAD b755ae73; type-gate `if` at 154 → `return` at 155; was line 146 at 37b5006) — suspend *succeeds* but `LatestSnapshotInfo().GetType()` is `SNAPSHOT_TYPE_UNSPECIFIED`. Distinct bricks, distinct failure points.)
+- (Contrast internal tracking a#3210, which fails one step later at **lines 154-155** (holds at af1f005 post-#370; take-gate `if` at 154 → `return` at 155; was line 146 at 37b5006) — suspend *succeeds* but the `SnapshotInfo.data` oneof is unpopulated / `GetExternal()` is nil (pre-#370: `GetType()` was `SNAPSHOT_TYPE_UNSPECIFIED`). Distinct bricks, distinct failure points.)
 
 ## Save/restore asymmetry (sharpens the fix)
 The RESTORE path tolerates zero durable-dir volumes — `main.go:387` (pause) and `main.go:416` (app containers) under `SNAPSHOT_SCOPE_DATA` just `cmdCreate`/`cmdStart` with no ddv requirement. Only the SAVE path requires `len(ddv) >= 1`. So a naive "make `len(ddv)==0` a no-op success" backstop would write an empty checkpoint dir that the restore side then tries to `--fs-restore-image-path` from — moving the brick to restore rather than removing it.
@@ -628,14 +640,14 @@ A TODO at the save switch already flags the DATA/FULL split as a temporary singl
 - `kb/substrate/health/e2e-history.jsonl`: PASS ≤ `9d57db04` → 7/7 FAIL from `37b5006`.
 - Upgrade-loop Job pod logs (read-only): `demo_test.go:584` golden-Ready timeout (`WaitGoldenActor`).
 - ate-controller logs (read-only): `no durable-dir volumes found for DATA snapshot`.
-- Source @ HEAD b755ae73 (the HEAD behind the 06-30 e2e fires; re-verified read-only 2026-06-30): `cmd/ateom-gvisor/main.go:273` (byte-exact, unchanged from 37b5006); controller `actortemplate_controller.go:151` (wrap) / `:154-155` (internal tracking a#3210 sibling). (Line pins drifted 140/146 → 151/154-155 across the 37b5006 → fe48750 → b755ae73 advance; the SAVE-path hard-error string + its `PhaseWaitGoldenActor` context are otherwise unchanged.)
+- Source @ HEAD b755ae73 (the HEAD behind the 06-30 e2e fires; re-verified read-only 2026-06-30): `cmd/ateom-gvisor/main.go:273` (byte-exact, unchanged from 37b5006); controller `actortemplate_controller.go:151` (wrap) / `:154-155` (internal tracking a#3210 sibling). (Line pins drifted 140/146 → 151/154-155 across the 37b5006 → fe48750 → b755ae73 advance; the SAVE-path hard-error string + its `PhaseWaitGoldenActor` context are otherwise unchanged.) Re-verified at `af1f005` (2026-07-09, post-#370): the SAVE-path hard-error drifted `main.go:273` → **`:271`** (string byte-exact); controller `:151` / `:154-155` unchanged.
 ````
 
 **Page-side notes (not part of the paste body)**
 
 - The staged draft's internal tracking preamble and trailing signature line are stripped above; the body's two sibling refs are rendered as "internal tracking a#3210" per this page's fence — **if §U1 files first, swap those for its upstream issue number** at filing time.
 - The body's "7/7 red since" was the tally at draft time; the durable history reads **45 of 46 FAIL** as of 2026-07-03 — update the tally at filing time if desired.
-- Line pins re-verified at `b755ae73` (2026-06-30); re-verify at filing time.
+- Line pins re-verified at `af1f005` (2026-07-09, post-#370): `main.go:273` → `:271` (string byte-exact); controller `:151` / `:154-155` hold. Re-verify at filing time.
 
 <a id="u3-ateredis-strict-protojson"></a>
 
@@ -647,13 +659,13 @@ A TODO at the save switch already flags the DATA/FULL split as a temporary singl
 
 - The `listactors-internal` e2e check on long-lived clusters: a proto field rename across a deploy (concretely upstream #227's `last_snapshot` → `latest_snapshot_info`) makes strict protojson reject pre-rename persisted rows → `ListActors` returns `code=Internal` on **every** call — 0-pass deterministic until rows are rewritten or the cluster recreated.
 - A loop-side workaround currently holds our clusters green, so this is **forward-compat hardening** (not gating a live fire) — the upstream fix is the durable close.
-- **New urgency (2026-07-02 sweep):** open upstream PR [#370](https://github.com/agent-substrate/substrate/issues/370) (SnapshotType enum removal; `SnapshotInfo.type` → `reserved`) is a concrete, imminent **second trigger** of the same brick class. Open PR [#356](https://github.com/agent-substrate/substrate/issues/356) (binary protobuf encoding for ateredis rows) is the structural fix — **merge order decides** whether a fresh brick fires (#356-first = safe, #370-first = brick).
+- **Race RESOLVED — second brick instance LIVE at head (2026-07-09):** upstream PR [#370](https://github.com/agent-substrate/substrate/pull/370) (SnapshotType enum removal; `SnapshotInfo.type` → `reserved`) **merged 2026-07-08** (`b66b5c20`) while [#356](https://github.com/agent-substrate/substrate/pull/356) (binary protobuf encoding for ateredis rows — the structural fix) is **still open**. The #370-first = brick branch fired: any `DBActor` row persisted pre-#370 with a **non-zero** snapshot type carries `"type":"SNAPSHOT_TYPE_LOCAL|EXTERNAL"` (protojson emits non-zero enums by name), which the post-#370 strict decoder rejects (`unknown field "type"`) — population-selective, same narrow-probe trap as #227.
 
 **Steps**
 
-**Related upstream (dup-search 2026-07-03 — no existing report of the decode-brick; new issue is correct):** [#227](https://github.com/agent-substrate/substrate/pull/227) *(merged — the rename that first triggered it)* · [#370](https://github.com/agent-substrate/substrate/pull/370) *(open — `SnapshotInfo.type` → reserved: the imminent second trigger)* · [#307](https://github.com/agent-substrate/substrate/issues/307) *(open — binary-protobuf capacity change; explicitly waves off decode-compat as "hard cutover", which strengthens this ask)* · [#356](https://github.com/agent-substrate/substrate/pull/356) *(open — implements #307; the structural fix, not merged)*
+**Related upstream (dup-search 2026-07-03 — no existing report of the decode-brick; new issue is correct):** [#227](https://github.com/agent-substrate/substrate/pull/227) *(merged — the rename that first triggered it)* · [#370](https://github.com/agent-substrate/substrate/pull/370) *(**merged 2026-07-08** — `SnapshotInfo.type` → reserved: the **live** second trigger)* · [#307](https://github.com/agent-substrate/substrate/issues/307) *(open — binary-protobuf capacity change; explicitly waves off decode-compat as "hard cutover", which strengthens this ask)* · [#356](https://github.com/agent-substrate/substrate/pull/356) *(open — implements #307; the structural fix, not merged)*
 
-Check the merge state of upstream #370 first — if it has merged, append the "Optional filing addendum" section (included in the fence below) and cite #370 as the concrete second trigger alongside #227.
+#370 merged 2026-07-08 — the "filing addendum" condition is **MET**: include the addendum section (in the fence below) and cite #370 as the concrete live second trigger alongside #227.
 
 ```bash
 gh issue create --repo agent-substrate/substrate \
@@ -723,20 +735,21 @@ pattern for proto-JSON-at-rest; it is additive and idempotent.
 3. Redeploy the api-server against the same store → `ListActors` returns `code=Internal`
    (`unknown field "<old>"`) on every call until the pre-rename rows are gone.
 
-## Optional filing addendum (use if #370 has merged by filing time)
+## Filing addendum (CONDITION MET — #370 merged 2026-07-08; include this)
 
 This is not a one-off: #370 (SnapshotType enum removal, `SnapshotInfo.type` →
-`reserved`) repeats the same shape — any `DBActor` row persisted before #370 carries
-`"type"`, which the post-#370 strict decoder rejects, re-bricking `ListActors` on any
-long-lived store. #356 (binary protobuf encoding for ateredis rows) fixes the class
-structurally; until it lands, `DiscardUnknown` on the read paths is the minimal guard
-that makes schema evolution safe for persisted rows.
+`reserved`; merged `b66b5c20`) repeats the same shape — any `DBActor` row persisted
+before #370 with a non-zero snapshot type carries `"type"`, which the post-#370 strict
+decoder rejects, re-bricking `ListActors` on any long-lived store. #356 (binary protobuf
+encoding for ateredis rows) fixes the class structurally; until it lands,
+`DiscardUnknown` on the read paths is the minimal guard that makes schema evolution safe
+for persisted rows.
 ````
 
 **Page-side notes (not part of the paste body)**
 
-- Re-verified at upstream `main` `b755ae73` (2026-06-30) — still unfixed, no drift: read paths still strict `protojson.Unmarshal` with zero `DiscardUnknown` anywhere in the ateredis pkg (`fetchActors` at `ateredis.go:746` backing `ListActors` at `:639`; persisted-row read at `:771`); the #227 field-12 rename still in `ateapi.proto:125`. Re-verify at filing time.
-- Drop the "Optional filing addendum" section if #370 has **not** merged at filing time (the base body stands alone).
+- Re-verified at upstream `main` `af1f005` (2026-07-09, post-#370) — still unfixed, no fix drift: all 10 persisted-row read sites still bare strict `protojson.Unmarshal` with zero `DiscardUnknown` anywhere in the ateredis pkg (`ateredis.go:140/:172/:242/:335/:407/:435/:503/:546/:612/:799`; `fetchActors` at `:774` backing `ListActors` at `:663`). Re-verify at filing time.
+- The addendum's condition is **MET** (#370 merged 2026-07-08) — include it; the base body still stands alone if pasted without it.
 
 <a id="u4-checkpoint-exit-128"></a>
 
