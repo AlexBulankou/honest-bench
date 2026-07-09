@@ -482,7 +482,7 @@ The direction in #1087 looks right to us — one thing worth double-checking in 
 
 ## Substrate upstream blockers
 
-Target project: [agent-substrate/substrate](https://github.com/agent-substrate/substrate). Fork: [`AlexBulankou/substrate`](https://github.com/AlexBulankou/substrate), synced to upstream `main` at this refresh. All four rows are **GH issue** actions (no prepared branches; the one near-PR fix, U1's requeue patch, is locally validated internally but its behavioral proof needs a cluster build+run — internal tracking a#2691). Dup-search 2026-07-03: **U4 is already filed upstream as [#50](https://github.com/agent-substrate/substrate/issues/50) with fix PR [#353](https://github.com/agent-substrate/substrate/pull/353) in flight — U4 comments there instead of filing.** One sitting clears all four; suggested order: **U2 → U1 → U3 (new filings) → U4 (two comments)**.
+Target project: [agent-substrate/substrate](https://github.com/agent-substrate/substrate). Fork: [`AlexBulankou/substrate`](https://github.com/AlexBulankou/substrate), synced to upstream `main` at this refresh. All five rows are **GH issue** actions (no branches pushed anywhere, per the no-filings rule). **Tested reference patches now exist for U2 and U5** — both re-cut 2026-07-09 onto upstream `af1f005` (post-#370), full `controlapi` suite green, `git apply --check` clean; staged locally, offered only if a maintainer asks. U1's requeue patch is locally validated but its behavioral proof needs a cluster build+run (internal tracking a#2691). Dup-search 2026-07-03: **U4 is already filed upstream as [#50](https://github.com/agent-substrate/substrate/issues/50); its fix PR [#353](https://github.com/agent-substrate/substrate/pull/353) merged 2026-07-08 — U4 comments there instead of filing.** One sitting clears all five; suggested order: **U2 → U1 → U5 → U3 (new filings) → U4 (comment)**.
 
 | # | What | Action | Steps |
 |---|---|---|---|
@@ -490,6 +490,7 @@ Target project: [agent-substrate/substrate](https://github.com/agent-substrate/s
 | U2 | DATA-scope golden snapshot **hard-fails on zero durable-dir volumes** (regression in upstream #295) → golden-snapshot e2e leg deterministically RED since 2026-06-27 (45 of 46 fires FAIL as of 07-03). Internal tracking a#3842. | **GH issue** — file-ready below; recommends a caller-side scope gate (admission validation) as the primary fix; explains why a naive callee no-op just moves the brick to restore. Dup-search: no existing report. | [→ §U2 file-ready text](#u2-data-snapshot-zero-ddv) |
 | U3 | Strict `protojson.Unmarshal` of persisted rows **bricks `ListActors`** across any proto field rename on a long-lived cluster; **second trigger now LIVE**: upstream [#370](https://github.com/agent-substrate/substrate/pull/370) (reserves `SnapshotInfo.type`) merged 2026-07-08 while the structural fix [#356](https://github.com/agent-substrate/substrate/pull/356) is still open. Internal tracking a#2921. | **GH issue** — file-ready below; proposes `DiscardUnknown` on read paths; the post-#370 addendum's condition is **MET** — include it. Dup-search: no existing report of the decode-brick itself. | [→ §U3 file-ready text](#u3-ateredis-strict-protojson) |
 | U4 | `runsc checkpoint` against an exited/destroyed container **retried forever** (exit 128 → permanent SUSPENDING wedge); 3 independent occurrences in 2 days, 3/3 recovered only by manual worker recycle. Internal tracking a#4189. | **GH issue — use existing [#50](https://github.com/agent-substrate/substrate/issues/50)** ("Actor stuck in STATUS_SUSPENDING" — the identical exit-128 wedge, verified from its logs) — comment our 3-occurrence evidence there; fix in flight: PR [#353](https://github.com/agent-substrate/substrate/pull/353) (terminal `CRASHED` classification during checkpoint — matches our fix #1); add the recycle-not-retry follow-through as a #353 comment. | [→ §U4 file-ready text](#u4-checkpoint-exit-128) |
+| U5 | Golden snapshot **registered with no `manifest.json`** — a crash mid-checkpoint-upload is laundered into a *successful* suspend (dangling-worker skip returns success; `FinalizeSuspended` promotes the unverified `InProgressSnapshot`; controller pins it with only a type check) → **every warm resume fails permanently**. Publish-side sibling of U1/U2, which brick the only remediation (regenerating the golden). Internal tracking a#4478. | **GH issue** — file-ready below; fix class is **verify-manifest-before-promote** (single choke point). [#353](https://github.com/agent-substrate/substrate/pull/353) (merged 07-08) improves legibility only; manifest-written-last (`9360791`, 06-25) narrows the window but the promote gate is still missing at HEAD. Tested reference patch staged @ `af1f005`. Dup-search: no existing report. | [→ §U5 file-ready text](#u5-nonatomic-manifest-publish) |
 
 <a id="u1-snapshot-type-unspecified"></a>
 
@@ -650,6 +651,7 @@ A TODO at the save switch already flags the DATA/FULL split as a temporary singl
 - The staged draft's internal tracking preamble and trailing signature line are stripped above; the body's two sibling refs are rendered as "internal tracking a#3210" per this page's fence — **if §U1 files first, swap those for its upstream issue number** at filing time.
 - The body's "7/7 red since" was the tally at draft time; the durable history reads **45 of 46 FAIL** as of 2026-07-03 — update the tally at filing time if desired.
 - Line pins re-verified at `af1f005` (2026-07-09, post-#370): `main.go:273` → `:271` (string byte-exact); controller `:151` / `:154-155` hold. Re-verify at filing time.
+- **Tested reference patch staged (2026-07-09):** converter-side `resolveSnapshotScope` DATA→FULL downgrade + `slog.Warn` when the actor has zero durable-dir volumes — the recommended caller-side scope gate, fallback-to-Full variant. Re-cut onto `af1f005` (no API port needed); full `controlapi` suite green; `git apply --check` clean. Staged locally per the no-filings rule — attach as a proposed fix or offer on ask.
 
 <a id="u3-ateredis-strict-protojson"></a>
 
@@ -847,6 +849,172 @@ if err != nil {
 
 - Source citations pinned at `main` `8631ae3` (2026-07-01) — `runsc.go:107-135`, `main.go:280-283`, `actortemplate_controller.go:149-151`. Re-verify line numbers at posting time.
 - The body was drafted as a new-issue filing; posted as a #50 comment it reads as independent-reproduction evidence — prepend a one-liner like "Independent reproduction + source pins (3 occurrences / 2 days):" if desired.
+
+<a id="u5-nonatomic-manifest-publish"></a>
+
+### §U5 — Golden snapshot registered with no manifest.json (nonatomic publish)
+
+**Internal tracking a#4478 · file-ready issue for agent-substrate/substrate**
+
+**What's blocked**
+
+- **The warm-resume path, permanently, once triggered**: a suspend that crashes mid-checkpoint-upload can end with an incomplete snapshot registered as `LatestSnapshotInfo` and pinned as the ActorTemplate's `Status.GoldenSnapshot` — after which **every warm resume from that golden hard-fails** ("while fetching snapshot manifest … object doesn't exist") with no self-heal.
+- This is the **publish-side sibling of U1/U2**: it explains how a broken golden got *registered* in the first place, while U1/U2 brick the only remediation (regenerating the golden) — so the unrestorable state is permanent until both sides are fixed. Operational remediation on our cluster remains gated on U1.
+- Observed live: a golden prefix created 2026-06-12 with all payload objects present and no `manifest.json` (versioned listing confirms never-written, not written-then-lost), degrading warm resume on every fire since.
+
+**Steps**
+
+```bash
+# file as a new issue (dup-search 2026-07-03 + 2026-07-09: no existing report of the
+# registration hole; #353 covers consumption-side legibility only):
+gh issue create --repo agent-substrate/substrate \
+  --title "Golden snapshot can be registered with no manifest.json: dangling-worker suspend skip + unverified InProgressSnapshot promote" \
+  --body-file u5-nonatomic-manifest-publish.md
+```
+
+**Issue body (copy-paste → u5-nonatomic-manifest-publish.md)**
+
+````markdown
+Repo: agent-substrate/substrate · source pins verified at upstream `main` = d8f562d (2026-07-06).
+
+## Summary
+
+A suspend that crashes mid-checkpoint-upload can still end with the incomplete snapshot
+registered as the actor's `LatestSnapshotInfo` — and then pinned as the ActorTemplate's
+`Status.GoldenSnapshot`. Every subsequent warm resume from that golden hard-fails with:
+
+```
+while fetching snapshot manifest: ... storage: object doesn't exist
+```
+
+(the Restore-side error at `cmd/atelet/main.go:476-480`).
+
+The publish is guarded at upload time (manifest written last) but **registration is never
+gated on the manifest actually existing**, and one retry path converts a mid-upload crash
+into a successful suspend.
+
+## Observed evidence
+
+On a long-lived demo cluster we found a golden snapshot prefix (created 2026-06-12) containing:
+
+- `checkpoint.img.zstd`, `pages.img.zstd`, `pages_meta.img.zstd` — payload objects present
+- **no `manifest.json`** — and, per a versioned bucket listing, **no deleted version either**:
+  the manifest was never written, not written-then-lost
+- the same bucket holds 763 `manifest.json` objects for other snapshots — manifest presence
+  is clearly the norm
+
+The ActorTemplate's `Status.GoldenSnapshot` points at that prefix, so every warm resume
+(`WorkerPool` scale-up from golden) fails deterministically with the fetch error above.
+There is no self-heal: nothing invalidates or regenerates the golden.
+
+## Mechanism (source pins at d8f562d)
+
+The suspend workflow (`cmd/ateapi/internal/controlapi/workflow_suspend.go`) is a 3-step
+state machine, and the composite hole is:
+
+1. **`PrepareSuspend` registers the snapshot location before any byte is uploaded**
+   (lines 89-91): it computes `snapshotID`, sets
+   `state.Actor.InProgressSnapshot = <location>/<actorID>/<snapshotID>`, and persists via
+   `UpdateActor` — all prior to the checkpoint upload.
+
+2. **`CallAteletSuspendStep.Execute` treats a vanished worker as success** (lines 112-114):
+
+   ```go
+   if errors.Is(err, ErrWorkerPodNotFound) {
+       slog.Warn("Skipping suspend for dangling worker pod", ...)
+       return nil
+   }
+   ```
+
+   The intended case is "worker already gone, nothing to checkpoint". But if the worker
+   dies *mid-checkpoint-upload* (after the `Checkpoint` RPC at line 141 was dispatched but
+   before it returned), the workflow retry finds the pod gone and this branch returns
+   `nil` — laundering an incomplete upload into a successful step.
+
+3. **`FinalizeSuspendedStep` promotes unconditionally** (lines 198-207): on
+   `InProgressSnapshot != ""` it builds `LatestSnapshotInfo` (external snapshot,
+   `SnapshotUriPrefix = InProgressSnapshot`), clears `InProgressSnapshot`, sets
+   STATUS_SUSPENDED, and persists (line 213). **No check that `manifest.json` — or any
+   object at all — exists at the prefix.**
+
+Upload-side, `uploadExternalCheckpoint` (`cmd/atelet/main.go:415`) uploads the payload
+files **in parallel** (errgroup, `SendLocalFileToGCSWithZstd` at line 425) and the
+manifest **last** (`SendBytesToGCS` at line 441, commented "written last, so a Restore on
+any node is self-describing"). So a crash in the window between payload completion and
+manifest write leaves exactly the observed shape: payloads present, manifest never written.
+
+Controller-side, `PhaseWaitGoldenActor`
+(`cmd/atecontroller/internal/controllers/actortemplate_controller.go`) gates only on
+snapshot **type** (line 155) before pinning
+`at.Status.GoldenSnapshot = ...SnapshotUriPrefix` (line 159) — the broken registration
+propagates to the template with no content check.
+
+End-to-end failure path:
+
+```
+payloads upload OK (parallel) → atelet/worker dies before manifest write
+→ Checkpoint RPC never succeeds → workflow retries Execute
+→ worker pod gone → ErrWorkerPodNotFound skip returns nil (success)
+→ FinalizeSuspended promotes InProgressSnapshot → LatestSnapshotInfo
+→ ActorTemplate controller pins it as Status.GoldenSnapshot (type-only gate)
+→ every warm resume: "while fetching snapshot manifest ... object doesn't exist"
+```
+
+## Timing note — partially mitigated, hole remains at HEAD
+
+The explicit manifest-written-last ordering landed in 9360791 (2026-06-25, "atelet:
+manifest-driven micro-VM snapshots with sparse, overlapped transfer") — *after* our broken
+2026-06-12 snapshot was created, so the historical instance may have had a different
+upload-side ordering. But the registration hole is orthogonal to upload ordering and is
+present at HEAD: manifest-last narrows the crash window, while the dangling-worker skip +
+unverified promote still convert any crash inside that window into a registered-but-
+unrestorable golden.
+
+**Relation to PR #353 (CRASHED-actor detection, merged 2026-07-08)** — #353 improves the
+*consumption-side legibility* of this failure: a golden restore that fails on an
+invalid-sandbox-asset error (e.g. the missing manifest) will mark the actor
+`STATUS_CRASHED` via `maybeCrashActor` instead of surfacing only a workflow error. That
+is welcome, but it does not close this hole:
+
+- registration is still unverified — `FinalizeSuspendedStep` still promotes
+  `InProgressSnapshot` with no manifest check, and the `ErrWorkerPodNotFound` skip in
+  `CallAteletSuspendStep` (the retry path that launders a mid-upload crash into success)
+  is untouched;
+- the ActorTemplate's `Status.GoldenSnapshot` is never invalidated, so every *new* actor
+  scaled up from the pool restores from the same broken golden and crashes in turn —
+  the failure becomes per-actor-legible but the template-level trap remains permanent.
+
+So fix (1) below (verify-before-promote) is still the missing piece after #353.
+
+## Suggested fixes
+
+The invariant worth enforcing: **a snapshot's registration and its manifest must be one
+atomic step — never "register now, verify never".**
+
+1. **`FinalizeSuspendedStep`: verify before promote.** Before promoting
+   `InProgressSnapshot` → `LatestSnapshotInfo`, stat `manifest.json` at the prefix (one
+   small GCS read). Missing manifest ⇒ fail the step (retry / surface), don't promote.
+   This is the single choke point — it closes the hole regardless of which upstream path
+   produced the incomplete upload.
+
+2. **`CallAteletSuspendStep`: don't return success on vanish with an unverified upload.**
+   `ErrWorkerPodNotFound` should distinguish "already checkpointed" (manifest present)
+   from "vanished mid-checkpoint" (manifest absent). In the latter case, clear
+   `InProgressSnapshot` and fail/abort rather than returning `nil`.
+
+3. *(Optional, defense-in-depth)* **ActorTemplate controller: manifest-presence gate**
+   next to the existing type check at `actortemplate_controller.go:155`, so a bad
+   registration can't become the template's golden.
+
+Fix (1) alone is sufficient to prevent the unrestorable-golden state; (2) improves the
+failure's legibility; (3) contains blast radius if a future path bypasses the workflow.
+````
+
+**Page-side notes (not part of the paste body)**
+
+- Body pins at `main` `d8f562d` (2026-07-06) — `workflow_suspend.go:89-91/:112-114/:141/:198-207/:213`, `atelet/main.go:415/:425/:441/:476-480`, `actortemplate_controller.go:155/:159`. Post-#370 (oneof refactor, merged 07-08) some of these drift — re-verify line numbers and the `SNAPSHOT_TYPE_EXTERNAL` → oneof phrasing at filing time (the body above already says "external snapshot" rather than the removed enum name).
+- The #353 relation section is current as of 2026-07-08 (merged); the two residual-gap bullets were re-verified against the merged `crash.go` — worker-release-on-terminal-failure remains an in-code TODO upstream tracks under [#119](https://github.com/agent-substrate/substrate/issues/119).
+- **Tested reference patch staged (re-cut 2026-07-09 onto `af1f005`, post-#370):** implements fixes (1) + (2) — GCS+S3 `SnapshotVerifier` (`ManifestExists(ctx, prefix)`), FinalizeSuspendedStep verify-before-promote gate (missing manifest ⇒ fail step, never promote), and CallAteletSuspendStep `ErrWorkerPodNotFound` disambiguation (no snapshot ⇒ safe skip; manifest present ⇒ completed, skip; manifest absent ⇒ clear `InProgressSnapshot` + fail; verifier error ⇒ fail-closed, keep registration for retry). The af1f005 re-cut ports the post-#370 oneof + post-ResourceMetadata API (2-value `UpdateActor`/`CreateActor` returns, `GetMetadata().GetVersion()` identity, `SuspendInput.ActorName`). 8 new unit tests; full `controlapi` suite green (18.9s incl. envtest); `git apply --check` clean @ `af1f005`. Fix (3) deliberately omitted — single-choke-point patch stays minimal. Staged locally per the no-filings rule; attach as a proposed fix or offer on ask.
 
 ---
 
