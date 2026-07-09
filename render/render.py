@@ -627,9 +627,10 @@ _SLO_BASIS_NOTES = {
     ),
     "literal_ttfe_upper_bound+acq_fulfilled": (
         "derived from the literal exec-probe warm p95 — an UPPER bound on TTFE (includes "
-        "exec setup overhead), so compliance at the bar is conservative; fills the <5s cell "
-        "ONLY (the <1s cell stays honest-empty under this basis) — throughput is the "
-        "acquisition rate: fulfilled (claim->bound)/s, steady-state, pending claims "
+        "exec setup overhead), so compliance at the bar is conservative; this basis fills "
+        "the <5s cell — it cannot itself certify the stricter <1s bar, so any <1s figure "
+        "shown is credited under the acquire-side *** basis below, not this one — throughput "
+        "is the acquisition rate: fulfilled (claim->bound)/s, steady-state, pending claims "
         "excluded; trust-gated per rung on agreement with the independent controller "
         "completion rate (divergent rungs are ineligible)"
     ),
@@ -1176,7 +1177,10 @@ def render_matrix(results, kata_results=None):
         "p95 clears THAT column's bar. When p95 clears BOTH bars (p95 < 1s ⇒ p95 < 5s too), the "
         "same per-node rate legitimately satisfies both, so it renders identically in both "
         "columns — not a copy-paste. The two per-CLUSTER halves can still differ (or carry "
-        "different caveats) because each bar's cluster figure is credited under its own basis."
+        "different caveats) because each bar's cluster figure is credited under its own basis "
+        "— and may even coincide numerically while resting on DIFFERENT bases (e.g. a literal-"
+        "TTFE floor at the <5s bar and an acquire-side floor at the <1s bar landing on the same "
+        "number), distinguished by the per-cell caveat tag (`***`), not by the digits."
     )
     lines.append(
         "- **`≥y /cluster` (certification floor)** — a per-cluster figure prefixed `≥` is a LOWER "
@@ -1205,6 +1209,15 @@ def render_matrix(results, kata_results=None):
         "compliant operating point exists at or above the floor. When this basis is in play "
         "the italic basis line above the table names it; a derived `0` instead reads off a "
         "measured TTFE p95 with no throughput fire behind it."
+    )
+    lines.append(
+        "- **A sub-bar TTFE p95 next to a `0` in that column's throughput** (e.g. the "
+        "unique-image-cold row's 3.x s p95 under the <5s bar, yet <5s throughput `0`) — not a "
+        "contradiction: the TTFE p95 is the acquire-side exec-probe (clean here), but the "
+        "throughput gate is the CONTROLLER cold-start floor, a SEPARATE and higher measurement "
+        "that exceeds both bars at every rate — so no compliant operating point exists and the "
+        "rate is a measured `0` (tagged `***`; see the cold-start floor zero note in the caveat "
+        "block below)."
     )
     lines.append(
         f"- **{_LOW_N_MARK}** — measured over fewer than N={TTFE_COMPARABILITY_MIN_N} samples: "
