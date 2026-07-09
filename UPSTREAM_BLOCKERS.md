@@ -34,12 +34,12 @@ No upstream issue exists for these (dup-search verified). Raise directly if the 
 
 | # | One-line blurb | Detail |
 |---|---|---|
-| 6 | agent-sandbox warm-pool claims stall under concurrency — internal retry rides exponential backoff, inflating tail latency (p95 ~9s at N=300 burst); tested fix staged as reference. (Adjacent-but-distinct: asbx#1059, #478 — cross-link, don't dup.) | [§S4](UPSTREAM_BLOCKERS_DETAIL.md#s4-adoption-completion-cache-race) |
+| 6 | agent-sandbox warm-pool claims stalled under concurrency — adoption-completion retry rode exponential backoff, inflating tail latency (p95 ~9s at N=300 burst). **RESOLVED UPSTREAM: [#1108](https://github.com/kubernetes-sigs/agent-sandbox/pull/1108) merged 07-08** — bounded requeue, the exact fix our reference patch proposed; remits on the next build-from-main operator rebuild. (Adjacent-but-distinct: asbx#1059, #478 — cross-link, don't dup.) | [§S4](UPSTREAM_BLOCKERS_DETAIL.md#s4-adoption-completion-cache-race) |
 | 7 | substrate golden-actor bring-up treats a transient state as fatal — templates wedge forever; activation-latency metric has zero clean records ever. | [§U1](UPSTREAM_BLOCKERS_DETAIL.md#u1-snapshot-type-unspecified) |
 | 8 | substrate DurableDir broke snapshotting for simple actors — e2e suite red since Jun 27 (~8 new FAILs/day). | [§U2](UPSTREAM_BLOCKERS_DETAIL.md#u2-data-snapshot-zero-ddv) |
 | 9 | substrate bricks its actor-listing API after any proto field rename on a long-lived cluster — **second trigger now live**: [#370](https://github.com/agent-substrate/substrate/pull/370) merged 07-08 while the structural fix ([#356](https://github.com/agent-substrate/substrate/pull/356)) is still open, so any pre-#370 row with a non-zero snapshot type bricks the post-#370 decoder. | [§U3](UPSTREAM_BLOCKERS_DETAIL.md#u3-ateredis-strict-protojson) |
 
 ## Reference patches (offer only if a maintainer asks)
 
-- [`agent-sandbox:adoption-completion-bounded-requeue`](https://github.com/AlexBulankou/agent-sandbox/tree/adoption-completion-bounded-requeue) — item 6, tested, ready.
+- [`agent-sandbox:adoption-completion-bounded-requeue`](https://github.com/AlexBulankou/agent-sandbox/tree/adoption-completion-bounded-requeue) — item 6, **superseded by upstream [#1108](https://github.com/kubernetes-sigs/agent-sandbox/pull/1108) (merged 07-08) — do not file.**
 - [`agent-sandbox:resume-clears-suspended-condition`](https://github.com/AlexBulankou/agent-sandbox/tree/resume-clears-suspended-condition) — item 1, historical (superseded by KEP-119 direction).
