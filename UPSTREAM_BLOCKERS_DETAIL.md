@@ -8,7 +8,7 @@ This page inventories every upstream defect currently holding an honest-bench me
 
 House fence (this page ships verbatim in a public repo): `AlexBulankou/a` is a **private** repo, so internal issue refs render as plain "internal tracking a#NNNN" prose — never a link, never a bare `#NNNN`. Public honest-bench issues render as normal hb#NNN links. Upstream projects are named in plain English, with real links to their public issues/PRs.
 
-_Last hand-refresh: 2026-07-03 (rev 2 — issue-first actions, fork-ready branches, verified dup-search)._
+_Last hand-refresh: 2026-07-15 — body reconciled through the 2026-07-11 tip-advance (upstream `main` → `d1180910c0`; §S4/#1108, §U3/#370, §U4/#353 all RESOLVED UPSTREAM); §U1 e2e-cite refreshed 2026-07-15; all upstream anchor states re-verified live 2026-07-15 with no drift (matches the executive page's "Last verified live: 2026-07-15")._
 
 ## Conventions (rev 2026-07-03) — SUPERSEDED by NO-BOT (2026-07-07)
 
