@@ -1006,6 +1006,23 @@ planes are separated in the data, not conflated: #353 made the resume-side crash
 *legible* (marks the actor `STATUS_CRASHED` via `maybeCrashActor`) but did not eliminate
 it — it keeps recurring on current main, independent of the manifest-missing hole above.
 
+**Root cause relocates to the checkpoint side (live-log RCA, 2026-07-15).** Because a
+failed warm-resume records no latency stamp and the raw runner logs GC within ~24h, the
+crash *cause* is normally lost — only the bounded outcome token survives. Reading the
+live logs of one deterministic fire before GC (the same commit `c1ab0958`, reproduced on
+all three daily fires) moved the likely root cause from the resume side to the
+**checkpoint side**: the golden actor's suspend/checkpoint step fails to capture the
+actor's data-snapshot durable-directory volumes, so the published snapshot has no valid
+data payload. Restore then finds nothing to restore and the actor dies mid-resume with a
+data-loss error — i.e. the `resume-actor-failed` / data-loss signature is the *symptom*,
+and the missing data-snapshot volume capture at checkpoint time is the *cause*. This is a
+snapshot **content** defect (the checkpoint wrote an incomplete snapshot) and is
+therefore distinct again from §U5's manifest **publish** hole (a valid snapshot whose
+manifest was never atomically written): one produces a snapshot that is registered but
+un-fetchable, the other a snapshot that is fetchable but empty. A fix that only hardens
+the publish/verify path (the atomicity fixes below) will not close this content-capture
+gap.
+
 ## Suggested fixes
 
 The invariant worth enforcing: **a snapshot's registration and its manifest must be one
