@@ -993,6 +993,19 @@ is welcome, but it does not close this hole:
 
 So fix (1) below (verify-before-promote) is still the missing piece after #353.
 
+**Empirical corroboration — the resume-side crash class still recurs on current main
+after #353, and is a plane distinct from the manifest-missing failure above.** Our own
+durable telemetry (accrual store `warm-resume-failure-history.jsonl`, internal tracking
+a#4895) captured three warm-resume failures on three distinct days (2026-07-13 / -14 /
+-15), all *after* #353 merged (2026-07-08) and all at the same substrate commit
+`c1ab0958`. Every one carries the bounded failmode token `resume-actor-failed` — the
+resume-side crash class (actor crashes partway through restore; `resume_ready_s` never
+records) — which our enum deliberately keeps distinct from `snapshot-manifest-missing`
+(the registration/fetch failure this section's mechanism analysis targets). So the two
+planes are separated in the data, not conflated: #353 made the resume-side crash
+*legible* (marks the actor `STATUS_CRASHED` via `maybeCrashActor`) but did not eliminate
+it — it keeps recurring on current main, independent of the manifest-missing hole above.
+
 ## Suggested fixes
 
 The invariant worth enforcing: **a snapshot's registration and its manifest must be one
