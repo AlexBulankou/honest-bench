@@ -781,7 +781,7 @@ for persisted rows.
 
 - **Suspend/resume lifecycle reliability on full-plane installs**: an actor whose container exited or was destroyed wedges **permanently in SUSPENDING** — `runsc checkpoint` exit 128 can never succeed by retrying the same worker, and the controller exp-backoff retries forever. Golden actors additionally block their ActorTemplate from ever reaching Ready.
 - **Three independent occurrences in 2 days** (2026-07-01/02) on a full-plane static-certs validation install: an e2e lane worker, plus two golden actors (one looped ~24h). 3/3 converged **only** via manual hosting-worker-pod recycle; none self-converged.
-- Freshest of the four filings: source pinned at upstream `main` `8631ae3` (2026-07-01); citations independently co-reviewed 3/3 verbatim, and the clean suspend/resume contract was independently verified (in-RAM carryover), corroborating exit-128 as an anomalous missing-container wedge, not expected behavior.
+- Freshest of the four filings: source originally pinned at upstream `main` `8631ae3` (2026-07-01); **re-verified STILL-HOLDS in full at HEAD `a814761b` (2026-07-16)** — the 41-commit drift `8631ae3`→`a814761b` touched all three cited files but the unclassified-wrap → hard-reconcile-error → requeue-forever shape survives unchanged; only the line pins drifted (refreshed below). Citations independently co-reviewed 3/3 verbatim (at `8631ae3`, re-verified at HEAD); the clean suspend/resume contract was independently verified (in-RAM carryover), corroborating exit-128 as an anomalous missing-container wedge, not expected behavior.
 
 **Related upstream (dup-search 2026-07-03):** [#50](https://github.com/agent-substrate/substrate/issues/50) *(open, SAME — adopt: its logs show the identical signature, `FetchSpec failed: loading container: file does not exist` → `runsc checkpoint: exit status 128` retried indefinitely, actor pinned STATUS_SUSPENDING)* · [#353](https://github.com/agent-substrate/substrate/pull/353) *(open PR, SAME-fix — puts the actor in terminal `CRASHED` when the runsc command fails during Suspend/Pause: exactly suggested-fix #1; omits only the recycle follow-through)* · [#292](https://github.com/agent-substrate/substrate/issues/292) *(open — CRASHED-state umbrella design; a maintainer comment already raises the retryable-vs-non-retryable runsc question)* · [#244](https://github.com/agent-substrate/substrate/issues/244) *(open — API-entry precondition validation, different defect)* · [#119](https://github.com/agent-substrate/substrate/issues/119) *(open — state-machine design; specifies the intended failure semantics this defect violates)*
 
@@ -801,7 +801,7 @@ gh pr comment 353 --repo agent-substrate/substrate --body \
 **Comment body for [#50](https://github.com/agent-substrate/substrate/issues/50) (copy-paste → u4-50-comment.md)**
 
 ````markdown
-Repo: agent-substrate/substrate · observed at build-from-main on 2026-07-01/02; source verified present at upstream `main` 8631ae3.
+Repo: agent-substrate/substrate · observed at build-from-main on 2026-07-01/02; source re-verified present at upstream `main` a814761b (2026-07-16; originally pinned at 8631ae3 2026-07-01).
 
 ## Symptom
 
@@ -815,22 +815,22 @@ ERROR Reconciler error controller=actortemplate ActorTemplate=<name>
 
 `runsc checkpoint` exits 128 because the target container no longer exists in the runsc state dir — a condition that **can never self-resolve by retrying the same command against the same worker**. The controller treats it as a transient error (exp-backoff requeue), so the loop runs forever. Observed three independent times in two days on one install (a golden-actor take, a second golden-actor take on a different ActorTemplate, and a user-actor suspend); in every case the only recovery was manually deleting the hosting worker pod so the actor was re-run on a fresh worker.
 
-## Source (main @ 8631ae3)
+## Source (main @ a814761b)
 
-1. `cmd/ateom-gvisor/runsc.go` `cmdCheckpoint` (:107) — any `runsc checkpoint` failure returns a plain wrapped error; exit codes are not classified:
+1. `cmd/ateom-gvisor/runsc.go` `cmdCheckpoint` (:106-133, error at :131) — any `runsc checkpoint` failure returns a plain wrapped error; exit codes are not classified:
 ```go
 err := cmd.Run()
 if err != nil {
     return fmt.Errorf("while running `runsc checkpoint`: %w", err)
 }
 ```
-2. `cmd/ateom-gvisor/main.go` `CheckpointWorkload` FULL scope (:280-283) — wraps and propagates:
+2. `cmd/ateom-gvisor/main.go` FULL-scope suspend path (:278-279) — wraps and propagates:
 ```go
 if err := rcmd.cmdCheckpoint(ctx, "pause", checkpointPath); err != nil {
     return nil, fmt.Errorf("while checkpointing pause: %w", err)
 }
 ```
-3. `cmd/atecontroller/internal/controllers/actortemplate_controller.go` (:149-151) — SuspendActor error is a hard reconcile error → controller-runtime exp-backoff retry, same actor, same worker assignment, forever:
+3. `cmd/atecontroller/internal/controllers/actortemplate_controller.go` (:160-162) — SuspendActor error is a hard reconcile error → controller-runtime exp-backoff retry, same actor, same worker assignment, forever:
 ```go
 resp, err := r.AteClient.SuspendActor(ctx, req)
 if err != nil {
@@ -841,7 +841,7 @@ if err != nil {
 ## Why this is a bug, not an operational error
 
 - The failure is **deterministic and permanent** for the retried operation: a checkpoint of a container that no longer exists cannot succeed, no matter how many times it is retried against the same worker. Retry-with-backoff is the right posture for transient failures; here it converts a recoverable situation into a permanent wedge.
-- Upstream already flags this call site as needing resilience work — `actortemplate_controller.go:142-144` (directly above the cited SuspendActor call) carries `// TODO: Need to be more resilient --- if suspendactor tells us conflict, ...`. That TODO targets the conflict case specifically; the exit-128 missing-container case is an adjacent-but-distinct hardening gap on the same suspend path.
+- Upstream already flags this call site as needing resilience work — `actortemplate_controller.go:153` (directly above the cited SuspendActor call at :160) carries `// TODO: Need to be more resilient --- if suspendactor tells us conflict, ...`. That TODO targets the conflict case specifically; the exit-128 missing-container case is an adjacent-but-distinct hardening gap on the same suspend path.
 - The system **already has the recovery primitive**: re-running the actor on a fresh worker converges cleanly every time (verified 3/3). Nothing invokes it — the actor stays bound to the broken worker and the loop never escalates.
 - The wedge is user-visible and quota-relevant: the actor holds SUSPENDING state (and, for golden actors, blocks the ActorTemplate from ever reaching Ready), while the controller emits an unbounded error stream.
 
