@@ -12,9 +12,9 @@ _Anchors and the entry set are generated from the closed pending-reason enum —
 
 - **What:** A cell whose metric simply has not been measured yet — a genuinely not-yet-run cell (for example, a throughput figure before its TTFE fire has run).
 - **Why absent:** **not-yet-measured.** No blocker — the measurement fire has not run for this cell. A bare `pending` (with no reason in parentheses) is always this class.
-- **In flight:** Yes — picked up by the standing TTFE / throughput refresh cadence.
-- **ETA:** Next scheduled refresh fire. The page regenerates from the fire's results with no hand-entry, so the cell fills the moment its fire lands.
-- **Trace:** Standing refresh cadence; traceability tracked in [hb#166](https://github.com/AlexBulankou/honest-bench/issues/166).
+- **In flight:** Yes — filled by a manually-invoked TTFE / throughput refresh run. There is no automatic recurring cadence: the run is triggered by hand, and its results-publish step needs a credential that is still being provisioned.
+- **ETA:** Gated on provisioning the refresh run's results-publish credential (internal tracking a#4183). No scheduled date — once that lands, the run is invoked by hand and the page regenerates from its results with no hand-entry.
+- **Trace:** Refresh mechanism tracked in [hb#166](https://github.com/AlexBulankou/honest-bench/issues/166); publish-credential gate: internal tracking a#4183.
 
 <a id="cluster-fire"></a>
 
@@ -62,9 +62,9 @@ _Anchors and the entry set are generated from the closed pending-reason enum —
 
 - **What:** A gVisor-family cell whose measurement requires the live node to run the gVisor runtime.
 - **Why absent:** **not-yet-measured (runtime-gated).** A single run measures one runtime; this run measured a different one, so the gVisor cell pends until a gVisor run fills it.
-- **In flight:** Yes — covered by the standing gVisor refresh run.
-- **ETA:** Next gVisor refresh run.
-- **Trace:** Standing refresh cadence ([hb#166](https://github.com/AlexBulankou/honest-bench/issues/166)).
+- **In flight:** Yes — filled by a manually-invoked gVisor refresh run (no automatic recurring cadence).
+- **ETA:** Gated on provisioning the refresh run's results-publish credential (internal tracking a#4183); fires on manual invocation once that lands. No scheduled date.
+- **Trace:** Refresh mechanism tracked in [hb#166](https://github.com/AlexBulankou/honest-bench/issues/166); publish-credential gate: internal tracking a#4183.
 
 <a id="requires-kata-runtime"></a>
 
@@ -72,9 +72,9 @@ _Anchors and the entry set are generated from the closed pending-reason enum —
 
 - **What:** A Kata-family cell whose measurement requires the live node to run the Kata runtime.
 - **Why absent:** **not-yet-measured (runtime-gated).** Symmetric with the gVisor case: this run measured a different runtime, so the Kata cell pends until a Kata run fills it.
-- **In flight:** Yes — covered by the standing Kata refresh run on the Kata node pool.
-- **ETA:** Next Kata refresh run.
-- **Trace:** Standing refresh cadence ([hb#166](https://github.com/AlexBulankou/honest-bench/issues/166)).
+- **In flight:** Yes — filled by a manually-invoked Kata refresh run on the Kata node pool (no automatic recurring cadence).
+- **ETA:** Gated on provisioning the refresh run's results-publish credential (internal tracking a#4183); fires on manual invocation once that lands. No scheduled date.
+- **Trace:** Refresh mechanism tracked in [hb#166](https://github.com/AlexBulankou/honest-bench/issues/166); publish-credential gate: internal tracking a#4183.
 
 <a id="requires-gke"></a>
 
@@ -82,9 +82,9 @@ _Anchors and the entry set are generated from the closed pending-reason enum —
 
 - **What:** A cell whose measurement requires a GKE cluster (the substrate these numbers are measured on).
 - **Why absent:** **not-yet-measured (environment-gated).** The measurement pends until it runs on a GKE cluster.
-- **In flight:** Yes — part of the standing refresh cadence.
-- **ETA:** Next refresh run on a GKE cluster.
-- **Trace:** Standing refresh cadence ([hb#166](https://github.com/AlexBulankou/honest-bench/issues/166)).
+- **In flight:** Yes — filled by a manually-invoked refresh run on a GKE cluster (no automatic recurring cadence).
+- **ETA:** Gated on provisioning the refresh run's results-publish credential (internal tracking a#4183); fires on manual invocation once that lands. No scheduled date.
+- **Trace:** Refresh mechanism tracked in [hb#166](https://github.com/AlexBulankou/honest-bench/issues/166); publish-credential gate: internal tracking a#4183.
 
 <a id="requires-kata-microvm"></a>
 
@@ -92,9 +92,9 @@ _Anchors and the entry set are generated from the closed pending-reason enum —
 
 - **What:** The Kata + microVM runtime rows, where a Kata+microVM measurement has not yet run.
 - **Why absent:** **not-yet-measured.** The Kata + microVM matrix rows are uniformly awaiting their measurement; the public page carries no internal issue ref for them by the PII fence.
-- **In flight:** Yes — tracked internally; graduates as Kata+microVM fires land.
-- **ETA:** Next Kata + microVM refresh run.
-- **Trace:** Internal tracking (no public issue by the PII fence).
+- **In flight:** Yes — tracked internally; filled by a manually-invoked Kata + microVM refresh run (no automatic recurring cadence).
+- **ETA:** Gated on provisioning the refresh run's results-publish credential (internal tracking a#4183); fires on manual invocation once that lands. No scheduled date.
+- **Trace:** Internal tracking (no public issue by the PII fence); publish-credential gate: internal tracking a#4183.
 
 <a id="pool-topology-constrained"></a>
 

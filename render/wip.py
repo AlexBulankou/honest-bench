@@ -162,12 +162,17 @@ WIP_CATALOG = {
             "**not-yet-measured.** No blocker — the measurement fire has not run for this cell. "
             "A bare `pending` (with no reason in parentheses) is always this class."
         ),
-        "in_flight": "Yes — picked up by the standing TTFE / throughput refresh cadence.",
-        "eta": (
-            "Next scheduled refresh fire. The page regenerates from the fire's results with no "
-            "hand-entry, so the cell fills the moment its fire lands."
+        "in_flight": (
+            "Yes — filled by a manually-invoked TTFE / throughput refresh run. There is no "
+            "automatic recurring cadence: the run is triggered by hand, and its results-publish "
+            "step needs a credential that is still being provisioned."
         ),
-        "trace": f"Standing refresh cadence; traceability tracked in [hb#166]({_HB}/166).",
+        "eta": (
+            "Gated on provisioning the refresh run's results-publish credential (internal "
+            "tracking a#4183). No scheduled date — once that lands, the run is invoked by hand "
+            "and the page regenerates from its results with no hand-entry."
+        ),
+        "trace": f"Refresh mechanism tracked in [hb#166]({_HB}/166); publish-credential gate: internal tracking a#4183.",
     },
     "requires-gvisor-runtime": {
         "title": "Needs a gVisor run (`requires-gvisor-runtime`)",
@@ -176,9 +181,15 @@ WIP_CATALOG = {
             "**not-yet-measured (runtime-gated).** A single run measures one runtime; this run "
             "measured a different one, so the gVisor cell pends until a gVisor run fills it."
         ),
-        "in_flight": "Yes — covered by the standing gVisor refresh run.",
-        "eta": "Next gVisor refresh run.",
-        "trace": f"Standing refresh cadence ([hb#166]({_HB}/166)).",
+        "in_flight": (
+            "Yes — filled by a manually-invoked gVisor refresh run (no automatic recurring "
+            "cadence)."
+        ),
+        "eta": (
+            "Gated on provisioning the refresh run's results-publish credential (internal "
+            "tracking a#4183); fires on manual invocation once that lands. No scheduled date."
+        ),
+        "trace": f"Refresh mechanism tracked in [hb#166]({_HB}/166); publish-credential gate: internal tracking a#4183.",
     },
     "requires-kata-runtime": {
         "title": "Needs a Kata run (`requires-kata-runtime`)",
@@ -187,17 +198,29 @@ WIP_CATALOG = {
             "**not-yet-measured (runtime-gated).** Symmetric with the gVisor case: this run "
             "measured a different runtime, so the Kata cell pends until a Kata run fills it."
         ),
-        "in_flight": "Yes — covered by the standing Kata refresh run on the Kata node pool.",
-        "eta": "Next Kata refresh run.",
-        "trace": f"Standing refresh cadence ([hb#166]({_HB}/166)).",
+        "in_flight": (
+            "Yes — filled by a manually-invoked Kata refresh run on the Kata node pool (no "
+            "automatic recurring cadence)."
+        ),
+        "eta": (
+            "Gated on provisioning the refresh run's results-publish credential (internal "
+            "tracking a#4183); fires on manual invocation once that lands. No scheduled date."
+        ),
+        "trace": f"Refresh mechanism tracked in [hb#166]({_HB}/166); publish-credential gate: internal tracking a#4183.",
     },
     "requires-gke": {
         "title": "Needs a GKE cluster (`requires-gke`)",
         "what": "A cell whose measurement requires a GKE cluster (the substrate these numbers are measured on).",
         "why": "**not-yet-measured (environment-gated).** The measurement pends until it runs on a GKE cluster.",
-        "in_flight": "Yes — part of the standing refresh cadence.",
-        "eta": "Next refresh run on a GKE cluster.",
-        "trace": f"Standing refresh cadence ([hb#166]({_HB}/166)).",
+        "in_flight": (
+            "Yes — filled by a manually-invoked refresh run on a GKE cluster (no automatic "
+            "recurring cadence)."
+        ),
+        "eta": (
+            "Gated on provisioning the refresh run's results-publish credential (internal "
+            "tracking a#4183); fires on manual invocation once that lands. No scheduled date."
+        ),
+        "trace": f"Refresh mechanism tracked in [hb#166]({_HB}/166); publish-credential gate: internal tracking a#4183.",
     },
     "requires-kata-microvm": {
         "title": "Kata + microVM rows not yet measured (`requires-kata-microvm`)",
@@ -206,9 +229,15 @@ WIP_CATALOG = {
             "**not-yet-measured.** The Kata + microVM matrix rows are uniformly awaiting their "
             "measurement; the public page carries no internal issue ref for them by the PII fence."
         ),
-        "in_flight": "Yes — tracked internally; graduates as Kata+microVM fires land.",
-        "eta": "Next Kata + microVM refresh run.",
-        "trace": "Internal tracking (no public issue by the PII fence).",
+        "in_flight": (
+            "Yes — tracked internally; filled by a manually-invoked Kata + microVM refresh run "
+            "(no automatic recurring cadence)."
+        ),
+        "eta": (
+            "Gated on provisioning the refresh run's results-publish credential (internal "
+            "tracking a#4183); fires on manual invocation once that lands. No scheduled date."
+        ),
+        "trace": "Internal tracking (no public issue by the PII fence); publish-credential gate: internal tracking a#4183.",
     },
     "pool-topology-constrained": {
         "title": "Needs a pool sized for N concurrent warms (`pool-topology-constrained`)",
