@@ -1,7 +1,7 @@
 {
   "_meta": {
     "seeded_from": "UPSTREAM_BLOCKERS.md rev 4",
-    "last_verified": "2026-07-15",
+    "last_verified": "2026-07-16",
     "freshness": "Rides every UPSTREAM_BLOCKERS.md refresh PR; link states hand-verified at each refresh."
   },
   "classes": {
