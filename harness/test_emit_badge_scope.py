@@ -57,18 +57,19 @@ def test_perf_cells_have_no_badge_scope():
 class _FakeMod:
     """A scenario module stub whose run() returns a fixed (outcome, excerpt, sla)."""
 
-    def __init__(self, outcome):
+    def __init__(self, outcome, sla=None):
         self.outcome = outcome
+        self.sla = sla if sla is not None else {}
 
     def run(self, name):
-        return self.outcome, "excerpt-dropped", {}
+        return self.outcome, "excerpt-dropped", dict(self.sla)
 
 
-def _run_one_with_stub(cell, substrate, outcome):
+def _run_one_with_stub(cell, substrate, outcome, sla=None):
     """Drive _run_one with importlib stubbed so no scenario module / cluster is hit."""
     saved = run.importlib.import_module
     try:
-        run.importlib.import_module = lambda _modpath: _FakeMod(outcome)
+        run.importlib.import_module = lambda _modpath: _FakeMod(outcome, sla)
         return run._run_one(cell, substrate)
     finally:
         run.importlib.import_module = saved
@@ -104,6 +105,61 @@ def test_pending_cell_does_not_carry_badge_scope():
     _check(raw["outcome"] == "pending", "isolation cell pends on kind")
     _check("badge_scope" not in raw,
            f"pending early-return stays minimal (no badge_scope), got {raw!r}")
+
+
+def test_run_one_lifts_runtime_enforced_badge_pair():
+    # #4629: the data-plane probe (#3907) returns badge_scope='enforced' AND its
+    # companion badge_construction='standard-np' as one atomic pair in the third
+    # tuple element. _run_one must lift BOTH to the top-level raw dict — lifting
+    # only badge_scope leaves a naked 'enforced' that the #4051 over-claim guard
+    # rejects, crashing the whole run.
+    cell = Cell("cross_tenant_network_isolation",
+                requires_substrate="gke-sandbox",
+                pending_reason="requires-gke",
+                badge_scope="control-plane")
+    raw = _run_one_with_stub(
+        cell, "gke-sandbox", "PASS",
+        sla={"badge_scope": "enforced", "badge_construction": "standard-np"},
+    )
+    _check(raw.get("badge_scope") == "enforced",
+           f"runtime badge_scope upgrade must win over the static cell value, got {raw!r}")
+    _check(raw.get("badge_construction") == "standard-np",
+           f"_run_one must lift badge_construction alongside badge_scope, got {raw!r}")
+    _check("badge_construction" not in raw.get("sla_metrics", {}),
+           f"badge_construction must be popped out of sla_metrics, got {raw!r}")
+
+
+def test_run_one_enforced_pair_survives_build_results():
+    # End-to-end: the lifted enforced pair must round-trip through build_results
+    # without tripping the #4051 over-claim guard (the exact crash #4629 hit).
+    from harness import results_schema
+    from harness.test_results_schema import _prov, GEN_AT
+    cell = Cell("cross_tenant_network_isolation",
+                requires_substrate="gke-sandbox",
+                pending_reason="requires-gke",
+                badge_scope="control-plane")
+    raw = _run_one_with_stub(
+        cell, "gke-sandbox", "PASS",
+        sla={"badge_scope": "enforced", "badge_construction": "standard-np"},
+    )
+    results = results_schema.build_results([raw], _prov(), GEN_AT, product="sandbox")
+    sc = results["scenarios"][0]
+    _check(sc["badge_scope"] == "enforced", f"scope preserved through build, got {sc!r}")
+    _check(sc["badge_construction"] == "standard-np",
+           f"construction preserved through build, got {sc!r}")
+
+
+def test_run_one_omits_badge_construction_without_runtime_upgrade():
+    # No armed probe → no runtime badge dict → the control-plane cell emits its
+    # static badge_scope and NO badge_construction (control-plane needs none).
+    cell = Cell("cross_tenant_network_isolation",
+                requires_substrate="gke-sandbox",
+                pending_reason="requires-gke",
+                badge_scope="control-plane")
+    raw = _run_one_with_stub(cell, "gke-sandbox", "PASS")
+    _check(raw.get("badge_scope") == "control-plane", f"static scope, got {raw!r}")
+    _check("badge_construction" not in raw,
+           f"no runtime upgrade must emit no badge_construction, got {raw!r}")
 
 
 def _all_tests():

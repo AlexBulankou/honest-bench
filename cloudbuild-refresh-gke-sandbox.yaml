@@ -71,6 +71,17 @@ steps:
       - "NATIVE_DIGEST_COLD_RUNTIME_CLASS=gvisor"
       - "NATIVE_DIGEST_COLD_SAMPLES=30"
       - "BENCH_TTFE_EXEC=1"
+      # NetworkPolicy data-plane probe (#3950/#3907): arm the in-Pod on-the-wire
+      # enforcement probe so the two isolation cells (cross_tenant_network_isolation,
+      # default_deny_egress) publish "enforced" BY CONSTRUCTION when the CNI actually
+      # blocks the traffic — not a bare control-plane admission badge. Empirically
+      # verified ENFORCED on sandbox-scenarios-cluster 2026-07-18 (both cells PASS
+      # enforced/standard-np). Fail-safe: an inconclusive probe degrades to the
+      # control-plane PASS, so a probe-infra hiccup can never red the refresh. The
+      # cells build their OWN standard NetworkPolicy (bench-owned labels), never the
+      # gke-sandbox managed-NP, so charter-#5 (#139) managed-NP disclosure does not
+      # bind this arm.
+      - "BENCH_NETPOL_DATAPLANE_PROBE=1"
     args:
       - -c
       - |
