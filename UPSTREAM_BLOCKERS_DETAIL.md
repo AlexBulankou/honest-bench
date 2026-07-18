@@ -1069,6 +1069,72 @@ failure's legibility; (3) contains blast radius if a future path bypasses the wo
 - The #353 relation section is current as of 2026-07-08 (merged); the two residual-gap bullets were re-verified against the merged `crash.go` — worker-release-on-terminal-failure remains an in-code TODO upstream tracks under [#119](https://github.com/agent-substrate/substrate/issues/119).
 - **Tested reference patch staged (re-cut 2026-07-09 onto `de5d1d9`, post-[#411](https://github.com/agent-substrate/substrate/pull/411)):** implements fixes (1) + (2) — GCS+S3 `SnapshotVerifier` (`ManifestExists(ctx, prefix)`), FinalizeSuspendedStep verify-before-promote gate (missing manifest ⇒ fail step, never promote), and CallAteletSuspendStep `ErrWorkerPodNotFound` disambiguation (no snapshot ⇒ safe skip; manifest present ⇒ completed, skip; manifest absent ⇒ clear `InProgressSnapshot` + fail; verifier error ⇒ fail-closed, keep registration for retry). #411 rewrote this exact suspend path (atespace-aware lock keys + a FinalizeSuspendedStep worker-ownership check, `Assignment.Actor.Atespace/Name == input`); the de5d1d9 cut **merges cleanly WITH it** — keeps #411's ownership check + lock keys and layers the verifier, promote gate, and disambiguation on top. Test file is the **union**: #411's miniredis `TestFinalizeSuspendedStep_ReleasesOnlyOwnWorker` (verifier-injected so it doesn't nil-deref under our gate) + our 5 verify tests ported to the `ResourceMetadata`/`SuspendInput.ActorName` shape (the promote-test worker `ActorRef` carries `Atespace` so #411's ownership check permits release). Full `controlapi` suite green (19.4s incl. envtest); `git diff origin/main` clean @ `de5d1d9`. **CURRENT CUT: re-cut 2026-07-09 onto `f1b69e9` (post ObjectRef refactor)** — one-line adaptation: the patch's own promote-test worker ref `ActorRef`→`ObjectRef` in `workflow_suspend_test.go`; all 7 files otherwise applied clean; full `ateapi` suite green 16.8s; re-verified `git apply --check` clean at `992a3b30` (2026-07-10 — the Create-endpoint rework does not conflict with the suspend-path verifier cut) and again at `86cd169` (2026-07-10, OCI-config fix #301 — unrelated OCI-build surface) and once more at `354ca16` (2026-07-10, proto-fmt reformat — `.proto`-only clang-format, no `.go`/`.pb.go` regen) and once more at `cbde8b1` (2026-07-10 16:28Z, kubectl-ate actor-name change — `cmd/kubectl-ate/` + `internal/actorlog/` + a vendored apimachinery dep only, no `controlapi`/`.pb.go`) and once more at `669965a` (2026-07-10, "Rename actor_id to actor_name in atelet/ateom protos", ahead_by 1 — the first tip that touched this exact suspend path: `669965a` edited `workflow_suspend.go` and regenerated `{ateletpb,ateompb}/*.pb.go`, yet the field-name-only rename produces no conflict, so the staged patch still `git apply --check` clean, `go build ./cmd/ateapi/...` clean, and the `controlapi` suite green 18.174s exit 0). Fix (3) deliberately omitted — single-choke-point patch stays minimal. Staged locally per the no-filings rule; attach as a proposed fix or offer on ask. (Prior cuts — `de5d1d9`, `af1f005`, `069ba08`, original vs `d8f562d` — retained as history.)
 
+## GKE / gVisor platform blockers
+
+Target: Google Cloud (GKE gVisor sandbox runtime) — not a GitHub-hosted OSS project, so this section has no fork/PR mechanics and no "GH issue" Action column; it exists purely to park engineering evidence for alex per **NO-BOT (alex, 2026-07-07)**. Filing (if it happens at all) is a human action at [issuetracker.google.com](https://issuetracker.google.com) or via a paid support case — never agent-initiated.
+
+| # | What | Status | Detail |
+|---|---|---|---|
+| G1 | Sandboxed PID 1 (`RuntimeClass: gvisor`) exits prematurely with clean `exitCode: 0` after ~3-29s instead of running to completion — no OOM/kill signal at any layer. 100% reproducible on our gVisor sandbox benchmark cluster's default node pool since 2026-06-29 (450+ consecutive hourly fires, 0 PASS). Internal tracking a#4748. | Root-caused to the gVisor/runsc runtime layer; external escalation path identified but not filed (NO-BOT). | [→ §G1 file-ready material](#g1-gvisor-premature-exit) |
+
+<a id="g1-gvisor-premature-exit"></a>
+
+### §G1 — gVisor sandboxed process exits prematurely, clean exit 0, no kill signal
+
+**Internal tracking a#4748 · not a GH-issue target (Google Cloud product, not an OSS repo) · `terraform/modules/gke-demo-cluster/main.tf`**
+
+**What's blocked**
+
+- The `sandbox-untrusted-llm-code-execution` scenario on our gVisor sandbox benchmark cluster — 100% `TIMED_OUT` (previously misclassified `FAIL`, corrected by a#4768) since 2026-06-29, ~19-20 consecutive days, 450+ consecutive hourly fires, 0 successful completions.
+- No sandbox-scenario metric depending on this scenario's PASS path can graduate while this holds.
+
+**Diagnosis**
+
+- The sandboxed PID 1 (`sh -c "sleep 300"`) terminates on its own after ~3-29 seconds with `exitCode: 0`, far short of the commanded 300s. Kubelet does **not** actively kill the container — no `"Killing container with a grace period"` / `StopContainer` log line anywhere in the incident window (verified via 3 independent Cloud Logging queries: node-scoped, pod-UID-substring, container-ID-substring). Kubelet's PLEG relist *passively discovers* the already-dead container on its next poll (`generic.go:413 "Generic (PLEG): container finished" exitCode=0`) — structurally different from an active-kill code path (`kuberuntime_container.go`).
+- Ruled out: OOM kill (would be `exitCode: 137`; no OOM signal at kubelet/containerd/kernel for the window; node CPU/mem stayed ~5%/~1%), external `kubectl delete`, application/runner-level kill logic (none exists in the calling scenario), node pressure/eviction (all node Conditions clean), controller-software regression (reproduces identically across many different `agent-sandbox-controller` image builds/digests).
+- gVisor's own Cloud Logging stream (`projects/<project>/logs/gvisor`) shows only one benign entry in the incident window: `compat.go:120] Unsupported syscall rseq(...)` (documented-safe informational notice, not a panic).
+- Co-occurring anomaly, same node, same window: a different, unrelated gVisor sandbox stuck in teardown (`stat task ... error="cannot stat a stopped container"` recurring every 60s; `StopPodSandbox` failing `context deadline exceeded`). Both anomalies point at the shared gVisor/runsc runtime layer, not at any specific workload.
+- Scope: confirmed across both nodes in the affected default pool (exec-channel-exhausted preserved-pod labels span both `z97o` and `ek4c` node prefixes) — pool-wide, not single-node hardware.
+- Timing: onset (2026-06-29) suggestively — not provably — coincides with a node-pool force-replace recovering from an unrelated GCE MIG-deletion incident (#2215/#4011). `terraform/modules/gke-demo-cluster/main.tf:28` leaves `min_master_version` unpinned (`null`) on this RAPID-channel cluster, so that recreate would have silently re-resolved the node image to whatever COS/gVisor/kernel/containerd build the RAPID image family served at that moment (internal tracking a#4797, closed). Cloud Audit Logs (Admin Activity tier) record the node-pool-recreate call but strip `protoPayload.request`, so the resolved `sourceImage` was never logged — the exact pre-recreate build is unrecoverable.
+- Re-verified live 2026-07-18: current nodes (recreated 2026-07-12, `v1.36.0-gke.4447000`, containerd 2.2.3 — a definitively different/later build than the one implicated in the 06-29 onset) still reproduce the identical failure at 100%. This rules out "wait for the next recreate to self-heal" and rules out the specific `4447000` build as a fix, but does not by itself confirm or refute the version-float mechanism as the original cause.
+
+**Prepared artifact — ready-to-paste report body** (parked, not filed; NO-BOT):
+
+```markdown
+Title: GKE gVisor (RuntimeClass=gvisor) sandboxed process exits prematurely with clean exit code 0, no OOM/kill signal — 100% reproducible on affected node pool since 2026-06-29
+
+Component: Google Kubernetes Engine / gVisor sandbox runtime
+
+Environment:
+- GKE Standard, release channel RAPID, cluster version 1.36.0-gke.4447000 (current; onset was on an earlier RAPID build, exact pre-recreate version unrecoverable)
+- Node OS: Container-Optimized OS, containerd 2.2.3, kernel 6.12.90+
+- RuntimeClass: gvisor (runsc)
+- Reproduction manifest: bare Pod, command: ["sh", "-c", "sleep 300"], image busybox:1.36, resource requests 16Mi/10m, limits 64Mi/100m, restartPolicy: Never, no probes, no activeDeadlineSeconds
+
+Symptom: The sandboxed PID 1 (sh -c "sleep 300") terminates on its own after ~3-29 seconds (varies per fire) with exitCode: 0, far short of the commanded 300s sleep. Kubelet does NOT actively kill the container — there is no "Killing container with a grace period" / StopContainer log line anywhere in the incident window (verified via 3 independent Cloud Logging queries: node-scoped, pod-UID-substring, container-ID-substring). Instead kubelet's PLEG relist passively discovers the already-dead container on its next poll (generic.go:413 "Generic (PLEG): container finished" exitCode=0) — a structurally different code path (generic.go) from an active kill (kuberuntime_container.go).
+
+Ruled out:
+- OOM kill (would be exitCode: 137, and no kubelet/containerd/kernel OOM signal exists at any layer for the incident window; node CPU/memory utilization stayed at ~5%/~1% throughout)
+- External kubectl delete or any active kubelet-initiated termination
+- Application/runner-level kill logic (no such code exists in the calling scenario)
+- Node-level pressure/eviction (all node Conditions clean)
+- Controller-software regression (the failure reproduces identically across many different agent-sandbox-controller image builds/digests, ruling out our own control-plane code)
+
+gVisor-side signal: the dedicated projects/<project>/logs/gvisor Cloud Logging stream shows exactly one benign entry in the incident window: compat.go:120] Unsupported syscall rseq(...) — a documented-safe informational notice, not a panic. No gVisor panic-log content found.
+
+Co-occurring anomaly on the same node: in the same log window, a different, unrelated gVisor sandbox on the same node got stuck in sandbox teardown: stat task ... error="cannot stat a stopped container" recurring every 60s, with StopPodSandbox itself failing context deadline exceeded/Canceled. Both anomalies (premature-exit and stuck-teardown) point at the same underlying gVisor/runsc sandbox-runtime layer, not at any specific workload.
+
+Scope: confirmed across both nodes in the affected default pool (not a single bad node) — a pool-wide/node-image-wide condition, not node-specific hardware.
+
+Timeline / reproducibility: first observed 2026-06-29, ~100% reproducible since (450+ consecutive hourly fires of an automated gVisor-sandbox scenario test, 0 successful completions). Timing suggestively (not provably) coincides with an unplanned node-pool force-replace recovering from an unrelated GCE MIG-deletion incident, which on our unpinned-min_master_version RAPID-channel cluster would have silently re-resolved the node image to whatever COS/gVisor/kernel/containerd build the image family served at that moment. We cannot confirm the exact pre- vs post-recreate image build — Cloud Audit Logs (Admin Activity tier) record the node-pool-recreate API call but not the resolved sourceImage, and no nodes from the affected window survive current introspection.
+
+Ask: does this match a known gVisor/runsc regression on a recent COS/containerd 2.2.3 build? Is there a way to identify the exact resolved node image for a since-recreated node pool (retroactively, via Data Access audit logs or similar) to confirm the build-level correlation?
+```
+
+**Related / candidate mitigation (not applied):** pinning `min_master_version` in `terraform/modules/gke-demo-cluster/main.tf:28` would stop a *future* recreate from silently re-rolling the node image, but does not fix the *current* regression — the live nodes (recreated 07-12 onto `4447000`) already show the identical failure on a different build, so forcing a version is unproven without a known-good target. This is a live terraform touch on the gVisor sandbox benchmark cluster; per AGENTS.md's fire-day rule it requires high/xhigh effort + a4s1 collision-ack before any apply. Not applied; flagged as a candidate only.
+
+**Action:** none taken (NO-BOT). Evidence parked here for alex to hand to a Google engineering contact directly, or file himself at issuetracker.google.com, at his discretion.
+
 ---
 
 ## Also staged upstream (improvements, not metric blockers)
