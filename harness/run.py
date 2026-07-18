@@ -91,6 +91,7 @@ def _run_one(cell, substrate: str) -> dict:
     # regex). A scenario that does not measure (pending / under-delivery FAIL)
     # emits no "n" and the row renders without a sample count.
     runtime_scope = None
+    runtime_construction = None
     if isinstance(sla_metrics, dict):
         n = sla_metrics.pop("n", None)
         if isinstance(n, (int, float)) and not isinstance(n, bool):
@@ -104,6 +105,15 @@ def _run_one(cell, substrate: str) -> dict:
         # it matches the metric-key regex). The emitter validates it against
         # BADGE_SCOPE_ENUM; a junk override raises there (fail-closed).
         runtime_scope = sla_metrics.pop("badge_scope", None)
+        # A runtime "enforced" badge_scope upgrade MUST carry its companion
+        # badge_construction (#3950/#4051 over-claim guard): the data-plane probe
+        # returns {"badge_scope": "enforced", "badge_construction": "standard-np"}
+        # as one atomic pair. Lift badge_construction alongside badge_scope —
+        # without this the construction key stays in sla_metrics and is dropped by
+        # _coerce_sla_metrics (a string, not a metric), leaving a naked
+        # badge_scope='enforced' that _coerce_scenario rejects, crashing the whole
+        # run (#4629). The emitter validates it against the closed enum.
+        runtime_construction = sla_metrics.pop("badge_construction", None)
         # A scenario returning a pending outcome carries its reason under the
         # reserved "pending_reason" key inside sla_metrics (the substrate-gate
         # path sets pending_reason directly from cell.pending_reason and never
@@ -138,6 +148,12 @@ def _run_one(cell, substrate: str) -> dict:
     scope = runtime_scope if isinstance(runtime_scope, str) else cell.badge_scope
     if scope is not None:
         raw["badge_scope"] = scope
+    # badge_construction (#3950) is runtime-only for these cells — set it only when
+    # the scenario returned one alongside an "enforced" upgrade. The emitter
+    # validates it against the closed construction enum; pairing it with the scope
+    # here satisfies the #4051 over-claim guard by construction.
+    if isinstance(runtime_construction, str):
+        raw["badge_construction"] = runtime_construction
     return raw
 
 

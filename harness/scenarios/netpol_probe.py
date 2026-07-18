@@ -64,10 +64,17 @@ _PROBE_ENV = "BENCH_NETPOL_DATAPLANE_PROBE"
 def dataplane_probe_enabled() -> bool:
     """True iff BENCH_NETPOL_DATAPLANE_PROBE selects the data-plane probe.
 
-    # gated: default-off until the gke-sandbox fire that arms it is sequenced — an
-    # armed probe flips the public NetworkPolicy cells from PASS (control-plane) to
-    # their honest enforced/FAIL data-plane result, the #2082-coupled, charter-#5
-    # page-flip decision owned by the lead. Flip/arm tracked in #3950 (built in #3907).
+    ARMED in the publish path (#3950, 2026-07-18): the gke-sandbox refresh CI sets
+    BENCH_NETPOL_DATAPLANE_PROBE=1 (cloudbuild-refresh-gke-sandbox.yaml, measure
+    step), so the two isolation cells publish "enforced" BY CONSTRUCTION when the
+    in-Pod probe confirms the CNI blocks the traffic on the wire. Empirically
+    verified ENFORCED on sandbox-scenarios-cluster 2026-07-18 (both cells PASS
+    enforced/standard-np). The cells build their OWN standard NetworkPolicy, never
+    the gke-sandbox managed-NP, so charter-#5 (#139) managed-NP disclosure never
+    bound this arm. The per-invocation default stays OFF because kind/CI-unit runs
+    have no CNI enforcement to probe (an armed probe there would only ever go
+    inconclusive) — off-by-default is the correct substrate-scoped default, not a
+    dormant gate; the publish path arms it explicitly. Built in #3907.
     """
     return os.environ.get(_PROBE_ENV, "").strip().lower() in ("1", "true", "yes", "on")
 
