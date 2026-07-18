@@ -31,18 +31,37 @@ unset flag produces — so a flaky exec surface can never manufacture an ``enfor
 badge nor a false FAIL. The only states that move the badge are a clean two-sided
 confirmation (``enforced``) or a clean breach (deny path flowed -> FAIL).
 
-## Default-off + #2082 coupling (the sequencing reason)
+## Default-off + #2082 provenance (corrected 2026-07-18 — see #3950/#291)
 
 Gated behind ``BENCH_NETPOL_DATAPLANE_PROBE`` (default-off). Unset -> the cells never
-call in here and behave byte-identically to the control-plane badge. Armed against the
-*current* gke-sandbox controller the cross-tenant probe is EXPECTED to read a breach
-(the managed-NetworkPolicy podSelector keys on a label the bound Pods do not carry, so
-the policy selects zero Pods and is silently inert) -> the public page flips from
-``PASS (control-plane)`` to ``FAIL`` — the honest enforcement result, and the
-charter-#5-gated page-flip decision the lead arms. The exact exec mechanics
-(listener invocation, port, timeouts) are validated + tuned on that first armed fire;
-the never-raises -> inconclusive -> control-plane safety net means a mis-tuned probe
-degrades safely rather than mispublishing.
+call in here and behave byte-identically to the control-plane badge.
+
+Both scored cells (cross_tenant_network_isolation, default_deny_egress) build and bind
+their OWN scenario-scoped ``standard-np`` NetworkPolicy — keyed on bench-owned
+``honest-bench/scenario``(+``/tenant``) labels the harness itself sets on
+podTemplate.metadata — and already verify that binding at admission time (that is the
+existing control-plane badge). **Neither cell probes the gke-sandbox controller's
+auto-managed NetworkPolicy** (the #2082 subject, keyed on
+``agents.x-k8s.io/sandbox-template-ref-hash``). The paragraph this replaces claimed the
+armed probe was "EXPECTED to read a breach" because "the managed-NetworkPolicy
+podSelector keys on a label the bound Pods do not carry" — that described a mechanism
+these cells do not actually exercise; corrected by a4s2 (source read of both scenario
+files, 2026-07-18) after a4s1 independently found live evidence the managed-NP label
+mismatch is itself now resolved upstream (#1067, verified against controller digest
+``b54aefdf``). Either way, #2082's status was never load-bearing for this flip — these
+cells were never coupled to the managed-NP mechanism.
+
+So arming the probe answered an EMPIRICAL question, not a known-outcome flip: whether
+the cluster's CNI (Calico / GKE Dataplane V2) actually enforces the already-admitted,
+already-correctly-bound standard-np policy on the wire. The first armed fire
+(sandbox-scenarios-cluster, 2026-07-18) read a clean two-sided confirmation for both
+cells -> ``PASS (enforced)`` at ``badge_construction=standard-np`` (see the
+``dataplane_probe_enabled()`` docstring below). The never-raises -> inconclusive ->
+control-plane safety net means a mis-tuned probe degrades safely rather than
+mispublishing either way. The charter-#5-gated page-flip decision (owned by the lead,
+tracked in #3950) is about the ``badge_construction`` disclosure (standard-np vs
+managed-np) that accompanies the flip — already emitted by both cells today — not about
+a managed-NP dependency.
 """
 
 from __future__ import annotations
