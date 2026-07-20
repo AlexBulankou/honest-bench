@@ -16,8 +16,15 @@ sweep (hb#132/#149) into the run loop:
   - carry_prior_cluster_triples: the scenario-level do-not-auto-decay carry.
     Fresh triple wins outright; a prior triple is carried all-together and only
     with node_count + >=1 rate (never a rate without its measurement size). The
-    hb#174 stamps (thpt_slo_basis / thpt_slo_n_exec_ok) ride as passengers on a
-    carried triple but never gate or trigger the carry themselves.
+    hb#174 stamps (thpt_slo_basis, or its per-bar split thpt_slo_basis_1s /
+    thpt_slo_basis_5s, plus thpt_slo_n_exec_ok) and the hb#230 floor-zero
+    companions (thpt_slo_floor_zero, thpt_under_5s_per_node,
+    thpt_under_1s_per_node) ride as passengers on a carried triple but never
+    gate or trigger the carry themselves. Passenger copying is fresh-wins
+    PER-KEY too: thpt_under_5s_per_node/thpt_under_1s_per_node are computed on
+    every metrics.ttfe_sla_metrics call (not only alongside a cluster triple),
+    so an already-present fresh per-node value is never overwritten by a
+    carried stale one.
 """
 
 from __future__ import annotations
@@ -363,6 +370,65 @@ def test_basis_and_n_stamps_ride_carry_as_passengers():
     run.carry_prior_cluster_triples(raw, [_prior(sla_metrics=dict(prior_m))])
     _check(raw[0]["sla_metrics"] == prior_m,
            f"basis + n stamps carried with the triple, got {raw[0]['sla_metrics']!r}")
+
+
+def test_per_bar_basis_split_stamps_ride_carry_as_passengers():
+    # hb#174 per-bar split convention (thpt_slo_basis_1s/_5s in place of the
+    # singular thpt_slo_basis) must ride the carry exactly like the singular
+    # form does — #4183: a committed warmpool_cold_start row using the split
+    # convention was silently stripped of both stamps on every routine refresh
+    # because this allowlist predated the split.
+    prior_m = {"thpt_under_5s_per_cluster": 27.1, "thpt_under_1s_per_cluster": 9.0,
+               "thpt_cluster_node_count": 2,
+               "thpt_slo_basis_5s": "literal_ttfe_upper_bound+acq_fulfilled",
+               "thpt_slo_basis_1s": "acq_fulfilled+acq_p95_uncorroborated"}
+    raw = [_cell()]
+    run.carry_prior_cluster_triples(raw, [_prior(sla_metrics=dict(prior_m))])
+    _check(raw[0]["sla_metrics"] == prior_m,
+           f"per-bar basis stamps carried with the triple, got {raw[0]['sla_metrics']!r}")
+
+
+def test_floor_zero_and_per_node_companions_ride_carry_as_passengers():
+    # hb#230: _derive_cold_floor_zero / _derive_literal_floor_zero_5s stamp the
+    # per-cluster rate, its per-node companion, and thpt_slo_floor_zero together
+    # as one atomic dict — #4183: native_digest_cold's committed row lost all
+    # three (thpt_slo_floor_zero, thpt_under_1s_per_node, thpt_under_5s_per_node)
+    # on a routine refresh because none were in this allowlist.
+    prior_m = {"thpt_under_5s_per_cluster": 0.0, "thpt_under_5s_per_node": 0.0,
+               "thpt_under_1s_per_cluster": 0.0, "thpt_under_1s_per_node": 0.0,
+               "thpt_cluster_node_count": 9, "thpt_slo_floor_zero": 1,
+               "thpt_slo_basis": "controller_cold_floor_zero_corroborated"}
+    raw = [_cell(name="native_digest_cold")]
+    run.carry_prior_cluster_triples(
+        raw, [_prior(name="native_digest_cold", sla_metrics=dict(prior_m))])
+    _check(raw[0]["sla_metrics"] == prior_m,
+           f"floor-zero + per-node companions carried, got {raw[0]['sla_metrics']!r}")
+
+
+def test_fresh_per_node_companion_wins_over_carried_stale_value():
+    # #4183 follow-up: thpt_under_5s_per_node/thpt_under_1s_per_node are NOT
+    # atomic with the cluster triple in general -- metrics.ttfe_sla_metrics
+    # computes them on every call regardless of whether cluster_node_count is
+    # supplied, so warmpool_cold_start has a genuinely fresh per-node pair on a
+    # routine refresh even though its cluster triple (a manual-sweep-only
+    # figure) is carried. A passenger carry must never clobber an
+    # already-present fresh value with a stale carried one.
+    prior_m = {"thpt_under_5s_per_cluster": 1.204, "thpt_under_5s_per_node": 38.026,
+               "thpt_under_1s_per_cluster": 1.204, "thpt_under_1s_per_node": 38.026,
+               "thpt_cluster_node_count": 10,
+               "thpt_slo_basis_1s": "acq_fulfilled+acq_p95_uncorroborated",
+               "thpt_slo_basis_5s": "literal_ttfe_upper_bound+acq_fulfilled"}
+    raw = [_cell(name="warmpool_cold_start",
+                 sla_metrics={"thpt_under_5s_per_node": 40.0,
+                              "thpt_under_1s_per_node": 1.3})]
+    run.carry_prior_cluster_triples(
+        raw, [_prior(name="warmpool_cold_start", sla_metrics=dict(prior_m))])
+    m = raw[0]["sla_metrics"]
+    _check(m["thpt_under_5s_per_node"] == 40.0 and m["thpt_under_1s_per_node"] == 1.3,
+           f"fresh per-node values must survive the carry untouched, got {m!r}")
+    _check(m.get("thpt_cluster_node_count") == 10 and
+           m.get("thpt_slo_basis_1s") == prior_m["thpt_slo_basis_1s"],
+           f"cluster triple + basis stamps must still carry, got {m!r}")
 
 
 def test_stamps_without_rate_carry_nothing():

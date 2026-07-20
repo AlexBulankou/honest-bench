@@ -914,12 +914,34 @@ def carry_prior_cluster_triples(raw: list, prior_scenarios) -> None:
     itself: the per-node half is today's fire, the cluster half is the sweep's,
     and the render captions each cluster half with its own X.
 
-    hb#174: the basis stamp (`thpt_slo_basis`) and the literal sample-size stamp
-    (`thpt_slo_n_exec_ok`) travel WITH the triple — a carried rate keeps the
-    disclosure of which measured basis produced it and how thin its weakest
-    credited sample was. Stamps are passengers, not members: the fresh-wins check
-    and the eligibility guard key on the triple keys only, so a prior cell
-    carrying a stamp but no rate (a producer inconsistency) still carries nothing.
+    hb#174: the basis stamp (`thpt_slo_basis`, or its per-bar split
+    `thpt_slo_basis_1s`/`thpt_slo_basis_5s` — the two conventions are mutually
+    exclusive per cell, see results_schema._BASIS_KEYS) and the literal
+    sample-size stamp (`thpt_slo_n_exec_ok`) travel WITH the triple — a carried
+    rate keeps the disclosure of which measured basis produced it and how thin
+    its weakest credited sample was. hb#230: the cold/warm floor-zero flag
+    (`thpt_slo_floor_zero`) and each bar's per-node companion
+    (`thpt_under_5s_per_node`, `thpt_under_1s_per_node`) are stamped by the same
+    producer call as the per-cluster triple (_derive_cold_floor_zero /
+    _derive_literal_floor_zero_5s emit them together as one dict) and must ride
+    along the same way — a carry that drops them re-introduces exactly the
+    silent-decay bug this function exists to prevent (#4183: a cell-downgrade
+    fire on a fully-clean measurement run, traced to this allowlist predating
+    both the hb#174 per-bar split and the hb#230 floor-zero/per-node keys).
+    All of the above are passengers, not members: the fresh-wins check and the
+    eligibility guard key on the triple keys only, so a prior cell carrying a
+    stamp but no rate (a producer inconsistency) still carries nothing.
+
+    Per-node companion caveat: unlike the basis/floor-zero stamps, the per-node
+    keys are NOT always atomic with the cluster triple — metrics.ttfe_sla_metrics
+    computes thpt_under_5s_per_node/thpt_under_1s_per_node on every call whether
+    or not cluster_node_count is supplied, so a scenario like warmpool_cold_start
+    has a genuinely fresh per-node pair on a routine refresh even though its
+    cluster triple (a manual-sweep-only figure) is carried. Passenger copying is
+    therefore fresh-wins PER-KEY, not just per-cell: a passenger already present
+    on the fresh cell is left alone rather than overwritten by the carried
+    (possibly stale) value — only an absent passenger is filled in from the
+    prior row.
     """
     if not isinstance(prior_scenarios, list):
         return
@@ -943,8 +965,27 @@ def carry_prior_cluster_triples(raw: list, prior_scenarios) -> None:
         )
         if "thpt_cluster_node_count" not in carried or not has_rate:
             continue
-        for passenger in ("thpt_slo_basis", "thpt_slo_n_exec_ok"):
-            if passenger in pm:
+        for passenger in (
+            "thpt_slo_basis",
+            "thpt_slo_basis_1s",
+            "thpt_slo_basis_5s",
+            "thpt_slo_n_exec_ok",
+            "thpt_slo_floor_zero",
+            "thpt_under_5s_per_node",
+            "thpt_under_1s_per_node",
+        ):
+            # Fresh wins per-key, not just per-cell: thpt_under_5s_per_node /
+            # thpt_under_1s_per_node are NOT atomic with the cluster triple in
+            # general -- metrics.ttfe_sla_metrics computes them on every call
+            # regardless of whether cluster_node_count is supplied, so a
+            # scenario like warmpool_cold_start has a genuinely fresh per-node
+            # pair on every routine refresh even when the cluster triple itself
+            # is carried. Unconditionally overwriting via m.update(carried)
+            # would silently discard that fresh measurement in favor of a
+            # stale carried one -- the same class of bug this function exists
+            # to prevent, just aimed at a different key. Only carry a
+            # passenger the fresh cell doesn't already have.
+            if passenger in pm and passenger not in m:
                 carried[passenger] = pm[passenger]
         m.update(carried)
 
