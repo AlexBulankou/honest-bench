@@ -163,12 +163,11 @@ steps:
         # the persistent internal cluster's terraform: gVisor is per-nodepool, not
         # per-cluster). Harness pods request runtimeClassName=gvisor and land
         # on the sandboxed pool via its auto-applied taint/toleration.
-        # --enable-network-policy (Calico) mirrors sandbox-scenarios-cluster's
-        # terraform (terraform/clusters/sandbox-scenarios/main.tf) in the a4
-        # fleet repo. Without it the control-plane isolation badges
-        # (cross_tenant_network_isolation, default_deny_egress) read FAIL —
-        # not a flake, a real enforcement gap: NetworkPolicy objects admit
-        # cleanly but nothing enforces them. See #314.
+        # --enable-network-policy (Calico) mirrors the persistent internal
+        # cluster's terraform config. Without it the control-plane isolation
+        # badges (cross_tenant_network_isolation, default_deny_egress) read
+        # FAIL — not a flake, a real enforcement gap: NetworkPolicy objects
+        # admit cleanly but nothing enforces them. See #314.
         echo "==> creating ephemeral cluster $$CLUSTER in $$REGION"
         gcloud container clusters create "$$CLUSTER" \
           --region "$$REGION" \
