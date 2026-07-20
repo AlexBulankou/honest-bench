@@ -938,7 +938,7 @@ def test_starstar_footnote_renders_all_classes_with_upstream_links():
     # each class carries its upstream refs (link label survives; _unlink only strips WIP links)
     assert "agent-sandbox#940" in out and "agent-sandbox#1087" in out  # trust-gate (Class A)
     assert "agent-sandbox#751" in out and "agent-sandbox#761" in out  # no-compliant-rung (B/Kata)
-    assert "agent-sandbox#873" in out and "agent-sandbox#893" in out  # upstream-blocked (Class C)
+    assert "agent-sandbox#873" in out and "agent-sandbox#1150" in out  # upstream-blocked (Class C)
 
 
 def test_starstar_footnote_absent_when_no_caveat_cell():

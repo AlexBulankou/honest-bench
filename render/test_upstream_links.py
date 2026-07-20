@@ -77,9 +77,9 @@ def test_all_shipped_refs_point_at_public_oss_repos():
 
 def test_ref_url_issue_vs_pr_paths():
     issue = {"repo": "kubernetes-sigs/agent-sandbox", "number": 873, "kind": "issue"}
-    pr = {"repo": "kubernetes-sigs/agent-sandbox", "number": 893, "kind": "pr"}
+    pr = {"repo": "kubernetes-sigs/agent-sandbox", "number": 1150, "kind": "pr"}
     assert ref_url(issue) == "https://github.com/kubernetes-sigs/agent-sandbox/issues/873"
-    assert ref_url(pr) == "https://github.com/kubernetes-sigs/agent-sandbox/pull/893"
+    assert ref_url(pr) == "https://github.com/kubernetes-sigs/agent-sandbox/pull/1150"
 
 
 # --- cell formatter ----------------------------------------------------------
@@ -90,7 +90,7 @@ def test_cell_refs_upstream_blocked_exact():
     # space, arrow-joined, fix ref labeled with its live status.
     assert upstream_cell_refs("upstream-blocked") == (
         " [#873](https://github.com/kubernetes-sigs/agent-sandbox/issues/873)"
-        "→[#893 in review](https://github.com/kubernetes-sigs/agent-sandbox/pull/893)"
+        "→[#1150 in review](https://github.com/kubernetes-sigs/agent-sandbox/pull/1150)"
     )
 
 
@@ -109,7 +109,7 @@ def test_prose_refs_upstream_blocked_exact():
     assert upstream_prose_refs("upstream-blocked") == (
         "[agent-sandbox#873](https://github.com/kubernetes-sigs/agent-sandbox/issues/873)"
         " (issue, open)"
-        " → fix [agent-sandbox#893](https://github.com/kubernetes-sigs/agent-sandbox/pull/893)"
+        " → fix [agent-sandbox#1150](https://github.com/kubernetes-sigs/agent-sandbox/pull/1150)"
         " (PR, in review)"
     )
 

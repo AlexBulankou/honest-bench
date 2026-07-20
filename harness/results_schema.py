@@ -400,7 +400,7 @@ def _coerce_scenario(raw: dict) -> dict:
         out["pending_reason"] = reason
 
     # resume_probe_ceiling_ms (hb#230 Fork 5): the wall-clock ceiling the resume probe waited
-    # out against a never-clearing Suspended condition (upstream #873 → #893). It is NOT a
+    # out against a never-clearing Suspended condition (upstream #873 → #1150). It is NOT a
     # resume TTFE — the operation never completes — but per alex's doctrine flip (a caveated
     # measured number beats an empty cell) render publishes it across the gVisor resume row as
     # `≥<X>s***`. Carried TOP-LEVEL (a SCENARIO field, not sla_metrics) so it survives render's

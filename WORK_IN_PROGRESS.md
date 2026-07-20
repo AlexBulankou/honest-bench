@@ -52,9 +52,9 @@ _Anchors and the entry set are generated from the closed pending-reason enum —
 
 - **What:** TTFE and throughput for the **resume-from-suspend** activation mode — restore a previously-suspended sandbox and run the first instruction.
 - **Why absent:** **Gated (upstream).** The run itself lands, but an upstream controller gap holds graduation: on gVisor the suspended condition never clears. This is a known upstream gap, NOT an unrun or failed cell. (The Kata + microVM resume cell is a separate story — `na-by-construction`, because this CRIU-based metric does not transfer to the Kata VM isolation model.)
-- **In flight:** Yes — tracked upstream in the agent-sandbox controller: [agent-sandbox#873](https://github.com/kubernetes-sigs/agent-sandbox/issues/873) (issue, open) → fix [agent-sandbox#893](https://github.com/kubernetes-sigs/agent-sandbox/pull/893) (PR, in review). No honest-bench-side measurement can graduate it until the upstream fix lands.
+- **In flight:** Yes — tracked upstream in the agent-sandbox controller: [agent-sandbox#873](https://github.com/kubernetes-sigs/agent-sandbox/issues/873) (issue, open) → fix [agent-sandbox#1150](https://github.com/kubernetes-sigs/agent-sandbox/pull/1150) (PR, in review). No honest-bench-side measurement can graduate it until the upstream fix lands.
 - **ETA:** Gated on the upstream agent-sandbox resume-graduation fix. There is no honest-bench-side date — the cell graduates to a real number the moment upstream lands, not when a run is scheduled.
-- **Trace:** Upstream agent-sandbox controller (resume graduation): [agent-sandbox#873](https://github.com/kubernetes-sigs/agent-sandbox/issues/873) (issue, open) → fix [agent-sandbox#893](https://github.com/kubernetes-sigs/agent-sandbox/pull/893) (PR, in review).
+- **Trace:** Upstream agent-sandbox controller (resume graduation): [agent-sandbox#873](https://github.com/kubernetes-sigs/agent-sandbox/issues/873) (issue, open) → fix [agent-sandbox#1150](https://github.com/kubernetes-sigs/agent-sandbox/pull/1150) (PR, in review).
 
 <a id="requires-gvisor-runtime"></a>
 
