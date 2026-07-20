@@ -43,9 +43,9 @@ blocker — diagnosis plus file-ready patches and comments — is hand-maintaine
 
 | Runtime | Activation Mode | Throughput @ <5s TTFE (sb/s — node · cluster) | Throughput @ <1s TTFE (sb/s — node · cluster) | TTFE p50 | TTFE p95 | Execution Success (Honesty Check) |
 |---|---|---|---|---|---|---|
-| gVisor | Warm-pool hit (Base image) | 38.026 /node · ≥1.204 /cluster ⚠️ | 38.026 /node · ≥1.204 /cluster ⚠️*** | 0.7556s (count=30) | 0.9222s (count=30) | 100% |
-| gVisor | Unique-image cold (RL reality) | 0 /node · 0 /cluster ⚠️*** | 0 /node · 0 /cluster ⚠️*** | 3.4518s (count=30) | 3.7599s (count=30) | 100% |
-| gVisor | Resume-from-suspend | 0*** (upstream-blocked) | 0*** (upstream-blocked) | ≥34.6s*** | ≥34.6s*** | 0/1 completed*** |
+| gVisor | Warm-pool hit (Base image) | 4.535 /node · ≥1.204 /cluster ⚠️ | 0 /node · ≥1.204 /cluster ⚠️*** | 3.1352s (count=30) | 4.6908s (count=30) | 100% |
+| gVisor | Unique-image cold (RL reality) | 0 /node · 0 /cluster ⚠️*** | 0 /node · 0 /cluster ⚠️*** | 4.888s (count=30) | 5.2545s (count=30) | 100% |
+| gVisor | Resume-from-suspend | [pending (upstream-blocked)](WORK_IN_PROGRESS.md#upstream-blocked) [#873](https://github.com/kubernetes-sigs/agent-sandbox/issues/873)→[#893 in review](https://github.com/kubernetes-sigs/agent-sandbox/pull/893) | [pending (upstream-blocked)](WORK_IN_PROGRESS.md#upstream-blocked) [#873](https://github.com/kubernetes-sigs/agent-sandbox/issues/873)→[#893 in review](https://github.com/kubernetes-sigs/agent-sandbox/pull/893) | [pending (upstream-blocked)](WORK_IN_PROGRESS.md#upstream-blocked) [#873](https://github.com/kubernetes-sigs/agent-sandbox/issues/873)→[#893 in review](https://github.com/kubernetes-sigs/agent-sandbox/pull/893) | [pending (upstream-blocked)](WORK_IN_PROGRESS.md#upstream-blocked) [#873](https://github.com/kubernetes-sigs/agent-sandbox/issues/873)→[#893 in review](https://github.com/kubernetes-sigs/agent-sandbox/pull/893) | [pending (upstream-blocked)](WORK_IN_PROGRESS.md#upstream-blocked) [#873](https://github.com/kubernetes-sigs/agent-sandbox/issues/873)→[#893 in review](https://github.com/kubernetes-sigs/agent-sandbox/pull/893) |
 | Kata + microVM | Warm-pool hit (Base image) | 18.624 /node · ≥0.133 /cluster ⚠️*** | 18.624 /node · ≥0.133 /cluster ⚠️*** | 0.733s (count=30) | 0.9628s (count=30) | 100% |
 | Kata + microVM | Unique-image cold (RL reality) | unk.*** | 0 /node · 0 /cluster | 2.8537s (count=30) | 3.1263s (count=30) | 100% |
 | Kata + microVM | Resume-from-suspend | [N/A](WORK_IN_PROGRESS.md#na-by-construction) | [N/A](WORK_IN_PROGRESS.md#na-by-construction) | [N/A](WORK_IN_PROGRESS.md#na-by-construction) | [N/A](WORK_IN_PROGRESS.md#na-by-construction) | [N/A](WORK_IN_PROGRESS.md#na-by-construction) |
@@ -91,19 +91,19 @@ A cell tagged `***` prints the best figure we measured, not an honest-empty `pen
 
 _Kata + microVM rows are measured in a separate run on the kata node pool: cluster_substrate=gke-kata · node_count=2 · generated-at=2026-07-05T15:32:54Z._
 
-_build: cluster_substrate=gke-sandbox · run_id=c95500d1be8f439fb3a149b68aab707a · node_count=1_
-_generated-at: 2026-07-04T18:32:56Z_
+_build: cluster_substrate=gke-sandbox · run_id=7cc397ba4b7a486e9cedab1327aee984 · node_count=1_
+_generated-at: 2026-07-20T19:31:08Z_
 
-_**North Star** — warm-pool-hit TTFE p95 < 1s (the spec doc bar): gVisor 0.9222s (count=30) ✅ met (0.0778s headroom); Kata + microVM 0.9628s (count=30) ✅ met (0.0372s headroom). An honest ❌ prints the measured gap to the bar (tagged `within sampling noise` when the miss sits inside the sample spread — it stays a ❌, the tag never flips a miss to a pass); `pending` = unmeasured (never a guess); † marks a p95 over fewer than N=30 samples._
+_**North Star** — warm-pool-hit TTFE p95 < 1s (the spec doc bar): gVisor 4.6908s (count=30) ❌ not met (3.6908s above the bar); Kata + microVM 0.9628s (count=30) ✅ met (0.0372s headroom). An honest ❌ prints the measured gap to the bar (tagged `within sampling noise` when the miss sits inside the sample spread — it stays a ❌, the tag never flips a miss to a pass); `pending` = unmeasured (never a guess); † marks a p95 over fewer than N=30 samples._
 
-_**Stretch bar** — warm-pool-hit TTFE p95 < 0.5s (an aspiration above the North Star, not the North Star itself; the step-up curve grades sustained creation-rate against it — see [DETAILS.md](DETAILS.md)): gVisor 0.9222s (count=30) ❌ not met (0.4222s above the bar); Kata + microVM 0.9628s (count=30) ❌ not met (0.4628s above the bar)._
+_**Stretch bar** — warm-pool-hit TTFE p95 < 0.5s (an aspiration above the North Star, not the North Star itself; the step-up curve grades sustained creation-rate against it — see [DETAILS.md](DETAILS.md)): gVisor 4.6908s (count=30) ❌ not met (4.1908s above the bar); Kata + microVM 0.9628s (count=30) ❌ not met (0.4628s above the bar)._
 
 ## What this means for you
 
 The tables above are the raw measurements. If you build *on* sandboxes but do not run the cluster yourself, here is what they mean in practice:
 
-- **Keep a warm pool sized to demand and a new sandbox is ready in ~0.8s (~0.9s at the p95).** That is fast enough to put a fresh sandbox directly in a user-facing request path — no need to hide it behind a spinner or pre-allocate one per session.
-- **A warm-pool hit is about 10× faster than starting cold (gVisor).** If start-up latency matters to you, the warm pool is the single biggest lever — size it for your steady demand and most claims never pay the cold path. (This ratio is the dedicated warm-vs-cold leg — a separate point-in-time measurement from the Core Metrics matrix rows above, so do not reproduce it by dividing the matrix cells.)
+- **Keep a warm pool sized to demand and a new sandbox is ready quickly** — a claim against a ready pool skips the fresh-node startup path. The exact wait to budget is in the operating envelope below once that measurement lands.
+- **A warm-pool hit is about 4.7× faster than starting cold (gVisor).** If start-up latency matters to you, the warm pool is the single biggest lever — size it for your steady demand and most claims never pay the cold path. (This ratio is the dedicated warm-vs-cold leg — a separate point-in-time measurement from the Core Metrics matrix rows above, so do not reproduce it by dividing the matrix cells.)
 - **Big simultaneous bursts still work — 300 sandboxes asked for at once settled in ~6.9s.** But that is the pool-overflow regime: the wait climbs toward the cold-start number as claims outrun ready slots, so plan the pool around your steady rate, not your worst spike.
 - **Rule of thumb for pool size:** start near your typical concurrent demand (≈0.75× of it) and tune from there. This is a planning heuristic, not one of the measured numbers above.
 - **Both runtimes are measured — choose by isolation need.** In the measurements above, warm-pool latency is comparable between them; gVisor delivers the higher per-node throughput, while Kata + microVM puts each sandbox in its own VM for hardware-grade isolation. If unsure, start with gVisor and move only the workloads that need a VM boundary to Kata.
@@ -116,7 +116,7 @@ Find the row closest to **your** load; the p50 is the wait to plan around. The *
 
 | Your load pattern | Wait to budget (p50) | Scope |
 |---|---|---|
-| Steady trickle — warm pool keeps up with demand | ~0.8s | full start → first result |
+| Steady trickle — warm pool keeps up with demand | [pending](WORK_IN_PROGRESS.md#not-yet-measured) | full start → first result |
 | Bursty — pool oversubscribed 2:1 (60 claims / 30 ready) | ~1.7s | full start → first result |
 | 300 sandboxes requested at once (1:1 pool) | ~6.9s | full start → first result |
 | Sustained 300/sec churn | ~2.9s | pool hand-off only (before exec) |
@@ -167,42 +167,6 @@ The Concurrent Burst legs above are **1:1** — N ready sandboxes hit with N cla
 Under this contention, TTFE degrades to **1.6589s p50** / **2.0169s p95** — budget for that, not the sub-second warm hit, when your claim rate can outrun your pool. Full bind/exec decomposition is in the deep-dive appendix, [DETAILS.md](DETAILS.md).
 
 _Measured 2026-07-01 — warm-pool at-scale contention ceiling (point-in-time)._
-
-## Saturation — step-up throughput study
-
-**Claim acquisition stays compliant across the swept bracket (north-star p95 < 0.5s) — no knee.** Acquisition (submit → claim bound) is measured directly, not via a TTFE proxy; its compliance is a SEPARATE axis from the end-to-end readiness bounds below.
-
-| Offered rate (/s) | Acq p50 | Acq p95 | Acq p99 | p95 < bar | Fulfilled /s |
-|---|---|---|---|---|---|
-| 4 | 0.117263s | 0.245674s | 0.410301s | ✅ | 3.98986 |
-| 6 | 0.17971s | 0.420187s | 0.621767s | ✅ | 5.97682 |
-| 8 | 0.181669s | 0.395046s | 0.491353s | ✅ | 7.95654 |
-
-**End-to-end readiness (TTFE) has already collapsed across this bracket** — the binding constraint is warm controller-startup queueing, not claim acquisition. The collapse is pinned between two distinct measured bounds:
-
-_Literal-TTFE upper bound: exec-probe round-trip (claim → Ready → first exec instruction), which INCLUDES exec websocket-setup overhead — it OVER-reports true TTFE, so treat it as a ceiling, not a TTFE measurement._
-
-Upper-bound curve verdict: 🛑 saturated (at least one step crossed the collapse band).
-
-| Offered rate (/s) | Literal-TTFE p50 | Literal-TTFE p95 | Literal-TTFE p99 | Over-5s | Fulfilled /s |
-|---|---|---|---|---|---|
-| 4 | 3.6096s | 97.2414s | 131.146s | 32/120 | 3.98986 |
-| 6 | 13.2016s | 153.859s | 165.229s | 110/180 | 5.97682 |
-| 8 | 33.3646s | 189.318s | 195.088s | 192/240 | 7.95654 |
-
-_Controller-startup lower bound: controller-first-observed → Ready, which EXCLUDES the claim-admission → first-reconcile queueing lag — it UNDER-reports true TTFE, so treat it as a floor, not a TTFE measurement._
-
-Proxy curve verdict: 🛑 saturated (at least one step crossed the collapse band).
-
-| Offered rate (/s) | Ctrl-startup p50 | Ctrl-startup p95 | Ctrl-startup p99 | Ready /s |
-|---|---|---|---|---|
-| 4 | 0.158818s | 83.741s | 120s | — |
-| 6 | 22.669s | 158.643s | 223.729s | — |
-| 8 | 71.3839s | 220.411s | 236.082s | — |
-
-_The gap between the upper (literal-TTFE) and lower (controller-startup) bounds is exec-readiness queueing (pod-startup / exec-readiness). The measured bounds are in collapse at the bottom of this bracket, so the TTFE 1s/5s crossing sits BELOW the lowest swept rung — the published Warm-Pool Acquisition ceiling above remains the TTFE-compliant rate, not these acquisition-compliant rungs._
-
-_Sweep: 30 nodes, SLD 20s, WPR 0.75 — measured 2026-07-08 (point-in-time; refreshed on the next sweep)._
 
 ## Which storage class should you pick?
 
