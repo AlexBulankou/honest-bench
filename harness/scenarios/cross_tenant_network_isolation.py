@@ -488,10 +488,8 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
                     # resource names, just the semantic classification, and it lands
                     # in Cloud Build's own private build log, never the public repo.
                     log.warning(
-                        "dataplane probe FAIL verdict=%s (deny_blocked=%s, "
-                        "control_allowed=%s) — NetworkPolicy %s admitted+bound but "
-                        "not enforced on the wire",
-                        verdict, deny_blocked, control_allowed, policy_name,
+                        "dataplane FAIL: verdict=%s deny_blocked=%s control_allowed=%s",
+                        verdict, deny_blocked, control_allowed,
                     )
                     return (
                         "FAIL",

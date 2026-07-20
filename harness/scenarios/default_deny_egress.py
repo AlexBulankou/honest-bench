@@ -385,10 +385,8 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
                     # tears down (hb#314). Safe to log: semantic verdict only, no
                     # resource names, lands in Cloud Build's private build log.
                     log.warning(
-                        "dataplane probe FAIL verdict=%s (deny_blocked=%s, "
-                        "control_allowed=%s) — NetworkPolicy %s admitted+bound but "
-                        "not enforced on the wire",
-                        verdict, deny_blocked, control_allowed, policy_name,
+                        "dataplane FAIL: verdict=%s deny_blocked=%s control_allowed=%s",
+                        verdict, deny_blocked, control_allowed,
                     )
                     return (
                         "FAIL",
