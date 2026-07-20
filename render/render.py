@@ -979,7 +979,7 @@ def render_matrix(results, kata_results=None):
 
             # hb#230 Fork 5 (resume Class-C ceiling): the gVisor resume row DID record a probe
             # ceiling — the wall-clock it waited out against a never-clearing Suspended
-            # condition (upstream #873 → #893). Per alex's doctrine flip (a caveated measured
+            # condition (upstream #873 → #1150). Per alex's doctrine flip (a caveated measured
             # number always beats an empty cell), publish that ceiling as `≥<X>s***` — but
             # ONLY in the two TTFE columns, where a duration is the correct unit. The earlier
             # revision filled the ceiling across ALL FIVE cells, which stamped a *duration*

@@ -5,12 +5,12 @@ hand-maintained UPSTREAM_BLOCKERS.md — and exposes two formatters:
 
 - upstream_cell_refs(reason): compact per-cell suffix appended AFTER the
   link_pending-wrapped token in matrix data cells, e.g.
-  " [#873](...)→[#893 in review](...)". Returns "" for unmapped/None
+  " [#873](...)→[#1150 in review](...)". Returns "" for unmapped/None
   reasons, so non-upstream pending classes (cluster-fire etc.) render
   unchanged.
 - upstream_prose_refs(cls): fuller prose form for the matrix legend and
   the WORK_IN_PROGRESS.md entry, e.g.
-  "[agent-sandbox#873](...) (issue, open) → fix [agent-sandbox#893](...)
+  "[agent-sandbox#873](...) (issue, open) → fix [agent-sandbox#1150](...)
   (PR, in review)".
 
 Classes whose key matches a PENDING_REASONS member are consumed by the
@@ -103,7 +103,7 @@ def ref_url(ref):
 
 
 def _cell_token(ref):
-    """Compact per-ref markdown link: [#873](url) or [#893 in review](url)."""
+    """Compact per-ref markdown link: [#873](url) or [#1150 in review](url)."""
     label = "#%d" % ref["number"]
     if ref["role"] == "fix-in-flight":
         label += " %s" % STATUS_LABELS[ref["status"]]

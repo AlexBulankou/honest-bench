@@ -17,7 +17,7 @@
         },
         {
           "repo": "kubernetes-sigs/agent-sandbox",
-          "number": 893,
+          "number": 1150,
           "kind": "pr",
           "role": "fix-in-flight",
           "status": "in-review"
