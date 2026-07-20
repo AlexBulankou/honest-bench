@@ -113,7 +113,12 @@ EXT_CONTROLLER="${MANIFEST_DIR}/extensions.controller.yaml"
 [ -f "$EXT_CONTROLLER" ] \
   || die "expected extensions.controller.yaml in upstream k8s/ — upstream layout changed; re-check the same-name-Deployment overwrite before applying."
 log "applying RBAC + base controller manifests (extensions controller applied last)"
-find "$MANIFEST_DIR" -maxdepth 1 -name '*.yaml' ! -name 'extensions.controller.yaml' -print0 \
+# kustomization.yaml is a kustomize-only config file, not a real API resource — it lives at
+# the same top level as the real manifests (for the all-in-one `kubectl kustomize`/GitOps
+# consumer path) but `kubectl apply -f` on it always fails with "no matches for kind
+# Kustomization". Exclude it alongside extensions.controller.yaml, else `xargs` sees one
+# failing invocation, returns 123, and `set -e` aborts the whole install after this point.
+find "$MANIFEST_DIR" -maxdepth 1 -name '*.yaml' ! -name 'extensions.controller.yaml' ! -name 'kustomization.yaml' -print0 \
   | xargs -0 -I{} kubectl apply -f {}
 log "applying extensions controller LAST (deterministic --extensions winner)"
 kubectl apply -f "$EXT_CONTROLLER"
