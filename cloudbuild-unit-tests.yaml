@@ -53,6 +53,59 @@ steps:
         set -euo pipefail
         bash scripts/check-public-safety.sh
 
+  # Specific internal-name scan. Tree-wide guard against the specific internal
+  # cluster/project names that the generic structural scan above cannot know. The
+  # denylist is sourced from Secret Manager via secretEnv (DENYLIST) — NEVER a
+  # substitution var, since substitutions echo into build logs and would re-leak
+  # the very names this step guards. Fails CLOSED if the denylist is empty/unset,
+  # so a secret-fetch failure can never silently disable the guard. Matched names
+  # are REDACTED from output: only file:line is printed, never the matched name or
+  # line content, so the scan never re-leaks the names it guards even into the
+  # (private) build log. Runs after public-safety so a generic leak fails first.
+  - name: python:3.12
+    id: specific-name-scan
+    entrypoint: bash
+    waitFor: ['public-safety']
+    secretEnv: ['DENYLIST']
+    args:
+      - -c
+      - |
+        set -uo pipefail
+        # $$ escapes CB's substitution engine so DENYLIST is read at runtime from
+        # secretEnv, not consumed as a build substitution at submit time (the #1474
+        # foot-gun documented in cloudbuild-refresh-gke-sandbox.yaml). Only the
+        # uppercase secretEnv name needs it; the lowercase shell vars below do not
+        # match CB's substitution-key shape and pass through untouched.
+        names="$${DENYLIST:-}"
+        # Accept comma- or newline-delimited denylist; normalize to one per line.
+        mapfile -t denylist < <(printf '%s' "$names" | tr ',' '\n' \
+          | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -v '^$')
+        if [ "${#denylist[@]}" -eq 0 ]; then
+          echo "ERROR: internal-name denylist is empty or unset — failing closed." >&2
+          exit 1
+        fi
+        echo "specific-name-scan: ${#denylist[@]} name(s) loaded from Secret Manager."
+        hits=0
+        for name in "${denylist[@]}"; do
+          if git rev-parse --git-dir >/dev/null 2>&1; then
+            matches="$(git grep -F -n -I -- "$name" 2>/dev/null || true)"
+          else
+            matches="$(grep -rF -n -I --exclude-dir=.git -- "$name" . 2>/dev/null || true)"
+          fi
+          [ -z "$matches" ] && continue
+          while IFS= read -r m; do
+            [ -z "$m" ] && continue
+            loc="$(printf '%s' "$m" | cut -d: -f1-2)"
+            echo "FORBIDDEN internal name at ${loc} (name+content redacted)" >&2
+            hits=$((hits + 1))
+          done <<< "$matches"
+        done
+        if [ "$hits" -ne 0 ]; then
+          echo "specific-name-scan: ${hits} forbidden-name occurrence(s) — see file:line above." >&2
+          exit 1
+        fi
+        echo "specific-name-scan: clean — no forbidden internal names in tree."
+
   # Discover-all + run every test_*.py. Mirrors the workflow's discover-all glob
   # so a new test_*.py is gated the instant it is committed (no per-file list to
   # drift). Most modules are stdlib-pure, but the render tests import kubernetes
@@ -62,7 +115,7 @@ steps:
   - name: python:3.12
     id: unit-tests
     entrypoint: bash
-    waitFor: ['public-safety']
+    waitFor: ['specific-name-scan']
     args:
       - -c
       - |
@@ -96,6 +149,18 @@ steps:
 
 options:
   logging: CLOUD_LOGGING_ONLY
+
+availableSecrets:
+  secretManager:
+    # $PROJECT_ID is a Cloud Build built-in substitution resolved at build time, so
+    # the concrete project id never ships in this public file (same pattern as the
+    # refresh config's token secret). Provision the denylist — the specific internal
+    # cluster/project names, comma- or newline-delimited — as Secret Manager secret
+    # `honest-bench-internal-name-denylist`, granting Secret Accessor to the offline
+    # CI service account ONLY. secretEnv (not a substitution) keeps the names out of
+    # the build log; the specific-name-scan step redacts any match to file:line.
+    - versionName: projects/$PROJECT_ID/secrets/honest-bench-internal-name-denylist/versions/latest
+      env: DENYLIST
 
 # pip install of the harness deps + ~full test suite discovery/run. The workflow
 # had no explicit timeout (6h GHA default); 600s is ample for the offline suite.
