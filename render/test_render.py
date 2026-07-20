@@ -4235,6 +4235,70 @@ def test_storage_config_in_build_readme_ordering_and_inert():
         assert storage_at < recipe_at
 
 
+# --- Machine-class caveat fail-closed guard (trust-surface downgrade) ---
+# A sandbox-family run carries `runtime` in provenance and is exactly where machine
+# class is load-bearing. If such a run does not stamp `machine_type`, returning ""
+# would render the page with no machine-class disclosure — read by a consumer as
+# "rig unchanged", a silent downgrade. The guard emits an explicit rig-unknown marker
+# so the loss of the source fails loud (guard-then-fill), never quiet.
+
+
+def test_machine_class_caveat_rig_unknown_when_runtime_present_no_machine_type():
+    out = render._machine_class_caveat({"runtime": "gvisor"})
+    assert "Machine class unknown" in out
+    assert "cannot be ruled out" in out
+    # It must NOT masquerade as the change caveat.
+    assert "Machine-class change" not in out
+
+
+def test_machine_class_caveat_no_marker_when_substrate_no_machine_type():
+    # No runtime (substrate) + no machine_type -> guard does not fire; substrate runs
+    # are not measured on the sandbox rig, so machine_type is not required there.
+    assert render._machine_class_caveat({}) == ""
+    assert render._machine_class_caveat({"cluster_substrate": "kind"}) == ""
+
+
+def test_machine_class_caveat_inert_when_runtime_and_machine_type_present_no_prior():
+    # Sandbox run WITH machine_type but no prior (first stamped run / same-rig refresh):
+    # rig is known and unchanged -> no caveat.
+    assert render._machine_class_caveat(
+        {"runtime": "gvisor", "machine_type": "n2-standard-16"}
+    ) == ""
+
+
+def test_machine_class_caveat_change_when_both_present_and_differ():
+    # Existing behavior preserved: two stamped, differing rigs -> change caveat.
+    out = render._machine_class_caveat(
+        {"runtime": "gvisor", "machine_type": "n2-standard-16",
+         "prior_machine_type": "e2-standard-16"}
+    )
+    assert "Machine-class change" in out
+    assert "n2-standard-16" in out and "e2-standard-16" in out
+    assert "Machine class unknown" not in out
+
+
+def test_machine_class_caveat_no_change_when_same_rig():
+    assert render._machine_class_caveat(
+        {"runtime": "gvisor", "machine_type": "n2-standard-16",
+         "prior_machine_type": "n2-standard-16"}
+    ) == ""
+
+
+def test_rig_unknown_marker_reaches_rendered_page():
+    # End-to-end: proves _clean_provenance preserves `runtime` so the fail-closed
+    # guard fires through the warm-vs-cold block (the same render path that carries
+    # the machine-class-CHANGE caveat) for a sandbox run missing machine_type.
+    out = render.render_warm_vs_cold(
+        _matrix_results(
+            _full_gvisor_scenarios(),
+            provenance={"runtime": "gvisor"},
+            warm_vs_cold=_wc(),
+        )
+    )
+    assert "Machine class unknown" in out
+    assert "Machine-class change" not in out
+
+
 def _run_all():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:

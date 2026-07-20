@@ -87,20 +87,43 @@ def _clean_provenance(prov):
 
 
 def _machine_class_caveat(prov):
-    """One-line caveat when this run's machine_type differs from the prior published run's
-    (a#4183 PR#313 review, a4s1), or "" when INERT.
+    """One-line caveat about this run's machine class, or "" when INERT.
 
-    Both values are closed-schema-validated GCP machine shapes (never free text) cleaned by
-    _clean_provenance before reaching here, so the caveat can safely quote them. Data-keyed
-    off provenance.machine_type / prior_machine_type — same posture as the drained-regime
-    caveat above: build_provenance only stamps prior_machine_type when the rig actually
-    changed, so a same-rig refresh needs no caveat and this stops rendering by construction
-    the moment two consecutive runs share a machine class.
+    Two distinct emissions, both keyed off provenance:
+
+    1. **Rig-unknown (fail-closed guard).** A sandbox-family run carries
+       ``runtime`` in provenance; that is exactly the run where machine class is
+       load-bearing. If such a run did NOT stamp ``machine_type`` (unknown rig —
+       build_provenance omits it rather than guessing), returning "" would render
+       the page with zero machine-class disclosure, which a reader reads as
+       "rig unchanged" — a silent downgrade of a trust surface. So emit an
+       explicit rig-unknown marker instead: the loss of the source fails loud
+       (guard-then-fill), never quiet. Substrate runs carry no ``runtime`` and so
+       never trip this guard.
+    2. **Machine-class change.** When both ``machine_type`` and
+       ``prior_machine_type`` are present and differ, emit the confounded-delta
+       caveat. Both values are closed-schema-validated GCP machine shapes (never
+       free text) cleaned by _clean_provenance before reaching here, so the caveat
+       can safely quote them. build_provenance only stamps prior_machine_type when
+       the rig actually changed, so a same-rig refresh needs no caveat and this
+       stops rendering by construction the moment two consecutive runs share a
+       machine class.
     """
     if not isinstance(prov, dict):
         return ""
     current = prov.get("machine_type")
     prior = prov.get("prior_machine_type")
+    runtime = prov.get("runtime")
+    # (1) Fail-closed guard: sandbox-family run (runtime present) with no stamped
+    # machine_type. Do not silently render no caveat — mark the rig as unknown.
+    if runtime and not current:
+        return (
+            "> ⚠️ **Machine class unknown:** this sandbox-family run did not stamp "
+            "`machine_type`, so a rig change relative to the previously published run "
+            "cannot be ruled out. Treat any delta as possibly machine-class-confounded "
+            "until a matched-rig run is published."
+        )
+    # (2) Machine-class change between two stamped, differing rigs.
     if not current or not prior or current == prior:
         return ""
     return (
