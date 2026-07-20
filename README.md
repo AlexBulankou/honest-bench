@@ -43,8 +43,8 @@ blocker — diagnosis plus file-ready patches and comments — is hand-maintaine
 
 | Runtime | Activation Mode | Throughput @ <5s TTFE (sb/s — node · cluster) | Throughput @ <1s TTFE (sb/s — node · cluster) | TTFE p50 | TTFE p95 | Execution Success (Honesty Check) |
 |---|---|---|---|---|---|---|
-| gVisor | Warm-pool hit (Base image) | 6.317 /node · ≥1.204 /cluster ⚠️ | 0 /node · ≥1.204 /cluster ⚠️*** | 2.8173s (count=30) | 3.8161s (count=30) | 100% |
-| gVisor | Unique-image cold (RL reality) | 0 /node · 0 /cluster ⚠️*** | 0 /node · 0 /cluster ⚠️*** | 3.6482s (count=30) | 4.0576s (count=30) | 100% |
+| gVisor | Warm-pool hit (Base image) | 4.842 /node · ≥1.204 /cluster ⚠️ | 0 /node · ≥1.204 /cluster ⚠️*** | 2.9894s (count=30) | 4.0589s (count=30) | 100% |
+| gVisor | Unique-image cold (RL reality) | 0 /node · 0 /cluster ⚠️*** | 0 /node · 0 /cluster ⚠️*** | 4.336s (count=30) | 5.4425s (count=30) | 100% |
 | gVisor | Resume-from-suspend | [pending (upstream-blocked)](WORK_IN_PROGRESS.md#upstream-blocked) [#873](https://github.com/kubernetes-sigs/agent-sandbox/issues/873)→[#1150 in review](https://github.com/kubernetes-sigs/agent-sandbox/pull/1150) | [pending (upstream-blocked)](WORK_IN_PROGRESS.md#upstream-blocked) [#873](https://github.com/kubernetes-sigs/agent-sandbox/issues/873)→[#1150 in review](https://github.com/kubernetes-sigs/agent-sandbox/pull/1150) | [pending (upstream-blocked)](WORK_IN_PROGRESS.md#upstream-blocked) [#873](https://github.com/kubernetes-sigs/agent-sandbox/issues/873)→[#1150 in review](https://github.com/kubernetes-sigs/agent-sandbox/pull/1150) | [pending (upstream-blocked)](WORK_IN_PROGRESS.md#upstream-blocked) [#873](https://github.com/kubernetes-sigs/agent-sandbox/issues/873)→[#1150 in review](https://github.com/kubernetes-sigs/agent-sandbox/pull/1150) | [pending (upstream-blocked)](WORK_IN_PROGRESS.md#upstream-blocked) [#873](https://github.com/kubernetes-sigs/agent-sandbox/issues/873)→[#1150 in review](https://github.com/kubernetes-sigs/agent-sandbox/pull/1150) |
 | Kata + microVM | Warm-pool hit (Base image) | 18.624 /node · ≥0.133 /cluster ⚠️*** | 18.624 /node · ≥0.133 /cluster ⚠️*** | 0.733s (count=30) | 0.9628s (count=30) | 100% |
 | Kata + microVM | Unique-image cold (RL reality) | unk.*** | 0 /node · 0 /cluster | 2.8537s (count=30) | 3.1263s (count=30) | 100% |
@@ -91,21 +91,19 @@ A cell tagged `***` prints the best figure we measured, not an honest-empty `pen
 
 _Kata + microVM rows are measured in a separate run on the kata node pool: cluster_substrate=gke-kata · node_count=2 · generated-at=2026-07-05T15:32:54Z._
 
-_build: cluster_substrate=gke-sandbox · run_id=932288d042c04569a25f1ddde885e4fd · node_count=1_
-_generated-at: 2026-07-20T20:56:20Z_
+_build: cluster_substrate=gke-sandbox · run_id=860f2e0f1b084156b826deed69205e2a · node_count=1_
+_generated-at: 2026-07-20T23:54:44Z_
 
-_**North Star** — warm-pool-hit TTFE p95 < 1s (the spec doc bar): gVisor 3.8161s (count=30) ❌ not met (2.8161s above the bar); Kata + microVM 0.9628s (count=30) ✅ met (0.0372s headroom). An honest ❌ prints the measured gap to the bar (tagged `within sampling noise` when the miss sits inside the sample spread — it stays a ❌, the tag never flips a miss to a pass); `pending` = unmeasured (never a guess); † marks a p95 over fewer than N=30 samples._
+_**North Star** — warm-pool-hit TTFE p95 < 1s (the spec doc bar): gVisor 4.0589s (count=30) ❌ not met (3.0589s above the bar); Kata + microVM 0.9628s (count=30) ✅ met (0.0372s headroom). An honest ❌ prints the measured gap to the bar (tagged `within sampling noise` when the miss sits inside the sample spread — it stays a ❌, the tag never flips a miss to a pass); `pending` = unmeasured (never a guess); † marks a p95 over fewer than N=30 samples._
 
-_**Stretch bar** — warm-pool-hit TTFE p95 < 0.5s (an aspiration above the North Star, not the North Star itself; the step-up curve grades sustained creation-rate against it — see [DETAILS.md](DETAILS.md)): gVisor 3.8161s (count=30) ❌ not met (3.3161s above the bar); Kata + microVM 0.9628s (count=30) ❌ not met (0.4628s above the bar)._
-
-> ⚠️ **Machine-class change:** this run measured on `n2-standard-16`; the previously published run was on `e2-standard-16`. Read any delta against the prior run as machine-class-confounded, not a substrate signal, until corroborated on a matched rig.
+_**Stretch bar** — warm-pool-hit TTFE p95 < 0.5s (an aspiration above the North Star, not the North Star itself; the step-up curve grades sustained creation-rate against it — see [DETAILS.md](DETAILS.md)): gVisor 4.0589s (count=30) ❌ not met (3.5589s above the bar); Kata + microVM 0.9628s (count=30) ❌ not met (0.4628s above the bar)._
 
 ## What this means for you
 
 The tables above are the raw measurements. If you build *on* sandboxes but do not run the cluster yourself, here is what they mean in practice:
 
 - **Keep a warm pool sized to demand and a new sandbox is ready quickly** — a claim against a ready pool skips the fresh-node startup path. The exact wait to budget is in the operating envelope below once that measurement lands.
-- **A warm-pool hit is about 3.4× faster than starting cold (gVisor).** If start-up latency matters to you, the warm pool is the single biggest lever — size it for your steady demand and most claims never pay the cold path. (This ratio is the dedicated warm-vs-cold leg — a separate point-in-time measurement from the Core Metrics matrix rows above, so do not reproduce it by dividing the matrix cells.)
+- **A warm-pool hit is about 3.8× faster than starting cold (gVisor).** If start-up latency matters to you, the warm pool is the single biggest lever — size it for your steady demand and most claims never pay the cold path. (This ratio is the dedicated warm-vs-cold leg — a separate point-in-time measurement from the Core Metrics matrix rows above, so do not reproduce it by dividing the matrix cells.)
 - **Big simultaneous bursts still work — 300 sandboxes asked for at once settled in ~6.9s.** But that is the pool-overflow regime: the wait climbs toward the cold-start number as claims outrun ready slots, so plan the pool around your steady rate, not your worst spike.
 - **Rule of thumb for pool size:** start near your typical concurrent demand (≈0.75× of it) and tune from there. This is a planning heuristic, not one of the measured numbers above.
 - **Both runtimes are measured — choose by isolation need.** In the measurements above, warm-pool latency is comparable between them; gVisor delivers the higher per-node throughput, while Kata + microVM puts each sandbox in its own VM for hardware-grade isolation. If unsure, start with gVisor and move only the workloads that need a VM boundary to Kata.
