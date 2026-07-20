@@ -54,7 +54,7 @@ cells were never coupled to the managed-NP mechanism.
 So arming the probe answered an EMPIRICAL question, not a known-outcome flip: whether
 the cluster's CNI (Calico / GKE Dataplane V2) actually enforces the already-admitted,
 already-correctly-bound standard-np policy on the wire. The first armed fire
-(sandbox-scenarios-cluster, 2026-07-18) read a clean two-sided confirmation for both
+(the persistent internal cluster, 2026-07-18) read a clean two-sided confirmation for both
 cells -> ``PASS (enforced)`` at ``badge_construction=standard-np`` (see the
 ``dataplane_probe_enabled()`` docstring below). The never-raises -> inconclusive ->
 control-plane safety net means a mis-tuned probe degrades safely rather than
@@ -87,7 +87,7 @@ def dataplane_probe_enabled() -> bool:
     BENCH_NETPOL_DATAPLANE_PROBE=1 (cloudbuild-refresh-gke-sandbox.yaml, measure
     step), so the two isolation cells publish "enforced" BY CONSTRUCTION when the
     in-Pod probe confirms the CNI blocks the traffic on the wire. Empirically
-    verified ENFORCED on sandbox-scenarios-cluster 2026-07-18 (both cells PASS
+    verified ENFORCED on the persistent internal cluster 2026-07-18 (both cells PASS
     enforced/standard-np). The cells build their OWN standard NetworkPolicy, never
     the gke-sandbox managed-NP, so charter-#5 (#139) managed-NP disclosure never
     bound this arm. The per-invocation default stays OFF because kind/CI-unit runs

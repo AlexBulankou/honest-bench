@@ -1,5 +1,5 @@
 # Refresh the gke-sandbox (gVisor) honest-benchmark headline — MANUAL Cloud Build
-# trigger (a#4014 GHA->CB migration; replaces .github/workflows/refresh-gke-sandbox.yml).
+# trigger (GHA->CB migration; replaces .github/workflows/refresh-gke-sandbox.yml).
 #
 # Fleet rule: NO GitHub Actions — Cloud Build ONLY. "Spend-arm" is now the
 # trigger's invocation policy: this config binds to a MANUAL trigger (no
@@ -9,7 +9,7 @@
 #     --substitutions=_POOL_REPLICAS=10,_MACHINE_TYPE=n2-standard-16,_REGION=us-central1
 #
 # DEBUG ITERATION (hb#311): a `measure`-stage bug found via this trigger costs
-# a full ~25min create+teardown fire per layer peeled (a#4183's 4-bug chain
+# a full ~25min create+teardown fire per layer peeled (a prior 4-bug chain
 # was 4 such fires — "fire-as-linter"). Set _KEEP_CLUSTER_ON_FAILURE=1 to skip
 # the teardown trap on a FAILED measure step, leaving the cluster live for
 # fast (~seconds-scale) iteration against it:
@@ -52,8 +52,8 @@
 
 substitutions:
   _POOL_REPLICAS: "10"       # burst size K (warm slots == claims fired)
-  # Pinned to n2-standard-16 (a#4183 PR#313 review, a4z1) — the SAME class as the
-  # persistent sandbox-scenarios-cluster (re-pooled to n2-standard-16 2026-06-30, a#4021)
+  # Pinned to n2-standard-16 (PR#313 review) — the SAME class as the
+  # persistent internal gVisor benchmark cluster (re-pooled to n2-standard-16 2026-06-30)
   # and the 07-04 warm-vs-cold baseline this refresh replaces. Regime continuity, past
   # and future: a burstable e2 class makes the North Star's <1s verdict hinge on host
   # noise rather than the substrate, and would permanently split the page's history
@@ -74,8 +74,8 @@ steps:
     entrypoint: bash
     env:
       - "BENCH_CLUSTER_SUBSTRATE=gke-sandbox"
-      # Stamp the rig (a#4183 PR#313 review, a4s1): this ephemeral CI cluster's machine
-      # shape differs from the persistent sandbox-scenarios-cluster's (n2-standard-16) —
+      # Stamp the rig (PR#313 review): this ephemeral CI cluster's machine
+      # shape differs from the persistent internal cluster's (n2-standard-16) —
       # BENCH_MACHINE_TYPE lands it in provenance so the page is self-describing on a
       # machine-class change, not just a substrate label. Reads the same substitution the
       # cluster/node-pool create calls above use, so it can never drift from the actual rig.
@@ -101,7 +101,7 @@ steps:
       # enforcement probe so the two isolation cells (cross_tenant_network_isolation,
       # default_deny_egress) publish "enforced" BY CONSTRUCTION when the CNI actually
       # blocks the traffic — not a bare control-plane admission badge. Empirically
-      # verified ENFORCED on sandbox-scenarios-cluster 2026-07-18 (both cells PASS
+      # verified ENFORCED on the persistent internal cluster 2026-07-18 (both cells PASS
       # enforced/standard-np). Fail-safe: an inconclusive probe degrades to the
       # control-plane PASS, so a probe-infra hiccup can never red the refresh. The
       # cells build their OWN standard NetworkPolicy (bench-owned labels), never the
@@ -119,7 +119,7 @@ steps:
         # substitution — so every local bash variable below is dereferenced
         # with a doubled leading dollar sign (CB-escaped, becomes a single
         # dollar sign at runtime), never a single one. Confirmed live
-        # 2026-07-20 (a#4183 first fire): an unescaped cluster-name reference
+        # 2026-07-20 (first fire): an unescaped cluster-name reference
         # failed submission with "not a valid built-in substitution" before a
         # single dollar of cluster spend.
         REGION="${_REGION}"
@@ -160,7 +160,7 @@ steps:
         # resource, so the trigger kept failing "unrecognized arguments" even
         # after that merge. Fix: create the cluster with a plain default pool,
         # then add a dedicated gVisor-sandboxed node pool (mirrors the
-        # sandbox-scenarios-cluster terraform: gVisor is per-nodepool, not
+        # the persistent internal cluster's terraform: gVisor is per-nodepool, not
         # per-cluster). Harness pods request runtimeClassName=gvisor and land
         # on the sandboxed pool via its auto-applied taint/toleration.
         echo "==> creating ephemeral cluster $$CLUSTER in $$REGION"

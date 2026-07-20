@@ -321,7 +321,7 @@ def _read_prior_scenarios(out_path: pathlib.Path) -> list:
 
 
 def _read_prior_provenance_machine_type(out_path: pathlib.Path) -> str | None:
-    """Read the existing results file's provenance.machine_type (a#4183 PR#313 review).
+    """Read the existing results file's provenance.machine_type (PR#313 review).
 
     Best-effort, mirroring _read_prior_scenarios: a missing/malformed file or an absent/
     non-string machine_type means there is nothing to compare against, so return None
@@ -702,7 +702,7 @@ def _env_flag(name: str) -> bool:
 # scale_slope.run_sweep() provisions K*slots warm pools across multiple node-counts
 # and fires that many claims — it is a heavy MUTATING live producer, NOT part of the
 # default single-node auto-refresh (on one node only K=1 is achievable, so the
-# classifier returns {} by construction). It is armed ONLY in a4s1's coordinated,
+# classifier returns {} by construction). It is armed ONLY in a coordinated,
 # collision-acked multi-node sweep. Dual-gated below: BENCH_SCALE_SLOPE=1 AND the
 # sandbox product — any other product returns None (fail-closed), since the Scale
 # Proof table is a sandbox-page artifact and the substrate suite has no scale_proof
@@ -1222,16 +1222,16 @@ def build_provenance(
             "BENCH_NATIVE_DIGEST_COLD_MODE", "cold-provision"
         ),
     }
-    # Node machine shape (a#4183 PR#313 review, a4s1): stamps the rig every run so a
+    # Node machine shape (PR#313 review): stamps the rig every run so a
     # machine-class change between a comparison's baseline and its refresh is self-describing
     # on the page (the reproducible-numbers contract needs the machine class, not just the
     # substrate label — two runs can share cluster_substrate=gke-sandbox on different machine
-    # shapes, e.g. the ephemeral hb-refresh CI cluster vs the persistent sandbox-scenarios
+    # shapes, e.g. the ephemeral hb-refresh CI cluster vs a persistent internal
     # cluster). Absent env -> key omitted (unknown rig is never guessed).
     machine_type = os.environ.get("BENCH_MACHINE_TYPE", "").strip()
     if machine_type:
         prov["machine_type"] = machine_type
-        # Machine-class-change caveat (a#4183 PR#313 review, a4s1): carry the PREVIOUS
+        # Machine-class-change caveat (PR#313 review): carry the PREVIOUS
         # published run's machine_type forward as its own field (rather than diffing here)
         # so the renderer can data-key an honest "this delta may be machine-class, not
         # substrate" caveat off two closed-schema-validated values — same posture as the

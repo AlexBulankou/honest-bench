@@ -252,8 +252,8 @@ def render_product(results):
         "suite_git_sha",
         "run_id",
         "node_count",
-        # a#4183 PR#313 review (a4s1): stamp the node machine shape so a machine-class
-        # change (e.g. an ephemeral CI cluster vs the persistent sandbox-scenarios-cluster)
+        # PR#313 review: stamp the node machine shape so a machine-class
+        # change (e.g. an ephemeral CI cluster vs the persistent internal cluster)
         # is visible on the page, not silently folded into the same cluster_substrate label.
         "machine_type",
     ]

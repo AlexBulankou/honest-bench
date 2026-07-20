@@ -206,13 +206,13 @@ PROVENANCE_FIELDS = (
     "regime",
     "warm_scaling_term",
     "runtime",
-    # Node machine shape (a#4183 PR#313 review, a4s1): a run-level field so a machine-class
+    # Node machine shape (PR#313 review): a run-level field so a machine-class
     # change (e.g. the ephemeral hb-refresh CI cluster's e2-standard-16 vs the persistent
-    # sandbox-scenarios-cluster's n2-standard-16) is stamped on every run, not just node_count.
+    # internal cluster's n2-standard-16) is stamped on every run, not just node_count.
     # Generic string handling below applies (like controller_image/suite_git_sha); the tight
     # GCP-shape regex lives on the render side (render/schema.py's _MACHINE_TYPE).
     "machine_type",
-    # Prior-run machine shape (a#4183 PR#313 review, a4s1), stamped only when it differs
+    # Prior-run machine shape (PR#313 review), stamped only when it differs
     # from `machine_type` (see build_provenance) — lets the renderer emit a data-keyed
     # "this delta may be machine-class, not substrate" caveat instead of a reader silently
     # mis-reading a rig change as a regression. Same generic string handling as
