@@ -84,6 +84,15 @@ echo "==> [3/3] gke-sandbox refresh (MANUAL only — no branch/PR/schedule; spen
 # context; the build STEPS still come from inline-config, so this is not a
 # trusted-ref divergence. Confirmed live 2026-07-20: omitting it fails
 # with "Missing required argument [REVISION]: --branch or --tag is required".
+# NOTE: 'gcloud builds triggers update manual ... --inline-config=...' (the
+# naive re-bake command) is BROKEN for this trigger — it PATCHes a
+# {"build": {...}}-only body that the API rejects with a content-free 400
+# INVALID_ARGUMENT no matter the --updateMask (confirmed live 2026-07-20:
+# reproduced with --source-to-build-branch in place of the create-only
+# --branch, and with a hand-minimized updateMask; both still 400).
+# scripts/rebake-manual-trigger.sh is the confirmed-working full-resource-PATCH
+# replacement — use it for every future re-bake of this trigger, not the line
+# gcloud itself suggests.
 gcloud builds triggers create manual --name=hb-refresh-gke-sandbox \
   --inline-config=cloudbuild-refresh-gke-sandbox.yaml \
   --repo="https://github.com/${OWNER}/${REPO}" \
@@ -91,7 +100,7 @@ gcloud builds triggers create manual --name=hb-refresh-gke-sandbox \
   --branch=main \
   --service-account="$REFRESH_SA" \
   --project="$PROJECT" \
-  || echo "   (already exists — re-run with: gcloud builds triggers update manual hb-refresh-gke-sandbox --inline-config=cloudbuild-refresh-gke-sandbox.yaml --branch=main ...)"
+  || echo "   (already exists — re-run with: PROJECT=$PROJECT bash scripts/rebake-manual-trigger.sh hb-refresh-gke-sandbox cloudbuild-refresh-gke-sandbox.yaml)"
 
 cat <<EOF
 
