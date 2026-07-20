@@ -356,6 +356,67 @@ def test_build_provenance_machine_type_round_trips_through_emitter():
             _os.environ["BENCH_MACHINE_TYPE"] = saved
 
 
+def test_build_provenance_node_image_and_runsc_version():
+    # hb#317 (mirrors machine_type's hb#313/a#4183 pattern): BENCH_NODE_IMAGE /
+    # BENCH_RUNSC_VERSION stamp node_image/runsc_version — sandbox-family only
+    # (same `if runtime:` gate as sandbox_cpu_request_m), absent env -> omitted.
+    saved_img = _os.environ.pop("BENCH_NODE_IMAGE", None)
+    saved_runsc = _os.environ.pop("BENCH_RUNSC_VERSION", None)
+    try:
+        no_env = run.build_provenance("kind", "sandbox")
+        _check("node_image" not in no_env, "no BENCH_NODE_IMAGE -> node_image omitted")
+        _check("runsc_version" not in no_env,
+               "no BENCH_RUNSC_VERSION -> runsc_version omitted")
+
+        _os.environ["BENCH_NODE_IMAGE"] = "v1.31.1-gke.1846000"
+        _os.environ["BENCH_RUNSC_VERSION"] = "release-20260715.0"
+        prov = run.build_provenance("gke-sandbox", "sandbox")
+        _check(prov.get("node_image") == "v1.31.1-gke.1846000",
+               "node_image stamped from env")
+        _check(prov.get("runsc_version") == "release-20260715.0",
+               "runsc_version stamped from env")
+
+        # substrate (non-sandbox-family product) carries no matrix runtime, so
+        # neither field is stamped even with the env vars present.
+        substrate_prov = run.build_provenance("kind", "substrate")
+        _check("node_image" not in substrate_prov,
+               "non-sandbox-family product omits node_image")
+        _check("runsc_version" not in substrate_prov,
+               "non-sandbox-family product omits runsc_version")
+    finally:
+        _os.environ.pop("BENCH_NODE_IMAGE", None)
+        _os.environ.pop("BENCH_RUNSC_VERSION", None)
+        if saved_img is not None:
+            _os.environ["BENCH_NODE_IMAGE"] = saved_img
+        if saved_runsc is not None:
+            _os.environ["BENCH_RUNSC_VERSION"] = saved_runsc
+
+
+def test_build_provenance_node_image_and_runsc_version_round_trip_through_emitter():
+    # Both fields must survive _coerce_provenance (generic non-empty-string branch
+    # in PROVENANCE_FIELDS), so they reach latest.json for a future regression
+    # investigation to read back historically (no caveat-rendering needed, hb#317
+    # non-goal).
+    saved_img = _os.environ.pop("BENCH_NODE_IMAGE", None)
+    saved_runsc = _os.environ.pop("BENCH_RUNSC_VERSION", None)
+    try:
+        _os.environ["BENCH_NODE_IMAGE"] = "v1.31.1-gke.1846000"
+        _os.environ["BENCH_RUNSC_VERSION"] = "release-20260715.0"
+        prov = run.build_provenance("gke-sandbox", "sandbox")
+        r = rs.build_results([], prov, _GEN_AT, product="sandbox")
+        _check(r["provenance"]["node_image"] == "v1.31.1-gke.1846000",
+               "node_image survives the emitter coercion")
+        _check(r["provenance"]["runsc_version"] == "release-20260715.0",
+               "runsc_version survives the emitter coercion")
+    finally:
+        _os.environ.pop("BENCH_NODE_IMAGE", None)
+        _os.environ.pop("BENCH_RUNSC_VERSION", None)
+        if saved_img is not None:
+            _os.environ["BENCH_NODE_IMAGE"] = saved_img
+        if saved_runsc is not None:
+            _os.environ["BENCH_RUNSC_VERSION"] = saved_runsc
+
+
 def _all_tests():
     return [v for k, v in sorted(globals().items())
             if k.startswith("test_") and callable(v)]

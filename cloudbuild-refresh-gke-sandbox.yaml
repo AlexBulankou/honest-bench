@@ -185,6 +185,35 @@ steps:
 
         gcloud container clusters get-credentials "$$CLUSTER" --region "$$REGION"
 
+        # Node-image / gVisor runsc version provenance (hb#317, mirrors
+        # machine_type's hb#313/a#4183 pattern). These can only be resolved at
+        # runtime against the live cluster (unlike BENCH_MACHINE_TYPE, which is
+        # a static substitution known at submit time), so they're captured here
+        # as inline `export`s consumed by the harness.run invocation below rather
+        # than as static `env:` list entries.
+        echo "==> capturing node-image / runsc version for provenance"
+        gvisor_node=$(kubectl get nodes -l cloud.google.com/gke-nodepool=hb-gvisor-pool \
+          -o jsonpath='{.items[0].metadata.name}')
+        # Node image: kubeletVersion carries the GKE build suffix (e.g.
+        # v1.31.1-gke.1846000) that maps 1:1 to a node image release — a raw
+        # osImage string (e.g. "Container-Optimized OS from Google") is too
+        # generic to diff across GKE releases, so kubeletVersion is the proxy.
+        export BENCH_NODE_IMAGE=$(kubectl get node "$$gvisor_node" \
+          -o jsonpath='{.status.nodeInfo.kubeletVersion}' 2>/dev/null || echo "")
+        # runsc has no K8s-API-visible version — it's a binary on the node's host
+        # filesystem (GKE ships it at /home/kubernetes/bin/runsc). `kubectl debug
+        # node/...` is the standard no-SSH way to chroot into a node's root fs;
+        # the debug pod it creates is torn down along with the whole ephemeral
+        # cluster by this step's EXIT trap. Best-effort: a failure here must
+        # never fail the measure step over a nice-to-have provenance field
+        # (fail open, not fail closed — this is metadata, not a benchmark
+        # result). NOTE: the exact chroot path may need adjustment on the first
+        # live fire (hb#311's "fire-as-linter" cost applies here too).
+        export BENCH_RUNSC_VERSION=$(kubectl debug "node/$$gvisor_node" \
+          --image=busybox -q -- chroot /host /home/kubernetes/bin/runsc --version \
+          2>/dev/null | head -1 | awk '{print $$NF}' || echo "")
+        echo "==> node_image=$$BENCH_NODE_IMAGE runsc_version=$$BENCH_RUNSC_VERSION"
+
         echo "==> installing OSS controller from upstream main"
         bash recipe/install-controller-from-main.sh
 
