@@ -8,6 +8,19 @@
 #   gcloud builds triggers run hb-refresh-gke-sandbox --project=<PROJECT> \
 #     --substitutions=_POOL_REPLICAS=10,_MACHINE_TYPE=e2-standard-16,_REGION=us-central1
 #
+# DEBUG ITERATION (hb#311): a `measure`-stage bug found via this trigger costs
+# a full ~25min create+teardown fire per layer peeled (a#4183's 4-bug chain
+# was 4 such fires — "fire-as-linter"). Set _KEEP_CLUSTER_ON_FAILURE=1 to skip
+# the teardown trap on a FAILED measure step, leaving the cluster live for
+# fast (~seconds-scale) iteration against it:
+#   gcloud builds triggers run hb-refresh-gke-sandbox --project=<PROJECT> \
+#     --substitutions=_KEEP_CLUSTER_ON_FAILURE=1,...
+# A successful measure still always tears down regardless of this flag — it
+# only defeats the trap on the failure path. Manual reap required afterward
+# (the trap prints the exact `gcloud container clusters delete` command);
+# leaving it set for a normal (non-debugging) refresh risks a leaked billed
+# cluster on any transient failure, so the default is "0" (always teardown).
+#
 # WHAT IT DOES (unchanged from the workflow it replaces): provisions a FRESH,
 # EPHEMERAL GKE node pool with the gVisor runtime (`--sandbox type=gvisor`),
 # installs the SAME upstream controller from main as the kind path, fires the
@@ -41,6 +54,7 @@ substitutions:
   _POOL_REPLICAS: "10"       # burst size K (warm slots == claims fired)
   _MACHINE_TYPE: "e2-standard-16"
   _REGION: "us-central1"
+  _KEEP_CLUSTER_ON_FAILURE: "0"   # "1" = skip teardown trap on a FAILED measure step (hb#311)
 
 steps:
   # Single orchestration step: create -> install -> measure -> render -> public-safety,
@@ -103,8 +117,17 @@ steps:
         CLUSTER="hb-gvisor-ci-$(date +%s)"
 
         # Guaranteed teardown: fires on normal exit, `set -e` abort, or SIGTERM
-        # (build timeout). The CB-native stand-in for `if: always()`.
+        # (build timeout). The CB-native stand-in for `if: always()`. On a
+        # FAILED measure step, _KEEP_CLUSTER_ON_FAILURE=1 (hb#311) skips the
+        # delete so the cluster stays live for fast iteration — a successful
+        # exit always tears down regardless of the flag.
         cleanup() {
+          local exit_code=$$?
+          if [ "$$exit_code" -ne 0 ] && [ "${_KEEP_CLUSTER_ON_FAILURE}" = "1" ]; then
+            echo "==> [trap] measure FAILED (exit $$exit_code) and _KEEP_CLUSTER_ON_FAILURE=1 — leaving cluster $$CLUSTER live for debugging."
+            echo "==> [trap] manual reap when done: gcloud container clusters delete $$CLUSTER --region $$REGION --quiet"
+            return 0
+          fi
           echo "==> [trap] tearing down ephemeral cluster $$CLUSTER"
           gcloud container clusters delete "$$CLUSTER" \
             --region "$$REGION" --quiet || true
