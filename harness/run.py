@@ -320,6 +320,22 @@ def _read_prior_scenarios(out_path: pathlib.Path) -> list:
     return scen if isinstance(scen, list) else []
 
 
+def _read_prior_provenance_machine_type(out_path: pathlib.Path) -> str | None:
+    """Read the existing results file's provenance.machine_type (a#4183 PR#313 review).
+
+    Best-effort, mirroring _read_prior_scenarios: a missing/malformed file or an absent/
+    non-string machine_type means there is nothing to compare against, so return None
+    (build_provenance then omits prior_machine_type and no caveat renders).
+    """
+    try:
+        prior = json.loads(out_path.read_text())
+    except (FileNotFoundError, ValueError):
+        return None
+    prov = prior.get("provenance") if isinstance(prior, dict) else None
+    mt = prov.get("machine_type") if isinstance(prov, dict) else None
+    return mt if isinstance(mt, str) and mt else None
+
+
 def _read_prior_scale_proof(out_path: pathlib.Path):
     """Read the existing results file's top-level scale_proof object (#3952).
 
@@ -1184,7 +1200,11 @@ def _matrix_runtime_for(product: str) -> str:
     }.get(product, "")
 
 
-def build_provenance(substrate: str, product: str = results_schema.DEFAULT_PRODUCT) -> dict:
+def build_provenance(
+    substrate: str,
+    product: str = results_schema.DEFAULT_PRODUCT,
+    prior_machine_type: str | None = None,
+) -> dict:
     prov = {
         "cluster_substrate": substrate,
         "controller_image": os.environ.get("BENCH_CONTROLLER_IMAGE", ""),
@@ -1202,6 +1222,24 @@ def build_provenance(substrate: str, product: str = results_schema.DEFAULT_PRODU
             "BENCH_NATIVE_DIGEST_COLD_MODE", "cold-provision"
         ),
     }
+    # Node machine shape (a#4183 PR#313 review, a4s1): stamps the rig every run so a
+    # machine-class change between a comparison's baseline and its refresh is self-describing
+    # on the page (the reproducible-numbers contract needs the machine class, not just the
+    # substrate label — two runs can share cluster_substrate=gke-sandbox on different machine
+    # shapes, e.g. the ephemeral hb-refresh CI cluster vs the persistent sandbox-scenarios
+    # cluster). Absent env -> key omitted (unknown rig is never guessed).
+    machine_type = os.environ.get("BENCH_MACHINE_TYPE", "").strip()
+    if machine_type:
+        prov["machine_type"] = machine_type
+        # Machine-class-change caveat (a#4183 PR#313 review, a4s1): carry the PREVIOUS
+        # published run's machine_type forward as its own field (rather than diffing here)
+        # so the renderer can data-key an honest "this delta may be machine-class, not
+        # substrate" caveat off two closed-schema-validated values — same posture as the
+        # drained-regime caveat. Stamped only when the rig actually changed: a same-rig
+        # refresh needs no caveat, and this also means a run with no prior machine_type on
+        # record (the very first stamped run) never emits a spurious comparison.
+        if prior_machine_type and prior_machine_type != machine_type:
+            prov["prior_machine_type"] = prior_machine_type
     # Matrix runtime column (#3942/#830): emitted only for sandbox-family products
     # so render flips that runtime's rows to measured and the other to pending.
     runtime = _matrix_runtime_for(product)
@@ -1286,6 +1324,7 @@ def main(argv=None) -> int:
     prior_at_scale_contention = _read_prior_at_scale_contention(out)
     prior_cluster_saturation = _read_prior_cluster_saturation(out)
     prior_provisioning_rate_sweep = _read_prior_provisioning_rate_sweep(out)
+    prior_machine_type = _read_prior_provenance_machine_type(out)
     raw = merge_seed_placeholders(raw, prior_scenarios)
     # Per-mode SLO cluster-rate legs (hb#132/#149): fresh env-armed sweep
     # derivations merge first (fresh wins), then prior committed triples carry
@@ -1402,7 +1441,8 @@ def main(argv=None) -> int:
         None, prior_provisioning_rate_sweep, generated_at=generated_at
     )
     results = results_schema.build_results(
-        raw, build_provenance(substrate, args.product), generated_at=generated_at, product=args.product,
+        raw, build_provenance(substrate, args.product, prior_machine_type=prior_machine_type),
+        generated_at=generated_at, product=args.product,
         scale_proof=scale_proof, stepup=stepup, warm_vs_cold=warm_vs_cold_obj,
         kata_activation=kata_activation, concurrent_burst=concurrent_burst,
         warm_pool_acquisition=warm_pool_acquisition,

@@ -98,6 +98,8 @@ _**North Star** — warm-pool-hit TTFE p95 < 1s (the spec doc bar): gVisor 4.690
 
 _**Stretch bar** — warm-pool-hit TTFE p95 < 0.5s (an aspiration above the North Star, not the North Star itself; the step-up curve grades sustained creation-rate against it — see [DETAILS.md](DETAILS.md)): gVisor 4.6908s (count=30) ❌ not met (4.1908s above the bar); Kata + microVM 0.9628s (count=30) ❌ not met (0.4628s above the bar)._
 
+> ⚠️ **Machine-class change:** this run measured on `e2-standard-16`; the previously published run was on `n2-standard-16`. Read any delta against the prior run as machine-class-confounded, not a substrate signal, until corroborated on a matched rig.
+
 ## What this means for you
 
 The tables above are the raw measurements. If you build *on* sandboxes but do not run the cluster yourself, here is what they mean in practice:

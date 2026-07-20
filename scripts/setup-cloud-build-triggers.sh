@@ -97,7 +97,7 @@ cat <<EOF
 
 Done. Fire the manual gVisor refresh with:
   gcloud builds triggers run hb-refresh-gke-sandbox --project=$PROJECT \\
-    --substitutions=_POOL_REPLICAS=10,_MACHINE_TYPE=e2-standard-16,_REGION=us-central1
+    --substitutions=_POOL_REPLICAS=10,_MACHINE_TYPE=n2-standard-16,_REGION=us-central1
 
 NOTE — the kind (vanilla, no-gVisor) refresh workflow was NOT migrated. It is
 deprecated by its own header (a kind run only DOWNGRADES the live gVisor headline

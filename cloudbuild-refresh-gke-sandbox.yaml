@@ -6,7 +6,7 @@
 # branch/PR/schedule wiring), so a real gVisor GKE cluster is never spun
 # unattended. Fire it by hand:
 #   gcloud builds triggers run hb-refresh-gke-sandbox --project=<PROJECT> \
-#     --substitutions=_POOL_REPLICAS=10,_MACHINE_TYPE=e2-standard-16,_REGION=us-central1
+#     --substitutions=_POOL_REPLICAS=10,_MACHINE_TYPE=n2-standard-16,_REGION=us-central1
 #
 # DEBUG ITERATION (hb#311): a `measure`-stage bug found via this trigger costs
 # a full ~25min create+teardown fire per layer peeled (a#4183's 4-bug chain
@@ -52,7 +52,13 @@
 
 substitutions:
   _POOL_REPLICAS: "10"       # burst size K (warm slots == claims fired)
-  _MACHINE_TYPE: "e2-standard-16"
+  # Pinned to n2-standard-16 (a#4183 PR#313 review, a4z1) — the SAME class as the
+  # persistent sandbox-scenarios-cluster (re-pooled to n2-standard-16 2026-06-30, a#4021)
+  # and the 07-04 warm-vs-cold baseline this refresh replaces. Regime continuity, past
+  # and future: a burstable e2 class makes the North Star's <1s verdict hinge on host
+  # noise rather than the substrate, and would permanently split the page's history
+  # into two incomparable machine regimes. Cost is bounded (manual-fire-only, ~18min).
+  _MACHINE_TYPE: "n2-standard-16"
   _REGION: "us-central1"
   _KEEP_CLUSTER_ON_FAILURE: "0"   # "1" = skip teardown trap on a FAILED measure step (hb#311)
 
@@ -68,6 +74,12 @@ steps:
     entrypoint: bash
     env:
       - "BENCH_CLUSTER_SUBSTRATE=gke-sandbox"
+      # Stamp the rig (a#4183 PR#313 review, a4s1): this ephemeral CI cluster's machine
+      # shape differs from the persistent sandbox-scenarios-cluster's (n2-standard-16) —
+      # BENCH_MACHINE_TYPE lands it in provenance so the page is self-describing on a
+      # machine-class change, not just a substrate label. Reads the same substitution the
+      # cluster/node-pool create calls above use, so it can never drift from the actual rig.
+      - "BENCH_MACHINE_TYPE=${_MACHINE_TYPE}"
       - "BURST_CREATE_RUNTIME_CLASS=gvisor"
       - "BURST_CREATE_POOL_REPLICAS=${_POOL_REPLICAS}"
       # Graduation-shape knobs (#198): the published warm/cold cells are n=30, and

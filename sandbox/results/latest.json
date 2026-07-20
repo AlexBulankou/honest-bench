@@ -111,7 +111,9 @@
     "cold_start_mode": "cold-provision",
     "node_count": 1,
     "run_id": "7cc397ba4b7a486e9cedab1327aee984",
-    "runtime": "gvisor"
+    "runtime": "gvisor",
+    "machine_type": "e2-standard-16",
+    "prior_machine_type": "n2-standard-16"
   },
   "provisioning_rate_sweep": {
     "ceiling_high_per_s": 150.0,
