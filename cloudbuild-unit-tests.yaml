@@ -71,7 +71,12 @@ steps:
       - -c
       - |
         set -uo pipefail
-        names="${DENYLIST:-}"
+        # $$ escapes CB's substitution engine so DENYLIST is read at runtime from
+        # secretEnv, not consumed as a build substitution at submit time (the #1474
+        # foot-gun documented in cloudbuild-refresh-gke-sandbox.yaml). Only the
+        # uppercase secretEnv name needs it; the lowercase shell vars below do not
+        # match CB's substitution-key shape and pass through untouched.
+        names="$${DENYLIST:-}"
         # Accept comma- or newline-delimited denylist; normalize to one per line.
         mapfile -t denylist < <(printf '%s' "$names" | tr ',' '\n' \
           | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -v '^$')
