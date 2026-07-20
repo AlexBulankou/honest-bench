@@ -32,12 +32,42 @@ PATTERNS=(
   '[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}|email address (no emails belong in public results)'
 )
 
+# Patterns that additionally carry a set of file exclusions (documented conventions where
+# the pattern's referent is intentionally rendered, not leaked). pattern|reason|exclude-glob
+# The exclude-glob is a `case` glob matched against the scanned path; empty = no exclusion.
+EXCLUDABLE_PATTERNS=(
+  'a#[0-9]+|internal-repo issue reference (a#NNNN — private AlexBulankou/a tracker)|WORK_IN_PROGRESS.md:UPSTREAM_BLOCKERS.md:UPSTREAM_BLOCKERS_DETAIL.md:render/wip.py'
+  '\ba4[a-z][0-9]\b|fleet agent-id mention (a4<letter><digit>)|WORK_IN_PROGRESS.md:UPSTREAM_BLOCKERS.md:UPSTREAM_BLOCKERS_DETAIL.md:render/wip.py'
+)
+
+_excluded() {
+  local f="$1" globs="$2" g
+  local IFS=':'
+  for g in $globs; do
+    case "$f" in "$g") return 0;; esac
+  done
+  return 1
+}
+
 scan_target() {
   local f="$1" hit=0
   [ -f "$f" ] || return 0
   case "$f" in *check-public-safety.sh) return 0;; esac  # don't scan self (regex substrings)
   for entry in "${PATTERNS[@]}"; do
     local pat="${entry%%|*}" reason="${entry#*|}"
+    if grep -nE "$pat" "$f" >/tmp/_cps_hits 2>/dev/null; then
+      while IFS= read -r line; do
+        echo "FORBIDDEN [$reason]: $f:$line"
+        hit=1
+      done < /tmp/_cps_hits
+    fi
+  done
+  for entry in "${EXCLUDABLE_PATTERNS[@]}"; do
+    local pat="${entry%%|*}"
+    local rest="${entry#*|}"
+    local reason="${rest%%|*}"
+    local globs="${rest#*|}"
+    _excluded "$f" "$globs" && continue
     if grep -nE "$pat" "$f" >/tmp/_cps_hits 2>/dev/null; then
       while IFS= read -r line; do
         echo "FORBIDDEN [$reason]: $f:$line"

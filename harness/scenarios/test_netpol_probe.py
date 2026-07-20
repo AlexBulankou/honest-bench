@@ -6,7 +6,7 @@ decides the data-plane verdict is pure and pinned here — the env gate
 sentinel classifier (`classify_connection`), and the two-half verdict mapping
 (`classify_dataplane`). The three I/O surfaces (`exec_connection`,
 `start_listener`, `stop_listener`) touch a cluster and are exercised live by the
-NetworkPolicy cells on a4s1's first armed fire; here we pin the contract they
+NetworkPolicy cells on the first armed fire; here we pin the contract they
 feed/consume so a flaky exec can never manufacture an `enforced` badge or a false
 FAIL — only a clean two-sided confirmation (-> enforced) or a clean breach
 (-> FAIL) moves the badge.

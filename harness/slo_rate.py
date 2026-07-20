@@ -107,7 +107,7 @@ SLO_BASIS_ACQ_P95_UNCORROBORATED = "acq_fulfilled+acq_p95_uncorroborated"
 # bars, with a trusted-rung corroboration requirement. render marks it with the Fork-4
 # caveat (cold-start floor ~p50 controller-measured; acq clean; upstream #751 -> #761).
 SLO_BASIS_COLD_FLOOR_ZERO = "controller_cold_floor_zero_corroborated"
-# hb#230 (a4s1 Kata-cold ruling, 2026-07-08): the HONEST-UNKNOWN basis — no number,
+# hb#230 (Kata-cold ruling, 2026-07-08): the HONEST-UNKNOWN basis — no number,
 # either direction. The symmetry rule the whole doctrine rests on: a NEGATIVE claim (an
 # honest 0) requires the controller LOWER bound to breach the bar by margin; a POSITIVE
 # claim (a compliant rate) requires the literal exec-probe UPPER bound to clear it. When
@@ -141,7 +141,7 @@ LITERAL_N_EXEC_OK_FLOOR = 20
 
 # hb#174 sign-off amendment 2: the literal cell is trusted only when the two
 # independent rate legs — acquisition fulfilled-claims (measured fulfillment
-# window, a#4279) and controller completion (inter-scrape boundary window) —
+# window) and controller completion (inter-scrape boundary window) —
 # agree per-rung within this RELATIVE tolerance: |acq - ctrl| / max(acq, ctrl)
 # <= TOL. The gate is a SUSTAINABILITY discriminator: acq ~= ctrl means the
 # rung is refill-limited steady state (real throughput); acq >> ctrl means the
@@ -464,7 +464,7 @@ def _cold_p50_ms(pt) -> Optional[float]:
 def _derive_cold_floor_zero(records, node_count) -> dict:
     """hb#230 Fork 4: the COLD-START honest-ZERO predicate — both bars, corroborated.
 
-    The cold-start case (per Fork 4, a4s1-ruled 2026-07-08): the controller cold-start
+    The cold-start case (per Fork 4, ruled 2026-07-08): the controller cold-start
     floor is so far over the bar that NO offered rate could bring a compliant fraction
     under either bar — the compliant rate is an honest 0 at BOTH bars, rate-independent.
     This is the honest-ZERO polarity (a strong NEGATIVE claim), so — like the warm
@@ -475,7 +475,7 @@ def _derive_cold_floor_zero(records, node_count) -> dict:
     slo_sla_metrics_from_stepup consumes. Each rung carries `rate_per_s`,
     `controller_measured` (bool), and `controller_startup_cold_ms.{p50,...}`.
 
-    TWO-SIGNAL predicate — BOTH required (a4s1 ruling, verbatim intent):
+    TWO-SIGNAL predicate — BOTH required (ruling, verbatim intent):
 
       (a) FLOOR RUNG over BOTH margined bars: the rung with the minimum finite
           `rate_per_s` > 0 has a finite `controller_startup_cold_ms.p50` > 0 that

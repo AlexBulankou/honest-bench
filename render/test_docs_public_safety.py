@@ -6,9 +6,13 @@ docs (UPSTREAM_BLOCKERS*.md, WORK_IN_PROGRESS.md, ...) had no equivalent guard,
 and scripts/check-public-safety.sh deliberately holds only GENERIC structural
 patterns (per its header, specific names are the our-side 2b gate's job). That
 gap let an internal dev-cluster name sit in UPSTREAM_BLOCKERS_DETAIL.md prose
-(caught in PR #204 review). This module closes it for the tracked *.md set,
-reusing the same forbidden-token list test_render.py already ships — so it adds
-no new string surface to the public repo.
+(caught in PR #204 review). This module closed it for the tracked *.md set —
+originally via a hardcoded forbidden-name tuple, but holding those literals in
+this PUBLIC repo was itself the leak the guard existed to prevent (same finding
+as test_render.py's public-safety fences, PR #327). This module now delegates
+to check-public-safety.sh (structural patterns only, live today) and holds no
+real-name literal; the specific-name gap it leaves is closed by the forthcoming
+Secret-Manager-backed tree-wide specific-name scan (additive, Cloud Build).
 
 Stdlib-only + self-running via the __main__ guard, matching the repo's test
 convention (the CI unit-tests gate runs each module with `python3 <file>`).
@@ -18,16 +22,6 @@ import os
 import subprocess
 
 _REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
-# Same token set as test_render.py's render-output guards. Bare names only —
-# no descriptions — so this file stays as low-signal as the existing test list.
-FORBIDDEN = (
-    "sandbox-scenarios-cluster",
-    "substrate-demo-cluster",
-    "alexbu-gke-dev-d",
-    "postgres-obs-0",
-    "googleplex",
-)
 
 
 def _tracked_markdown():
@@ -40,16 +34,19 @@ def _tracked_markdown():
     return files
 
 
-def test_tracked_markdown_has_no_internal_resource_names():
-    hits = []
-    for rel in _tracked_markdown():
-        path = os.path.join(_REPO_ROOT, rel)
-        with open(path, encoding="utf-8") as fh:
-            for lineno, line in enumerate(fh, 1):
-                for tok in FORBIDDEN:
-                    if tok in line:
-                        hits.append(f"{rel}:{lineno}: {tok}")
-    assert not hits, "internal resource names in public docs:\n" + "\n".join(hits)
+def test_tracked_markdown_passes_generic_safety_scan():
+    # No real-name literal lives here: this shells out to the existing structural
+    # scanner (internal shortlinks, internal hosts, DSNs, OAuth tokens, private
+    # keys, emails) rather than holding a denylist in this public file. Specific
+    # internal resource names are the forthcoming Cloud Build tree-wide scan's job.
+    files = _tracked_markdown()
+    result = subprocess.run(
+        ["bash", os.path.join(_REPO_ROOT, "scripts", "check-public-safety.sh"), *files],
+        cwd=_REPO_ROOT, capture_output=True, text=True,
+    )
+    assert result.returncode == 0, (
+        "check-public-safety.sh flagged committed markdown:\n" + result.stdout + result.stderr
+    )
 
 
 def test_discovery_covers_the_blockers_docs():

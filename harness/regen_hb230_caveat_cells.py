@@ -25,7 +25,7 @@ Data-only, no fresh run:
 Idempotent: re-running reads the same records and re-applies the same
 drop/add set, so a second run is a no-op on already-converted files.
 
-The five conversions (see hb#230 / a4s1 rulings):
+The five conversions (see hb#230 rulings):
   1. gVisor warm  (warmpool_cold_start, sandbox/)      — per-bar basis split:
      5s stays corroborated-literal (CLEAN), 1s becomes acq-p95-uncorroborated
      (Class A ***); publish 1s per-cluster from the acq derivation.

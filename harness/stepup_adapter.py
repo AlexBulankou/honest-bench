@@ -118,7 +118,7 @@ def stepup_nested_to_flat(rec):
 def enrich_pareto_cost(flat, *, usd_per_node_hour=None):
     """Populate `cost_usd_per_1k_ready` on each Pareto point of a flat record.
 
-    The a#3960 item-4 cost axis: the schema reserved `cost_usd_per_1k_ready` as an
+    The step-up item-4 cost axis: the schema reserved `cost_usd_per_1k_ready` as an
     optional Pareto-point field and `cost.cost_usd_per_1k_ready` computes it, but until
     something joins the two the field rendered permanently ``pending``. This is that
     join in the adapter path — it walks the flattened `pareto_points` and stamps each

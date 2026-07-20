@@ -457,7 +457,7 @@ def run_sweep(scenario_name: str = "scale_slope") -> dict:
     client dependency.
 
     NOTE: this is the heavy, mutating live producer. It is invoked by the
-    coordinated multi-node sweep fire (a4s1's lane), NOT by the default single-node
+    coordinated multi-node sweep fire (a separate lane), NOT by the default single-node
     auto-refresh run — on a single-node cluster only the K=1 point is achievable, so
     the classifier returns {} (no slope) by construction.
     """

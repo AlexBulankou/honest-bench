@@ -326,7 +326,7 @@ def test_count_capable_empty_and_none():
 
 
 # ---- density denominator: gVisor-capable subset, not the whole pool [#3949] ----
-# The exact bug a4s1 caught in cluster prep: min() over ALL nodes picks the 2-vCPU
+# The exact bug caught in cluster prep: min() over ALL nodes picks the 2-vCPU
 # untainted system node, so density_per_vcpu = slots/(1.93*K) — ~8x inflated — even
 # though sandboxes only ever land on the 16-vCPU gVisor default-pool node.
 _GVISOR16_SYSTEM2 = [

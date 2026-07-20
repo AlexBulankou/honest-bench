@@ -1,6 +1,6 @@
 """Controller-histogram TTFE derivation -- warm/cold p50/95/99 straight from Prometheus.
 
-This is the a#3960 item-2 path: take Time-To-First-Execution from the controller's
+This is the step-up item-2 path: take Time-To-First-Execution from the controller's
 own Prometheus histogram ``agent_sandbox_claim_startup_latency_ms`` (claim-create ->
 ready, labeled by ``launch_type`` warm/cold) instead of the exec-channel round-trip
 probe in ``ttfe_probe.py``. The exec probe pays ~0.5-0.7s/claim of websocket setup that

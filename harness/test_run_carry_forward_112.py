@@ -312,7 +312,7 @@ def test_build_provenance_runtime_round_trips_through_emitter():
 
 
 def test_build_provenance_machine_type_and_prior_stamp():
-    # a#4183 PR#313 review (a4s1): BENCH_MACHINE_TYPE stamps machine_type; prior_machine_type
+    # PR#313 review: BENCH_MACHINE_TYPE stamps machine_type; prior_machine_type
     # is stamped ONLY when the caller-supplied prior differs from the current run's value
     # (absent env -> no machine_type at all -> never a spurious prior comparison either).
     saved = _os.environ.pop("BENCH_MACHINE_TYPE", None)

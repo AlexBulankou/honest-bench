@@ -17,7 +17,7 @@ explicit AND honest-by-construction.
              you. The speedup ratio is the portable headline: a stranger reruns both
              legs on their own cluster and gets the same shape.
 
-## Framing A -- warm vs TRUE-cold (locked, a4s1 fold-ack)
+## Framing A -- warm vs TRUE-cold (locked)
 
 There are three latency tiers in play, not two: warm (a ready warm-pool slot),
 overflow (a claim that arrived after the warm slots were consumed -- still a warm
@@ -56,7 +56,7 @@ number) on ANY of:
   - the shared runtime_class is falsy (unknown class -> the comparison's basis is undefined),
   - warm_p50 <= 0 after rounding (degenerate; would make the ratio undefined).
 
-The fire path (a4s1's lane) sets BENCH_TTFE_EXEC consistently across BOTH the warm
+The fire path sets BENCH_TTFE_EXEC consistently across BOTH the warm
 leg (burst_create) and the cold leg (native_digest_cold) for the same fire; this
 classifier is the BACKSTOP that refuses to publish if the two legs ever diverge.
 

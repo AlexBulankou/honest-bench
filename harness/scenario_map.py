@@ -113,7 +113,7 @@ SUBSTRATE_CELLS = (
 # (requires-kata-runtime) on kind/gke/gke-sandbox — the symmetric mirror of the
 # gVisor canary's requires-gvisor-runtime, and the genuine emit path for that token.
 # NO isolation badges: kata-clh is a microVM runtime, not gVisor, so the gVisor/NetworkPolicy
-# badges do not apply. The render-side matrix join (gVisor + Kata columns) is a4s1's
+# badges do not apply. The render-side matrix join (gVisor + Kata columns) is a
 # PHASE 3 lane. DEFAULT_PRODUCT stays "sandbox" — the auto-refresh kind runner never
 # fires --product sandbox-kata; it only runs at PHASE 2 on the live gke-kata pool.
 # Two of the four SANDBOX_CELLS perf cells are deliberately EXCLUDED (see the NOTEs
@@ -141,7 +141,7 @@ SANDBOX_KATA_CELLS = (
     # sandbox-kata/results/latest.json; excluding it keeps the raw results honest, the
     # same principle as the suspend_resume exclusion below. Re-including it is not just
     # adding the Cell back — it means wiring the kata resource floor + kata
-    # toleration/nodeSelector AND sizing the pool to the kata node capacity (a4s1's
+    # toleration/nodeSelector AND sizing the pool to the kata node capacity (the
     # burst headline design lane).
     # NOTE: suspend_resume is deliberately NOT a kata cell. Resume-from-suspend ×
     # Kata + microVM is N/A by construction — CRIU checkpoint/restore does not

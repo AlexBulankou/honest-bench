@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Set up the honest-bench Cloud Build triggers (a#4014 GHA->CB migration).
+# Set up the honest-bench Cloud Build triggers (GHA->CB migration).
 #
 # Fleet rule: NO GitHub Actions on any repo — Cloud Build ONLY. This script
 # creates the CB triggers that replace .github/workflows/*.yml (all deleted in the
@@ -82,7 +82,7 @@ echo "==> [3/3] gke-sandbox refresh (MANUAL only — no branch/PR/schedule; spen
 # --branch is REQUIRED by gcloud whenever --repo is set on a manual trigger (API
 # contract, not optional) — it only pins which ref is checked out as build
 # context; the build STEPS still come from inline-config, so this is not a
-# trusted-ref divergence. Confirmed live 2026-07-20 (a#4183): omitting it fails
+# trusted-ref divergence. Confirmed live 2026-07-20: omitting it fails
 # with "Missing required argument [REVISION]: --branch or --tag is required".
 gcloud builds triggers create manual --name=hb-refresh-gke-sandbox \
   --inline-config=cloudbuild-refresh-gke-sandbox.yaml \

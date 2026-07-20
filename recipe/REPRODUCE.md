@@ -238,7 +238,7 @@ pull by the node image cache, e.g. `crictl images` on the node, not by pod statu
 See the caveat comment in `prepull-daemonset.yaml`.)
 
 ```
-# placeholder — measured numbers filled post-fire (a4s1's lane).
+# placeholder — measured numbers filled post-fire.
 # achieved sustained throughput : TODO sb/s            (target: 300 sb/s)
 # warm-pool claim->ready p95    : TODO ms              (target: < 500 ms; doc ideal)
 # TTFE p95 (executed first-instr): TODO s              (target: < 1 s)

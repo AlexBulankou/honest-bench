@@ -551,7 +551,7 @@ def test_scale_proof_extra_keys_dropped():
 
 def test_stepup_passthrough_valid():
     # A well-formed top-level stepup object survives _coerce_stepup and is emitted
-    # at the top level (the Step-Up Pareto table source, a#3960 item 4).
+    # at the top level (the Step-Up Pareto table source, step-up item 4).
     su = {
         "pareto_points": [
             {"offered_rate_per_s": 10, "ttfe_p95_ms": 240.0, "ttfe_p50_ms": 120.0,
@@ -646,7 +646,7 @@ def test_stepup_fractional_rates_normalized():
 
 
 def test_stepup_fractional_derived_rates_normalized():
-    # hb#189 second sweep (a4s2 pre-stage finding): the DERIVED rate fields are values
+    # hb#189 second sweep (pre-stage finding): the DERIVED rate fields are values
     # FROM the swept ladder, so a fractional ladder yields fractional saturation-point
     # legs and characteristic rates. Prior gates silently DROPPED them (saturation leg
     # -> any_rate False -> whole block None; characteristic rate -> key omitted) — a
@@ -858,7 +858,7 @@ def test_stepup_extra_keys_dropped():
     out = rs.build_results([], _prov(), GEN_AT, stepup=su)["stepup"]
     # Full-subset assert (mirrors scale_proof / warm_vs_cold): the emitted top-level key set must be
     # a subset of the _coerce_stepup contract, so ANY future extra/internal key is caught — not just
-    # the two specific leak names below. This is the stronger lock a4s1 flagged on PR #80.
+    # the two specific leak names below. This is the stronger lock flagged on PR #80.
     _check(set(out) <= {"verdict", "pareto_points", "controller_startup", "north_star_breach_rate",
                         "saturation_rate", "max_flat_rate", "sld_s", "wpr", "node_count",
                         "machine_type", "measured_at"},

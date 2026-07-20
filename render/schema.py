@@ -148,7 +148,7 @@ _ISO = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$")
 # image: registry/path:tag — no credentials, no internal AR project paths get through the
 # 2a scanner anyway; here we just bound the shape.
 _IMAGE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]*:[A-Za-z0-9][A-Za-z0-9._-]*$")
-# GCP machine type shape (a#3960 step-up): <family>-<class>[-<size>], e.g. e2-standard-16,
+# GCP machine type shape (step-up): <family>-<class>[-<size>], e.g. e2-standard-16,
 # n2d-standard-8, c3-highmem-4, e2-medium. The family/class names are PUBLIC GCP identifiers
 # (not infra-secret), but we bound the shape tightly so free-text can never ride this field.
 # A value that is not a recognizable GCP machine shape (e.g. a custom type) is dropped.
@@ -186,7 +186,7 @@ PROVENANCE_FIELDS = {
     # build banner's explicit key list does not include it, so the primary banner is
     # unchanged by this addition.
     "machine_type": lambda v: isinstance(v, str) and bool(_MACHINE_TYPE.match(v)),
-    # Prior-run machine shape (a#4183 PR#313 review, a4s1): stamped by build_provenance only
+    # Prior-run machine shape (PR#313 review): stamped by build_provenance only
     # when it differs from `machine_type` — drives the machine-class-change caveat (data-keyed,
     # same posture as the drained-regime caveat) so a rig change reads as machine-class, not a
     # substrate regression. Same tight GCP-shape regex as machine_type.
@@ -328,7 +328,7 @@ TTFE_COMPARABILITY_MIN_N = 30
 # Density is a per-RUNTIME property (holds across activation modes), not per-mode. The
 # renderer sources it from whichever of these scenarios carries density_per_vcpu, applies it
 # to the warm-pool + cold rows, and renders N/A on the resume row (matching the doc).
-# Single canonical source = warmpool_cold_start (a4s2 emit lock, PR #28): Layer-2 emits
+# Single canonical source = warmpool_cold_start (emit lock, PR #28): Layer-2 emits
 # density ONLY on warm-pool with the per-node-allocatable denominator (the 1.88 basis), so
 # the 1.88 is sourced unambiguously. burst_create is intentionally NOT here — its old
 # cluster-wide-capacity 0.45 must never shadow the corrected per-node number.
@@ -376,7 +376,7 @@ _nonneg = lambda v: isinstance(v, (int, float)) and not isinstance(v, bool) and 
 MATRIX_METRIC_FIELDS = {
     "ttfe_p50_ms": _nonneg,
     "ttfe_p95_ms": _nonneg,
-    # p99 completes the percentile spine (a#3960 item 4). INERT in the fixed 9-column matrix
+    # p99 completes the percentile spine (step-up item 4). INERT in the fixed 9-column matrix
     # render today (no p99 column) — carried so a per-step Pareto row can show the tail a
     # reader can reproduce and beat. The producer emits only p50/p95 on matrix cells, so
     # allow-listing p99 here does not change matrix output.
@@ -599,7 +599,7 @@ def storage_payload_bytes_ok(v):
     honesty gates are the per-class fields above."""
     return isinstance(v, int) and not isinstance(v, bool) and v > 0
 
-# --- a#3960: Step-up backfill saturation Pareto ------------------------------------------
+# --- Step-up backfill saturation Pareto ---------------------------------------------------
 # The proven "300 sandboxes in <1s" story is a THROUGHPUT-SATURATION study, not single-
 # sandbox latency: a SandboxWarmPool sustaining a creation RATE, swept step-by-step
 # (10 -> 30 -> 100 -> ... sb/sec), each step held against a warm pool pre-sized by Little's
@@ -706,7 +706,7 @@ def _stepup_controller_ok(v):
 _pos_int = lambda v: isinstance(v, int) and not isinstance(v, bool) and 0 < v < 100000
 
 
-# The operator-facing SATURATION POINT block (a#3960 #4030). alex's headline ask: the max
+# The operator-facing SATURATION POINT block (#4030). alex's headline ask: the max
 # sustained creation rate (offered sb/sec) holding TTFE p95 under the human "under 1s" (tight)
 # and "under 5s" (loose) bars, split by leg — warm-pool hit vs cold-provision (node overflow).
 # Distinct from the 500ms/2000ms methodology bands above (which stay on the characteristic-rate
@@ -744,7 +744,7 @@ def _stepup_saturation_point_ok(v):
     return any_rate
 
 
-# The literal-TTFE UPPER-BOUND block (a#4560). The symmetric partner of controller_startup:
+# The literal-TTFE UPPER-BOUND block. The symmetric partner of controller_startup:
 # literal-TTFE samples are exec-probe round-trips (claim → Ready → first exec instruction), so
 # each carries exec websocket-setup overhead ON TOP of true TTFE — the percentiles are an UPPER
 # BOUND on true TTFE. `upper_bound: true` is REQUIRED and load-bearing — render keys the fixed
@@ -778,7 +778,7 @@ def _stepup_literal_ok(v):
     return True
 
 
-# The claim-ACQUISITION-latency block (a#4560). The DISTINCT third axis: how long claim
+# The claim-ACQUISITION-latency block. The DISTINCT third axis: how long claim
 # acquisition (submit → claim bound) takes, measured directly (not a TTFE proxy). Its compliance
 # semantics are SEPARATE from TTFE by construction — a sweep can be acquisition-compliant (acq p95
 # under the north-star bar, no knee) AND TTFE-non-compliant (end-to-end readiness collapsed)
@@ -829,9 +829,9 @@ STEPUP_PARETO_FIELDS = {
     "saturation_point": _stepup_saturation_point_ok,
     # The controller-startup LOWER-BOUND proxy block (#3975) — see _stepup_controller_ok.
     "controller_startup": _stepup_controller_ok,
-    # The literal-TTFE UPPER-BOUND block (a#4560) — symmetric partner of controller_startup.
+    # The literal-TTFE UPPER-BOUND block — symmetric partner of controller_startup.
     "literal_ttfe": _stepup_literal_ok,
-    # The claim-ACQUISITION axis (a#4560) — the DISTINCT compliant axis, verdict kept off TTFE.
+    # The claim-ACQUISITION axis — the DISTINCT compliant axis, verdict kept off TTFE.
     "acquisition": _stepup_acquisition_ok,
     # The three characteristic rates (all optional — absent when the curve never crossed that
     # band). north_star_breach_rate (key name locked for schema-contract stability) = first
