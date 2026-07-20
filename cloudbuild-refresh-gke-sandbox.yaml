@@ -118,7 +118,17 @@ steps:
         # so --break-system-packages is required (container is ephemeral — safe).
         pip install --quiet --no-cache-dir --break-system-packages -r harness/requirements.txt
 
-        echo "==> creating ephemeral gVisor cluster $$CLUSTER in $$REGION"
+        # `--sandbox` is NOT a `clusters create` flag at all (only `node-pools
+        # create` has it — confirmed via `gcloud container clusters create --help`,
+        # zero gVisor-related flags). #304's fix only corrected the flag's
+        # syntax (space -> =) while the real defect was targeting the wrong
+        # resource, so the trigger kept failing "unrecognized arguments" even
+        # after that merge. Fix: create the cluster with a plain default pool,
+        # then add a dedicated gVisor-sandboxed node pool (mirrors the
+        # sandbox-scenarios-cluster terraform: gVisor is per-nodepool, not
+        # per-cluster). Harness pods request runtimeClassName=gvisor and land
+        # on the sandboxed pool via its auto-applied taint/toleration.
+        echo "==> creating ephemeral cluster $$CLUSTER in $$REGION"
         gcloud container clusters create "$$CLUSTER" \
           --region "$$REGION" \
           --release-channel rapid \
@@ -126,8 +136,17 @@ steps:
           --node-locations "$$REGION-a" \
           --num-nodes 1 \
           --enable-autoscaling --min-nodes 1 --max-nodes 3 \
-          --sandbox=type=gvisor \
           --no-enable-basic-auth --no-issue-client-certificate
+
+        echo "==> adding gVisor-sandboxed node pool to $$CLUSTER"
+        gcloud container node-pools create hb-gvisor-pool \
+          --cluster "$$CLUSTER" \
+          --region "$$REGION" \
+          --machine-type "${_MACHINE_TYPE}" \
+          --node-locations "$$REGION-a" \
+          --num-nodes 1 \
+          --enable-autoscaling --min-nodes 1 --max-nodes 3 \
+          --sandbox=type=gvisor
 
         gcloud container clusters get-credentials "$$CLUSTER" --region "$$REGION"
 
