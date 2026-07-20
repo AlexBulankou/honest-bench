@@ -88,12 +88,14 @@ steps:
         set -euo pipefail
 
         # CB's substitution scanner reads the WHOLE step string (this bash script
-        # included) and rejects any bare $UPPERCASE token it doesn't recognize as a
-        # built-in or a defined ${_substitution} — so every local bash var below is
-        # dereferenced as $$VAR (CB-escaped -> literal $VAR at runtime), never $VAR.
-        # Confirmed live 2026-07-20 (a#4183 first fire): unescaped $CLUSTER failed
-        # submission with "key in the template CLUSTER is not a valid built-in
-        # substitution" before a single dollar of cluster spend.
+        # and its comments included) and rejects any bare dollar-prefixed
+        # all-caps token it doesn't recognize as a built-in or a defined
+        # substitution — so every local bash variable below is dereferenced
+        # with a doubled leading dollar sign (CB-escaped, becomes a single
+        # dollar sign at runtime), never a single one. Confirmed live
+        # 2026-07-20 (a#4183 first fire): an unescaped cluster-name reference
+        # failed submission with "not a valid built-in substitution" before a
+        # single dollar of cluster spend.
         REGION="${_REGION}"
         # Short, valid GKE cluster name (<=40 chars, starts with a letter). BUILD_ID
         # is a 36-char UUID — too long to prefix — so key on a timestamp; a manual
@@ -177,8 +179,8 @@ steps:
         git commit -m "data: auto-refresh benchmark results (substrate=gke-sandbox, gVisor)"
 
         # A fresh CB clone fetches only main, so it has no remote-tracking ref for
-        # origin/$BRANCH — and `--force-with-lease` with no explicit expected value
-        # uses refs/remotes/origin/$BRANCH as its lease baseline. Without it, the 2nd
+        # origin/BRANCH — and `--force-with-lease` with no explicit expected value
+        # uses refs/remotes/origin/BRANCH as its lease baseline. Without it, the 2nd
         # refresh onward is rejected ("stale info") because git has no baseline to
         # compare. Establish the ref first: force-update the remote-tracking ref to the
         # current remote tip so the lease is accurate. Tolerated no-op on the very first
