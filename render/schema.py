@@ -186,6 +186,11 @@ PROVENANCE_FIELDS = {
     # build banner's explicit key list does not include it, so the primary banner is
     # unchanged by this addition.
     "machine_type": lambda v: isinstance(v, str) and bool(_MACHINE_TYPE.match(v)),
+    # Prior-run machine shape (a#4183 PR#313 review, a4s1): stamped by build_provenance only
+    # when it differs from `machine_type` — drives the machine-class-change caveat (data-keyed,
+    # same posture as the drained-regime caveat) so a rig change reads as machine-class, not a
+    # substrate regression. Same tight GCP-shape regex as machine_type.
+    "prior_machine_type": lambda v: isinstance(v, str) and bool(_MACHINE_TYPE.match(v)),
     # vCPU-footprint axis (#3868): the per-sandbox DECLARED cpu/mem request (millicores +
     # MiB, whole non-negative ints) the density figures were measured under — a run-level
     # property of the runtime, not a per-scenario measurement. Rendered only where explicitly

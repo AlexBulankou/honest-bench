@@ -311,6 +311,51 @@ def test_build_provenance_runtime_round_trips_through_emitter():
             _os.environ["BENCH_MATRIX_RUNTIME"] = saved
 
 
+def test_build_provenance_machine_type_and_prior_stamp():
+    # a#4183 PR#313 review (a4s1): BENCH_MACHINE_TYPE stamps machine_type; prior_machine_type
+    # is stamped ONLY when the caller-supplied prior differs from the current run's value
+    # (absent env -> no machine_type at all -> never a spurious prior comparison either).
+    saved = _os.environ.pop("BENCH_MACHINE_TYPE", None)
+    try:
+        _check("machine_type" not in run.build_provenance("kind", "sandbox"),
+               "no BENCH_MACHINE_TYPE -> machine_type omitted")
+        _os.environ["BENCH_MACHINE_TYPE"] = "e2-standard-16"
+        same_rig = run.build_provenance("kind", "sandbox", prior_machine_type="e2-standard-16")
+        _check(same_rig.get("machine_type") == "e2-standard-16",
+               "machine_type stamped from env")
+        _check("prior_machine_type" not in same_rig,
+               "same-rig prior == current -> no prior_machine_type stamped")
+        changed_rig = run.build_provenance("kind", "sandbox", prior_machine_type="n2-standard-16")
+        _check(changed_rig.get("prior_machine_type") == "n2-standard-16",
+               "differing prior stamped as prior_machine_type")
+        no_prior = run.build_provenance("kind", "sandbox")
+        _check("prior_machine_type" not in no_prior,
+               "no prior supplied -> no prior_machine_type stamped")
+    finally:
+        _os.environ.pop("BENCH_MACHINE_TYPE", None)
+        if saved is not None:
+            _os.environ["BENCH_MACHINE_TYPE"] = saved
+
+
+def test_build_provenance_machine_type_round_trips_through_emitter():
+    # Both machine_type and prior_machine_type must survive _coerce_provenance (they are in
+    # PROVENANCE_FIELDS and pass the generic non-empty-string branch), so a machine-class
+    # change reaches the renderer's closed-schema-validated caveat, not just latest.json.
+    saved = _os.environ.pop("BENCH_MACHINE_TYPE", None)
+    try:
+        _os.environ["BENCH_MACHINE_TYPE"] = "e2-standard-16"
+        prov = run.build_provenance("gke-sandbox", "sandbox", prior_machine_type="n2-standard-16")
+        r = rs.build_results([], prov, _GEN_AT, product="sandbox")
+        _check(r["provenance"]["machine_type"] == "e2-standard-16",
+               "machine_type survives the emitter coercion")
+        _check(r["provenance"]["prior_machine_type"] == "n2-standard-16",
+               "prior_machine_type survives the emitter coercion")
+    finally:
+        _os.environ.pop("BENCH_MACHINE_TYPE", None)
+        if saved is not None:
+            _os.environ["BENCH_MACHINE_TYPE"] = saved
+
+
 def _all_tests():
     return [v for k, v in sorted(globals().items())
             if k.startswith("test_") and callable(v)]

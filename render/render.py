@@ -86,6 +86,30 @@ def _clean_provenance(prov):
     return out
 
 
+def _machine_class_caveat(prov):
+    """One-line caveat when this run's machine_type differs from the prior published run's
+    (a#4183 PR#313 review, a4s1), or "" when INERT.
+
+    Both values are closed-schema-validated GCP machine shapes (never free text) cleaned by
+    _clean_provenance before reaching here, so the caveat can safely quote them. Data-keyed
+    off provenance.machine_type / prior_machine_type — same posture as the drained-regime
+    caveat above: build_provenance only stamps prior_machine_type when the rig actually
+    changed, so a same-rig refresh needs no caveat and this stops rendering by construction
+    the moment two consecutive runs share a machine class.
+    """
+    if not isinstance(prov, dict):
+        return ""
+    current = prov.get("machine_type")
+    prior = prov.get("prior_machine_type")
+    if not current or not prior or current == prior:
+        return ""
+    return (
+        f"> ⚠️ **Machine-class change:** this run measured on `{current}`; the previously "
+        f"published run was on `{prior}`. Read any delta against the prior run as "
+        "machine-class-confounded, not a substrate signal, until corroborated on a matched rig."
+    )
+
+
 def _clean_metrics(metrics):
     """Keep only known metric keys with numeric (non-bool) values."""
     if not isinstance(metrics, dict):
@@ -228,6 +252,10 @@ def render_product(results):
         "suite_git_sha",
         "run_id",
         "node_count",
+        # a#4183 PR#313 review (a4s1): stamp the node machine shape so a machine-class
+        # change (e.g. an ephemeral CI cluster vs the persistent sandbox-scenarios-cluster)
+        # is visible on the page, not silently folded into the same cluster_substrate label.
+        "machine_type",
     ]
     banner = [f"{k}={prov[k]}" for k in banner_order if k in prov]
     if banner:
@@ -1495,7 +1523,11 @@ def render_north_star_caption(results, kata_results=None):
         "North Star, not the North Star itself; the step-up curve grades sustained creation-rate "
         f"against it — see [DETAILS.md](DETAILS.md)): {_entries(STRETCH_TTFE_P95_MS)}._"
     )
-    return north_star + "\n\n" + stretch
+    caveat = _machine_class_caveat(_clean_provenance(results.get("provenance")))
+    out = north_star + "\n\n" + stretch
+    if caveat:
+        out += "\n\n" + caveat
+    return out
 
 
 # --- hb#134: operating-envelope headline table -------------------------------------------
@@ -2577,6 +2609,14 @@ def render_warm_vs_cold(results):
         f"_Speedup = cold ÷ warm, computed from the displayed values{n_note}; the warm leg "
         "is the p50 so half of warm claims beat it._")
     lines.append("")
+    # Machine-class-change caveat (a#4183 PR#313 review, a4s1): data-keyed off the SAME
+    # run-level provenance the build banner stamps (see _machine_class_caveat) — renders
+    # only when this run's rig differs from the prior published run's, so a speedup delta
+    # (e.g. 9.98x -> 5.50x) reads as machine-class-confounded rather than a substrate signal.
+    machine_caveat = _machine_class_caveat(_clean_provenance(results.get("provenance")))
+    if machine_caveat:
+        lines.append(machine_caveat)
+        lines.append("")
     # Cross-block coherence caveat (#103 / a4s1): this warm-vs-cold pair is its own
     # point-in-time run at its own operating point — NOT the same measurement as the
     # Core Metrics matrix "Warm-pool hit" row. A reader comparing the two warm p50s
