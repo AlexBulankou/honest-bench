@@ -3732,12 +3732,29 @@ def test_what_this_means_burst_clause_degrades_when_burst_absent():
 
 
 def test_what_this_means_public_safe_no_internal_names():
-    # PII fence: static prose + public runtime labels only — no internal cluster names / project-ids.
+    # PII fence (injection-sentinel form, mirrors test_unknown_provenance_field_dropped):
+    # render_what_this_means renders only from the scenario result cells — it does NOT read
+    # results["provenance"] at all — so no provenance value can reach the public "what this
+    # means" section. Inject synthetic internal-shaped names into provenance and assert the
+    # output drops them: this proves the no-leak by construction AND pins it against a future
+    # change that starts consuming provenance here, while the test itself holds NO real
+    # internal-name literal (such literals in a PUBLIC repo were themselves the leak this guard
+    # removes). Tree-wide reintroduction of any real name anywhere is caught by the Cloud Build
+    # specific-name-scan.
     out = render.render_what_this_means(
-        _matrix_results(_full_gvisor_scenarios(), warm_vs_cold=_wc(), concurrent_burst=_cb()))
-    for forbidden in ("sandbox-scenarios-cluster", "substrate-demo-cluster",
-                      "alexbu-gke-dev-d", "postgres-obs-0"):
-        assert forbidden not in out
+        _matrix_results(
+            _full_gvisor_scenarios(),
+            provenance={
+                "internal_cluster_name": "SYNTHETIC-INTERNAL-CLUSTER-NAME",
+                "project": "SYNTHETIC-GCP-PROJECT-ID",
+            },
+            warm_vs_cold=_wc(),
+            concurrent_burst=_cb(),
+        ))
+    assert "SYNTHETIC-INTERNAL-CLUSTER-NAME" not in out
+    assert "SYNTHETIC-GCP-PROJECT-ID" not in out
+    assert "internal_cluster_name" not in out
+    assert "project" not in out
 
 
 def test_what_this_means_in_full_readme_between_matrix_and_scale():
@@ -3787,13 +3804,16 @@ def test_recipe_no_contested_sub_1s_headline_and_no_stale_literal():
 
 
 def test_recipe_public_safe_generic_tokens_only():
-    # PII fence: only generic/vendor-public tokens; no internal cluster names / project-ids.
+    # PII fence: render_recipe is deterministic, product-agnostic STATIC prose (no results/
+    # provenance arg — see test_recipe_renders_h2_and_is_static), so it has no injection point
+    # and its only internal-name leak vector is a hardcoded source literal. That surface is
+    # guarded tree-wide by the Cloud Build specific-name-scan (real names live only in Secret
+    # Manager, never in this PUBLIC repo) plus the structural check-public-safety.sh scanner
+    # (go/ links, internal host shapes, project-id patterns, ...); this test therefore holds
+    # NO real-name literal and only asserts the generic/vendor-public tokens are PRESENT.
     out = render.render_recipe()
     for tok in ("e2-standard-16", "gvisor", "RuntimeClass", "GKE", "DaemonSet"):
         assert tok in out
-    for forbidden in ("sandbox-scenarios-cluster", "substrate-demo-cluster",
-                      "alexbu-gke-dev-d", "postgres-obs-0", "googleplex"):
-        assert forbidden not in out
 
 
 def test_recipe_in_full_readme_after_data_sections():
