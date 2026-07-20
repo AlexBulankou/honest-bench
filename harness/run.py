@@ -1256,7 +1256,7 @@ def build_provenance(
         prov["sandbox_cpu_request_m"] = metrics.parse_cpu_millicores(requests["cpu"])
         prov["sandbox_mem_request_mib"] = metrics.parse_mem_mib(requests["memory"])
         # Node-image / gVisor runsc version (hb#317, mirrors machine_type's
-        # hb#313/a#4183 pattern): same env-passthrough-or-omit posture — absent
+        # hb#313 pattern): same env-passthrough-or-omit posture — absent
         # env means the key is omitted, never guessed. Sandbox-family only (same
         # gate as `runtime` above), since these fields only matter where a sandbox
         # runtime's node-side build is in play. No caveat-diffing logic here (unlike

@@ -357,7 +357,7 @@ def test_build_provenance_machine_type_round_trips_through_emitter():
 
 
 def test_build_provenance_node_image_and_runsc_version():
-    # hb#317 (mirrors machine_type's hb#313/a#4183 pattern): BENCH_NODE_IMAGE /
+    # hb#317 (mirrors machine_type's hb#313 pattern): BENCH_NODE_IMAGE /
     # BENCH_RUNSC_VERSION stamp node_image/runsc_version — sandbox-family only
     # (same `if runtime:` gate as sandbox_cpu_request_m), absent env -> omitted.
     saved_img = _os.environ.pop("BENCH_NODE_IMAGE", None)

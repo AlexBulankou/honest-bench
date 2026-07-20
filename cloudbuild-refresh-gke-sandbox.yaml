@@ -186,7 +186,7 @@ steps:
         gcloud container clusters get-credentials "$$CLUSTER" --region "$$REGION"
 
         # Node-image / gVisor runsc version provenance (hb#317, mirrors
-        # machine_type's hb#313/a#4183 pattern). These can only be resolved at
+        # machine_type's hb#313 pattern). These can only be resolved at
         # runtime against the live cluster (unlike BENCH_MACHINE_TYPE, which is
         # a static substitution known at submit time), so they're captured here
         # as inline `export`s consumed by the harness.run invocation below rather
