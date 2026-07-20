@@ -3733,12 +3733,14 @@ def test_what_this_means_burst_clause_degrades_when_burst_absent():
 
 def test_what_this_means_public_safe_no_internal_names():
     # PII fence (injection-sentinel form, mirrors test_unknown_provenance_field_dropped):
-    # render_what_this_means consumes provenance ONLY via closed-vocabulary lookups (regime,
-    # warm_scaling_term) and must never echo an arbitrary provenance value onto the public page.
-    # Inject synthetic internal-shaped names into provenance and assert they are dropped — this
-    # proves the drop by construction while the test itself holds NO real internal-name literal
-    # (such literals in a PUBLIC repo were themselves the leak this guard removes). Tree-wide
-    # reintroduction of any real name anywhere is caught by the Cloud Build specific-name-scan.
+    # render_what_this_means renders only from the scenario result cells — it does NOT read
+    # results["provenance"] at all — so no provenance value can reach the public "what this
+    # means" section. Inject synthetic internal-shaped names into provenance and assert the
+    # output drops them: this proves the no-leak by construction AND pins it against a future
+    # change that starts consuming provenance here, while the test itself holds NO real
+    # internal-name literal (such literals in a PUBLIC repo were themselves the leak this guard
+    # removes). Tree-wide reintroduction of any real name anywhere is caught by the Cloud Build
+    # specific-name-scan.
     out = render.render_what_this_means(
         _matrix_results(
             _full_gvisor_scenarios(),
