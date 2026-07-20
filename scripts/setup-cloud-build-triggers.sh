@@ -79,13 +79,19 @@ gcloud builds triggers create github --name=hb-unit-tests-main \
   || echo "   (already exists — re-run with: gcloud builds triggers update github hb-unit-tests-main --inline-config=cloudbuild-unit-tests.yaml ...)"
 
 echo "==> [3/3] gke-sandbox refresh (MANUAL only — no branch/PR/schedule; spend-gated by invocation)"
+# --branch is REQUIRED by gcloud whenever --repo is set on a manual trigger (API
+# contract, not optional) — it only pins which ref is checked out as build
+# context; the build STEPS still come from inline-config, so this is not a
+# trusted-ref divergence. Confirmed live 2026-07-20 (a#4183): omitting it fails
+# with "Missing required argument [REVISION]: --branch or --tag is required".
 gcloud builds triggers create manual --name=hb-refresh-gke-sandbox \
   --inline-config=cloudbuild-refresh-gke-sandbox.yaml \
   --repo="https://github.com/${OWNER}/${REPO}" \
   --repo-type=GITHUB \
+  --branch=main \
   --service-account="$REFRESH_SA" \
   --project="$PROJECT" \
-  || echo "   (already exists — re-run with: gcloud builds triggers update manual hb-refresh-gke-sandbox --inline-config=cloudbuild-refresh-gke-sandbox.yaml ...)"
+  || echo "   (already exists — re-run with: gcloud builds triggers update manual hb-refresh-gke-sandbox --inline-config=cloudbuild-refresh-gke-sandbox.yaml --branch=main ...)"
 
 cat <<EOF
 
