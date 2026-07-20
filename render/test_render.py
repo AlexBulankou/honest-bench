@@ -123,7 +123,7 @@ def test_unknown_provenance_field_dropped():
                 "cluster_substrate": "gke-sandbox",
                 "internal_cluster_name": "SYNTHETIC-INTERNAL-CLUSTER-NAME",
                 # GCP project id is not allow-listed: infra-noise, off the public page by
-                # construction even though the id itself is public (a4z1 corp-audit, #3876).
+                # construction even though the id itself is public (#3876).
                 "project": "SYNTHETIC-GCP-PROJECT-ID",
             },
             "scenarios": [{"name": "warmpool_cold_start", "outcome": "PASS", "n": 1}],
@@ -585,11 +585,11 @@ def test_matrix_renders_doc_exact_gvisor_rows():
 
 
 def test_matrix_low_n_ttfe_cells_marked():
-    # a4z1 footgun: a low-N row's TTFE must not read as comparable to a high-N row. A row whose
+    # footgun: a low-N row's TTFE must not read as comparable to a high-N row. A row whose
     # N is below TTFE_COMPARABILITY_MIN_N gets the small-sample dagger on BOTH TTFE cells; the
     # high-N warm-pool row stays unmarked.
     scen = _full_gvisor_scenarios()
-    scen[1]["n"] = 1  # cold row: single sample (the inverting case a4z1 flagged)
+    scen[1]["n"] = 1  # cold row: single sample (the inverting case flagged previously)
     out = render.render_matrix(_matrix_results(scen))
     cold_line = [l for l in out.splitlines() if "Unique-image cold" in l][0]
     cells = [_unlink(c.strip()) for c in cold_line.strip("|").split("|")]
@@ -842,7 +842,7 @@ def test_matrix_true_ttfe_cluster_figure_no_floor_prefix():
 
 
 def test_matrix_resume_gvisor_ceiling_per_column_units():
-    # hb#230 Fork 5 (nit fix, a4z1): the gVisor resume row DID record a probe ceiling (the
+    # hb#230 Fork 5 (nit fix): the gVisor resume row DID record a probe ceiling (the
     # wall-clock it waited out against a never-clearing Suspended condition). Per alex's
     # doctrine flip a caveated measured number always beats an empty cell — but the ceiling is
     # a DURATION, so it may only land in the two TTFE columns. The earlier revision filled it
@@ -882,7 +882,7 @@ def test_matrix_resume_gvisor_no_ceiling_falls_back_to_pending():
 
 
 def test_matrix_resume_gvisor_graduated_row_ignores_vestigial_ceiling():
-    # hb#230 finding #1 (a#4420 transition-guard): the Fork-5 ceiling override is gated on
+    # hb#230 finding #1 (transition-guard doctrine): the Fork-5 ceiling override is gated on
     # sc_pending. If the gVisor resume row ever GRADUATES (outcome=="PASS") but still carries a
     # vestigial resume_probe_ceiling_ms, an ungated override would MASK the five real graduated
     # metrics behind a stale `≥Xs***` — a silent trust downgrade. A graduated row must fall
@@ -1251,7 +1251,7 @@ def test_matrix_pass_scenario_still_shows_metrics_after_pending_guard():
 
 
 def test_matrix_density_sourced_from_warmpool_not_stale_burst_create():
-    # a4s2 Q3 lock (PR #28): DENSITY_SOURCE_SCENARIOS = (warmpool_cold_start,). A stale
+    # Q3 lock (PR #28): DENSITY_SOURCE_SCENARIOS = (warmpool_cold_start,). A stale
     # burst_create row carrying the OLD cluster-wide-capacity 0.45 must NOT shadow warmpool's
     # corrected per-node-allocatable 1.88. hb#134 relocated Max Density off the headline matrix
     # into render_density_detail (DETAILS.md); GOAL-2.1 gap-1 then surfaced it back into the
@@ -2303,7 +2303,7 @@ def test_scale_proof_out_of_band_retention_flags_no():
 
 
 def test_scale_proof_superlinear_retention_reads_beat_not_regression():
-    # a4s2 v2 lock (PR #28): asymmetric verdict. A superlinear result (retention > 1.1) is a
+    # v2 lock (PR #28): asymmetric verdict. A superlinear result (retention > 1.1) is a
     # BEAT under the floor-not-ceiling framing, NOT a regression — must read ✅, never ⚠️.
     # (The prior symmetric 0.9–1.1 band wrongly flagged this legit beat as failure.)
     results = _matrix_results(
@@ -2500,7 +2500,7 @@ def test_scale_proof_per_step_throughput_absent_when_producer_omits():
 
 
 def test_scale_proof_per_step_compounding_decay_read():
-    # a4s1's PR #54 fast-follow: every step within tolerance (≥0.9) yet the endpoint ratio
+    # PR #54 fast-follow: every step within tolerance (≥0.9) yet the endpoint ratio
     # compounds below 0.9 — the table reads ⚠️ No, so the subline must NOT say "holds flat".
     # 1.0 → 0.93 → 0.8649: steps 0.93/0.93 both ✅, endpoint 0.8649 < 0.9.
     results = _matrix_results(
@@ -2659,14 +2659,14 @@ def test_warm_vs_cold_cold_provision_never_claims_unique_image():
 
 
 def test_warm_vs_cold_unknown_mode_inert():
-    # #4024 (a4s1 ask): a present-but-INVALID cold_start_mode (e.g. a typo "cold-provison")
+    # #4024: a present-but-INVALID cold_start_mode (e.g. a typo "cold-provison")
     # must fail the block CLOSED ⇒ INERT, never silently fall through to the true-cold default
     # (which would over-claim unique-image for a mislabeled cold leg).
     results = _matrix_results(_full_gvisor_scenarios(), warm_vs_cold=_wc(cold_start_mode="cold-provison"))
     assert render.render_warm_vs_cold(results) == ""
 
 
-# --- a#3960 step-up saturation render (#4030 saturation_point framing) ---------------------
+# --- step-up saturation render (#4030 saturation_point framing) ---------------------------
 def _su(**over):
     base = {
         # #4030 OPERATOR headline: the emitter-computed 2×2 (warm/cold × tight/loose) table.
@@ -2807,7 +2807,7 @@ def test_stepup_sweep_params_subline():
     assert "measured 2026-06-30" in out
 
 
-# --- a#4560 knee-bracket: two-axis (acquisition-compliant + TTFE-collapsed) render ---------
+# --- knee-bracket: two-axis (acquisition-compliant + TTFE-collapsed) render ---------------
 def _knee(**over):
     # The #4560 knee-bracket shape: NO true-TTFE pareto_points / saturation_point (both null in
     # the record), an acquisition axis that stays compliant (no knee in [4,8]), and a TTFE
@@ -2930,7 +2930,7 @@ def test_stepup_acquisition_missing_upper_bound_flag_drops_literal():
 
 
 def test_stepup_ttfe_compliant_uses_neutral_prose():
-    # a#4560 fast-follow: the collapse prose is VERDICT-gated, not presence-gated. A future sweep
+    # fast-follow: the collapse prose is VERDICT-gated, not presence-gated. A future sweep
     # that folds compliant TTFE bounds must render neutral "stays within band" prose — never a
     # silent-false "has already collapsed" publish while the per-table verdict lines say compliant.
     knee = _knee()
@@ -2948,7 +2948,7 @@ def test_stepup_ttfe_compliant_uses_neutral_prose():
 
 
 def test_stepup_collapse_count_word_tracks_surviving_bounds():
-    # a#4560 fast-follow nit: the count-word tracks how many bounds survive the schema predicate,
+    # fast-follow nit: the count-word tracks how many bounds survive the schema predicate,
     # so a dropped bound can't leave a stale "two distinct" behind. Drop the literal (upper) via
     # its load-bearing flag → only the controller lower bound (saturated) survives.
     knee = _knee()
@@ -3522,7 +3522,7 @@ def test_operating_envelope_row1_pends_when_scenario_not_pass():
 
 
 def test_operating_envelope_row1_pend_inherits_pending_reason():
-    # hb#134 (a4s1 nit): a genuinely-pending row-1 inherits the matrix scenario's pending_reason
+    # hb#134 (nit): a genuinely-pending row-1 inherits the matrix scenario's pending_reason
     # so a known upstream/cluster gap reads `pending (<reason>)` here exactly as the matrix does —
     # NOT a bare `pending` a reader could mistake for not-yet-run.
     scen = _full_gvisor_scenarios()
@@ -3674,7 +3674,7 @@ def test_what_this_means_renders_measured_numbers():
 
 
 def test_what_this_means_speedup_carries_separate_leg_caveat():
-    # a4z1 honest-display finding: the ~7.3x headline is the warm_vs_cold LEG, NOT matrix-cell
+    # honest-display finding: the ~7.3x headline is the warm_vs_cold LEG, NOT matrix-cell
     # arithmetic — the matrix warm p50 / cold cell divide to a different ratio because they are
     # separate measurements (and the matrix cold cell is a count=1 single observation). The
     # measured clause must carry the "separate leg — do not divide the matrix cells" caveat so a

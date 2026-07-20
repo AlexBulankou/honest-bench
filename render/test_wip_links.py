@@ -119,7 +119,7 @@ def test_wip_page_has_no_bare_github_autolink():
     # Public-safety (hb#166 amendment): honest-bench is PUBLIC; a bare `#<n>` GitHub
     # auto-links to a non-existent honest-bench issue. Internal tracking is `a#<n>` prose;
     # public tracking is `hb#` or a full github.com URL. So no bare `#<digits>` may appear
-    # except immediately after `hb` or `a` (i.e. hb#132 / a#3097).
+    # except immediately after `hb` or `a` (i.e. hb#<n> / a#<n>).
     page = build_work_in_progress()
     bare = re.findall(r"(?<![A-Za-z0-9])#\d+", page)
     assert not bare, (
