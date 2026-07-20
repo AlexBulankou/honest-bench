@@ -1255,6 +1255,19 @@ def build_provenance(
         requests = rc.container_resources_from_env(runtime).get("requests", {})
         prov["sandbox_cpu_request_m"] = metrics.parse_cpu_millicores(requests["cpu"])
         prov["sandbox_mem_request_mib"] = metrics.parse_mem_mib(requests["memory"])
+        # Node-image / gVisor runsc version (hb#317, mirrors machine_type's
+        # hb#313 pattern): same env-passthrough-or-omit posture — absent
+        # env means the key is omitted, never guessed. Sandbox-family only (same
+        # gate as `runtime` above), since these fields only matter where a sandbox
+        # runtime's node-side build is in play. No caveat-diffing logic here (unlike
+        # machine_type) — landing in provenance is sufficient for a future regression
+        # investigation to read back historically; non-goal per hb#317.
+        node_image = os.environ.get("BENCH_NODE_IMAGE", "").strip()
+        if node_image:
+            prov["node_image"] = node_image
+        runsc_version = os.environ.get("BENCH_RUNSC_VERSION", "").strip()
+        if runsc_version:
+            prov["runsc_version"] = runsc_version
     return prov
 
 

@@ -218,6 +218,14 @@ PROVENANCE_FIELDS = (
     # mis-reading a rig change as a regression. Same generic string handling as
     # machine_type; the tight GCP-shape regex lives on the render side.
     "prior_machine_type",
+    # Node-image / gVisor runsc version (hb#317, mirrors machine_type's hb#313
+    # pattern): sandbox-family-only, stamped by build_provenance's `if runtime:` gate.
+    # Generic string passthrough (see _coerce_provenance below) — no closed-enum
+    # validation, no caveat-diffing field (unlike machine_type/prior_machine_type),
+    # since landing in provenance is sufficient for a future regression investigation
+    # to read back historically; non-goal per hb#317.
+    "node_image",
+    "runsc_version",
 )
 SCENARIO_FIELDS = (
     "name",
