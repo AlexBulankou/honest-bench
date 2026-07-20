@@ -382,7 +382,7 @@ def test_burst_create_excluded_from_kata_suite_not_kata_honest():
     sandbox-kata/results/latest.json. Excluding it keeps the raw kata results honest;
     this pins that exclusion so a future suite edit cannot silently re-introduce a
     dishonest kata burst number without also wiring the kata resource floor + toleration
-    + pool sizing (a4s1's burst headline design lane).
+    + pool sizing (the burst headline design lane).
     """
     kata_modules = {c.module for c in CELLS_BY_PRODUCT["sandbox-kata"]}
     _check(

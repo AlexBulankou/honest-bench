@@ -7,7 +7,7 @@ including its default-off no-op and its merge-not-clobber semantics), the substr
 consistency guard (`assert_substrate_runtime_consistency`), and the bound-pod violation
 classifier (`classify_runtime_violations` / `assert_no_runtime_violations`). The one
 I/O surface (`verify_bound_pod_runtimes`) touches a cluster and is exercised live by
-the matrix scenarios on a4s1's armed fire; here we pin the pure verdict it delegates to
+the matrix scenarios on the armed fire; here we pin the pure verdict it delegates to
 so a runc Pod can never publish under a gVisor/Kata banner. Its owner-uid Sandbox->Pod
 WALK (the logic between the two API reads — the part that decides which Pod backs which
 Sandbox and can silently shrink the violation set) is itself covered offline with
@@ -93,7 +93,7 @@ def test_family_unknown_is_itself():
 
 
 def test_resolve_kata_clh_resolves_kata_profile():
-    # The load-bearing fix: a4s1 installs kata-clh, so resolve_scheduling("kata-clh")
+    # The load-bearing fix: the kata install uses kata-clh, so resolve_scheduling("kata-clh")
     # MUST return the kata profile (toleration + nested-virt nodeSelector), not ([], {}).
     tols, sel = rc.resolve_scheduling("kata-clh")
     assert sel == {"nested-virtualization": "enabled"}
@@ -235,7 +235,7 @@ def test_consistency_gke_kata_gvisor_raises():
 
 def test_consistency_gke_kata_kata_clh_ok():
     # The isolation claim is the FAMILY: a gke-kata banner is satisfied by ANY kata
-    # hypervisor pin (kata-clh / kata-qemu) — this is the a4s1-install case.
+    # hypervisor pin (kata-clh / kata-qemu) — this is the kata-install case.
     rc.assert_substrate_runtime_consistency("gke-kata", "kata-clh")  # no raise
     rc.assert_substrate_runtime_consistency("gke-kata", "kata-qemu")  # no raise
 

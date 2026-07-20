@@ -1,6 +1,6 @@
 """Cost axis for the step-up throughput study -- USD per 1000 ready sandboxes.
 
-This is the a#3960 item-4 cost axis: the schema (#47) reserved
+This is the step-up item-4 cost axis: the schema (#47) reserved
 ``cost_usd_per_1k_ready`` as an optional Pareto-point field, but nothing computed
 it, so the axis rendered permanently ``pending``. This module is the producer.
 

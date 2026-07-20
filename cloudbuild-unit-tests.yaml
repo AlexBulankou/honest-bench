@@ -1,4 +1,4 @@
-# Offline unit-tests gate — Cloud Build PR-trigger config (a#4014 GHA→CB migration).
+# Offline unit-tests gate — Cloud Build PR-trigger config (GHA→CB migration).
 #
 # Replaces .github/workflows/unit-tests.yml (deleted in the same PR). alex's
 # fleet-wide rule: NO GitHub Actions on any of his repos — Cloud Build ONLY.
@@ -11,8 +11,8 @@
 # POSTURE — FAIL-CLOSED (a real gate, NOT the advisory a4-pr-lint posture).
 # Every step propagates its non-zero exit so a genuinely broken test / leak /
 # dependency failure reds the build and blocks the merge. There is no WARN-wrap:
-# this config is meant to be wired as a REQUIRED status check on main (a4z1 +
-# alex own the branch-protection wiring). Cloud Build posts this build's
+# this config is meant to be wired as a REQUIRED status check on main (the
+# fleet admin + alex own the branch-protection wiring). Cloud Build posts this build's
 # pass/fail as a commit status on the PR head SHA.
 #
 # AUTH: runs as a native Cloud Build service account — no WIF, no long-lived

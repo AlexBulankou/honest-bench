@@ -519,7 +519,7 @@ def test_emit_to_render_scale_proof_convergence_doc_linearity():
 
 
 def test_emit_to_render_stepup_pareto_convergence():
-    """Convergence guard for the Step-Up Pareto object (a#3960 item 4) — INERT-render edition.
+    """Convergence guard for the Step-Up Pareto object (item 4) — INERT-render edition.
 
     The step-up sweep object is emitted by harness/results_schema.build_results(stepup=...) (via
     _coerce_stepup) and allow-listed on the render side by schema.STEPUP_PARETO_FIELDS. Unlike the
@@ -712,7 +712,7 @@ def test_emit_to_render_warm_vs_cold_convergence():
     The warm_vs_cold object is emitted by harness/results_schema.build_results(warm_vs_cold=...)
     (via _coerce_warm_vs_cold) and allow-listed on the render side by schema.WARM_VS_COLD_FIELDS.
     Like the step-up convergence test, this guards the contract while the render is inert (the
-    headline-page render_warm_vs_cold wiring is a4s1's fire lane, #3954): every field the EMITTER
+    headline-page render_warm_vs_cold wiring is a separate fire lane, #3954): every field the EMITTER
     keeps on a real warm-vs-cold object must pass the INDEPENDENT render-side WARM_VS_COLD_FIELDS
     predicate. A drift between the two closed vocabularies (the harness mirror enums vs render's
     RUNTIME_LABELS / semantic set) would make a future render silently drop the block -> a blank

@@ -5,7 +5,7 @@ in-memory samples into the locked emit-key values. Offline-testable with bare
 python3 (the auto-refresh GH-runner needs no extra deps), mirroring the
 `results_schema` and `session_turnover` pure/offline discipline.
 
-The locked emit keys this module produces (the a4s1/a4s2 schema contract):
+The locked emit keys this module produces (the harness/render schema contract):
 
   ttfe_p50_ms, ttfe_p95_ms           -- TTFE distribution (Time-To-First-Execution)
   thpt_under_5s_per_node             -- sustained throughput @ <5s TTFE (sb/sec/node)
@@ -164,7 +164,7 @@ def density_per_vcpu(
 ) -> float:
     """Max concurrent sandboxes divided by per-node allocatable sandbox vCPU.
 
-    The denominator is the LOCKED definition (a4s1/a4s2, goal 2.1): the node's
+    The denominator is the LOCKED definition (goal 2.1): the node's
     sandbox-schedulable ALLOCATABLE vCPU, NOT total-cluster CAPACITY vCPU. This is
     the doc's ~1.88/vCPU basis; dividing the count by the cluster-wide capacity sum
     (incl system-pool + control-plane overhead) is the 0.45 burst_create reading.

@@ -125,7 +125,7 @@ _MIN_COMPLETED_RATIO = float(
 
 # Public benchmark metric keys. lowercase-alnum+underscore so they pass the
 # emitter's _METRIC_KEY_RE with no harness-schema change; render/schema.py's
-# METRIC_LABELS registers each display label (a4s1's render-side lane).
+# METRIC_LABELS registers each display label (the render-side lane).
 # refill_latency_ms = MEDIAN replenishment latency (the headline, robust to a
 # single cold-tail provision); refill_p90_ms = the p90 tail, surfaced as a
 # tail column so the floor-not-ceiling framing shows the slow end too.

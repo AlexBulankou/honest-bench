@@ -155,7 +155,7 @@ _TTFE_EXEC = _env_flag("BENCH_TTFE_EXEC")
 # behavior; emit byte-unchanged). When > 1 the cell loops N suspend->resume cycles
 # on the SAME Sandbox and aggregates the N resume-activation TTFE samples into a
 # real p50/p95 distribution (metrics.multi_sample_ttfe_point) instead of the noisy
-# n=1 single sample. Fire-time controllable so a4s1 can re-fire resume at higher N
+# n=1 single sample. Fire-time controllable so resume can be re-fired at higher N
 # without a code change. Only the TTFE distribution scales with N; the Suspended-
 # clear gap verdict is a deterministic controller property (pending if ANY cycle's
 # Suspended condition never clears, else PASS). N has effect only when

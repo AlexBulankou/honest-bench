@@ -151,7 +151,7 @@ _MIN_QUALIFIED_RATIO = float(
 
 # Public benchmark metric keys. Both lowercase-alnum+underscore so they pass the
 # emitter's _METRIC_KEY_RE with no harness-schema change; render/schema.py's
-# METRIC_LABELS registers their display labels (a4s1's render-side lane).
+# METRIC_LABELS registers their display labels (the render-side lane).
 _KEY_COUNT = "sandboxes_ready_under_1s"
 _KEY_DENSITY = "density_per_vcpu"
 

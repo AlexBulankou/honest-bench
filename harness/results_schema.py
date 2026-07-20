@@ -100,7 +100,7 @@ BADGE_SCOPE_ENUM = ("control-plane", "enforced")
 # BADGE_CONSTRUCTIONS; a drift is caught by the cross-contract test, not a shared import.
 BADGE_CONSTRUCTION_ENUM = ("standard-np", "managed-np")
 
-# a#3960 step-up saturation verdicts — the emitter's INDEPENDENT copy of render's
+# Step-up saturation verdicts — the emitter's INDEPENDENT copy of render's
 # STEPUP_VERDICTS (the two modules deliberately keep separate vocabularies; a drift is
 # caught by the cross-contract test, not papered over by a shared import). A verdict outside
 # this set invalidates the whole stepup block (-> None) so an unknown label never reaches
@@ -139,7 +139,7 @@ SLO_BASIS_ENUM = (
     # Distinct from the warm floor_zero_margin basis: over the controller cold-start
     # distribution, fills BOTH bars, trusted-rung-corroborated.
     "controller_cold_floor_zero_corroborated",
-    # hb#230 (a4s1 Kata-cold ruling, 2026-07-08): the HONEST-UNKNOWN basis — the bar
+    # hb#230 (Kata-cold ruling, 2026-07-08): the HONEST-UNKNOWN basis — the bar
     # falls INSIDE the proven [ctrl-lower, exec-upper] TTFE bracket, so neither an
     # honest-0 (needs the lower bound to breach) nor a positive rate (needs the upper
     # bound to clear) is supportable. Carries NO per-cluster/per-node figure; render
@@ -726,7 +726,7 @@ def _coerce_saturation_point(raw, clean_nonneg):
 def _coerce_stepup(raw):
     """Keep the closed top-level step-up Pareto shape; return None to omit the key.
 
-    The a#3960 throughput-saturation study renders from a TOP-LEVEL `stepup` object
+    The throughput-saturation study renders from a TOP-LEVEL `stepup` object
     (a list-bearing value cannot ride per-scenario sla_metrics, which _coerce_sla_metrics
     drops). Mirrors render/schema.py's STEPUP_PARETO_FIELDS exactly so emitter and renderer
     share one contract. PUBLIC-safe by construction: only measured numbers + a bounded GCP
@@ -1526,7 +1526,7 @@ def build_results(scenario_outcomes, provenance, generated_at: str,
     (the table renders nothing rather than a partial lie).
 
     `stepup` is the OPTIONAL top-level Step-Up Pareto object (defaults None so
-    existing callers are unchanged; a#3960 item 4). When supplied it passes through
+    existing callers are unchanged; step-up item 4). When supplied it passes through
     `_coerce_stepup`; the key is emitted only when a valid non-empty pareto_points
     list + a known verdict survive — same partial-lie-omission contract as
     scale_proof.

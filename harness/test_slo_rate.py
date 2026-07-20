@@ -775,7 +775,7 @@ def _cold_rung(rate, cold_p50_ms, measured):
 
 
 class TestColdFloorZero:
-    """hb#230 Fork 4 (a4s1-ruled 2026-07-08): the COLD-START honest-ZERO predicate.
+    """hb#230 Fork 4 (ruled 2026-07-08): the COLD-START honest-ZERO predicate.
 
     A cold-start floor so far over the bar that NO offered rate brings a compliant
     fraction under either bar — an honest 0 at BOTH bars, rate-independent. The

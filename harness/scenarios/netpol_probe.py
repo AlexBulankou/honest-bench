@@ -45,8 +45,8 @@ auto-managed NetworkPolicy** (the #2082 subject, keyed on
 ``agents.x-k8s.io/sandbox-template-ref-hash``). The paragraph this replaces claimed the
 armed probe was "EXPECTED to read a breach" because "the managed-NetworkPolicy
 podSelector keys on a label the bound Pods do not carry" — that described a mechanism
-these cells do not actually exercise; corrected by a4s2 (source read of both scenario
-files, 2026-07-18) after a4s1 independently found live evidence the managed-NP label
+these cells do not actually exercise; corrected after a source read of both scenario
+files (2026-07-18) found live evidence the managed-NP label
 mismatch is itself now resolved upstream (#1067, verified against controller digest
 ``b54aefdf``). Either way, #2082's status was never load-bearing for this flip — these
 cells were never coupled to the managed-NP mechanism.

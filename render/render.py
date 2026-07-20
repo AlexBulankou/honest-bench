@@ -984,7 +984,7 @@ def render_matrix(results, kata_results=None):
             # ONLY in the two TTFE columns, where a duration is the correct unit. The earlier
             # revision filled the ceiling across ALL FIVE cells, which stamped a *duration*
             # (`≥34.6s`) into the two THROUGHPUT columns (a rate, sb/s) and the EXECUTION-SUCCESS
-            # column (a %) — a units mismatch (hb#230 nit, a4z1). The correct per-column render:
+            # column (a %) — a units mismatch (hb#230 nit). The correct per-column render:
             #   - throughput (<5s / <1s):  `0*** (upstream-blocked)` — zero sandboxes reached a
             #     TTFE bar because the resume never completed; the rate is a true zero, not a floor.
             #   - TTFE p50 / p95:          `≥<X>s***` — the honest measured wall-clock floor.
@@ -994,7 +994,7 @@ def render_matrix(results, kata_results=None):
             # handled above); a resume row with no recorded ceiling falls through to the normal
             # pending path. It is NOT a resume TTFE (the operation never completes) — the `≥` and
             # the footnote carry that; the number is the honest measured wall-clock floor.
-            # a#4420 transition-guard: gate the ceiling override on `sc_pending`. The override
+            # Transition-guard: gate the ceiling override on `sc_pending`. The override
             # is an honest-empty→caveated-measured UPGRADE that only holds while the row is
             # pending; if the resume row ever GRADUATES (outcome=="pass") but still carries a
             # vestigial `resume_probe_ceiling_ms`, an ungated override would MASK the five real
@@ -1449,7 +1449,7 @@ STRETCH_TTFE_P95_MS = 500.0
 def _p95_verdict(p95, bar_ms, p50, n):
     """Signed-margin verdict for a measured p95 against a bar.
 
-    Renders ✅/❌ with the measured headroom/gap. hb#202 (a4z1 flap-risk ask): when a MISS
+    Renders ✅/❌ with the measured headroom/gap. hb#202 (flap-risk ask): when a MISS
     sits inside the sample's spread, append a `within N=<n> sampling noise` annotation so a
     2ms miss does not read as a hard fail on the next re-fire. The spread proxy is
     (p95−p50)/√n — distribution-free, uses only committed schema fields (no CI field exists),
@@ -1612,7 +1612,7 @@ def render_operating_envelope(results, heading=None):
     if sc and sc.get("outcome") == "PASS" and "ttfe_p50_ms" in sc["metrics"]:
         rows.append((label1, _fmt_wait(sc["metrics"]["ttfe_p50_ms"]), _ENVELOPE_FULL_TTFE))
     else:
-        # hb#134 (a4s1 nit): a row-1 pend inherits the matrix scenario's pending_reason so a
+        # hb#134 (nit): a row-1 pend inherits the matrix scenario's pending_reason so a
         # known upstream/cluster gap reads `pending (<reason>)` here exactly as it does in the
         # matrix, not a bare `pending` that looks not-yet-run. The reason decorates only a
         # genuinely pending scenario (mirrors the matrix pending_tok logic at ~653); a
@@ -2349,7 +2349,7 @@ def render_cold_bind_decomposition(results):
 def _flat_verdict(retention):
     """✅/⚠️ flat verdict for a retention ratio; pending when absent.
 
-    ASYMMETRIC framing (a4s2 v2 lock, PR #28): retention >= ~0.9 reads flat/linear-or-better
+    ASYMMETRIC framing (v2 lock, PR #28): retention >= ~0.9 reads flat/linear-or-better
     — a superlinear result (>1.0) is a BEAT under the floor-not-ceiling framing, NOT a
     regression, so it must read ✅, not ⚠️. Only retention < ~0.9 reads ⚠️ No: the per-node
     number sagged as the cluster grew, i.e. the controller is the ceiling and the page says so.
@@ -2368,7 +2368,7 @@ def _per_step_retention_line(points, key, noun):
     subline exposes each ADJACENT step (1→2, 2→4) so the shape of the decay is
     visible — derived from the same scale_points the table already uses.
 
-    THREE-WAY convergence read (fixes the slow-uniform-decay wording gap, a4s1's
+    THREE-WAY convergence read (fixes the slow-uniform-decay wording gap,
     PR #54 fast-follow): a per-step ⚠️ is not the only way the endpoint sags. Each
     step can sit within tolerance (every step ✅, ≥0.9) yet COMPOUND to an endpoint
     below 0.9 — the table reads ⚠️ No while the steps all read ✅, an apparent
@@ -2550,7 +2550,7 @@ def _clean_warm_vs_cold(results):
     # mode (e.g. a typo "cold-provison") must fail the block CLOSED rather than fall through
     # to the true-cold default phrasing, which would silently over-claim unique-image. The
     # validation loop above only adds it to `clean` when valid, so "in wc but not in clean"
-    # == present-but-invalid ⇒ INERT. Absent stays valid (⇒ true-cold default). (a4s1 ask.)
+    # == present-but-invalid ⇒ INERT. Absent stays valid (⇒ true-cold default).
     if "cold_start_mode" in wc and "cold_start_mode" not in clean:
         return None
     return clean
@@ -2632,7 +2632,7 @@ def render_warm_vs_cold(results):
         f"_Speedup = cold ÷ warm, computed from the displayed values{n_note}; the warm leg "
         "is the p50 so half of warm claims beat it._")
     lines.append("")
-    # Machine-class-change caveat (a#4183 PR#313 review, a4s1): data-keyed off the SAME
+    # Machine-class-change caveat (PR#313 review): data-keyed off the SAME
     # run-level provenance the build banner stamps (see _machine_class_caveat) — renders
     # only when this run's rig differs from the prior published run's, so a speedup delta
     # (e.g. 9.98x -> 5.50x) reads as machine-class-confounded rather than a substrate signal.
@@ -2640,7 +2640,7 @@ def render_warm_vs_cold(results):
     if machine_caveat:
         lines.append(machine_caveat)
         lines.append("")
-    # Cross-block coherence caveat (#103 / a4s1): this warm-vs-cold pair is its own
+    # Cross-block coherence caveat (#103): this warm-vs-cold pair is its own
     # point-in-time run at its own operating point — NOT the same measurement as the
     # Core Metrics matrix "Warm-pool hit" row. A reader comparing the two warm p50s
     # across blocks must not read a divergence as a contradiction. Static prose (no numbers,
@@ -2769,7 +2769,7 @@ def render_kata_activation(results):
 
 # --- #4021: concurrent-burst sweep render -------------------------------------------------
 # The Core Metrics matrix and the step-up table both report a per-SECOND creation RATE (sandboxes
-# launched per second, ramped). This block reports the complementary axis alex/a4z1 asked for: a
+# launched per second, ramped). This block reports the complementary axis that was asked for: a
 # single ALL-AT-ONCE burst of N concurrent claims (300/500), warm-pool vs cold-provision. Same TTFE
 # honesty spine as the matrix (executed-first-instruction-and-returned-a-result), so the numbers are
 # directly comparable to the matrix TTFE columns. INERT (returns "") until the harness emits a
@@ -3062,7 +3062,7 @@ def render_at_scale_contention(results, detail=False, page_heading=None):
     heading = ("## At Scale Under Contention — where sub-second warm activation breaks"
                if detail else (page_heading or "## Where it breaks today (honest limits)"))
     lines = [heading, ""]
-    # hb#134 (a4s1 nit): the Concurrent Burst table lives on the headline README, so "above" is
+    # hb#134 (nit): the Concurrent Burst table lives on the headline README, so "above" is
     # correct on the page path but dangles in the DETAILS detail-path (nothing is above it there).
     burst_locator = "on the headline page" if detail else "above"
     caption = (
@@ -3399,8 +3399,8 @@ def render_provisioning_rate_sweep(results):
     return "\n".join(lines)
 
 
-# --- a#3960: Step-up backfill saturation render -------------------------------------------
-# The saturation headline alex/a4z1 asked for ("max sandboxes/sec under 5s AND under 1s,
+# --- Step-up backfill saturation render -----------------------------------------------------
+# The saturation headline that was asked for ("max sandboxes/sec under 5s AND under 1s,
 # warm+cold") is computed by the internal classifier (#4030) and emitted as the pre-validated
 # saturation_point block (2×2 warm/cold × tight(1s)/loose(5s) bars). Render reads it straight —
 # the operator headline is the emitter's number, not a render-time re-derivation. The schema
@@ -3409,7 +3409,7 @@ def render_provisioning_rate_sweep(results):
 
 
 def _clean_stepup(results):
-    """Closed-schema-validate the TOP-LEVEL stepup object (a#3960). None ⇒ INERT.
+    """Closed-schema-validate the TOP-LEVEL stepup object. None ⇒ INERT.
 
     Every present field renders ONLY if it is declared in STEPUP_PARETO_FIELDS and passes its
     predicate; anything else is dropped on read. The block is INERT unless the union of
@@ -3450,7 +3450,7 @@ _STEPUP_VERDICT_LABELS = {
 
 
 def render_stepup(results):
-    """Render the step-up saturation block (a#3960), or "" when INERT.
+    """Render the step-up saturation block, or "" when INERT.
 
     Headline = the operator Saturation Point table (#4030): max sustained creation rate with
     TTFE p95 under the 1s (tight) and 5s (loose) bars, split by leg (warm-pool hit vs cold-
@@ -3524,7 +3524,7 @@ def render_stepup(results):
             lines.append("| " + " | ".join(cells) + " |")
         lines.append("")
 
-    # Claim-ACQUISITION axis (a#4560) — the DISTINCT compliant axis, rendered SEPARATELY from
+    # Claim-ACQUISITION axis — the DISTINCT compliant axis, rendered SEPARATELY from
     # TTFE so the page never averages the two into one verdict: a bracket can be acq-compliant
     # AND TTFE-non-compliant at once, and that split is the finding.
     acq = su.get("acquisition")
@@ -3558,12 +3558,12 @@ def render_stepup(results):
             lines.append("| " + " | ".join(cells) + " |")
         lines.append("")
 
-    # End-to-end readiness (TTFE) window — pinned between two DISTINCT named bounds (a#4560),
+    # End-to-end readiness (TTFE) window — pinned between two DISTINCT named bounds,
     # never rendered as a single range: the literal-TTFE UPPER bound (includes exec-setup) and
     # the controller-startup LOWER bound (excludes it). The gap between them is exec-readiness
     # queueing (pod-startup / exec-readiness), which readers want to see.
     #
-    # The collapse framing is VERDICT-gated, not presence-gated (a#4560 fast-follow): the prose
+    # The collapse framing is VERDICT-gated, not presence-gated (fast-follow): the prose
     # keys on verdict == "saturated" (either bound), so a future sweep at lower rungs that folds
     # verdict: "compliant" blocks into latest.json renders neutral "stays within band" prose
     # instead of a silent-false "has already collapsed" publish on a trust surface. The
@@ -3643,7 +3643,7 @@ def render_stepup(results):
             lines.append("| " + " | ".join(cells) + " |")
         lines.append("")
 
-    # Knee-below-ceiling statement (a#4560) — tie the two axes together. The published ceiling
+    # Knee-below-ceiling statement — tie the two axes together. The published ceiling
     # is the TTFE-compliant rate (referenced BY POINTER, never a stale literal), and the TTFE
     # 1s/5s crossing sits BELOW the lowest swept rung: these rungs are acquisition-compliant but
     # TTFE-non-compliant, so they never replace the published Warm-Pool Acquisition ceiling.
