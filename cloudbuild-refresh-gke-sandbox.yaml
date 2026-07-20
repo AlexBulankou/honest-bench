@@ -135,6 +135,7 @@ steps:
         # exit always tears down regardless of the flag.
         cleanup() {
           local exit_code=$$?
+          kill "$${NODE_SAMPLER_PID:-}" 2>/dev/null || true
           if [ "$$exit_code" -ne 0 ] && [ "${_KEEP_CLUSTER_ON_FAILURE}" = "1" ]; then
             echo "==> [trap] measure FAILED (exit $$exit_code) and _KEEP_CLUSTER_ON_FAILURE=1 — leaving cluster $$CLUSTER live for debugging."
             echo "==> [trap] manual reap when done: gcloud container clusters delete $$CLUSTER --region $$REGION --quiet"
@@ -191,6 +192,28 @@ steps:
 
         gcloud container clusters get-credentials "$$CLUSTER" --region "$$REGION"
 
+        # Background node-count sampler (hb#319 diagnostic): warmpool_cold_start asks
+        # for 30 resident + 40 claims on hb-gvisor-pool's 1-3 node autoscale ceiling —
+        # the leading hypothesis for hb#318's "warm slower than cold" anomaly is that
+        # the burst saturates the 1-node floor and a reactive GKE scale-up (VM boot +
+        # gVisor runtime init + kubelet join) lands inside the measured bind-time
+        # window, smearing "warm" and "cold" together. This can't be reconstructed
+        # post-hoc (the cluster is ephemeral, no retained autoscaler event history),
+        # so sample hb-gvisor-pool's node count across the WHOLE measure phase and
+        # print it at the end — confirms or rules out the ceiling directly from the
+        # next fire's build log, no separate debugging fire required. Best-effort:
+        # a sampler hiccup must never fail the measure step over a diagnostic.
+        NODE_SAMPLE_LOG=/workspace/hb319-node-count-sample.log
+        : > "$$NODE_SAMPLE_LOG"
+        ( while true; do
+            printf '%s nodes=%s\n' \
+              "$(date -u +%FT%TZ)" \
+              "$(kubectl get nodes -l cloud.google.com/gke-nodepool=hb-gvisor-pool --no-headers 2>/dev/null | wc -l | tr -d ' ')" \
+              >> "$$NODE_SAMPLE_LOG" 2>/dev/null || true
+            sleep 3
+          done ) &
+        NODE_SAMPLER_PID=$$!
+
         # Node-image / gVisor runsc version provenance (hb#317, mirrors
         # machine_type's hb#313 pattern). These can only be resolved at
         # runtime against the live cluster (unlike BENCH_MACHINE_TYPE, which is
@@ -225,6 +248,10 @@ steps:
 
         echo "==> running sandbox harness (gke-sandbox / gVisor)"
         python3 -m harness.run --product sandbox
+
+        kill "$$NODE_SAMPLER_PID" 2>/dev/null || true
+        echo "==> hb-gvisor-pool node count over the measure window (hb#319 diagnostic):"
+        cat "$$NODE_SAMPLE_LOG" 2>/dev/null || echo "(no samples captured)"
 
         echo "==> rendering README/DETAILS from results"
         python3 -m render.generate
