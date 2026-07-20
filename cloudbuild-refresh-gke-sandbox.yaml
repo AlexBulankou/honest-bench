@@ -87,6 +87,13 @@ steps:
       - |
         set -euo pipefail
 
+        # CB's substitution scanner reads the WHOLE step string (this bash script
+        # included) and rejects any bare $UPPERCASE token it doesn't recognize as a
+        # built-in or a defined ${_substitution} — so every local bash var below is
+        # dereferenced as $$VAR (CB-escaped -> literal $VAR at runtime), never $VAR.
+        # Confirmed live 2026-07-20 (a#4183 first fire): unescaped $CLUSTER failed
+        # submission with "key in the template CLUSTER is not a valid built-in
+        # substitution" before a single dollar of cluster spend.
         REGION="${_REGION}"
         # Short, valid GKE cluster name (<=40 chars, starts with a letter). BUILD_ID
         # is a 36-char UUID — too long to prefix — so key on a timestamp; a manual
@@ -96,9 +103,9 @@ steps:
         # Guaranteed teardown: fires on normal exit, `set -e` abort, or SIGTERM
         # (build timeout). The CB-native stand-in for `if: always()`.
         cleanup() {
-          echo "==> [trap] tearing down ephemeral cluster $CLUSTER"
-          gcloud container clusters delete "$CLUSTER" \
-            --region "$REGION" --quiet || true
+          echo "==> [trap] tearing down ephemeral cluster $$CLUSTER"
+          gcloud container clusters delete "$$CLUSTER" \
+            --region "$$REGION" --quiet || true
         }
         trap cleanup EXIT
 
@@ -109,18 +116,18 @@ steps:
         # so --break-system-packages is required (container is ephemeral — safe).
         pip install --quiet --no-cache-dir --break-system-packages -r harness/requirements.txt
 
-        echo "==> creating ephemeral gVisor cluster $CLUSTER in $REGION"
-        gcloud container clusters create "$CLUSTER" \
-          --region "$REGION" \
+        echo "==> creating ephemeral gVisor cluster $$CLUSTER in $$REGION"
+        gcloud container clusters create "$$CLUSTER" \
+          --region "$$REGION" \
           --release-channel rapid \
           --machine-type "${_MACHINE_TYPE}" \
-          --node-locations "$REGION-a" \
+          --node-locations "$$REGION-a" \
           --num-nodes 1 \
           --enable-autoscaling --min-nodes 1 --max-nodes 3 \
           --sandbox type=gvisor \
           --no-enable-basic-auth --no-issue-client-certificate
 
-        gcloud container clusters get-credentials "$CLUSTER" --region "$REGION"
+        gcloud container clusters get-credentials "$$CLUSTER" --region "$$REGION"
 
         echo "==> installing OSS controller from upstream main"
         bash recipe/install-controller-from-main.sh
@@ -165,7 +172,7 @@ steps:
         git config --global user.email "refresh@localhost"
 
         BRANCH="auto/refresh-gke-sandbox"
-        git checkout -B "$BRANCH"
+        git checkout -B "$$BRANCH"
         git add sandbox/results/latest.json README.md DETAILS.md
         git commit -m "data: auto-refresh benchmark results (substrate=gke-sandbox, gVisor)"
 
@@ -177,8 +184,8 @@ steps:
         # current remote tip so the lease is accurate. Tolerated no-op on the very first
         # refresh (branch does not yet exist remotely). Preserves the force-with-lease
         # safety semantics (still refuses to clobber an unseen concurrent update).
-        git fetch origin "+$BRANCH:refs/remotes/origin/$BRANCH" 2>/dev/null || true
-        git push --force-with-lease origin "$BRANCH"
+        git fetch origin "+$$BRANCH:refs/remotes/origin/$$BRANCH" 2>/dev/null || true
+        git push --force-with-lease origin "$$BRANCH"
 
         # Open the PR (idempotent: if one is already open for this head, the push
         # above updated it; skip re-creating). Body kept single-line to avoid JSON
@@ -186,13 +193,13 @@ steps:
         BODY="Automated gke-sandbox (gVisor) benchmark refresh from a manual Cloud Build dispatch. substrate: gke-sandbox (fresh ephemeral node pool with --sandbox type=gvisor); burst fired under runtimeClassName=gvisor (burst-create read-back guard confirmed every backing pod landed on the gvisor RuntimeClass); results regenerated from sandbox/results/latest.json; public-safety scanner passed (fail-closed gate before this PR opened). Review the headline change before merge."
         api="https://api.github.com/repos/AlexBulankou/honest-bench/pulls"
         open_count=$(curl -sS -H "Authorization: Bearer $${GITHUB_TOKEN}" \
-          "$api?head=AlexBulankou:$BRANCH&state=open" \
+          "$api?head=AlexBulankou:$$BRANCH&state=open" \
           | python3 -c 'import sys,json; print(len(json.load(sys.stdin)))')
         if [ "$open_count" != "0" ]; then
-          echo "A PR for $BRANCH is already open — pushed the update to it."
+          echo "A PR for $$BRANCH is already open — pushed the update to it."
           exit 0
         fi
-        payload=$(python3 -c 'import json,sys; print(json.dumps({"title":"data: auto-refresh gke-sandbox (gVisor) benchmark headline","head":sys.argv[1],"base":"main","body":sys.argv[2]}))' "$BRANCH" "$BODY")
+        payload=$(python3 -c 'import json,sys; print(json.dumps({"title":"data: auto-refresh gke-sandbox (gVisor) benchmark headline","head":sys.argv[1],"base":"main","body":sys.argv[2]}))' "$$BRANCH" "$$BODY")
         curl -sS -X POST -H "Authorization: Bearer $${GITHUB_TOKEN}" \
           -H "Accept: application/vnd.github+json" "$api" -d "$payload"
 
