@@ -71,9 +71,14 @@ log "substituting ko:// -> ${STAGING_PREFIX}/<cmd>:${IMAGE_TAG}"
 while IFS= read -r -d '' f; do
   sed -i -E "s#ko://[^[:space:]\"']*/cmd/([A-Za-z0-9._-]+)#${STAGING_PREFIX//#/\\#}/\1:${IMAGE_TAG}#g" "$f"
 done < <(find "$MANIFEST_DIR" -name '*.yaml' -print0)
-if grep -rqn 'ko://' "$MANIFEST_DIR"; then
-  grep -rn 'ko://' "$MANIFEST_DIR" >&2
-  die "unsubstituted ko:// references remain (cmd-basename map missed one)"
+# Check only actual `image:` fields, not any mention of the string "ko://" — upstream's
+# k8s/kustomization.yaml carries a prose comment describing the ko:// release-tooling mechanism
+# ("... with the ko:// image replaced by the published controller image.") that is not itself a
+# placeholder and never gets (or needs) substitution. A bare `grep 'ko://'` false-positives on
+# that comment even when every real image: field substituted cleanly.
+if grep -rEqn '^\s*image:\s*ko://' "$MANIFEST_DIR"; then
+  grep -rEn '^\s*image:\s*ko://' "$MANIFEST_DIR" >&2
+  die "unsubstituted ko:// image: references remain (cmd-basename map missed one)"
 fi
 log "controller image(s) after substitution:"
 grep -rh 'image:[[:space:]]*'"${STAGING_PREFIX}" "$MANIFEST_DIR" | sed 's/^[[:space:]]*/    /' | sort -u || true
