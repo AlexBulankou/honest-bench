@@ -378,6 +378,18 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
                         {"badge_scope": "enforced", "badge_construction": "standard-np"},
                     )
                 if verdict in ("breach", "over-block"):
+                    # See the matching comment in cross_tenant_network_isolation.py:
+                    # this excerpt is `del`-ed by run.py before results.json is ever
+                    # written (public-safety rule), so without this log line a badge
+                    # regression is unattributable after the ephemeral CI cluster
+                    # tears down (hb#314). Safe to log: semantic verdict only, no
+                    # resource names, lands in Cloud Build's private build log.
+                    log.warning(
+                        "dataplane probe FAIL verdict=%s (deny_blocked=%s, "
+                        "control_allowed=%s) — NetworkPolicy %s admitted+bound but "
+                        "not enforced on the wire",
+                        verdict, deny_blocked, control_allowed, policy_name,
+                    )
                     return (
                         "FAIL",
                         f"NetworkPolicy {policy_name} admitted+bound (control-plane "

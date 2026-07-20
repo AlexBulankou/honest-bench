@@ -480,6 +480,19 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
                         {"badge_scope": "enforced", "badge_construction": "standard-np"},
                     )
                 if verdict in ("breach", "over-block"):
+                    # The FAIL excerpt below is classification-only and gets `del`-ed
+                    # by run.py before results.json is ever written (public-safety
+                    # FORBIDDEN raw-failure_excerpt rule) — so without a log line here
+                    # a badge regression is unattributable after the ephemeral CI
+                    # cluster tears down (hb#314). This verdict is safe to log: no
+                    # resource names, just the semantic classification, and it lands
+                    # in Cloud Build's own private build log, never the public repo.
+                    log.warning(
+                        "dataplane probe FAIL verdict=%s (deny_blocked=%s, "
+                        "control_allowed=%s) — NetworkPolicy %s admitted+bound but "
+                        "not enforced on the wire",
+                        verdict, deny_blocked, control_allowed, policy_name,
+                    )
                     return (
                         "FAIL",
                         f"NetworkPolicy {policy_name} admitted+bound (control-plane "
