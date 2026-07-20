@@ -152,6 +152,16 @@ _TTFE_EXEC = _env_flag("BENCH_TTFE_EXEC")
 # Node count for the per-node throughput denominator (matches run.py provenance).
 _NODE_COUNT = max(1, _opt_int("BENCH_NODE_COUNT") or 1)
 
+# Diagnostic-only node-count sampler (hb#319). The scenario's 1-3 node
+# autoscale ceiling (ephemeral CI cluster) may not fit a 30-replica/40-claim
+# override — a mid-burst scale-up (VM boot + gVisor init + kubelet join) could
+# land directly in the observed bind-latency range and smear warm/cold
+# together. This can't be confirmed post-hoc (the ephemeral cluster is torn
+# down every fire with no retained autoscaler event history), so sample node
+# count on a background thread through the pool-warm + claim-burst windows and
+# log the series — best-effort, never affects PASS/FAIL or published metrics.
+_NODE_SAMPLE_INTERVAL_S = _opt_float("WARMPOOL_COLD_START_NODE_SAMPLE_INTERVAL_S") or 3.0
+
 # Density basis (the LOCKED 1.88/vCPU reconcile). Supplied by the fire path from
 # the real saturation measurement: max concurrent sandboxes / per-node
 # ALLOCATABLE sandbox-schedulable vCPU. When either is unset, no density_per_vcpu
@@ -298,6 +308,29 @@ def _is_claim_ready_and_bound(status: dict) -> bool:
     )
     has_bound = bool((status.get("sandbox") or {}).get("name"))
     return has_ready and has_bound
+
+
+def _sample_node_count(core_v1) -> int:
+    """Best-effort node count; -1 on any failure (never raises — diagnostic only)."""
+    try:
+        return len((core_v1.list_node() or {}).items or [])
+    except Exception as e:  # noqa: BLE001 — diagnostic sampler must never break the run
+        log.warning("node-count sample failed: %s", e)
+        return -1
+
+
+def _run_node_count_sampler(core_v1, stop_event, samples: list[tuple[float, int]],
+                             interval_s: float) -> None:
+    """Loop sampling (monotonic-ts, node_count) into `samples` until stop_event fires.
+
+    Runs in its own daemon thread, started before the pool-warm wait and
+    stopped in `run()`'s finally so it always covers pool-warm + claim-burst,
+    including the exception path. See hb#319 (module-level comment).
+    """
+    t_start = time.monotonic()
+    while not stop_event.is_set():
+        samples.append((time.monotonic() - t_start, _sample_node_count(core_v1)))
+        stop_event.wait(interval_s)
 
 
 def _wait_for_pool_warm(
@@ -762,6 +795,23 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
         body=_build_warmpool_manifest(pool_name, template_name, _POOL_REPLICAS),
     )
 
+    # hb#319 diagnostic: sample node count on a background thread through the
+    # pool-warm + claim-burst windows, so a mid-burst autoscale event (VM boot
+    # + gVisor init + kubelet join) is directly visible in the fire log instead
+    # of only inferred post-hoc from smeared bind latencies. Started before the
+    # try so it's live for the whole measured window; stopped in `finally` so
+    # it always stops, including on the exception path.
+    import threading
+
+    _node_stop = threading.Event()
+    _node_samples: list[tuple[float, int]] = []
+    _node_thread = threading.Thread(
+        target=_run_node_count_sampler,
+        args=(core_v1, _node_stop, _node_samples, _NODE_SAMPLE_INTERVAL_S),
+        daemon=True,
+    )
+    _node_thread.start()
+
     try:
         log.info(
             "waiting for WarmPool %s to reach readyReplicas=%d (window=%ds)",
@@ -1006,6 +1056,18 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
             sla_metrics,
         )
     finally:
+        _node_stop.set()
+        _node_thread.join(timeout=_NODE_SAMPLE_INTERVAL_S + 5.0)
+        if _node_samples:
+            counts = [c for _, c in _node_samples if c >= 0]
+            log.info(
+                "hb#319 node-count diagnostic: %d samples over %.1fs, "
+                "min=%s max=%s series=%s",
+                len(_node_samples), _node_samples[-1][0],
+                min(counts) if counts else "<all-failed>",
+                max(counts) if counts else "<all-failed>",
+                [(round(t, 1), c) for t, c in _node_samples],
+            )
         _cleanup(
             custom, claim_names=claim_names,
             pool_name=pool_name, template_name=template_name,
