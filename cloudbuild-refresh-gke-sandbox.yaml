@@ -228,13 +228,22 @@ steps:
         # print it at the end — confirms or rules out the ceiling directly from the
         # next fire's build log, no separate debugging fire required. Best-effort:
         # a sampler hiccup must never fail the measure step over a diagnostic.
+        #
+        # Stream EACH sample line to stdout as it's taken (prefixed hb319-sample,
+        # easy to grep out of the full step log), not only the end-of-window `cat`
+        # below. The first live fire (hb#319) lost the trailing `cat` dump to a
+        # build-infra log-sink hiccup with the file itself still intact but the
+        # one-shot end-of-window print never landing in the persisted log — spreading
+        # the same data across ~20min of small, already-streamed lines makes a
+        # single late-window log-sink gap survivable (only that gap's samples are
+        # lost, not the whole series). The file + final `cat` stay as a convenience
+        # recap; the per-sample echo is now the durable copy.
         NODE_SAMPLE_LOG=/workspace/hb319-node-count-sample.log
         : > "$$NODE_SAMPLE_LOG"
         ( while true; do
-            printf '%s nodes=%s\n' \
-              "$(date -u +%FT%TZ)" \
-              "$(kubectl get nodes -l cloud.google.com/gke-nodepool=hb-gvisor-pool --no-headers 2>/dev/null | wc -l | tr -d ' ')" \
-              >> "$$NODE_SAMPLE_LOG" 2>/dev/null || true
+            sample="hb319-sample $(date -u +%FT%TZ) nodes=$(kubectl get nodes -l cloud.google.com/gke-nodepool=hb-gvisor-pool --no-headers 2>/dev/null | wc -l | tr -d ' ')"
+            echo "$$sample" || true
+            printf '%s\n' "$$sample" >> "$$NODE_SAMPLE_LOG" 2>/dev/null || true
             sleep 3
           done ) &
         NODE_SAMPLER_PID=$$!
@@ -275,7 +284,7 @@ steps:
         python3 -m harness.run --product sandbox
 
         kill "$$NODE_SAMPLER_PID" 2>/dev/null || true
-        echo "==> hb-gvisor-pool node count over the measure window (hb#319 diagnostic):"
+        echo "==> hb-gvisor-pool node count over the measure window (hb#319 diagnostic, recap — the durable copy is the hb319-sample lines streamed above):"
         cat "$$NODE_SAMPLE_LOG" 2>/dev/null || echo "(no samples captured)"
 
         echo "==> rendering README/DETAILS from results"
