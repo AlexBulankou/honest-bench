@@ -375,7 +375,7 @@ def test_basis_and_n_stamps_ride_carry_as_passengers():
 def test_per_bar_basis_split_stamps_ride_carry_as_passengers():
     # hb#174 per-bar split convention (thpt_slo_basis_1s/_5s in place of the
     # singular thpt_slo_basis) must ride the carry exactly like the singular
-    # form does — #4183: a committed warmpool_cold_start row using the split
+    # form does — a committed warmpool_cold_start row using the split
     # convention was silently stripped of both stamps on every routine refresh
     # because this allowlist predated the split.
     prior_m = {"thpt_under_5s_per_cluster": 27.1, "thpt_under_1s_per_cluster": 9.0,
@@ -391,7 +391,7 @@ def test_per_bar_basis_split_stamps_ride_carry_as_passengers():
 def test_floor_zero_and_per_node_companions_ride_carry_as_passengers():
     # hb#230: _derive_cold_floor_zero / _derive_literal_floor_zero_5s stamp the
     # per-cluster rate, its per-node companion, and thpt_slo_floor_zero together
-    # as one atomic dict — #4183: native_digest_cold's committed row lost all
+    # as one atomic dict — native_digest_cold's committed row lost all
     # three (thpt_slo_floor_zero, thpt_under_1s_per_node, thpt_under_5s_per_node)
     # on a routine refresh because none were in this allowlist.
     prior_m = {"thpt_under_5s_per_cluster": 0.0, "thpt_under_5s_per_node": 0.0,
@@ -406,7 +406,7 @@ def test_floor_zero_and_per_node_companions_ride_carry_as_passengers():
 
 
 def test_fresh_per_node_companion_wins_over_carried_stale_value():
-    # #4183 follow-up: thpt_under_5s_per_node/thpt_under_1s_per_node are NOT
+    # thpt_under_5s_per_node/thpt_under_1s_per_node are NOT
     # atomic with the cluster triple in general -- metrics.ttfe_sla_metrics
     # computes them on every call regardless of whether cluster_node_count is
     # supplied, so warmpool_cold_start has a genuinely fresh per-node pair on a
