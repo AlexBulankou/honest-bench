@@ -217,7 +217,7 @@ steps:
         : > "$$NODE_SAMPLE_LOG"
         ( while true; do
             sample="hb319-sample $(date -u +%FT%TZ) nodes=$(kubectl get nodes -l cloud.google.com/gke-nodepool=hb-gvisor-pool --no-headers 2>/dev/null | wc -l | tr -d ' ')"
-            echo "$$sample"
+            echo "$$sample" || true
             printf '%s\n' "$$sample" >> "$$NODE_SAMPLE_LOG" 2>/dev/null || true
             sleep 3
           done ) &
