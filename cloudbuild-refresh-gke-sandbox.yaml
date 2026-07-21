@@ -63,6 +63,33 @@ substitutions:
   _KEEP_CLUSTER_ON_FAILURE: "0"   # "1" = skip teardown trap on a FAILED measure step (hb#311)
 
 steps:
+  # PRE-FIRE FUNCTIONAL PROBE (follow-up to a#5293's second task): a policy
+  # READ (`gcloud projects get-iam-policy` / the settle-verify added in
+  # a#5293) can show `roles/logging.logWriter` bound to this trigger's SA and
+  # still be wrong — a#5293's incident found a build (`3cfd8655`) that
+  # succeeded with ZERO step logs because the grant hadn't finished
+  # PROPAGATING through IAM's enforcement layer yet, even though a live
+  # policy read already showed it bound (the same shape recurred as
+  # `68d8c424` days later on the same SA, per a4s2 in-flight notes). A policy
+  # read only proves the binding EXISTS, not that it has taken effect. This
+  # step instead performs the actual FUNCTIONAL operation the whole build
+  # depends on — write one real log entry via `gcloud logging write` — so a
+  # propagation lag fails HERE, in seconds, before the ~25min ephemeral
+  # gVisor cluster spend (create + gVisor pool + burst measure + teardown)
+  # below, instead of silently producing a zero-log-lines build.
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    id: preflight-logwriter-probe
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        echo "==> pre-fire functional probe: writing a real log entry to confirm logWriter has actually propagated (not just a policy read)"
+        gcloud logging write hb-refresh-preflight-probe \
+          "hb-refresh-gke-sandbox pre-fire logWriter probe $(date -u +%FT%TZ)" \
+          --severity=INFO --project=$PROJECT_ID
+        echo "==> probe succeeded — logWriter is live; proceeding to the ~25min cluster spend"
+
   # Single orchestration step: create -> install -> measure -> render -> public-safety,
   # with an EXIT trap that tears the cluster down no matter how the step ends.
   # Everything through public-safety lives here so a failure anywhere still hits the
