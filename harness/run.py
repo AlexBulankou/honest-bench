@@ -941,9 +941,9 @@ def carry_prior_cluster_triples(raw: list, prior_scenarios) -> None:
     producer call as the per-cluster triple (_derive_cold_floor_zero /
     _derive_literal_floor_zero_5s emit them together as one dict) and must ride
     along the same way — a carry that drops them re-introduces exactly the
-    silent-decay bug this function exists to prevent (#4183: a cell-downgrade
-    fire on a fully-clean measurement run, traced to this allowlist predating
-    both the hb#174 per-bar split and the hb#230 floor-zero/per-node keys).
+    silent-decay bug this function exists to prevent (a cell-downgrade fire on
+    a fully-clean measurement run, traced to this allowlist predating both the
+    hb#174 per-bar split and the hb#230 floor-zero/per-node keys).
     All of the above are passengers, not members: the fresh-wins check and the
     eligibility guard key on the triple keys only, so a prior cell carrying a
     stamp but no rate (a producer inconsistency) still carries nothing.
