@@ -417,7 +417,19 @@ steps:
         with open("sandbox/results/latest.json") as fh:
             results = json.load(fh)
 
-        caveat = _render._north_star_delta_caveat(results)
+        # Mirror generate.py's own kata_results load (generate.py:190-194) so this
+        # step evaluates the SAME two-arg call the in-page render does. A one-arg
+        # call would silently drop the Kata rows from _north_star_rows and miss a
+        # Kata-only p95 swing or verdict flip — exactly the drift this step exists
+        # to prevent. Graceful-degrade to None when the Kata companion is absent,
+        # same as generate.py.
+        kata_results = None
+        kata_path = "sandbox-kata/results/latest.json"
+        if os.path.exists(kata_path):
+            with open(kata_path) as fh:
+                kata_results = json.load(fh)
+
+        caveat = _render._north_star_delta_caveat(results, kata_results)
         if not caveat:
             print("No refresh-delta flag triggered — nothing to notify.")
             raise SystemExit(0)
@@ -429,8 +441,15 @@ steps:
         req = urllib.request.Request(
             webhook, data=body, headers={"Content-Type": "application/json"}
         )
-        urllib.request.urlopen(req, timeout=15)
-        print("Posted refresh-delta tripwire to #s-dev.")
+        # Best-effort: a webhook 4xx/5xx/timeout must never fail this step, since
+        # open-pr already published the real work by the time this runs — mirrors
+        # the creds-refresh doctrine ("both notify steps are best-effort — failure
+        # of either never breaks the actual cred refresh").
+        try:
+            urllib.request.urlopen(req, timeout=15)
+            print("Posted refresh-delta tripwire to #s-dev.")
+        except Exception as exc:
+            print("WARNING: refresh-delta chat post failed (non-fatal): %s" % exc)
         PYEOF
 
 availableSecrets:
