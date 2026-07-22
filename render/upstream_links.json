@@ -1,6 +1,6 @@
 {
   "_meta": {
-    "seeded_from": "UPSTREAM_BLOCKERS.md rev 5",
+    "seeded_from": "UPSTREAM_BLOCKERS.md rev 6",
     "last_verified": "2026-07-22",
     "freshness": "Rides every UPSTREAM_BLOCKERS.md refresh PR; link states hand-verified at each refresh."
   },
@@ -32,7 +32,8 @@
           "number": 751,
           "kind": "issue",
           "role": "blocks",
-          "status": "open"
+          "status": "closed",
+          "note": "auto-closed 2026-07-22T17:43:51Z (state_reason=completed, by kubernetes-prow[bot]) via #761's 'Fixes #751' — 1s after the merge. The upstream tracking issue closing does NOT graduate any honest-bench cell: the webhook is still undeployed + the PHASE-B scrape unwired, so no true_ttfe writer exists here (adoption gap remains open, a#5396)."
         },
         {
           "repo": "kubernetes-sigs/agent-sandbox",
