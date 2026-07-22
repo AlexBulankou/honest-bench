@@ -272,6 +272,7 @@ headline section produces exactly this shape; the sweep record is the nested
 ```json
 {
   "params": {"cluster_nodes": 40},
+  "true_ttfe_webhook_stamped_claims": 200,
   "pareto": [
     {"offered_rate_per_s": 10,  "ready_per_s": 9.8,  "ttfe_p95_ms": 850.0},
     {"offered_rate_per_s": 30,  "ready_per_s": 28.4, "ttfe_p95_ms": 3200.0},
@@ -279,6 +280,15 @@ headline section produces exactly this shape; the sweep record is the nested
   ]
 }
 ```
+
+The top-level `pareto`'s `ttfe_p95_ms` is the **true-TTFE basis** — an
+ms-precision `t0` taken from the `agents.x-k8s.io/webhook-first-observed-at`
+annotation the asbx#761 mutating webhook stamps on each SandboxClaim CREATE
+(deploy recipe: `recipe/deploy-ttfe-webhook.sh` + `recipe/ttfe-webhook/SOURCE.md`).
+Without the webhook, `t0` falls back to the second-truncated `creationTimestamp`,
+which is a literal **upper bound** — see the literal-basis legs below. The
+`true_ttfe_webhook_stamped_claims` field is the load-bearing corroboration for
+that basis and is described next.
 
 As with the concurrent-N driver, the caller exports `KUBECONFIG` first and the
 sweep writes a timestamped record file, **not** `sandbox/results/latest.json` —
@@ -325,6 +335,35 @@ within the bar** and merges the coupled triple —
 A previously-published triple is carried forward across later env-less runs
 (same do-not-auto-decay posture as the scale-proof block), so one reviewed
 sweep fire per mode keeps the cell filled until a fresh fire supersedes it.
+
+### The true-TTFE basis read-back guard (hb#5396)
+
+The true-TTFE `pareto` above is only honest if the webhook was actually live in
+the fired window. The harness enforces this with a **fail-closed read-back
+guard**, so a stale scrape or a partial deploy can never silently publish a
+literal upper bound dressed as the true ms-precision basis:
+
+- **The producer stamps a count.** The step-up sweep record MUST carry a
+  top-level `true_ttfe_webhook_stamped_claims` — the number of claims in the
+  fired window carrying the webhook annotation, read straight off the headline
+  metric `agent_sandbox_claim_startup_latency_ms`'s `_count` (that histogram is
+  `.Observe()`d only for annotation-bearing claims, so its count *is* the
+  webhook-stamped population).
+- **The guard requires corroboration.** The true-TTFE basis is trusted only
+  when that count is a finite, non-bool integer `>= 1`. A populated true-TTFE
+  `pareto` with the count **absent or `< 1`** is treated as a stale-scrape /
+  partial-deploy artifact: the true-TTFE basis is **discarded** and the harness
+  falls through to the literal bases (`literal_ttfe_upper_bound+*`).
+- **Why (encode-then-merge / transition-guard doctrine).** The stamp and the
+  pareto it corroborates are written by the same fire; publishing the pareto
+  without the corroborating count is exactly the silent trust-downgrade the
+  guard exists to refuse — it fails loud (drops to the honest literal upper
+  bound) rather than rendering an unverified number as fresh.
+
+Concretely: when box-3's CL2 sweep fires against the webhook-deployed cluster,
+its record carries both the true-TTFE `pareto` **and**
+`true_ttfe_webhook_stamped_claims` (the `_count` at scrape time). Omit the
+count and the whole true-TTFE cell honestly reverts to the literal bases.
 
 ## Refreshing published cells: the canonical per-product command
 
