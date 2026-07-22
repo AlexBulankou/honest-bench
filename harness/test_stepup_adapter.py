@@ -221,6 +221,22 @@ def test_flatten_non_dict_controller_startup_omitted():
     _check("controller_startup" not in flat, "non-dict controller_startup omitted from flat record")
 
 
+# ----------------------------- true-TTFE webhook read-back count (hb#5396)
+
+def test_flatten_lifts_webhook_stamped_claims_count():
+    rec = _nested()
+    rec["true_ttfe_webhook_stamped_claims"] = 7
+    flat = a.stepup_nested_to_flat(rec)
+    _check(flat["true_ttfe_webhook_stamped_claims"] == 7,
+           "webhook-stamped-claims read-back count carried verbatim to flat")
+
+
+def test_flatten_webhook_stamped_claims_absent_when_unstamped():
+    flat = a.stepup_nested_to_flat(_nested())
+    _check("true_ttfe_webhook_stamped_claims" not in flat,
+           "unstamped record -> key absent (slo_rate then fails closed)")
+
+
 # ----------------------------------- literal-TTFE UPPER-BOUND leg (hb#174)
 
 def _nested_literal(over=None):

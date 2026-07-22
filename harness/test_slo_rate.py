@@ -106,7 +106,8 @@ class TestSloClusterRate:
 
 class TestSloSlaMetricsFromStepup:
     def test_both_bars_land_with_node_count(self):
-        flat = {"pareto_points": SWEEP, "node_count": 40}
+        flat = {"pareto_points": SWEEP, "node_count": 40,
+                "true_ttfe_webhook_stamped_claims": 1}
         out = slo_sla_metrics_from_stepup(flat)
         assert out == {
             "thpt_under_5s_per_cluster": 28.4,
@@ -118,7 +119,10 @@ class TestSloSlaMetricsFromStepup:
     def test_partial_fill_one_bar_only(self):
         # Lowest rung clears 5s but not 1s: 5s half fills, 1s half stays pending.
         pts = [_rung(30, 28.4, 3200.0), _rung(100, 41.0, 12610.3)]
-        out = slo_sla_metrics_from_stepup({"pareto_points": pts, "node_count": 40})
+        out = slo_sla_metrics_from_stepup(
+            {"pareto_points": pts, "node_count": 40,
+             "true_ttfe_webhook_stamped_claims": 1}
+        )
         assert out == {
             "thpt_under_5s_per_cluster": 28.4,
             "thpt_cluster_node_count": 40,
@@ -138,7 +142,10 @@ class TestSloSlaMetricsFromStepup:
         assert slo_sla_metrics_from_stepup({"pareto_points": SWEEP, "node_count": 40.5}) == {}
 
     def test_integral_float_node_count_coerced_to_int(self):
-        out = slo_sla_metrics_from_stepup({"pareto_points": SWEEP, "node_count": 40.0})
+        out = slo_sla_metrics_from_stepup(
+            {"pareto_points": SWEEP, "node_count": 40.0,
+             "true_ttfe_webhook_stamped_claims": 1}
+        )
         assert out["thpt_cluster_node_count"] == 40
         assert isinstance(out["thpt_cluster_node_count"], int)
 
@@ -148,7 +155,10 @@ class TestSloSlaMetricsFromStepup:
 
     def test_rounding_matches_throughput_per_cluster_convention(self):
         pts = [_rung(10, 9.87654, 850.0)]
-        out = slo_sla_metrics_from_stepup({"pareto_points": pts, "node_count": 40})
+        out = slo_sla_metrics_from_stepup(
+            {"pareto_points": pts, "node_count": 40,
+             "true_ttfe_webhook_stamped_claims": 1}
+        )
         assert out["thpt_under_5s_per_cluster"] == 9.877
 
     def test_output_passes_scenario_sla_coercion(self):
@@ -156,7 +166,10 @@ class TestSloSlaMetricsFromStepup:
         # including the hb#174 thpt_slo_basis stamp via its enum-gated carve-out.
         from harness.results_schema import _coerce_sla_metrics
 
-        out = slo_sla_metrics_from_stepup({"pareto_points": SWEEP, "node_count": 40})
+        out = slo_sla_metrics_from_stepup(
+            {"pareto_points": SWEEP, "node_count": 40,
+             "true_ttfe_webhook_stamped_claims": 1}
+        )
         assert "thpt_slo_basis" in out
         assert _coerce_sla_metrics(out) == out
 
@@ -182,6 +195,7 @@ class TestSloBasisSelection:
         flat = {
             "pareto_points": SWEEP,
             "node_count": 40,
+            "true_ttfe_webhook_stamped_claims": 1,
             "literal_ttfe": {
                 "upper_bound": True,
                 "pareto_points": [_lit_rung(10, 900.0, ctrl=99.0, acq=99.0)],
@@ -190,6 +204,34 @@ class TestSloBasisSelection:
         out = slo_sla_metrics_from_stepup(flat)
         assert out["thpt_slo_basis"] == SLO_BASIS_TRUE_TTFE
         assert out["thpt_under_5s_per_cluster"] == 28.4
+
+    def test_true_ttfe_refused_without_webhook_corroboration(self):
+        # hb#5396 read-back guard: a true-TTFE pareto that DERIVES bars but carries no
+        # webhook-stamped-claim read-back is fail-closed discarded. With a literal leg
+        # present, the basis falls through to it; with none, the whole triple is empty.
+        deriving = {"pareto_points": SWEEP, "node_count": 40}
+        # absent count -> refused, no literal -> nothing
+        assert slo_sla_metrics_from_stepup(deriving) == {}
+        # count == 0 -> still refused (guard requires >= 1)
+        assert slo_sla_metrics_from_stepup(
+            {**deriving, "true_ttfe_webhook_stamped_claims": 0}
+        ) == {}
+        # absent count + a live literal leg -> falls THROUGH to the literal basis
+        with_literal = {
+            "pareto_points": SWEEP,
+            "node_count": 2,
+            "literal_ttfe": {
+                "upper_bound": True,
+                "pareto_points": [_lit_rung(10, 850.0, ctrl=9.4, acq=9.9)],
+            },
+        }
+        out = slo_sla_metrics_from_stepup(with_literal)
+        assert out["thpt_slo_basis"] == SLO_BASIS_LITERAL_ACQ
+        # and stamping it >= 1 restores the true-TTFE basis
+        out2 = slo_sla_metrics_from_stepup(
+            {**with_literal, "true_ttfe_webhook_stamped_claims": 3}
+        )
+        assert out2["thpt_slo_basis"] == SLO_BASIS_TRUE_TTFE
 
     def test_literal_5s_fallback_when_true_ttfe_dead(self):
         # The #3975 dead-family shape: true-TTFE points carry no ready_per_s.
@@ -373,7 +415,10 @@ class TestSloBasisSelection:
         )
 
     def test_true_ttfe_triple_never_carries_n_exec_ok(self):
-        out = slo_sla_metrics_from_stepup({"pareto_points": SWEEP, "node_count": 40})
+        out = slo_sla_metrics_from_stepup(
+            {"pareto_points": SWEEP, "node_count": 40,
+             "true_ttfe_webhook_stamped_claims": 1}
+        )
         assert out["thpt_slo_basis"] == SLO_BASIS_TRUE_TTFE
         assert "thpt_slo_n_exec_ok" not in out
 
@@ -531,6 +576,7 @@ class TestLiteralFloorZero:
         flat = self._flat([_fz_rung(0.5)])
         flat["pareto_points"] = SWEEP
         flat["node_count"] = 40
+        flat["true_ttfe_webhook_stamped_claims"] = 1
         out = slo_sla_metrics_from_stepup(flat)
         assert out["thpt_slo_basis"] == SLO_BASIS_TRUE_TTFE
         assert out["thpt_under_5s_per_cluster"] == 28.4
