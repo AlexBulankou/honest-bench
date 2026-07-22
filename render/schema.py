@@ -199,6 +199,13 @@ PROVENANCE_FIELDS = {
     # predicate); a footprint is a count, never a flag.
     "sandbox_cpu_request_m": lambda v: isinstance(v, int) and not isinstance(v, bool) and v >= 0,
     "sandbox_mem_request_mib": lambda v: isinstance(v, int) and not isinstance(v, bool) and v >= 0,
+    # Prior-run North Star TTFE p95 (hb#5414 refresh-delta tripwire, mirrors
+    # prior_machine_type's pattern): stamped by build_provenance whenever a
+    # prior published value exists (unlike prior_machine_type, unconditionally
+    # — the metric is expected to vary every run) — drives the >2x-delta and
+    # verdict-flip caveats in render_north_star_caption. A positive float/int,
+    # bool excluded (bool is an int subclass).
+    "prior_warmpool_ttfe_p95_ms": lambda v: isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0,
 }
 
 # scenario internal-name -> public display label. A scenario whose name is not in this
