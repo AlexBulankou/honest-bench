@@ -1590,6 +1590,30 @@ def _north_star_delta_caveat(results, kata_results=None):
     )
 
 
+# One-time, hand-written historical footnote (hb#352) — NOT a computed caveat like
+# _machine_class_caveat/_north_star_delta_caveat above, because the fact it documents predates
+# both provenance fields those read: the page's very first published warmpool_cold_start numbers
+# (bind_p95 678ms / ttfe_p95 922ms, dated 2026-07-04) were measured on a long-lived, pre-warmed
+# internal GKE cluster — NOT by this repo's own CI. The `hb-refresh-gke-sandbox` Cloud Build
+# trigger's first-ever automated fire was 2026-07-20, and by design (see the cloudbuild config's
+# "Honest by construction" note) every fire since provisions a brand-new, single-node ephemeral
+# cluster with an empty containerd cache — a genuine cold pull. Neither prior_warmpool_ttfe_p95_ms
+# nor prior_machine_type existed before that first automated fire, so neither delta-tripwire can
+# see across this boundary; a reader diffing today's ~3s cold numbers against an earlier ~700-900ms
+# citation of this page is comparing two different measurement regimes, not seeing a regression.
+# Static and permanent: this is a fact about the page's history, not a live signal that clears on
+# its own — unlike the two caveats above, there is nothing to re-check on a future run.
+_REGIME_BOUNDARY_NOTE = (
+    "> ℹ️ **Regime note:** every automated refresh since **2026-07-20** measures a brand-new, "
+    "single-node ephemeral CI cluster with an empty containerd cache per run — a deliberately "
+    "cold pull (see \"Reproduce it\" below). Numbers published **before 2026-07-20** (e.g. the "
+    "2026-07-04 baseline) were instead measured on a long-lived, pre-warmed internal cluster, not "
+    "by this repo's own CI. If you're comparing today's cold-start figures against an older "
+    "citation of this page and see a large jump, that's this regime switch — not a code or "
+    "controller regression."
+)
+
+
 def render_north_star_caption(results, kata_results=None):
     """One-line measured-verdict captions for the <1s North Star + 0.5s stretch bar.
 
@@ -1638,6 +1662,7 @@ def render_north_star_caption(results, kata_results=None):
         out += "\n\n" + caveat
     if delta_caveat:
         out += "\n\n" + delta_caveat
+    out += "\n\n" + _REGIME_BOUNDARY_NOTE
     return out
 
 
