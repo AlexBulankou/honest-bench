@@ -280,6 +280,15 @@ steps:
         echo "==> installing OSS controller from upstream main"
         bash recipe/install-controller-from-main.sh
 
+        # hb#5396: deploy the upstream TTFE-true mutating webhook (asbx#761) so
+        # SandboxClaim CREATE is stamped with agents.x-k8s.io/webhook-first-observed-at,
+        # giving the harness a ms-precision t0 for ClaimStartupLatency (the true_ttfe
+        # basis). Runs AFTER the controller install (registers the SandboxClaim CRD +
+        # the agent-sandbox-system namespace the webhook needs) and BEFORE harness.run
+        # (the claims it measures must already be webhook-stamped).
+        echo "==> deploying TTFE-true webhook (asbx#761, hb#5396)"
+        bash recipe/deploy-ttfe-webhook.sh
+
         echo "==> running sandbox harness (gke-sandbox / gVisor)"
         python3 -m harness.run --product sandbox
 

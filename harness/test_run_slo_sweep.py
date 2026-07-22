@@ -53,6 +53,9 @@ def _check(cond, msg):
 # reads): the 5s bar lands at ready 28.4, the 1s bar at 9.8, top rung overloads.
 _NESTED = {
     "params": {"cluster_nodes": 40},
+    # hb#5396: the webhook read-back count corroborating the true-TTFE pareto below;
+    # slo_rate's fail-closed guard requires it >= 1 before crediting the true_ttfe basis.
+    "true_ttfe_webhook_stamped_claims": 40,
     "pareto": [
         {"offered_rate_per_s": 10, "ready_per_s": 9.8, "ttfe_p95_ms": 850.0},
         {"offered_rate_per_s": 30, "ready_per_s": 28.4, "ttfe_p95_ms": 3200.0},
@@ -182,6 +185,7 @@ def test_sweep_overwrites_direct_emit_triple():
 def test_partial_fill_merges_landed_bar_only():
     # Lowest rung clears 5s but not 1s: 5s half + node_count merge, no 1s key.
     rec = {"params": {"cluster_nodes": 40},
+           "true_ttfe_webhook_stamped_claims": 40,
            "pareto": [{"offered_rate_per_s": 30, "ready_per_s": 28.4,
                        "ttfe_p95_ms": 3200.0}]}
     raw = [_cell()]
@@ -222,6 +226,8 @@ def test_env_var_naming():
 def _stamped(runtime, *, field="runtime_class"):
     """A copy of _NESTED with a runtime stamp in params under `field` (hb#169)."""
     return {"params": {"cluster_nodes": 40, field: runtime},
+            "true_ttfe_webhook_stamped_claims":
+                _NESTED["true_ttfe_webhook_stamped_claims"],
             "pareto": [dict(p) for p in _NESTED["pareto"]]}
 
 

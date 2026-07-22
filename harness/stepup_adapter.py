@@ -73,6 +73,16 @@ def stepup_nested_to_flat(rec):
     if measured_at:
         flat["measured_at"] = measured_at
 
+    # Lift the hb#5396 true-TTFE webhook read-back corroboration count. The producer
+    # stamps `true_ttfe_webhook_stamped_claims` (count of claims in the fired window
+    # carrying the asbx#761 webhook annotation) alongside the true-TTFE `pareto` in
+    # PHASE B; slo_rate's read-back guard requires it >= 1 before crediting the
+    # true-TTFE basis. Carried verbatim when present; absent => slo_rate fails closed.
+    if "true_ttfe_webhook_stamped_claims" in rec:
+        flat["true_ttfe_webhook_stamped_claims"] = rec.get(
+            "true_ttfe_webhook_stamped_claims"
+        )
+
     # Lift the controller-startup LOWER-BOUND proxy block (#3975). The producer keeps it nested
     # alongside an EMPTY true-TTFE `pareto` while the true-TTFE gap is open; this is the bridge to
     # the flat shape `_coerce_controller_startup` reads. Pure relabel, same honesty spine as the

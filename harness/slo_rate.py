@@ -81,6 +81,14 @@ from .metrics import THRESHOLD_1S_MS, THRESHOLD_5S_MS
 # Never mixed: one basis per triple. The literal basis fills ONLY when the true-TTFE
 # pareto derives nothing for either bar (the #3975 dead-family gap).
 SLO_BASIS_TRUE_TTFE = "true_ttfe"
+# hb#5396 read-back guard: the true-TTFE histogram (agent_sandbox_claim_startup_latency_ms)
+# is `.Observe()`d by the controller ONLY on claims the mutating webhook (asbx#761) stamped
+# with this annotation. A populated true-TTFE pareto WITHOUT a corroborating count of
+# webhook-stamped claims is a stale-scrape / partial-deploy / upstream-metric-reuse artifact,
+# NOT a trustworthy ms-precision t0 — so the basis fails closed and falls through to the
+# literal bases. The producer stamps `true_ttfe_webhook_stamped_claims` (count of claims
+# carrying the annotation in the fired window) in PHASE B; the guard requires it >= 1.
+TRUE_TTFE_WEBHOOK_ANNOTATION = "agents.x-k8s.io/webhook-first-observed-at"
 SLO_BASIS_LITERAL_CONTROLLER = "literal_ttfe_upper_bound+controller_completed"
 SLO_BASIS_LITERAL_ACQ = "literal_ttfe_upper_bound+acq_fulfilled"
 # hb#214 part 1: the pre-declared floor-rate honest-ZERO basis. Produced only by
@@ -309,6 +317,19 @@ def _valid_count(v) -> Optional[int]:
         return None
     n = int(fv)
     return n if n >= 0 else None
+
+
+def _true_ttfe_webhook_corroborated(flat) -> bool:
+    """hb#5396: True iff the fired window carries >= 1 webhook-stamped claim.
+
+    The true-TTFE histogram is populated only for claims the asbx#761 mutating webhook
+    stamped with TRUE_TTFE_WEBHOOK_ANNOTATION, so a producer-stamped read-back count of
+    such claims is the corroboration that the true-TTFE pareto reflects a live-deployed
+    webhook and not a stale/partial-deploy artifact. Fail-closed: absent or < 1 => not
+    corroborated => the true-TTFE basis is discarded and the literal bases are consulted.
+    """
+    n = _valid_count(flat.get("true_ttfe_webhook_stamped_claims"))
+    return n is not None and n >= 1
 
 
 def _derive_literal_floor_zero_5s(pareto_points) -> dict:
@@ -622,6 +643,12 @@ def slo_sla_metrics_from_stepup(flat) -> dict:
 
     out = _derive_bars(flat.get("pareto_points"), "ttfe_p95_ms", "ready_per_s")
     basis = SLO_BASIS_TRUE_TTFE
+    if out and not _true_ttfe_webhook_corroborated(flat):
+        # hb#5396 read-back guard: true-TTFE bars derived, but no webhook-stamped-claim
+        # read-back corroborates them -> refuse (fail-closed) and fall through to the
+        # literal bases. A populated histogram without corroboration is a stale-scrape /
+        # partial-deploy artifact, not a trustworthy ms-precision t0.
+        out = {}
     if not out:
         lt = flat.get("literal_ttfe")
         if isinstance(lt, dict) and lt.get("upper_bound") is True:
