@@ -33,7 +33,7 @@
           "kind": "issue",
           "role": "blocks",
           "status": "closed",
-          "note": "auto-closed 2026-07-22T17:43:51Z (state_reason=completed, by kubernetes-prow[bot]) via #761's 'Fixes #751' — 1s after the merge. The upstream tracking issue closing does NOT graduate any honest-bench cell: the webhook is still undeployed + the PHASE-B scrape unwired, so no true_ttfe writer exists here (adoption gap remains open, a#5396)."
+          "note": "auto-closed 2026-07-22T17:43:51Z (state_reason=completed, by kubernetes-prow[bot]) via #761's 'Fixes #751' — 1s after the merge. The upstream tracking issue closing does NOT graduate any honest-bench cell: the webhook is still undeployed + the PHASE-B scrape unwired, so no true_ttfe writer exists here (adoption gap remains open)."
         },
         {
           "repo": "kubernetes-sigs/agent-sandbox",
@@ -41,7 +41,7 @@
           "kind": "pr",
           "role": "fix-in-flight",
           "status": "merged",
-          "note": "merged 2026-07-22T17:43:50Z; necessary-but-not-sufficient — webhook not yet deployed + PHASE-B scrape unwired, so no true_ttfe writer exists here yet (adoption tracked a#5396)"
+          "note": "merged 2026-07-22T17:43:50Z; necessary-but-not-sufficient — webhook not yet deployed + PHASE-B scrape unwired, so no true_ttfe writer exists here yet (adoption not yet complete)"
         }
       ]
     },
