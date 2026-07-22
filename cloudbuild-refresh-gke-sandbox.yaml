@@ -353,16 +353,85 @@ steps:
         # newline handling in the shell.
         BODY="Automated gke-sandbox (gVisor) benchmark refresh from a manual Cloud Build dispatch. substrate: gke-sandbox (fresh ephemeral node pool with --sandbox type=gvisor); burst fired under runtimeClassName=gvisor (burst-create read-back guard confirmed every backing pod landed on the gvisor RuntimeClass); results regenerated from sandbox/results/latest.json; public-safety scanner passed (fail-closed gate before this PR opened). Review the headline change before merge."
         api="https://api.github.com/repos/AlexBulankou/honest-bench/pulls"
-        open_count=$(curl -sS -H "Authorization: Bearer $${GITHUB_TOKEN}" \
-          "$api?head=AlexBulankou:$$BRANCH&state=open" \
-          | python3 -c 'import sys,json; print(len(json.load(sys.stdin)))')
-        if [ "$open_count" != "0" ]; then
+        existing=$(curl -sS -H "Authorization: Bearer $${GITHUB_TOKEN}" \
+          "$api?head=AlexBulankou:$$BRANCH&state=open")
+        # Capture the PR's html_url either way (existing or freshly-opened) so the
+        # sdev-delta-notify step below can link it — written unconditionally on both branches.
+        existing_url=$(echo "$existing" | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d[0]["html_url"] if d else "")')
+        if [ -n "$existing_url" ]; then
           echo "A PR for $$BRANCH is already open — pushed the update to it."
+          echo "$existing_url" > /workspace/pr_url.txt
           exit 0
         fi
         payload=$(python3 -c 'import json,sys; print(json.dumps({"title":"data: auto-refresh gke-sandbox (gVisor) benchmark headline","head":sys.argv[1],"base":"main","body":sys.argv[2]}))' "$$BRANCH" "$$BODY")
-        curl -sS -X POST -H "Authorization: Bearer $${GITHUB_TOKEN}" \
-          -H "Accept: application/vnd.github+json" "$api" -d "$payload"
+        pr_response=$(curl -sS -X POST -H "Authorization: Bearer $${GITHUB_TOKEN}" \
+          -H "Accept: application/vnd.github+json" "$api" -d "$payload")
+        echo "$pr_response"
+        echo "$pr_response" | python3 -c 'import sys,json; print(json.load(sys.stdin)["html_url"])' > /workspace/pr_url.txt
+
+  # hb#346 added the in-page "Refresh delta" caveat (_north_star_delta_caveat in
+  # render/render.py) but that's passive — someone has to open the README to see it.
+  # This step pushes the SAME flag proactively to a Google Chat room at publish time,
+  # so a >=NORTH_STAR_DELTA_FACTOR swing or a pass/fail verdict flip is surfaced the
+  # moment it's measured, not discovered days later by whoever next happens to open
+  # the rendered page.
+  #
+  # Runs only if open-pr actually opened/updated a PR this fire (pr_url.txt present —
+  # absent on the "no diff to publish" no-op). Reuses _north_star_delta_caveat directly
+  # (imported, not reimplemented) so the proactive post can never drift from the
+  # in-page annotation's threshold logic. No-op (exit 0, no post) when the caveat is
+  # empty — most refreshes don't cross the flag threshold.
+  - name: python:3.12-slim
+    id: sdev-delta-notify
+    waitFor: ['open-pr']
+    entrypoint: bash
+    secretEnv: ['HB_SDEV_WEBHOOK']
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        if [ ! -f /workspace/pr_url.txt ]; then
+          echo "No PR opened this run — nothing to notify."
+          exit 0
+        fi
+        PR_URL=$$(cat /workspace/pr_url.txt)
+        cd /workspace
+        PR_URL="$$PR_URL" python3 <<'PYEOF'
+        import importlib.util
+        import json
+        import os
+        import sys
+        import urllib.request
+
+        # render.py is loaded by explicit file path (same technique render/generate.py
+        # uses) because it does a flat `from schema import ...` that only resolves with
+        # render/ itself on sys.path — a dotted `from render.render import ...` would hit
+        # the render/-directory-shadows-render.py namespace-package trap documented in
+        # generate.py's own import note. The sys.path insert below is what makes that
+        # flat `from schema import ...` resolve during exec_module, mirroring generate.py.
+        sys.path.insert(0, "/workspace/render")
+        _spec = importlib.util.spec_from_file_location("_bench_render", "/workspace/render/render.py")
+        _render = importlib.util.module_from_spec(_spec)
+        _spec.loader.exec_module(_render)
+
+        with open("sandbox/results/latest.json") as fh:
+            results = json.load(fh)
+
+        caveat = _render._north_star_delta_caveat(results)
+        if not caveat:
+            print("No refresh-delta flag triggered — nothing to notify.")
+            raise SystemExit(0)
+
+        pr_url = os.environ["PR_URL"]
+        webhook = os.environ["HB_SDEV_WEBHOOK"]
+        text = caveat + "\n\nResults PR: " + pr_url
+        body = json.dumps({"text": text}).encode()
+        req = urllib.request.Request(
+            webhook, data=body, headers={"Content-Type": "application/json"}
+        )
+        urllib.request.urlopen(req, timeout=15)
+        print("Posted refresh-delta tripwire to #s-dev.")
+        PYEOF
 
 availableSecrets:
   secretManager:
@@ -373,6 +442,12 @@ availableSecrets:
     # needs no secret (read-only offline run).
     - versionName: projects/$PROJECT_ID/secrets/hb-refresh-github-token/versions/latest
       env: GITHUB_TOKEN
+    # Incoming Google Chat webhook the sdev-delta-notify step posts to (see the PR
+    # description for provisioning detail). Consumed only via secretEnv in
+    # sdev-delta-notify above, never a build substitution, so it never echoes into
+    # build logs.
+    - versionName: projects/$PROJECT_ID/secrets/hb-sdev-webhook/versions/latest
+      env: HB_SDEV_WEBHOOK
 
 options:
   logging: CLOUD_LOGGING_ONLY
