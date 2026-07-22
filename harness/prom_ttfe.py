@@ -555,3 +555,107 @@ def controller_startup_by_launch_type_delta(
     metric. Honesty spine identical to the headline delta path.
     """
     return _assemble_by_launch_type_delta(start_text, end_text, PROXY_METRIC, _PROXY_PCTILES)
+
+
+# --------------------------------------------------------------------------------------------
+# webhook-stamped claim count (hb#5396 box-3 PHASE-B producer stamp)
+# --------------------------------------------------------------------------------------------
+#
+# The true-TTFE basis (slo_rate.SLO_BASIS_TRUE_TTFE) is trusted only when the fired sweep
+# record carries ``true_ttfe_webhook_stamped_claims`` >= 1 (slo_rate._true_ttfe_webhook_
+# corroborated). That stamp is the number of claims whose t0 came from the asbx#761 webhook
+# annotation ``agents.x-k8s.io/webhook-first-observed-at`` -- and because HEADLINE_METRIC is
+# ``.Observe()``d ONCE per annotation-bearing claim, the webhook-stamped population IS the
+# HEADLINE_METRIC observation count. So the producer reads the stamp straight off the same
+# scrape it derives the pareto ttfe_p95_ms from -- one parser, one scrape, convergent by
+# construction (the same reason the percentile path reimplements histogram_quantile byte-for-
+# byte). These functions are the count half of that: PURE, offline, no scrape/cluster/clock,
+# dead-by-construction until the webhook is live (returns None when the metric is absent),
+# auto-populating once it is.
+
+
+def _sum_total_observations(hists: list[Histogram]) -> Optional[float]:
+    """Sum ``_total_observations`` across a list of histogram series, or None if none measured.
+
+    Returns None (measured=False -- the INFRA-vs-test split) when the list is empty or every
+    series is malformed (no +Inf and no _count), rather than a fabricated 0. A genuine 0
+    total (a series present but with zero observations) contributes 0 and is honest -- distinct
+    from "the metric was not there at all".
+    """
+    total = 0.0
+    seen = False
+    for h in hists:
+        t = _total_observations(h)
+        if t is None:
+            continue
+        total += t
+        seen = True
+    return total if seen else None
+
+
+def webhook_stamped_claim_count(
+    text: str, metric_name: str = HEADLINE_METRIC
+) -> Optional[int]:
+    """Count of webhook-stamped claims in a scrape: the summed HEADLINE_METRIC observations.
+
+    The ``true_ttfe_webhook_stamped_claims`` stamp the box-3 producer writes into the sweep
+    record. HEADLINE_METRIC is ``.Observe()``d once per claim bearing the asbx#761 webhook
+    annotation, so the total observation count across all (launch_type, sandbox_template)
+    series IS the webhook-stamped population.
+
+    Honesty spine (mirrors ``ttfe_by_launch_type``):
+      - the metric absent from the scrape (webhook not yet live / not deployed on this
+        cluster) -> None (measured=False); the read-back guard reads absent-or-<1 as "discard
+        true-TTFE, fall to the literal bases" -- exactly the dead-by-construction pre-Friday
+        state;
+      - a genuine 0 (metric present, zero observations) -> 0, an HONEST measured zero (the
+        guard still rejects <1, so a 0-count fire correctly does not license the true-TTFE
+        basis) -- never conflated with the absent case;
+      - the ``_controller_`` sibling (PROXY_METRIC) is excluded by ``parse_metric_histograms``'
+        exact-name match, so a controller-startup series never inflates the headline count.
+    """
+    hists = parse_metric_histograms(text, metric_name)
+    total = _sum_total_observations(hists)
+    if total is None:
+        return None
+    return int(round(total))
+
+
+def webhook_stamped_claim_count_delta(
+    start_text: str, end_text: str, metric_name: str = HEADLINE_METRIC
+) -> Optional[int]:
+    """Webhook-stamped claim count for the FIRED WINDOW: the HEADLINE_METRIC count INCREMENT.
+
+    The per-step / windowed analogue of ``webhook_stamped_claim_count`` -- the stamp for a
+    sweep whose t0/tN bracket a fire, so a claim count accumulated by an earlier warmup never
+    inflates the fired-window population. Collapses the template dimension first (matching the
+    percentile delta path), subtracts ``end - start`` per launch_type via ``histogram_delta``,
+    and sums the per-launch_type increments.
+
+    Honesty spine (identical to ``ttfe_by_launch_type_delta``):
+      - a counter reset for ANY launch_type (``histogram_delta`` -> None, e.g. a controller
+        restart mid-window) makes the windowed count unmeasurable -> None (measured=False),
+        rather than reporting a meaningless cross-reset total;
+      - a launch_type present in ``end`` but absent from ``start`` carries its full end count
+        (all its observations fell in this window);
+      - an empty/absent ``start`` scrape makes every increment equal its end histogram, so the
+        result equals ``webhook_stamped_claim_count(end_text)`` (cumulative == windowed);
+      - the metric absent from ``end`` -> None (measured=False), same as the cumulative path.
+    """
+    start_by_lt = aggregate_by_launch_type(parse_metric_histograms(start_text, metric_name))
+    end_by_lt = aggregate_by_launch_type(parse_metric_histograms(end_text, metric_name))
+    if not end_by_lt:
+        return None  # metric absent from end -> measured=False
+    total = 0.0
+    for lt, end_hist in end_by_lt.items():
+        start_hist = start_by_lt.get(lt)
+        if start_hist is None:
+            delta = end_hist  # new launch_type since start: increment == end (start all-0)
+        else:
+            delta = histogram_delta(start_hist, end_hist)
+            if delta is None:
+                return None  # counter reset -> whole windowed count is measured=False
+        t = _total_observations(delta)
+        if t is not None:
+            total += t
+    return int(round(total))
