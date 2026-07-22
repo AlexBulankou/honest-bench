@@ -226,6 +226,14 @@ PROVENANCE_FIELDS = (
     # to read back historically; non-goal per hb#317.
     "node_image",
     "runsc_version",
+    # Prior-run North Star TTFE p95 (hb#5414 refresh-delta tripwire, mirrors
+    # prior_machine_type's pattern): stamped whenever a prior published value
+    # exists, unlike prior_machine_type's "only if it differs" gating — the
+    # metric is EXPECTED to vary every run, so the renderer needs the prior
+    # value on every run to compute the delta, not just on a change. Numeric
+    # (float), not string, so it needs its own _coerce_provenance branch below
+    # rather than the generic string passthrough.
+    "prior_warmpool_ttfe_p95_ms",
 )
 SCENARIO_FIELDS = (
     "name",
@@ -1499,6 +1507,17 @@ def _coerce_provenance(raw: dict) -> dict:
                     f"provenance.runtime {v!r} not in {MATRIX_RUNTIME_ENUM}"
                 )
             out[f] = v
+        elif f == "prior_warmpool_ttfe_p95_ms":
+            # Numeric (float), not string — the generic string passthrough
+            # below never fires for this field, so it needs its own branch.
+            # Fail-closed-by-drop (not raise): an unreadable/negative prior is
+            # a "no prior available" signal, not a misconfiguration — the
+            # renderer's delta caveat already treats a missing prior as
+            # nothing-to-compare, so silently omitting it here is the correct
+            # degrade, mirroring node_count's isinstance-guard-then-drop shape.
+            if isinstance(v, bool) or not isinstance(v, (int, float)) or v <= 0:
+                continue
+            out[f] = float(v)
         elif isinstance(v, str) and v:
             out[f] = v
     return out

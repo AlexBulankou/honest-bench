@@ -1445,6 +1445,15 @@ def render_matrix(results, kata_results=None):
 NORTH_STAR_TTFE_P95_MS = 1000.0
 STRETCH_TTFE_P95_MS = 500.0
 
+# hb#5414 (Transition guards on trust surfaces, AGENTS.md #4420): a refresh that silently
+# swings the North Star p95 by 2x+, or flips its ✅/❌ verdict against the bar, is exactly
+# the "downgrades trust quietly" shape that doctrine forbids — it must reopen loudly (an
+# in-page caveat) rather than render next to last run's number with no signal tying them
+# together. Flagged in EITHER direction: a suspicious 2x *improvement* is as worth a second
+# look as a regression (machine-class change, broken measurement, or a real fix all look
+# the same as "the number moved a lot").
+NORTH_STAR_DELTA_FACTOR = 2.0
+
 
 def _p95_verdict(p95, bar_ms, p50, n):
     """Signed-margin verdict for a measured p95 against a bar.
@@ -1505,6 +1514,82 @@ def _north_star_rows(results, kata_results=None):
     return rows
 
 
+def _north_star_delta_flag(label, current_p95, prior_p95):
+    """One flagged-runtime line, or None if this runtime has nothing to flag.
+
+    Flags a >=NORTH_STAR_DELTA_FACTOR swing in EITHER direction, or a verdict flip
+    against NORTH_STAR_TTFE_P95_MS (✅↔❌) — either condition alone is enough to flag,
+    matching the "downgrade OR loses information" trigger in the trust-surface doctrine
+    rather than requiring both.
+    """
+    if not isinstance(current_p95, (int, float)) or not isinstance(prior_p95, (int, float)):
+        return None
+    if prior_p95 <= 0 or current_p95 <= 0:
+        return None
+    ratio = current_p95 / prior_p95
+    big_delta = ratio >= NORTH_STAR_DELTA_FACTOR or ratio <= 1.0 / NORTH_STAR_DELTA_FACTOR
+    prior_pass = prior_p95 < NORTH_STAR_TTFE_P95_MS
+    current_pass = current_p95 < NORTH_STAR_TTFE_P95_MS
+    flipped = prior_pass != current_pass
+    if not big_delta and not flipped:
+        return None
+    direction = "regressed" if current_p95 > prior_p95 else "improved"
+    flag = (
+        f"**{label}** {direction} by {_fmt_secs(abs(current_p95 - prior_p95))} "
+        f"({_fmt_secs(prior_p95)} → {_fmt_secs(current_p95)}, {ratio:.1f}x)"
+    )
+    if flipped:
+        flag += " · verdict flip " + ("✅→❌" if prior_pass else "❌→✅")
+    return flag
+
+
+def _north_star_delta_caveat(results, kata_results=None):
+    """Refresh-over-refresh delta/verdict-flip caveat for the North Star cell (hb#5414).
+
+    Reads the `prior_warmpool_ttfe_p95_ms` provenance field (stamped by
+    harness/run.py's build_provenance, carried forward from the previously published
+    run, same mechanism as _machine_class_caveat's prior_machine_type) and compares it
+    to this run's measured p95 per runtime. Pure function of (results, kata_results);
+    returns "" when nothing to flag so callers can unconditionally append it.
+    """
+    rows = _north_star_rows(results, kata_results)
+    label_to_rt = {v: k for k, v in RUNTIME_LABELS.items()}
+
+    prior_by_runtime = {}
+    prov = _clean_provenance(results.get("provenance"))
+    measured_runtime = prov.get("runtime") or "gvisor"
+    prior_p95 = prov.get("prior_warmpool_ttfe_p95_ms")
+    if isinstance(prior_p95, (int, float)):
+        prior_by_runtime[measured_runtime] = prior_p95
+    if isinstance(kata_results, dict):
+        kp = _clean_provenance(kata_results.get("provenance"))
+        if kp.get("runtime") == "kata-microvm":
+            kata_prior = kp.get("prior_warmpool_ttfe_p95_ms")
+            if isinstance(kata_prior, (int, float)):
+                prior_by_runtime["kata-microvm"] = kata_prior
+
+    flags = []
+    for label, p95, _cell, _p50, _n in rows:
+        if p95 is None:
+            continue
+        rt = label_to_rt.get(label)
+        prior = prior_by_runtime.get(rt)
+        if prior is None:
+            continue
+        flag = _north_star_delta_flag(label, p95, prior)
+        if flag:
+            flags.append(flag)
+
+    if not flags:
+        return ""
+    return (
+        "> ⚠️ **Refresh delta:** " + "; ".join(flags) + ". A swing this large, or a bar-crossing "
+        "flip, between consecutive published runs is flagged for a second look before trusting it "
+        "as a substrate signal — check for a machine-class change, a broken measurement, or a real "
+        "regression/fix."
+    )
+
+
 def render_north_star_caption(results, kata_results=None):
     """One-line measured-verdict captions for the <1s North Star + 0.5s stretch bar.
 
@@ -1547,9 +1632,12 @@ def render_north_star_caption(results, kata_results=None):
         f"against it — see [DETAILS.md](DETAILS.md)): {_entries(STRETCH_TTFE_P95_MS)}._"
     )
     caveat = _machine_class_caveat(_clean_provenance(results.get("provenance")))
+    delta_caveat = _north_star_delta_caveat(results, kata_results)
     out = north_star + "\n\n" + stretch
     if caveat:
         out += "\n\n" + caveat
+    if delta_caveat:
+        out += "\n\n" + delta_caveat
     return out
 
 

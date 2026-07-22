@@ -3989,6 +3989,118 @@ def test_north_star_caption_in_full_readme_under_core_matrix():
     assert matrix_at < ns_at < means_at < envelope_at
 
 
+# --- hb#5414: refresh-delta / verdict-flip tripwire on the North Star caption ---
+# Transition guards on trust surfaces (AGENTS.md #4420): a refresh that silently swings
+# the North Star p95 2x+, or flips its ✅/❌ verdict against the <1s bar, must reopen loudly
+# (an in-page caveat) rather than render next to last run's number with no signal tying
+# them together. Mirrors _machine_class_caveat's prior_* carry-forward pattern above.
+
+
+def test_north_star_delta_flag_none_within_threshold_no_flip():
+    # ~1.06x, both sides pass the <1s bar -> nothing to flag.
+    assert render._north_star_delta_flag("gVisor", 900, 950) is None
+
+
+def test_north_star_delta_flag_none_on_non_numeric_or_non_positive():
+    assert render._north_star_delta_flag("gVisor", "900", 950) is None
+    assert render._north_star_delta_flag("gVisor", 900, None) is None
+    assert render._north_star_delta_flag("gVisor", 0, 950) is None
+    assert render._north_star_delta_flag("gVisor", 900, -1) is None
+
+
+def test_north_star_delta_flag_big_regression_with_verdict_flip():
+    # 900ms (pass) -> 1800ms (fail): 2.0x swing AND a ✅→❌ flip.
+    flag = render._north_star_delta_flag("gVisor", 1800, 900)
+    assert flag == "**gVisor** regressed by 0.9s (0.9s → 1.8s, 2.0x) · verdict flip ✅→❌"
+
+
+def test_north_star_delta_flag_big_improvement_no_flip():
+    # 3000ms -> 1200ms: 0.4x swing, but BOTH sides still fail the <1s bar -> no flip suffix.
+    flag = render._north_star_delta_flag("gVisor", 1200, 3000)
+    assert flag == "**gVisor** improved by 1.8s (3s → 1.2s, 0.4x)"
+
+
+def test_north_star_delta_flag_flip_alone_below_delta_threshold():
+    # 900ms (pass) -> 1050ms (fail): only 1.2x, under the 2x factor, but the bar-crossing
+    # flip alone is enough to flag (either condition, not both, per the doctrine).
+    flag = render._north_star_delta_flag("gVisor", 1050, 900)
+    assert flag == "**gVisor** regressed by 0.15s (0.9s → 1.05s, 1.2x) · verdict flip ✅→❌"
+
+
+def test_north_star_delta_caveat_absent_without_prior():
+    out = render.render_north_star_caption(_matrix_results(_full_gvisor_scenarios()))
+    assert "Refresh delta" not in out
+
+
+def test_north_star_delta_caveat_absent_within_threshold():
+    scen = [{
+        "name": "warmpool_cold_start", "outcome": "PASS", "n": 200,
+        "sla_metrics": {"ttfe_p95_ms": 900},
+    }]
+    out = render.render_north_star_caption(_matrix_results(
+        scen, provenance={"runtime": "gvisor", "prior_warmpool_ttfe_p95_ms": 950.0}
+    ))
+    assert "Refresh delta" not in out
+
+
+def test_north_star_delta_caveat_flags_big_regression():
+    scen = [{
+        "name": "warmpool_cold_start", "outcome": "PASS", "n": 200,
+        "sla_metrics": {"ttfe_p95_ms": 1800},
+    }]
+    out = render.render_north_star_caption(_matrix_results(
+        scen, provenance={"runtime": "gvisor", "prior_warmpool_ttfe_p95_ms": 900.0}
+    ))
+    assert (
+        "> ⚠️ **Refresh delta:** **gVisor** regressed by 0.9s (0.9s → 1.8s, 2.0x) "
+        "· verdict flip ✅→❌. A swing this large, or a bar-crossing flip, between "
+        "consecutive published runs is flagged for a second look before trusting it as a "
+        "substrate signal — check for a machine-class change, a broken measurement, or a "
+        "real regression/fix."
+    ) in out
+
+
+def test_north_star_delta_caveat_flags_kata_independently_gvisor_clean():
+    # gVisor has no prior stamped (not flagged); kata's own prior swings 2x -> only kata flags.
+    kata_scen = [{
+        "name": "warmpool_cold_start", "outcome": "PASS", "n": 30,
+        "sla_metrics": {"ttfe_p95_ms": 1800},
+    }]
+    out = render.render_north_star_caption(
+        _matrix_results(_full_gvisor_scenarios(), provenance={"runtime": "gvisor"}),
+        kata_results=_kata_results(
+            scenarios=kata_scen,
+            provenance={"runtime": "kata-microvm", "prior_warmpool_ttfe_p95_ms": 900.0},
+        ),
+    )
+    assert "**Kata + microVM** regressed" in out
+    assert "**gVisor** regressed" not in out and "**gVisor** improved" not in out
+
+
+def test_north_star_delta_caveat_joins_multiple_flags():
+    gv_scen = [{
+        "name": "warmpool_cold_start", "outcome": "PASS", "n": 200,
+        "sla_metrics": {"ttfe_p95_ms": 1800},
+    }]
+    kata_scen = [{
+        "name": "warmpool_cold_start", "outcome": "PASS", "n": 30,
+        "sla_metrics": {"ttfe_p95_ms": 1800},
+    }]
+    out = render.render_north_star_caption(
+        _matrix_results(gv_scen, provenance={
+            "runtime": "gvisor", "prior_warmpool_ttfe_p95_ms": 900.0,
+        }),
+        kata_results=_kata_results(
+            scenarios=kata_scen,
+            provenance={"runtime": "kata-microvm", "prior_warmpool_ttfe_p95_ms": 900.0},
+        ),
+    )
+    assert "**gVisor** regressed" in out
+    assert "**Kata + microVM** regressed" in out
+    caveat_line = out.split("Refresh delta:** ", 1)[1].split(". A swing", 1)[0]
+    assert "; " in caveat_line
+
+
 # ---------------------------------------------------------------------------
 # #4164 / hb#132: render_storage_config — "Which storage class should you pick?"
 # Closed-enum ({ephemeral,pd,snapshot}) data-keyed guidance section. Fixtures use

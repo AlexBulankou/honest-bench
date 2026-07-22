@@ -336,6 +336,36 @@ def _read_prior_provenance_machine_type(out_path: pathlib.Path) -> str | None:
     return mt if isinstance(mt, str) and mt else None
 
 
+def _read_prior_warmpool_ttfe_p95(out_path: pathlib.Path) -> float | None:
+    """Read the existing results file's warmpool_cold_start TTFE p95 (hb#5414).
+
+    Best-effort, mirroring _read_prior_provenance_machine_type: a missing/
+    malformed file, an absent warmpool_cold_start scenario, or a non-numeric
+    ttfe_p95_ms means there is nothing to compare against, so return None
+    (build_provenance then omits prior_warmpool_ttfe_p95_ms and no delta
+    caveat renders — the North Star cell degrades to "no prior" quietly,
+    never to a stale/wrong number).
+    """
+    try:
+        prior = json.loads(out_path.read_text())
+    except (FileNotFoundError, ValueError):
+        return None
+    scenarios = prior.get("scenarios") if isinstance(prior, dict) else None
+    if not isinstance(scenarios, list):
+        return None
+    for scen in scenarios:
+        if not isinstance(scen, dict) or scen.get("name") != "warmpool_cold_start":
+            continue
+        metrics = scen.get("sla_metrics")
+        if not isinstance(metrics, dict):
+            return None
+        p95 = metrics.get("ttfe_p95_ms")
+        if isinstance(p95, bool) or not isinstance(p95, (int, float)) or p95 <= 0:
+            return None
+        return float(p95)
+    return None
+
+
 def _read_prior_scale_proof(out_path: pathlib.Path):
     """Read the existing results file's top-level scale_proof object (#3952).
 
@@ -1204,6 +1234,7 @@ def build_provenance(
     substrate: str,
     product: str = results_schema.DEFAULT_PRODUCT,
     prior_machine_type: str | None = None,
+    prior_warmpool_ttfe_p95: float | None = None,
 ) -> dict:
     prov = {
         "cluster_substrate": substrate,
@@ -1268,6 +1299,19 @@ def build_provenance(
         runsc_version = os.environ.get("BENCH_RUNSC_VERSION", "").strip()
         if runsc_version:
             prov["runsc_version"] = runsc_version
+        # Prior-run North Star TTFE p95 (hb#5414 refresh-delta tripwire): carry
+        # the PREVIOUSLY published warmpool_cold_start p95 forward as its own
+        # provenance field (rather than diffing here), same posture as
+        # prior_machine_type — the renderer data-keys a ">2x delta" / verdict-
+        # flip caveat off two closed-schema-validated values. Unlike
+        # prior_machine_type's "only if it differs" gate, stamped whenever a
+        # prior value exists: TTFE p95 is EXPECTED to vary every run, so the
+        # renderer needs the prior on every run to compute the delta, not just
+        # on a qualitative change. Sandbox-family only (same `if runtime:`
+        # gate as node_image/runsc_version) since warmpool_cold_start is a
+        # sandbox-family-only scenario.
+        if prior_warmpool_ttfe_p95:
+            prov["prior_warmpool_ttfe_p95_ms"] = prior_warmpool_ttfe_p95
     return prov
 
 
@@ -1338,6 +1382,7 @@ def main(argv=None) -> int:
     prior_cluster_saturation = _read_prior_cluster_saturation(out)
     prior_provisioning_rate_sweep = _read_prior_provisioning_rate_sweep(out)
     prior_machine_type = _read_prior_provenance_machine_type(out)
+    prior_warmpool_ttfe_p95 = _read_prior_warmpool_ttfe_p95(out)
     raw = merge_seed_placeholders(raw, prior_scenarios)
     # Per-mode SLO cluster-rate legs (hb#132/#149): fresh env-armed sweep
     # derivations merge first (fresh wins), then prior committed triples carry
@@ -1454,7 +1499,11 @@ def main(argv=None) -> int:
         None, prior_provisioning_rate_sweep, generated_at=generated_at
     )
     results = results_schema.build_results(
-        raw, build_provenance(substrate, args.product, prior_machine_type=prior_machine_type),
+        raw, build_provenance(
+            substrate, args.product,
+            prior_machine_type=prior_machine_type,
+            prior_warmpool_ttfe_p95=prior_warmpool_ttfe_p95,
+        ),
         generated_at=generated_at, product=args.product,
         scale_proof=scale_proof, stepup=stepup, warm_vs_cold=warm_vs_cold_obj,
         kata_activation=kata_activation, concurrent_burst=concurrent_burst,
