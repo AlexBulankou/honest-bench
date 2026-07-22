@@ -1712,6 +1712,10 @@ def test_emit_to_render_slo_sweep_convergence():
     # clears the 5s bar (p95 3.2s) but not the 1s bar; the top rung overloads past both.
     nested = {
         "params": {"cluster_nodes": 40},
+        # hb#5396: the true-TTFE bars derive only when a webhook-stamped-claim read-back
+        # corroborates them — this fixture exercises the true_ttfe per-bar fill, so it
+        # carries the stamp (slo_rate's read-back guard fails closed without it).
+        "true_ttfe_webhook_stamped_claims": 200,
         "pareto": [
             {"offered_rate_per_s": 30, "ready_per_s": 28.4, "ttfe_p95_ms": 3200.0},
             {"offered_rate_per_s": 100, "ready_per_s": 41.0, "ttfe_p95_ms": 12610.3},
