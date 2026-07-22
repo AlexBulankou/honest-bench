@@ -3654,9 +3654,64 @@ def test_what_this_means_always_renders_skeleton_all_clauses_degrade():
     assert "asked for at once settled in" not in out
     # Static bullets always present (rule-of-thumb + product-shape posture).
     assert "Rule of thumb for pool size" in out
-    assert "Both runtimes are measured — choose by isolation need." in out
+    # No kata_results passed here ⇒ the runtime-choice clause degrades to the no-Kata-data
+    # fallback (hb#352 follow-up: it must never claim cross-runtime comparability without a
+    # measured Kata leg to compare against).
+    assert "gVisor is measured here; Kata + microVM adds hardware-grade VM isolation" in out
+    assert "Both runtimes are measured — choose by isolation need." not in out
     assert "Do not design around suspend/resume yet." in out
     assert "is unmeasured, not bad." in out
+
+
+def _measured_kata_results(generated_at):
+    # A Kata fixture with an actually-MEASURED warmpool_cold_start leg (PASS + ttfe_p95_ms) —
+    # the default _kata_results() fixture leaves that scenario `pending`, which the runtime-choice
+    # clause correctly treats as not-measured-yet, so exercising the "kata_measured" branches
+    # needs this explicit override.
+    return _kata_results(
+        scenarios=[
+            {
+                "name": "warmpool_cold_start", "outcome": "PASS", "n": 5,
+                "sla_metrics": {"ttfe_p50_ms": 4000, "ttfe_p95_ms": 4800, "exec_success_rate": 1.0},
+            },
+        ],
+        generated_at=generated_at,
+    )
+
+
+def test_what_this_means_runtime_choice_cross_regime_caveat():
+    # hb#352 follow-up (PR #353 review catch): gVisor measured post-ephemeral-CI-cutover,
+    # Kata measured pre-cutover on the old persistent cluster ⇒ the clause must flag the pairing
+    # as cross-regime instead of asserting unqualified comparability.
+    out = render.render_what_this_means(
+        _matrix_results(_full_gvisor_scenarios(), generated_at="2026-07-22T22:16:46Z"),
+        kata_results=_measured_kata_results("2026-07-05T15:32:54Z"),
+    )
+    assert "Both runtimes are measured, but not from the same cluster regime right now." in out
+    assert "Both runtimes are measured — choose by isolation need." not in out
+
+
+def test_what_this_means_runtime_choice_same_regime_preserves_comparability_claim():
+    # Both sides measured on the SAME side of the cutover ⇒ the original unqualified
+    # comparability claim is preserved (no cross-regime caveat).
+    out = render.render_what_this_means(
+        _matrix_results(_full_gvisor_scenarios(), generated_at="2026-07-21T00:00:00Z"),
+        kata_results=_measured_kata_results("2026-07-21T12:00:00Z"),
+    )
+    assert "Both runtimes are measured — choose by isolation need." in out
+    assert "Both runtimes are measured, but not from the same cluster regime right now." not in out
+
+
+def test_what_this_means_runtime_choice_missing_generated_at_no_cross_regime_claim():
+    # A missing/invalid generated_at on either side can't support a regime comparison — fail
+    # closed to the same-regime (unqualified) phrasing rather than fabricating a cross-regime
+    # claim from incomplete data.
+    out = render.render_what_this_means(
+        _matrix_results(_full_gvisor_scenarios()),
+        kata_results=_measured_kata_results("2026-07-05T15:32:54Z"),
+    )
+    assert "Both runtimes are measured — choose by isolation need." in out
+    assert "Both runtimes are measured, but not from the same cluster regime right now." not in out
 
 
 def test_what_this_means_renders_measured_numbers():

@@ -1794,7 +1794,73 @@ def render_operating_envelope(results, heading=None):
     return "\n".join(lines)
 
 
-def render_what_this_means(results):
+# The ephemeral-CI regime boundary (see _REGIME_BOUNDARY_NOTE above) as a machine-comparable
+# ISO-8601 string. Both `generated_at` fields this compares against are canonical
+# "%Y-%m-%dT%H:%M:%SZ" UTC stamps (same format on every product's harness output), so a plain
+# string comparison sorts chronologically identically to a real datetime comparison — no need to
+# parse into datetime objects for a single boundary check.
+_EPHEMERAL_CI_CUTOVER = "2026-07-20T00:00:00Z"
+
+
+def _runtime_choice_clause(results, kata_results):
+    """The gVisor-vs-Kata isolation-tradeoff clause in render_what_this_means (hb#352 follow-up).
+
+    Only claims warm-pool latency is "comparable between them" when both runtimes' numbers were
+    actually measured in the same cluster regime (see _REGIME_BOUNDARY_NOTE) — pre- or
+    post-2026-07-20 ephemeral-CI cutover. A cross-regime pairing (one side pre-cutover on the
+    long-lived pre-warmed cluster, the other post-cutover on a cold ephemeral cluster) makes any
+    latency gap between the two runtimes at least partly a regime artifact, not a runtime
+    difference, so the unqualified comparability claim would be misleading without disclosure.
+    """
+    kata_measured = False
+    kata_gen = None
+    if isinstance(kata_results, dict) and kata_results.get("product") == "sandbox-kata":
+        kp = _clean_provenance(kata_results.get("provenance"))
+        if kp.get("runtime") == "kata-microvm":
+            k_scen = _matrix_scenarios(kata_results.get("scenarios"))
+            sc = k_scen.get("warmpool_cold_start")
+            if sc and "ttfe_p95_ms" in sc.get("metrics", {}):
+                kata_measured = True
+                g = kata_results.get("generated_at")
+                if isinstance(g, str) and _ISO.match(g):
+                    kata_gen = g
+
+    if not kata_measured:
+        return (
+            "- **gVisor is measured here; Kata + microVM adds hardware-grade VM isolation for "
+            "workloads that need it.** Its own warm-pool latency numbers land once that runtime "
+            "is measured — see the matrix above for current status."
+        )
+
+    gvisor_gen = results.get("generated_at")
+    gvisor_gen = gvisor_gen if isinstance(gvisor_gen, str) and _ISO.match(gvisor_gen) else None
+    cross_regime = (
+        gvisor_gen is not None
+        and kata_gen is not None
+        and (gvisor_gen >= _EPHEMERAL_CI_CUTOVER) != (kata_gen >= _EPHEMERAL_CI_CUTOVER)
+    )
+    if cross_regime:
+        return (
+            "- **Both runtimes are measured, but not from the same cluster regime right now.** "
+            "gVisor's numbers above are from a fresh ephemeral CI cluster (cold containerd "
+            "cache); Kata + microVM's are from an earlier run on a long-lived, pre-warmed "
+            "cluster (see the matrix's per-run disclosure above) — so today's warm-pool-latency "
+            "gap between them is at least partly that regime difference, not necessarily the "
+            "runtimes themselves. gVisor delivers the higher per-node throughput; Kata + microVM "
+            "puts each sandbox in its own VM for hardware-grade isolation. If unsure, start with "
+            "gVisor and move only the workloads that need a VM boundary to Kata once its own "
+            "ephemeral-regime numbers land."
+        )
+    return (
+        "- **Both runtimes are measured — choose by isolation need.** In the measurements above, "
+        "warm-pool latency is comparable between them; gVisor delivers the higher per-node "
+        "throughput, while Kata + microVM puts each sandbox in its own VM for hardware-grade "
+        "isolation. If unsure, start with gVisor and move only the workloads that need a VM "
+        "boundary to Kata."
+    )
+
+
+def render_what_this_means(results, kata_results=None):
     """hb#134 plain-English synthesis for the non-infra reader (model-builders / agentic devs).
 
     Reads the SAME closed-schema cleaners the tables above use, so every number here is the
@@ -1877,13 +1943,7 @@ def render_what_this_means(results):
         "it) and tune from there. This is a planning heuristic, not one of the measured numbers "
         "above."
     )
-    lines.append(
-        "- **Both runtimes are measured — choose by isolation need.** In the measurements above, "
-        "warm-pool latency is comparable between them; gVisor delivers the higher per-node "
-        "throughput, while Kata + microVM puts each sandbox in its own VM for hardware-grade "
-        "isolation. If unsure, start with gVisor and move only the workloads that need a VM "
-        "boundary to Kata."
-    )
+    lines.append(_runtime_choice_clause(results, kata_results))
     lines.append(
         "- **Do not design around suspend/resume yet.** gVisor resume is blocked upstream, and "
         "Kata resume is `N/A` by construction (checkpoint-restore does not transfer to the VM "
