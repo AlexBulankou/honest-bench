@@ -19,7 +19,11 @@ spec:
           type: RuntimeDefault
       containers:
       - name: webhook
-        image: us-central1-docker.pkg.dev/alexbu-gke-dev-d/honest-bench/webhook-inject-timestamp:asbx-adfe5409@sha256:9177721d8244b7208472229fff31496f52bb1f76bc0f1aadf25903fed3548ac5
+        # __WEBHOOK_IMAGE_PROJECT__ is rendered to the GCP project id by
+        # deploy-ttfe-webhook.sh at apply time (default: `gcloud config get-value project`),
+        # so the private project id never lives in this public tree. Tag+digest are pinned
+        # (content-addressable) — the image is pre-built from the asbx#761 pinned source.
+        image: us-central1-docker.pkg.dev/__WEBHOOK_IMAGE_PROJECT__/honest-bench/webhook-inject-timestamp:asbx-adfe5409@sha256:9177721d8244b7208472229fff31496f52bb1f76bc0f1aadf25903fed3548ac5
         imagePullPolicy: IfNotPresent
         ports:
         - containerPort: 8443

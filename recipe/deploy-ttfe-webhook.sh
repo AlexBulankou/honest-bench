@@ -17,7 +17,7 @@
 # ONE SCRIPT, TWO CALLERS (honest-bench#5396):
 #   - the ephemeral gVisor refresh (cloudbuild-refresh-gke-sandbox.yaml), between
 #     install-controller-from-main.sh and harness.run; and
-#   - a manual apply against the persistent sandbox-scenarios-cluster kata-microvm-pool
+#   - a manual apply against the persistent Kata micro-VM sandbox cluster's Kata pool
 #     before the Kata unique-image-cold cell fires.
 #
 # PRECONDITION: the agent-sandbox controller is already installed (registers the SandboxClaim
@@ -28,15 +28,20 @@
 #   recipe/deploy-ttfe-webhook.sh --dry-run  # print what would apply, no cluster writes
 #
 # Env overrides:
-#   CERT_MANAGER_VERSION   cert-manager release tag to install (default below)
-#   WEBHOOK_NAMESPACE      namespace the webhook deploys into (default agent-sandbox-system)
-#   ROLLOUT_TIMEOUT        kubectl rollout/wait timeout (default 180s)
+#   CERT_MANAGER_VERSION    cert-manager release tag to install (default below)
+#   WEBHOOK_NAMESPACE       namespace the webhook deploys into (default agent-sandbox-system)
+#   ROLLOUT_TIMEOUT         kubectl rollout/wait timeout (default 180s)
+#   WEBHOOK_IMAGE_PROJECT   GCP project holding the pre-built webhook image
+#                           (default: `gcloud config get-value project`) — rendered into
+#                           the vendored Deployment's image ref at apply time, so the
+#                           private project id never lives in this public tree.
 
 set -euo pipefail
 
 CERT_MANAGER_VERSION="${CERT_MANAGER_VERSION:-v1.21.0}"
 WEBHOOK_NAMESPACE="${WEBHOOK_NAMESPACE:-agent-sandbox-system}"
 ROLLOUT_TIMEOUT="${ROLLOUT_TIMEOUT:-180s}"
+WEBHOOK_IMAGE_PROJECT="${WEBHOOK_IMAGE_PROJECT:-$(gcloud config get-value project 2>/dev/null || true)}"
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VENDOR="$HERE/ttfe-webhook"
@@ -62,6 +67,7 @@ CM_URL="https://github.com/cert-manager/cert-manager/releases/download/${CERT_MA
 if [ "$MODE" = "dry-run" ]; then
   log "[dry-run] would install cert-manager ${CERT_MANAGER_VERSION} from ${CM_URL}"
   log "[dry-run] would apply: cert-manager-rbac.yaml, cert-manager-resources.yaml, webhook-deployment.yaml, mutating-webhook-configuration.yaml (ns=${WEBHOOK_NAMESPACE})"
+  log "[dry-run] webhook image project = ${WEBHOOK_IMAGE_PROJECT:-<unset — set WEBHOOK_IMAGE_PROJECT or a gcloud default project>}"
   exit 0
 fi
 
@@ -87,9 +93,13 @@ kubectl apply -f "$VENDOR/cert-manager-resources.yaml"
 log "waiting for webhook Certificate to be Ready"
 kubectl -n "$WEBHOOK_NAMESPACE" wait --for=condition=Ready certificate/webhook-certificate --timeout="$ROLLOUT_TIMEOUT"
 
-# 3. webhook Deployment + Service (pinned image).
-log "applying webhook Deployment + Service"
-kubectl apply -f "$VENDOR/webhook-deployment.yaml"
+# 3. webhook Deployment + Service (pinned image; project rendered in from
+#    WEBHOOK_IMAGE_PROJECT so the private project id stays out of the vendored tree).
+[ -n "$WEBHOOK_IMAGE_PROJECT" ] \
+  || die "WEBHOOK_IMAGE_PROJECT is empty and no gcloud default project is set — export WEBHOOK_IMAGE_PROJECT=<project>"
+log "applying webhook Deployment + Service (image project ${WEBHOOK_IMAGE_PROJECT})"
+sed "s|__WEBHOOK_IMAGE_PROJECT__|${WEBHOOK_IMAGE_PROJECT}|g" "$VENDOR/webhook-deployment.yaml" \
+  | kubectl apply -f -
 kubectl -n "$WEBHOOK_NAMESPACE" rollout status deploy/webhook-deployment --timeout="$ROLLOUT_TIMEOUT"
 
 # 4. MutatingWebhookConfiguration (cert-manager injects the caBundle via inject-ca-from).
