@@ -407,6 +407,65 @@ def test_proxy_delta_empty_start_equals_single_end():
            "empty start -> proxy delta == single end-scrape proxy quantile")
 
 
+# ---------------------------------------------------------------- webhook-stamped claim count
+#
+# The hb#5396 box-3 producer stamp: true_ttfe_webhook_stamped_claims == summed HEADLINE_METRIC
+# observation count (HEADLINE_METRIC is .Observe()d once per webhook-annotated claim). The
+# read-back guard trusts the true-TTFE basis only when this stamp is >= 1, so the count's honest
+# spine (None on absent metric, 0 on honest-zero, None on counter-reset) IS the guard's input.
+
+def test_webhook_stamped_claim_count_sums_all_launch_types():
+    # SCRAPE: warm +Inf=100, cold +Inf=10 -> 110; the _controller_ sibling MUST NOT inflate it.
+    _check(p.webhook_stamped_claim_count(SCRAPE) == 110,
+           "stamped count == 100 warm + 10 cold == 110 (controller sibling excluded)")
+
+
+def test_webhook_stamped_claim_count_absent_metric_is_none():
+    # A proxy-only scrape carries no HEADLINE_METRIC series -> measured=False, NOT a fake 0.
+    proxy_only = _multi_template_scrape(p.PROXY_METRIC)
+    _check(p.webhook_stamped_claim_count(proxy_only) is None,
+           "headline metric absent (webhook not live) -> None, not 0")
+    _check(p.webhook_stamped_claim_count("# nothing\n") is None,
+           "empty exposition -> None")
+
+
+def test_webhook_stamped_claim_count_zero_is_honest_zero():
+    # Metric present with zero observations -> 0 (an HONEST measured zero, distinct from absent).
+    # The guard still rejects <1, so a 0-count fire correctly does not license the true-TTFE basis.
+    zero = _warm_scrape([("100", 0), ("+Inf", 0)], 0)
+    _check(p.webhook_stamped_claim_count(zero) == 0,
+           "metric present, zero observations -> honest 0 (not None)")
+
+
+def test_webhook_stamped_claim_count_delta_window():
+    # _DELTA_START count=50, _DELTA_END count=100 -> fired-window increment == 50.
+    _check(p.webhook_stamped_claim_count_delta(_DELTA_START, _DELTA_END) == 50,
+           "windowed stamped count == 100 - 50 == 50 (increment, not cumulative)")
+
+
+def test_webhook_stamped_claim_count_delta_counter_reset_none():
+    # END < START (controller restart mid-window) -> whole windowed count is measured=False.
+    reset_end = _warm_scrape(
+        [("100", 0), ("250", 1), ("500", 2), ("1000", 3), ("2500", 4), ("+Inf", 5)], 5)
+    _check(p.webhook_stamped_claim_count_delta(_DELTA_END, reset_end) is None,
+           "counter reset -> None (measured=False, not a cross-reset total)")
+
+
+def test_webhook_stamped_claim_count_delta_empty_start_equals_cumulative():
+    # Fresh-restarted controller (empty start): increment == end, so windowed == cumulative.
+    _check(p.webhook_stamped_claim_count_delta("", _DELTA_END)
+           == p.webhook_stamped_claim_count(_DELTA_END),
+           "empty start -> windowed == cumulative end count")
+    _check(p.webhook_stamped_claim_count_delta("", SCRAPE) == 110,
+           "empty start over SCRAPE -> 110 (both launch_types, controller excluded)")
+
+
+def test_webhook_stamped_claim_count_delta_absent_end_is_none():
+    # Metric absent from END -> None, same measured=False posture as the cumulative path.
+    _check(p.webhook_stamped_claim_count_delta(_DELTA_START, "# nothing\n") is None,
+           "headline metric absent from end -> None")
+
+
 def _run_all():
     tests = [v for k, v in sorted(globals().items())
              if k.startswith("test_") and callable(v)]
