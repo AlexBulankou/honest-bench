@@ -214,7 +214,7 @@ def build_readme(root=None):
         # plain-English "What this means for you" synthesis leads, then the operating-envelope
         # scorecard folds UNDER it as a `###` sub-block — "what wait should I budget?". This
         # keeps the page skimming as: matrix → north-star captions → what-it-means → does-it-scale.
-        sections.append(render_what_this_means(results).rstrip())
+        sections.append(render_what_this_means(results, kata_results=kr).rstrip())
         sections.append(render_operating_envelope(
             results, heading="### What wait should I budget?").rstrip())
         # hb#134: Scale-Proof + Concurrent-Burst + Saturation + at-scale Contention merge into ONE
