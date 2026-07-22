@@ -42,9 +42,9 @@ _Anchors and the entry set are generated from the closed pending-reason enum —
 
 - **What:** A cold-start per-**cluster** SLO-rate cell whose measurement fire DID run with the trust gate PASSING, but where every measured rung's p95 sits over the cell's SLO bar on the only available (literal upper-bound) basis.
 - **Why absent:** **not-yet-graduated (basis-gated).** An SLO-gated rate cannot be published as 0 from a finite ladder — a lower untested rate could still comply — so "no compliant rung ⇒ pend, never 0". The literal TTFE basis is an UPPER bound (it includes probe scheduling overhead); the tighter true-TTFE basis has no production writer upstream, so the cell may yet fill once that lands.
-- **In flight:** Yes — the true-TTFE annotation writer is tracked upstream: [agent-sandbox#751](https://github.com/kubernetes-sigs/agent-sandbox/issues/751) (issue, open) → fix [agent-sandbox#761](https://github.com/kubernetes-sigs/agent-sandbox/pull/761) (PR, open). Internal tracking a#3975 (basis fallback).
+- **In flight:** Yes — the true-TTFE annotation writer is tracked upstream: [agent-sandbox#751](https://github.com/kubernetes-sigs/agent-sandbox/issues/751) (issue, closed) → fix [agent-sandbox#761](https://github.com/kubernetes-sigs/agent-sandbox/pull/761) (PR, merged). Internal tracking a#3975 (basis fallback).
 - **ETA:** Gated on the upstream true-TTFE writer, or a future fire whose literal-basis p95 clears the bar at some measured rate.
-- **Trace:** Upstream agent-sandbox (end-to-end TTFE measurability): [agent-sandbox#751](https://github.com/kubernetes-sigs/agent-sandbox/issues/751) (issue, open) → fix [agent-sandbox#761](https://github.com/kubernetes-sigs/agent-sandbox/pull/761) (PR, open). Internal tracking a#3975 / a#4364.
+- **Trace:** Upstream agent-sandbox (end-to-end TTFE measurability): [agent-sandbox#751](https://github.com/kubernetes-sigs/agent-sandbox/issues/751) (issue, closed) → fix [agent-sandbox#761](https://github.com/kubernetes-sigs/agent-sandbox/pull/761) (PR, merged). Internal tracking a#3975 / a#4364.
 
 <a id="upstream-blocked"></a>
 

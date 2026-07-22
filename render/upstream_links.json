@@ -1,6 +1,6 @@
 {
   "_meta": {
-    "seeded_from": "UPSTREAM_BLOCKERS.md rev 4",
+    "seeded_from": "UPSTREAM_BLOCKERS.md rev 6",
     "last_verified": "2026-07-22",
     "freshness": "Rides every UPSTREAM_BLOCKERS.md refresh PR; link states hand-verified at each refresh."
   },
@@ -25,21 +25,23 @@
       ]
     },
     "no-compliant-rung": {
-      "renders_at": "cold-start SLO-rate cluster cells (gVisor + Kata) publishing honest-empty because every measured rung's literal-basis p95 sits over the bar; the true-TTFE basis that could tighten the bound has no production writer upstream",
+      "renders_at": "legend-only today (no matrix cell currently renders this class): the cold cells graduated independently — gVisor unique-image-cold to controller_cold_floor_zero_corroborated (honest-zero, hb#230/#214, needs NO webhook), Kata unique-image-cold to unresolved_bounds_bar_bracketed (5s) + derived-zero (1s). The true-TTFE basis this class's fix (#761) enables could only tighten the Kata cold 5s unresolved-bounds cell — and only after the webhook is DEPLOYED on the Kata measurement cluster AND the PHASE-B scrape is wired into harness.run (prom_ttfe is offline PHASE-A only, not imported in run.py).",
       "refs": [
         {
           "repo": "kubernetes-sigs/agent-sandbox",
           "number": 751,
           "kind": "issue",
           "role": "blocks",
-          "status": "open"
+          "status": "closed",
+          "note": "auto-closed 2026-07-22T17:43:51Z (state_reason=completed, by kubernetes-prow[bot]) via #761's 'Fixes #751' — 1s after the merge. The upstream tracking issue closing does NOT graduate any honest-bench cell: the webhook is still undeployed + the PHASE-B scrape unwired, so no true_ttfe writer exists here (adoption gap remains open)."
         },
         {
           "repo": "kubernetes-sigs/agent-sandbox",
           "number": 761,
           "kind": "pr",
           "role": "fix-in-flight",
-          "status": "open"
+          "status": "merged",
+          "note": "merged 2026-07-22T17:43:50Z; necessary-but-not-sufficient — webhook not yet deployed + PHASE-B scrape unwired, so no true_ttfe writer exists here yet (adoption not yet complete)"
         }
       ]
     },
