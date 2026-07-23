@@ -32,8 +32,17 @@ Post-as#1087-merge expectation: the warm sub-saturation ratio collapses toward
 ~1.0 and the gate-(d) rel-diff drops under 0.10 on those rungs. If it does not,
 the double-count was not the (whole) root cause.
 
+The --verdict mode turns the same signals into a fail-closed graduation gate
+for the trust-gated gate-(d) cell (a downgrade of a trust surface must fail
+closed, never silently): it exits 0 ONLY when the corpus
+shows the double-count SIGNATURE_CLEARED, so flipping the cell to green once
+as#1087's re-record lands becomes mechanical + auditable instead of a
+human eyeball call. Every non-cleared state (still-present, ambiguous,
+too-little-data) exits non-zero -> the cell HOLDS.
+
 Usage:
-  scripts/gate_d_corpus_baseline.py [records_dir]   # default: sandbox/records
+  scripts/gate_d_corpus_baseline.py [records_dir]             # human summary + verdict
+  scripts/gate_d_corpus_baseline.py --verdict [records_dir]   # machine gate: exit 0 iff CLEARED
 """
 import glob
 import json
@@ -43,6 +52,31 @@ import sys
 
 GATE_TOL = 0.10          # harness/slo_rate.py LITERAL_RATE_AGREEMENT_TOL
 HIGH_RATE_OFFERED = 10.0  # offered rate at/above which the ctrl leg is throughput-limited
+
+# --- Falsification-verdict thresholds (--verdict mode) --------------------
+# The verdict mechanizes a fail-closed HOLD on the trust-gated gate-(d) cell
+# (a trust surface graduates loud + conservative, never on a silent maybe):
+# only SIGNATURE_CLEARED permits graduating the cell to green once
+# as#1087's re-record lands. Every other state HOLDS. Thresholds are derived
+# from the pre-fix corpus baseline (warm sub-saturation ratio median ~1.75,
+# cold control ~1.0) with deliberate dead-bands so a noisy re-record can't
+# alias CLEARED.
+WARM_SIGNATURE_MIN = 1.40      # warm_sub ratio median >= this => double-count present
+WARM_CLEARED_MAX = 1.20       # warm_sub ratio median <= this => double-count gone
+COLD_CONTROL_LO = 0.85        # cold ratio must stay in [LO,HI] to isolate the mechanism
+COLD_CONTROL_HI = 1.15
+WARM_PASS_FRACTION_MIN = 0.60  # fraction of warm rungs passing gate-(d) for CLEARED
+MIN_WARM_RUNGS = 3            # below this, warm median is not judgeable -> INSUFFICIENT
+
+# Verdict -> process exit code. Graduation gate reads "exit 0 iff CLEARED";
+# the specific non-zero code says why the cell HELD. 1 is reserved for a
+# real error (no records), so the verdict codes start at 2.
+VERDICT_EXIT = {
+    "SIGNATURE_CLEARED": 0,
+    "SIGNATURE_PRESENT": 2,
+    "AMBIGUOUS": 3,
+    "INSUFFICIENT_DATA": 4,
+}
 
 
 def load_records(records_dir):
@@ -135,6 +169,87 @@ def summarize(rungs):
     return out
 
 
+def verdict(rungs):
+    """Fail-closed falsification verdict on the as#1087 double-count fix.
+
+    This is the mechanical graduation gate for the trust-gated gate-(d) cell:
+    the cell may flip to green ONLY when this returns
+    SIGNATURE_CLEARED on a re-recorded corpus. Every other state HOLDS — a
+    noisy, partial, or mechanism-unclear re-record must never alias CLEARED.
+
+    The judgement rests on three independent signals:
+      - warm_sub ratio median   — the double-count magnitude (~1.75 pre-fix,
+                                   ~1.0 once as#1087's re-record lands)
+      - cold ratio median       — the CONTROL: cold has no warm-pool informer
+                                   so no replay; it must stay ~1.0 for any
+                                   definitive verdict. Cold drifting out of
+                                   band means the mechanism is not isolated,
+                                   so neither PRESENT nor CLEARED is trustable.
+      - warm gate-(d) pass frac — |acq-ctrl|/max <= GATE_TOL on warm rungs;
+                                   the fix's whole point is these rungs start
+                                   passing the live agreement gate.
+
+    States: SIGNATURE_PRESENT (pre-fix, HOLD), SIGNATURE_CLEARED (graduate),
+    AMBIGUOUS (intermediate / mechanism-unclear, HOLD), INSUFFICIENT_DATA
+    (too few warm rungs or no cold control, HOLD).
+    """
+    warm_ratios = [r["ratio"] for r in rungs
+                   if r["regime"] == "warm_sub" and r["ratio"] is not None]
+    cold_ratios = [r["ratio"] for r in rungs
+                   if r["regime"] == "cold" and r["ratio"] is not None]
+    warm_rel = [r["rel_diff"] for r in rungs
+                if r["regime"] == "warm_sub" and r["rel_diff"] is not None]
+
+    def _v(state, reason, **extra):
+        out = {"state": state, "reason": reason,
+               "warm_n": len(warm_ratios), "cold_n": len(cold_ratios),
+               "warm_ratio_median": (statistics.median(warm_ratios)
+                                     if warm_ratios else None),
+               "cold_ratio_median": (statistics.median(cold_ratios)
+                                     if cold_ratios else None),
+               "warm_pass_fraction": (sum(1 for x in warm_rel if x <= GATE_TOL)
+                                      / len(warm_rel)) if warm_rel else None}
+        out.update(extra)
+        return out
+
+    if len(warm_ratios) < MIN_WARM_RUNGS or not cold_ratios or not warm_rel:
+        return _v("INSUFFICIENT_DATA",
+                  f"need >= {MIN_WARM_RUNGS} warm rungs with a ratio, a cold "
+                  f"control, and warm rel-diffs; have warm_ratio={len(warm_ratios)} "
+                  f"cold={len(cold_ratios)} warm_rel={len(warm_rel)}")
+
+    warm_med = statistics.median(warm_ratios)
+    cold_med = statistics.median(cold_ratios)
+    warm_pass = sum(1 for x in warm_rel if x <= GATE_TOL) / len(warm_rel)
+
+    # Cold control gates EVERY definitive verdict: if the control regime is
+    # itself off ~1.0, the mechanism is not isolated and no PRESENT/CLEARED
+    # call is trustworthy -> HOLD as AMBIGUOUS.
+    if not (COLD_CONTROL_LO <= cold_med <= COLD_CONTROL_HI):
+        return _v("AMBIGUOUS",
+                  f"cold control median {cold_med:.2f} outside "
+                  f"[{COLD_CONTROL_LO},{COLD_CONTROL_HI}] -- mechanism not "
+                  f"isolated, verdict withheld")
+
+    if warm_med >= WARM_SIGNATURE_MIN and warm_pass < WARM_PASS_FRACTION_MIN:
+        return _v("SIGNATURE_PRESENT",
+                  f"warm ratio median {warm_med:.2f} >= {WARM_SIGNATURE_MIN} and "
+                  f"warm gate-(d) pass {warm_pass:.0%} < {WARM_PASS_FRACTION_MIN:.0%} "
+                  f"-- double-count present, cell HOLDS")
+
+    if warm_med <= WARM_CLEARED_MAX and warm_pass >= WARM_PASS_FRACTION_MIN:
+        return _v("SIGNATURE_CLEARED",
+                  f"warm ratio median {warm_med:.2f} <= {WARM_CLEARED_MAX} and "
+                  f"warm gate-(d) pass {warm_pass:.0%} >= {WARM_PASS_FRACTION_MIN:.0%} "
+                  f"-- double-count gone, cell may graduate")
+
+    return _v("AMBIGUOUS",
+              f"warm ratio median {warm_med:.2f} / pass {warm_pass:.0%} in the "
+              f"dead-band between PRESENT (>= {WARM_SIGNATURE_MIN} & pass < "
+              f"{WARM_PASS_FRACTION_MIN:.0%}) and CLEARED (<= {WARM_CLEARED_MAX} & "
+              f"pass >= {WARM_PASS_FRACTION_MIN:.0%}) -- verdict withheld")
+
+
 def _fmt(st):
     if not st:
         return "n=0"
@@ -143,7 +258,11 @@ def _fmt(st):
 
 
 def main(argv):
-    records_dir = argv[1] if len(argv) > 1 else "sandbox/records"
+    args = argv[1:]
+    verdict_only = "--verdict" in args
+    positional = [a for a in args if not a.startswith("--")]
+    records_dir = positional[0] if positional else "sandbox/records"
+
     records = load_records(records_dir)
     if not records:
         print(f"no records under {records_dir}", file=sys.stderr)
@@ -151,8 +270,15 @@ def main(argv):
     rungs = []
     for filename, record in records:
         rungs.extend(extract_rungs(filename, record))
-    s = summarize(rungs)
 
+    v = verdict(rungs)
+
+    if verdict_only:
+        # Machine gate: one terse verdict line + exit code (0 iff CLEARED).
+        print(f"VERDICT: {v['state']} -- {v['reason']}")
+        return VERDICT_EXIT[v["state"]]
+
+    s = summarize(rungs)
     print(f"records: {len(records)}  pareto rungs: {len(rungs)}")
     rd = s["rel_diff"]
     if rd:
@@ -167,6 +293,8 @@ def main(argv):
     }
     for regime, label in labels.items():
         print(f"  {label:44} {_fmt(s['ratio_by_regime'][regime])}")
+    print(f"\nfalsification verdict: {v['state']}")
+    print(f"  {v['reason']}")
     return 0
 
 
