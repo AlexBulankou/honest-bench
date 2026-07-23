@@ -957,6 +957,14 @@ def render_matrix(results, kata_results=None):
     lines.append("| " + " | ".join(header) + " |")
     lines.append("|" + "|".join(["---"] * len(header)) + "|")
 
+    # #4420: collect (runtime, activation-mode) cells whose scenario OUTCOME is FAIL so a
+    # loud caveat can be emitted below the table. A FAIL cell keeps its real metrics (unlike
+    # a `pending` cell, whose metrics _matrix_scenarios suppresses) — a FAILing measurement
+    # is honest data, not absent — but rendering those numbers with no FAIL disclosure would
+    # let an SLA-failing cell read as a clean pass, the same silent-downgrade the North Star
+    # caption's own FAIL caveat closes.
+    fail_cells = []
+
     for rt in MATRIX_RUNTIMES:
         rt_label = RUNTIME_LABELS[rt]
         rt_scen = sources.get(rt)
@@ -975,6 +983,7 @@ def render_matrix(results, kata_results=None):
                 continue
             sc = rt_scen.get(scen_name) if measured else None
             sc_pending = bool(sc) and sc.get("outcome") == "pending"
+            sc_fail = bool(sc) and sc.get("outcome") == "FAIL"
             m = sc["metrics"] if sc else {}
 
             # hb#230 Fork 5 (resume Class-C ceiling): the gVisor resume row DID record a probe
@@ -1152,12 +1161,30 @@ def render_matrix(results, kata_results=None):
                 link_pending(c) + (pending_refs if (pending_refs and c == pending_tok) else "")
                 for c in (thpt5, thpt1, p50, p95, exec_cell)
             ]
+            # #4420: a FAIL cell renders its real metrics but flags the mode label loudly so
+            # the row cannot read as a clean pass; the full disclosure rides the caveat below.
+            row_mode_label = f"{mode_label} ⚠️ FAIL" if sc_fail else mode_label
+            if sc_fail:
+                fail_cells.append((rt_label, mode_label))
             lines.append(
                 "| "
-                + " | ".join([rt_label, mode_label] + data_cells)
+                + " | ".join([rt_label, row_mode_label] + data_cells)
                 + " |"
             )
     lines.append("")
+
+    # #4420: emit the loud FAIL disclosure directly under the matrix — mirrors
+    # render_cluster_saturation's own outcome=FAIL headline (a FAILing measurement is
+    # surfaced as SLA-not-met, never softened into a green cell).
+    if fail_cells:
+        who = "; ".join(f"**{rt}** {mode}" for rt, mode in fail_cells)
+        lines.append(
+            f"_⚠️ **Scenario FAIL:** {who} — the row above carries a real measurement whose "
+            "own scenario outcome is **FAIL** (SLA not met), not a passing warm hit. The "
+            "numbers are honest data, disclosed as a miss rather than dropped or greened; a "
+            "later refresh whose scenario returns to PASS clears this._"
+        )
+        lines.append("")
 
     # hb#230 (alex doctrine flip): snapshot whether ANY matrix cell earned a *** caveat
     # BEFORE the glossary/footnote text below (which itself contains a literal `***` in the
@@ -1478,8 +1505,12 @@ def _p95_verdict(p95, bar_ms, p50, n):
 def _north_star_rows(results, kata_results=None):
     """Per-runtime measured warm-hit p95 rows, sourced exactly like the matrix.
 
-    Returns a list of (runtime_label, p95_or_None, p95_cell_or_None, p50_or_None, n_or_None).
-    A runtime with no measured warm-hit p95 carries p95=None (renders `pending`).
+    Returns a list of (runtime_label, p95_or_None, p95_cell_or_None, p50_or_None,
+    n_or_None, outcome_or_None). A runtime with no measured warm-hit p95 carries
+    p95=None (renders `pending`). The scenario's own `outcome` is carried through
+    (unchanged by the p95 read) so the caption can disclose a FAIL loudly — the p95
+    is sourced REGARDLESS of outcome, so a FAILing run still emits a real p95 that
+    would otherwise render as a clean green number (the #4420 trust-surface gap).
     """
     prov = _clean_provenance(results.get("provenance"))
     measured_runtime = prov.get("runtime") or "gvisor"
@@ -1498,8 +1529,9 @@ def _north_star_rows(results, kata_results=None):
         rt_scen = sources.get(rt)
         sc = rt_scen.get("warmpool_cold_start") if rt_scen is not None else None
         p95 = sc["metrics"].get("ttfe_p95_ms") if sc else None
+        outcome = sc.get("outcome") if sc else None
         if p95 is None:
-            rows.append((RUNTIME_LABELS[rt], None, None, None, None))
+            rows.append((RUNTIME_LABELS[rt], None, None, None, None, outcome))
             continue
         p50 = sc["metrics"].get("ttfe_p50_ms")
         n_val = sc["n"] if sc["n"] > 0 else None
@@ -1510,7 +1542,7 @@ def _north_star_rows(results, kata_results=None):
             p95_cell += f" (count={n_val})"
             if n_val < TTFE_COMPARABILITY_MIN_N:
                 p95_cell += f" {_LOW_N_MARK}"
-        rows.append((RUNTIME_LABELS[rt], p95, p95_cell, p50, n_val))
+        rows.append((RUNTIME_LABELS[rt], p95, p95_cell, p50, n_val, outcome))
     return rows
 
 
@@ -1595,7 +1627,7 @@ def _north_star_delta_caveat(results, kata_results=None):
                 prior_nc_by_runtime["kata-microvm"] = kp["prior_node_count"]
 
     flags = []
-    for label, p95, _cell, _p50, _n in rows:
+    for label, p95, _cell, _p50, _n, _outcome in rows:
         if p95 is None:
             continue
         rt = label_to_rt.get(label)
@@ -1644,6 +1676,36 @@ _REGIME_BOUNDARY_NOTE = (
 )
 
 
+def _north_star_fail_caveat(rows):
+    """Loud disclosure when a runtime's warmpool_cold_start scenario OUTCOME is FAIL.
+
+    The North Star p95 is sourced from the warmpool_cold_start scenario REGARDLESS of that
+    scenario's own outcome — a FAILing run still emits a real p95 that _north_star_rows reads
+    and the caption grades against the bar and the refresh-delta tripwire carries forward as
+    the baseline. Per the trust-surface doctrine (#4420: a downgrade must reopen loudly, never
+    render silently), a FAIL outcome on the very scenario whose p95 the caption adopts must be
+    disclosed — the bar grade (❌/✅) and the scenario's own outcome are INDEPENDENT signals, so
+    a p95 that happens to clear the bar would otherwise render a green ✅ while its own run was
+    marked FAIL. Mirrors render_cluster_saturation's own outcome=FAIL headline caveat. Returns
+    "" when no runtime FAILs so the caller can unconditionally append it.
+    """
+    failed = [
+        label
+        for label, p95, _cell, _p50, _n, outcome in rows
+        if outcome == "FAIL" and p95 is not None
+    ]
+    if not failed:
+        return ""
+    who = ", ".join(f"**{lbl}**" for lbl in failed)
+    return (
+        "> ⚠️ **Scenario FAIL:** the warm-pool-hit scenario's own outcome is **FAIL** for "
+        f"{who} — the p95 above is a real measurement that MISSED its SLA, not a passing "
+        "warm hit. It is still graded against the bar and carried forward as the refresh "
+        "baseline honestly (an SLA-failing number is disclosed, never softened into a green "
+        "cell); a later refresh whose scenario returns to PASS clears this."
+    )
+
+
 def render_north_star_caption(results, kata_results=None):
     """One-line measured-verdict captions for the <1s North Star + 0.5s stretch bar.
 
@@ -1666,11 +1728,17 @@ def render_north_star_caption(results, kata_results=None):
 
     def _entries(bar_ms):
         parts = []
-        for label, p95, p95_cell, p50, n_val in rows:
+        for label, p95, p95_cell, p50, n_val, outcome in rows:
             if p95 is None:
                 parts.append(f"{label} {link_pending(_PENDING)}")
             else:
-                parts.append(f"{label} {p95_cell} {_p95_verdict(p95, bar_ms, p50, n_val)}")
+                entry = f"{label} {p95_cell} {_p95_verdict(p95, bar_ms, p50, n_val)}"
+                # #4420: a FAIL outcome on the sourced scenario overrides the bar grade —
+                # never let a p95 that clears the bar render a silent green ✅ while its own
+                # run was marked FAIL. The full disclosure rides the caveat block below.
+                if outcome == "FAIL":
+                    entry += " ⚠️ **scenario FAIL**"
+                parts.append(entry)
         return "; ".join(parts)
 
     north_star = (
@@ -1687,7 +1755,10 @@ def render_north_star_caption(results, kata_results=None):
     )
     caveat = _machine_class_caveat(_clean_provenance(results.get("provenance")))
     delta_caveat = _north_star_delta_caveat(results, kata_results)
+    fail_caveat = _north_star_fail_caveat(rows)
     out = north_star + "\n\n" + stretch
+    if fail_caveat:
+        out += "\n\n" + fail_caveat
     if caveat:
         out += "\n\n" + caveat
     if delta_caveat:
