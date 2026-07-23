@@ -490,6 +490,116 @@ def test_prior_cell_missing_or_malformed_is_noop():
     _check(raw[0]["sla_metrics"] == {}, "non-dict prior sla_metrics -> no-op")
 
 
+# --- carry_prior_basis_caveats (hb#230 standalone unresolved-bounds caveat) ---
+
+# The committed native_digest_cold shape: a per-bar basis caveat with NO triple.
+_CAVEAT = {"thpt_slo_basis_5s": "unresolved_bounds_bar_bracketed"}
+_NDC = "native_digest_cold"
+
+
+def test_standalone_caveat_carried_onto_remeasured_cell():
+    # The core native_digest_cold case: an honest re-measure re-derives the
+    # p50/p95 bars but no sweep env reproduces the standalone caveat, so the
+    # fresh cell arrives with no basis/triple. The prior caveat must carry so
+    # check_cell_downgrade does not fire on the lost sla_metrics key.
+    raw = [_cell(name=_NDC, sla_metrics={"ttfe_p50_ms": 2853.7, "ttfe_p95_ms": 3126.3})]
+    prior = [_prior(name=_NDC, sla_metrics=dict(_CAVEAT, ttfe_p50_ms=2900.0))]
+    run.carry_prior_basis_caveats(raw, prior)
+    m = raw[0]["sla_metrics"]
+    _check(m.get("thpt_slo_basis_5s") == "unresolved_bounds_bar_bracketed",
+           f"standalone caveat carried, got {m!r}")
+    _check(m["ttfe_p50_ms"] == 2853.7 and m["ttfe_p95_ms"] == 3126.3,
+           "fresh measured bars untouched by the caveat carry")
+
+
+def test_both_per_bar_caveats_carry():
+    raw = [_cell(name=_NDC)]
+    prior_m = {"thpt_slo_basis_5s": "unresolved_bounds_bar_bracketed",
+               "thpt_slo_basis_1s": "unresolved_bounds_bar_bracketed"}
+    run.carry_prior_basis_caveats(raw, [_prior(name=_NDC, sla_metrics=dict(prior_m))])
+    _check(raw[0]["sla_metrics"] == prior_m, "both per-bar caveats carried")
+
+
+def test_fresh_triple_blocks_caveat_carry():
+    # A fresh triple owns its own basis — carry_prior_cluster_triples' lane, not
+    # this one. This function must never overlay a caveat onto a triple cell.
+    fresh = {"thpt_under_5s_per_cluster": 1.2, "thpt_cluster_node_count": 5}
+    raw = [_cell(name=_NDC, sla_metrics=dict(fresh))]
+    run.carry_prior_basis_caveats(raw, [_prior(name=_NDC, sla_metrics=dict(_CAVEAT))])
+    _check(raw[0]["sla_metrics"] == fresh,
+           f"fresh triple blocks the caveat carry, got {raw[0]['sla_metrics']!r}")
+
+
+def test_fresh_own_basis_blocks_caveat_carry():
+    # Never overlay a caveat onto a cell that stamped its own basis (would risk
+    # the schema's mixed-basis REFUSE and shadow a fresh stamp).
+    fresh = {"thpt_slo_basis": "true_ttfe", "ttfe_p50_ms": 400.0}
+    raw = [_cell(name=_NDC, sla_metrics=dict(fresh))]
+    run.carry_prior_basis_caveats(raw, [_prior(name=_NDC, sla_metrics=dict(_CAVEAT))])
+    _check(raw[0]["sla_metrics"] == fresh,
+           f"fresh own basis blocks the caveat carry, got {raw[0]['sla_metrics']!r}")
+
+
+def test_fresh_own_per_bar_basis_blocks_caveat_carry():
+    fresh = {"thpt_slo_basis_5s": "true_ttfe"}
+    raw = [_cell(name=_NDC, sla_metrics=dict(fresh))]
+    run.carry_prior_basis_caveats(
+        raw, [_prior(name=_NDC, sla_metrics={"thpt_slo_basis_5s":
+                                             "unresolved_bounds_bar_bracketed"})])
+    _check(raw[0]["sla_metrics"] == fresh,
+           "fresh per-bar basis is never overwritten by a carried caveat")
+
+
+def test_prior_caveat_with_triple_is_a_passenger_not_carried_here():
+    # A per-bar basis riding a valid triple is carry_prior_cluster_triples'
+    # passenger — this function must leave that case alone (prior has a triple).
+    raw = [_cell(name=_NDC)]
+    prior_m = {"thpt_under_5s_per_cluster": 27.1, "thpt_cluster_node_count": 2,
+               "thpt_slo_basis_5s": "literal_ttfe_upper_bound+acq_fulfilled"}
+    run.carry_prior_basis_caveats(raw, [_prior(name=_NDC, sla_metrics=dict(prior_m))])
+    _check(raw[0]["sla_metrics"] == {},
+           "a triple-passenger caveat is not this function's lane")
+
+
+def test_whole_triple_basis_alone_carries_nothing():
+    # Only per-bar keys are carried; a bare whole-triple thpt_slo_basis with no
+    # triple is meaningless (it describes a triple that isn't there).
+    raw = [_cell(name=_NDC)]
+    run.carry_prior_basis_caveats(
+        raw, [_prior(name=_NDC, sla_metrics={"thpt_slo_basis": "true_ttfe"})])
+    _check(raw[0]["sla_metrics"] == {},
+           "standalone whole-triple basis (no triple) carries nothing")
+
+
+def test_caveat_carry_non_list_and_missing_prior_noop():
+    raw = [_cell(name=_NDC)]
+    run.carry_prior_basis_caveats(raw, None)
+    run.carry_prior_basis_caveats(raw, {"name": _NDC})
+    run.carry_prior_basis_caveats(raw, [_prior(name="burst_create",
+                                               sla_metrics=dict(_CAVEAT))])
+    run.carry_prior_basis_caveats(raw, [{"name": _NDC, "sla_metrics": "junk"}])
+    _check(raw[0]["sla_metrics"] == {},
+           "non-list / missing-name / malformed prior -> no-op")
+
+
+def test_warmpool_true_ttfe_headline_untouched_by_caveat_carry():
+    # The full-matrix guard: on the real re-fire, warmpool_cold_start arrives
+    # with a fresh true_ttfe triple and native_digest_cold with re-measured bars.
+    # The caveat carry must touch ONLY native_digest_cold.
+    warm = _cell(name=_WARM, sla_metrics=dict(_TRIPLE, thpt_under_5s_per_cluster=0.822,
+                                              thpt_cluster_node_count=5))
+    ndc = _cell(name=_NDC, sla_metrics={"ttfe_p50_ms": 2853.7})
+    raw = [warm, ndc]
+    prior = [_prior(name=_WARM, sla_metrics=dict(_TRIPLE)),
+             _prior(name=_NDC, sla_metrics=dict(_CAVEAT))]
+    run.carry_prior_basis_caveats(raw, prior)
+    _check("thpt_slo_basis_5s" not in raw[0]["sla_metrics"],
+           "warmpool true_ttfe headline never gets a caveat overlay")
+    _check(raw[1]["sla_metrics"].get("thpt_slo_basis_5s")
+           == "unresolved_bounds_bar_bracketed",
+           "native_digest_cold caveat carried")
+
+
 def _all_tests():
     return [v for k, v in sorted(globals().items())
             if k.startswith("test_") and callable(v)]

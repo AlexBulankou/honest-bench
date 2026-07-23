@@ -846,6 +846,13 @@ _CLUSTER_TRIPLE_KEYS = (
     "thpt_cluster_node_count",
 )
 
+# hb#230 per-bar basis stamps (mutually exclusive per cell with the whole-triple
+# `thpt_slo_basis` — see results_schema._BASIS_KEYS / the mixed-basis REFUSE).
+_PER_BAR_BASIS_KEYS = (
+    "thpt_slo_basis_5s",
+    "thpt_slo_basis_1s",
+)
+
 # Products whose runs carry a matrix cluster half to fill (hb#149 / Path A). BOTH
 # gVisor (product "sandbox") and Kata microVM (product "sandbox-kata") own a
 # warm-row cluster cell in render_matrix (the kata slot fills from kata_results),
@@ -1034,6 +1041,67 @@ def carry_prior_cluster_triples(raw: list, prior_scenarios) -> None:
             if passenger in pm and passenger not in m:
                 carried[passenger] = pm[passenger]
         m.update(carried)
+
+
+def carry_prior_basis_caveats(raw: list, prior_scenarios) -> None:
+    """Carry a prior STANDALONE per-bar basis caveat across the daily refresh.
+
+    carry_prior_cluster_triples above carries the per-bar basis stamps
+    (`thpt_slo_basis_5s`/`_1s`) ONLY as passengers riding a valid cluster triple
+    — a prior cell that stamps a per-bar basis but has NO triple carries nothing
+    (the "producer inconsistency" branch, keyed on the triple keys only). That is
+    the wrong call for the ONE legitimate stamp-without-triple shape: the hb#230
+    `unresolved_bounds_bar_bracketed` caveat, hand-authored onto native_digest_cold
+    by regen_hb230_caveat_cells.py. It records that the bar's SLO rate was
+    genuinely MEASURED but sits inside an unresolvable [lower,upper] bracket, so no
+    per-cluster rate can be published (the cell renders `unk.***`) — a true
+    disclosure with deliberately no triple to ride. A refresh that re-measures the
+    cell drops the caveat (no sweep env reproduces it, and the triple-passenger
+    carry skips it), and check_cell_downgrade then correctly fires on the lost
+    sla_metrics key — turning an honest re-measure into a refused write.
+
+    This carry closes that gap with the same do-not-auto-decay posture, scoped
+    tightly to avoid re-introducing a mixed-basis or shadow-a-fresh-sweep bug:
+
+      * fresh cell must carry NO cluster-triple key (a fresh triple owns its own
+        basis — that path is carry_prior_cluster_triples', not this one), AND
+      * fresh cell must carry NO basis key of any convention (whole-triple or
+        per-bar) — never overlay a caveat onto a cell that stamped its own basis,
+        and never create the schema's mixed-basis REFUSE shape, AND
+      * prior cell must hold a per-bar basis stamp AND itself have NO triple (a
+        genuine standalone caveat, not a triple passenger).
+
+    Only the per-bar keys are carried (a standalone whole-triple `thpt_slo_basis`
+    with no triple is meaningless — it describes a triple that isn't there). Runs
+    AFTER carry_prior_cluster_triples so a fresh or carried triple always wins.
+    """
+    if not isinstance(prior_scenarios, list):
+        return
+    prior_by_name = {
+        s.get("name"): s for s in prior_scenarios if isinstance(s, dict)
+    }
+    for cell in raw:
+        if not isinstance(cell, dict):
+            continue
+        m = cell.get("sla_metrics")
+        if not isinstance(m, dict):
+            continue
+        # Fresh cell must own neither a triple nor any basis stamp of its own.
+        if any(k in m for k in _CLUSTER_TRIPLE_KEYS):
+            continue
+        if any(k in m for k in ("thpt_slo_basis", *_PER_BAR_BASIS_KEYS)):
+            continue
+        prior = prior_by_name.get(cell.get("name"))
+        pm = prior.get("sla_metrics") if isinstance(prior, dict) else None
+        if not isinstance(pm, dict):
+            continue
+        # Prior must be a genuine standalone caveat: a per-bar basis stamp with
+        # NO triple (a triple-passenger caveat is already handled above).
+        if any(k in pm for k in _CLUSTER_TRIPLE_KEYS):
+            continue
+        carried = {k: pm[k] for k in _PER_BAR_BASIS_KEYS if k in pm}
+        if carried:
+            m.update(carried)
 
 
 def carry_prior_density(raw: list, prior_scenarios) -> None:
@@ -1390,6 +1458,12 @@ def main(argv=None) -> int:
     # on the daily refresh nor shadow a deliberate new sweep.
     merge_slo_sweeps(raw, args.product)
     carry_prior_cluster_triples(raw, prior_scenarios)
+    # Carry a prior STANDALONE per-bar basis caveat (hb#230
+    # unresolved_bounds_bar_bracketed) that has no triple to ride — the
+    # triple-passenger carry above skips it, so an honest re-measure would drop
+    # the still-true caveat and trip check_cell_downgrade. Runs AFTER the triple
+    # carry so a fresh or carried triple always wins.
+    carry_prior_basis_caveats(raw, prior_scenarios)
     # Carry the cross-fire Max Density value (hb#206): the saturation probe
     # measures it, the canonical refresh publishes it via env stamp — a refresh
     # without the density envs must not decay the published cell to pending.
