@@ -4552,6 +4552,108 @@ def test_matrix_no_fail_caveat_when_all_pass():
 
 
 # ---------------------------------------------------------------------------
+# #4420 trust-surface: warm-pool-hit p95 is meant to sit AT or BELOW the
+# unique-image cold-start p95 (warm is the fast path). When the published matrix
+# shows warm p95 > cold p95 it renders a backwards number as two clean green
+# cells. _warm_cold_inversion_caveat is a cause-agnostic, auto-clearing standing
+# tripwire that discloses the live inversion, gated on BOTH rows N >= 30 so it
+# never fires on the low-N sampling inversion TTFE_COMPARABILITY_MIN_N marks.
+# ---------------------------------------------------------------------------
+
+def _inversion_scenarios(warm_p95, cold_p95, warm_n=30, cold_n=30):
+    # gVisor scenario list with warm/cold p95 + N dialed for the inversion guard.
+    return [
+        {
+            "name": "warmpool_cold_start", "outcome": "PASS", "n": warm_n,
+            "sla_metrics": {"ttfe_p50_ms": 400, "ttfe_p95_ms": warm_p95},
+        },
+        {
+            "name": "native_digest_cold", "outcome": "PASS", "n": cold_n,
+            "sla_metrics": {"ttfe_p50_ms": 400, "ttfe_p95_ms": cold_p95},
+        },
+    ]
+
+
+def test_warm_cold_inversion_caveat_fires_when_warm_above_cold():
+    # warm 4089ms > cold 3715ms, both N>=30 — the live gVisor anomaly. Must disclose.
+    out = render._warm_cold_inversion_caveat(
+        _matrix_results(
+            _inversion_scenarios(4089, 3715, warm_n=200, cold_n=200),
+            provenance={"runtime": "gvisor"},
+        )
+    )
+    assert "Warm-slower-than-cold:" in out
+    assert "gVisor" in out
+    assert "warm 4.089s" in out
+    assert "cold 3.715s" in out
+    # cause-agnostic: no mechanism is asserted as fact
+    assert "candidates:" in out
+
+
+def test_warm_cold_inversion_caveat_clean_when_warm_below_cold():
+    # the normal, correct ordering (warm faster than cold) emits nothing — auto-clear.
+    out = render._warm_cold_inversion_caveat(
+        _matrix_results(
+            _inversion_scenarios(900, 1560, warm_n=200, cold_n=200),
+            provenance={"runtime": "gvisor"},
+        )
+    )
+    assert out == ""
+
+
+def test_warm_cold_inversion_caveat_suppressed_when_either_row_low_n():
+    # warm > cold but the cold row is below the N=30 floor — a low-N draw can invert the
+    # true relationship purely from sampling, so the guard must NOT fire (that is exactly
+    # the small-sample inversion TTFE_COMPARABILITY_MIN_N marks, not a real warm>cold).
+    out_cold_low = render._warm_cold_inversion_caveat(
+        _matrix_results(
+            _inversion_scenarios(4089, 3715, warm_n=200, cold_n=5),
+            provenance={"runtime": "gvisor"},
+        )
+    )
+    assert out_cold_low == ""
+    out_warm_low = render._warm_cold_inversion_caveat(
+        _matrix_results(
+            _inversion_scenarios(4089, 3715, warm_n=5, cold_n=200),
+            provenance={"runtime": "gvisor"},
+        )
+    )
+    assert out_warm_low == ""
+
+
+def test_warm_cold_inversion_caveat_flags_kata_independently():
+    # gVisor clean, Kata inverted — only Kata is named, and it fires off the kata companion.
+    kata_scen = _inversion_scenarios(3500, 3000, warm_n=40, cold_n=40)
+    out = render._warm_cold_inversion_caveat(
+        _matrix_results(
+            _inversion_scenarios(900, 1560, warm_n=200, cold_n=200),
+            provenance={"runtime": "gvisor"},
+        ),
+        kata_results=_kata_results(
+            scenarios=kata_scen, provenance={"runtime": "kata-microvm"},
+        ),
+    )
+    assert "Kata + microVM" in out
+    assert "gVisor" not in out
+
+
+def test_warm_cold_inversion_caveat_wired_into_caption():
+    # end-to-end: the caption assembles the inversion caveat when the live data is inverted.
+    out = render.render_north_star_caption(
+        _matrix_results(
+            _inversion_scenarios(4089, 3715, warm_n=200, cold_n=200),
+            provenance={"runtime": "gvisor"},
+        )
+    )
+    assert "Warm-slower-than-cold:" in out
+    # and stays absent on a clean run
+    clean = render.render_north_star_caption(
+        _matrix_results(_full_gvisor_scenarios(), provenance={"runtime": "gvisor"})
+    )
+    assert "Warm-slower-than-cold" not in clean
+
+
+# ---------------------------------------------------------------------------
 # #4164 / hb#132: render_storage_config — "Which storage class should you pick?"
 # Closed-enum ({ephemeral,pd,snapshot}) data-keyed guidance section. Fixtures use
 # only generic public-safe class names (never a sandbox.a4/ label prefix, volume,
