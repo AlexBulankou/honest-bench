@@ -16,8 +16,8 @@ Honesty spine (inherited from ttfe_stamp / prom_ttfe, never bypassed here):
   - the stamped count is the summed webhook-stamped population, None iff the metric
     was absent in every rung (dead-by-construction).
 
-Collision-ack from a4s2 is required before running (shared cluster) — mirrored on
-#4021. Cleans up all created Template/WarmPool/Claims on exit.
+A peer collision-ack is required before running (the cluster is shared).
+Cleans up all created Template/WarmPool/Claims on exit.
 """
 import json
 import os
