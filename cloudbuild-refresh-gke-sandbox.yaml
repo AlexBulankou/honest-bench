@@ -192,11 +192,11 @@ steps:
             return 0
           fi
           echo "==> [trap] tearing down ephemeral cluster $$CLUSTER"
-          # Loud on failure (hb#382 follow-up, a#5503): a bare `|| true` here
-          # used to swallow a mid-build IAM-strip 403 with zero build-time
-          # signal -- the ONLY backstop was the a#5496 age-based orphan
-          # reaper, up to ~90min later. Capture the real exit code and, on
-          # failure, (a) print a greppable ERROR line in the build log and
+          # Loud on failure (hb#382 follow-up): a bare `|| true` here used to
+          # swallow a mid-build IAM-strip 403 with zero build-time signal --
+          # the ONLY backstop was the age-based orphan reaper, up to ~90min
+          # later. Capture the real exit code and, on failure, (a) print a
+          # greppable ERROR line in the build log and
           # (b) best-effort POST an immediate alert through the same #s-dev
           # webhook sdev-delta-notify uses below, so a leak is known at
           # build-failure time instead of on the reaper's next sweep. The
@@ -206,12 +206,16 @@ steps:
           # already-determined exit code anyway (bash locks that in before
           # running EXIT traps), and trying to would only risk masking the
           # real measure-step failure this trap is reporting on.
-          if ! gcloud container clusters delete "$$CLUSTER" --region "$$REGION" --quiet; then
-            local del_exit=$$?
+          # `local del_exit=$?` inside `if ! cmd; then` would capture the
+          # NEGATED test's status (always 0), not cmd's real exit -- so the
+          # delete's actual code is captured via `||` BEFORE the `if` runs.
+          local del_exit=0
+          gcloud container clusters delete "$$CLUSTER" --region "$$REGION" --quiet || del_exit=$$?
+          if [ "$$del_exit" -ne 0 ]; then
             echo "==> [trap] ERROR: teardown FAILED (exit $$del_exit) for cluster $$CLUSTER in $$REGION -- likely LEAKED and still billing. Manual reap: gcloud container clusters delete $$CLUSTER --region $$REGION --quiet"
             if [ -n "$${HB_SDEV_WEBHOOK:-}" ]; then
               curl -sS -X POST -H "Content-Type: application/json" \
-                -d "{\"text\": \"honest-bench hb-refresh-gke-sandbox: teardown FAILED (exit $$del_exit) for cluster $$CLUSTER in $$REGION -- likely leaked and still billing. Backstopped by the a#5496 orphan reaper (~90min), but check now: gcloud container clusters delete $$CLUSTER --region $$REGION --quiet\"}" \
+                -d "{\"text\": \"honest-bench hb-refresh-gke-sandbox: teardown FAILED (exit $$del_exit) for cluster $$CLUSTER in $$REGION -- likely leaked and still billing. Backstopped by the age-based orphan reaper (~90min), but check now: gcloud container clusters delete $$CLUSTER --region $$REGION --quiet\"}" \
                 "$${HB_SDEV_WEBHOOK}" >/dev/null || echo "==> [trap] WARNING: #s-dev alert post also failed (non-fatal) -- relying on the orphan reaper backstop"
             fi
           fi
@@ -507,10 +511,10 @@ availableSecrets:
     # needs no secret (read-only offline run).
     - versionName: projects/$PROJECT_ID/secrets/hb-refresh-github-token/versions/latest
       env: GITHUB_TOKEN
-    # Incoming Google Chat webhook the sdev-delta-notify step posts to (see the PR
-    # description for provisioning detail). Consumed only via secretEnv in
-    # sdev-delta-notify above, never a build substitution, so it never echoes into
-    # build logs.
+    # Incoming Google Chat webhook (see the PR description for provisioning detail).
+    # Consumed via secretEnv by two steps -- sdev-delta-notify's threshold alert and
+    # measure's teardown-failure alert -- never a build substitution, so it never
+    # echoes into build logs.
     - versionName: projects/$PROJECT_ID/secrets/hb-sdev-webhook/versions/latest
       env: HB_SDEV_WEBHOOK
 
