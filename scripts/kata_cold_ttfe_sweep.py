@@ -2,7 +2,7 @@
 """Minimal honest Kata cold step-up sweep -> true-TTFE stamp (hb#5396 box 4).
 
 Fires real cold SandboxClaims (warmpool replicas=0, runtimeClassName=kata-clh) on
-the persistent sandbox-scenarios-cluster, brackets each rung with controller
+the persistent scenarios cluster, brackets each rung with controller
 /metrics scrapes, and assembles the {pareto, true_ttfe_webhook_stamped_claims}
 record via harness.ttfe_stamp. The record is written to a BENCH_SLO_SWEEP file the
 `sandbox-kata` product then derives into scenarios[0].sla_metrics.thpt_slo_basis.
