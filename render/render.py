@@ -3025,8 +3025,8 @@ def _concurrent_burst_regime_note(cb):
 
     OPTIONAL `cluster_regime` override (#5474): the date-cutover inference above is a PROXY — it
     only holds for fires that actually ran through honest-bench's own CI harness. A leg fired
-    out-of-band against a known cluster (e.g. a manual low-N true-per-sandbox fire against the
-    genuinely long-lived sandbox-scenarios-cluster, dated after the cutover) states its TRUE
+    out-of-band against a known cluster (e.g. a manual low-N true-per-sandbox fire against a
+    genuinely long-lived, pre-warmed internal cluster, dated after the cutover) states its TRUE
     regime explicitly via this key, which takes precedence over the date inference entirely —
     the proxy never overrides a known fact.
     """

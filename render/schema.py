@@ -985,7 +985,7 @@ def _concurrent_burst_leg_ok(v):
     # render.py's _concurrent_burst_regime_note() infers "ephemeral CI cluster" for any
     # measured_at on/after _EPHEMERAL_CI_CUTOVER — a proxy that only holds for fires that
     # actually ran through honest-bench's own CI harness. A leg fired out-of-band against a
-    # genuinely long-lived cluster (e.g. sandbox-scenarios-cluster) after that date must state
+    # genuinely long-lived, pre-warmed internal cluster after that date must state
     # its TRUE regime explicitly rather than let the date proxy fabricate a false claim — the
     # same fail-closed-on-a-bad-proxy posture as every other guard in this schema.
     if "cluster_regime" in v and v["cluster_regime"] not in CONCURRENT_BURST_CLUSTER_REGIMES:
