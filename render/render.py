@@ -985,6 +985,13 @@ def render_matrix(results, kata_results=None):
             sc_pending = bool(sc) and sc.get("outcome") == "pending"
             sc_fail = bool(sc) and sc.get("outcome") == "FAIL"
             m = sc["metrics"] if sc else {}
+            # #4420 scope-gate: a FAIL earns the loud ⚠️ FAIL tag + caveat ONLY when it
+            # carries a REAL TTFE measurement — the caveat text asserts a real measurement
+            # whose SLA was not met. The never-reached-first-execution FAIL (empty TTFE
+            # metrics, only exec_success_rate:0.0) is a DIFFERENT failure the Execution-Success
+            # cell already discloses (`0% ⚠️`); tagging it would claim a measurement that
+            # isn't there. Mirrors the North Star caveat's own `p95 is not None` gate.
+            sc_fail = sc_fail and ("ttfe_p95_ms" in m or "ttfe_p50_ms" in m)
 
             # hb#230 Fork 5 (resume Class-C ceiling): the gVisor resume row DID record a probe
             # ceiling — the wall-clock it waited out against a never-clearing Suspended
