@@ -466,6 +466,25 @@ def test_webhook_stamped_claim_count_delta_absent_end_is_none():
            "headline metric absent from end -> None")
 
 
+def test_webhook_stamped_claim_count_delta_mixes_new_and_diffed_launch_types():
+    # The count analogue of test_delta_new_launch_type_carries_full_end_histogram: warm is
+    # present in BOTH scrapes (diffed via histogram_delta: 100-50=50) while cold first appears
+    # this window (absent from start -> full end count 10). A single call must SUM both branches
+    # -- the diffed-existing path AND the new-launch-type full-end path -- into 50+10=60. The
+    # window test exercises only the diffed path; the empty-start test exercises only the
+    # full-end path (all-new degenerate); neither proves the accumulator mixes the two.
+    start = _DELTA_START  # warm only, count 50
+    end = _DELTA_END + (  # warm count 100 + cold (new this window) count 10
+        'agent_sandbox_claim_startup_latency_ms_bucket{launch_type="cold",le="1000"} 0\n'
+        'agent_sandbox_claim_startup_latency_ms_bucket{launch_type="cold",le="2500"} 5\n'
+        'agent_sandbox_claim_startup_latency_ms_bucket{launch_type="cold",le="5000"} 8\n'
+        'agent_sandbox_claim_startup_latency_ms_bucket{launch_type="cold",le="+Inf"} 10\n'
+        'agent_sandbox_claim_startup_latency_ms_count{launch_type="cold"} 10\n'
+    )
+    _check(p.webhook_stamped_claim_count_delta(start, end) == 60,
+           "mixed window: 50 (warm diff) + 10 (cold full-end) == 60")
+
+
 def _run_all():
     tests = [v for k, v in sorted(globals().items())
              if k.startswith("test_") and callable(v)]
