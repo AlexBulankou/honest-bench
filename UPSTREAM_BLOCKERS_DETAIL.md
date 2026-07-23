@@ -1171,47 +1171,53 @@ if resp.GetActor().GetLatestSnapshotInfo().GetExternal() == nil {
 
 <a id="u7-golden-resume-no-free-workers"></a>
 
-### §U7 — Golden-actor resume fast-fails "no free workers available" (worker-pool saturation vs. locality-restricted resume)
+### §U7 — Golden-actor resume fast-fails "no free workers available" (per-template worker-assignment contention)
 
 **Internal tracking a#5452 · evidence-only per NO-BOT (alex, 2026-07-07) — root-cause bisect pending; filing, if any, is a human action, never agent-initiated**
 
 **What's blocked**
 
-- **The a4 demo e2e suite has been RED since ~2026-07-07** with golden-actor **resume** fast-failing `rpc error: code = FailedPrecondition desc = AssignWorker: no free workers available`. As of 2026-07-23 this is the **sole** cause of the demo-suite RED across **both** `TestActorLifecycle` and `TestDurableDirLifecycle`, after #5448 cleared the §U2 DATA hard-fail (see [§U2 STATUS banner](#u2-data-snapshot-zero-ddv)). The golden actor in atespace `ate-golden` never reaches Ready → the whole suite fails its golden precondition.
-- **Two candidate root causes, not yet disambiguated** (the pending bisect must decide):
-  1. **Genuine pool saturation.** Each per-test WorkerPool hard-codes `Replicas: 5` (`internal/e2e/suites/demo/demo_test.go:524`, upstream tip `961883a`) on a single-node `n2d-standard-4` cluster running **4 concurrent per-test namespaces**. The golden resume in `ate-golden` contends with each test's own actors for a fixed-size pool and **does not back off** on `no free workers` — it fast-fails instead of retrying/queuing.
-  2. **Upstream #398 — misleading "no free workers" on locality-restricted resume.** Upstream [#398](https://github.com/agent-substrate/substrate/issues/398) reports that a **locality-restricted resume** (an actor whose snapshot pins it to a specific node/VM) surfaces the *same* `no free workers available` string even when the pool has capacity — a misleading message masking a locality mismatch, not a true count exhaustion. If resume gained a locality restriction upstream around the onset date, our RED is #398's surface, not a count problem.
-- **The onset discriminates toward an *upstream* change, not our config.** RED began **~2026-07-07T00:17Z on an UNCHANGED `Replicas: 5`** — no a4-side config touched the pool size at the boundary — so whatever changed was upstream (a resume-path regime shift: either a scheduling/backoff change that removed slack, or a new locality restriction per candidate 2). This is why the section is filed upstream-lane, not as an a4 test-harness bug.
+- **The a4 demo e2e suite has been RED since 2026-07-07T00:17Z** with the **golden** actor's **resume** fast-failing `rpc error: code = FailedPrecondition desc = no free workers available`. As of 2026-07-23 this is the **sole** cause of the demo-suite RED across **both** `TestActorLifecycle` and `TestDurableDirLifecycle`, after #5448 cleared the §U2 DATA hard-fail (see [§U2 STATUS banner](#u2-data-snapshot-zero-ddv)). Every failure is `/ateapi.Control/ResumeActor` on atespace `ate-golden` (`GoldenActorAtespace`), across the 5 distinct golden UUIDs (one per per-test ActorTemplate) — the golden is the lazily-resumed restore source for new actors and draws workers from the **same per-template WorkerPool** as that test's own actors (via `Spec.WorkerSelector`).
+- **Mechanism, source-traced live (a4s1, 2026-07-23, demo-cluster image `529a28de`):** `AssignWorkerStep.Execute` → `findFreeWorker` filters pool workers by `Assignment==nil` **AND** eligible-for (SandboxClass + template/actor `WorkerSelector`) **AND** a node-VM-local-snapshot restriction; an empty result raises `FailedPrecondition "no free workers available"`. **On a single-node cluster the node-VM-local restriction is a no-op**, so the empty result reduces to one of: (a) all eligible workers in the per-template 5-pool are already `Assignment!=nil` (transient RUNNING/RESUMING contention — golden-resume racing the test's own actors, no backoff/requeue → fast-fail), or (b) an **eligibility mismatch** (golden's SandboxClass/WorkerSelector no longer matches its pool's workers).
+- **Three prior candidates RULED OUT** by the live trace:
+  - **NOT node CPU pressure** — worker pods carry no CPU requests; the single node sits ~15% allocated (618m/3920m). "Add a node / lower Replicas to relieve the node" would do nothing. This is a substrate **free-worker accounting** error, not a k8s Pending-pod error.
+  - **NOT a naive suspend-leak** — the suspend and pause paths both free the worker (`worker.Assignment = nil`, gated on "still belongs to us"), so saturation is from concurrently RUNNING/RESUMING actors, not from suspended actors holding workers.
+  - **NOT upstream #398's locality path** — [#398](https://github.com/agent-substrate/substrate/issues/398) ("misleading 'no free workers' on locality-restricted resume") is the *same error string* but its mechanism is the node-VM-local restriction, which is a **no-op on this single-node cluster**. #398 stays RELATED (same string + the same *fast-fail-vs-backoff* design question below), but is **not** the root cause here; it would only bite on a multi-node cluster.
+- **The onset discriminates toward an *upstream* change, not our config.** RED began 2026-07-07T00:17Z (`kb/substrate/health/e2e-history.jsonl`) on the **unchanged** hardcoded `Replicas: 5` per-test pools that historically passed — so 5 workers *used* to suffice, and something in the golden-resume / worker-release timing or the golden's eligibility changed upstream ~07-07. This is **not** #5448 (durable-dir, landed 07-23, *after* onset) and not node capacity. This is why the section is filed upstream-lane, not as an a4 test-harness bug.
 
 **Distinct from the substrate siblings on this page:**
 
-- **§U6 (a#5115)** silently *drops* the golden snapshot pointer (`LatestSnapshotInfo == nil`) → symptom is `unexpected snapshot type for golden actor: <nil>`; this is a *worker-assignment* fast-fail (`AssignWorker: no free workers available`) with the pointer intact.
-- **§U2 (a#3842, e2e no longer triggers)** was a DATA-scope converter hard-fail at snapshot *take* time; this is a *resume* time worker-assignment failure.
+- **§U6 (a#5115)** silently *drops* the golden snapshot pointer (`LatestSnapshotInfo == nil`) → symptom is `unexpected snapshot type for golden actor: <nil>`; this is a *worker-assignment* fast-fail with the pointer intact.
+- **§U2 (a#3842, e2e no longer triggers)** was a DATA-scope converter hard-fail at snapshot *take* time; this is a *resume*-time worker-assignment failure.
 
 **Symptom**
 
 ```
-ERROR golden-actor resume failed atespace=ate-golden
-  error="rpc error: code = FailedPrecondition desc = AssignWorker: no free workers available"
-# golden actor never reaches Ready → demo suite golden precondition fails → suite RED
+ERROR while resuming golden actor atespace=ate-golden
+  error="rpc error: code = FailedPrecondition desc = no free workers available"
+# golden never reaches Ready → demo suite golden precondition fails → suite RED
+# 09:43Z fire window: 0 DATA hard-fails, 43 api-server + 87 controller "no free workers",
+#   ~2ms each, across 4 concurrent per-test namespaces; first (not retry-pile-up) error per ns
 ```
 
-**Source (upstream tip `961883a`, re-verified 2026-07-23)**
+**Source (live-traced at demo-cluster image `529a28de`, 2026-07-23 — re-verify at upstream tip at filing time)**
 
-- Per-test WorkerPool size: `internal/e2e/suites/demo/demo_test.go:524` — `Replicas: 5,` (unchanged across the onset boundary).
-- The `no free workers available` RPC string originates in the substrate worker-assignment path (`AssignWorker`); re-verify the exact source line at filing time — not pinned here because the root cause (saturation vs. locality) is unresolved and the load-bearing line differs per candidate.
+- Per-test WorkerPool size: `internal/e2e/suites/demo/demo_test.go:524` — `Replicas: 5,` (verified at upstream tip `961883a`; **unchanged** across the onset boundary).
+- Golden atespace: `internal/resources/actor.go:31` — `GoldenActorAtespace = "ate-golden"`.
+- Assignment path: `cmd/ateapi/internal/controlapi/workflow_resume.go` — `findFreeWorker` (~:263), `FailedPrecondition "no free workers available"` (~:213); worker-free on suspend `workflow_suspend.go` (~:209), on pause `workflow_pause.go` (~:215). **These `cmd/ateapi/...` line numbers are from the running demo-cluster image, not confirmed against upstream tip `961883a`** — re-verify at filing time (only the two `internal/...` pins above are tip-verified).
 
-**Related upstream (dup-search 2026-07-23):** [#398](https://github.com/agent-substrate/substrate/issues/398) *(open — "misleading 'no free workers' on locality-restricted resume"; the leading alternative root cause — candidate 2 above)*. Searched `no free workers available`, `AssignWorker locality`, `resume no free workers` — #398 is the sole prior report of this string; **no report matching a plain per-pool-saturation-on-concurrent-namespaces framing.**
+**Related upstream (dup-search 2026-07-23):** [#398](https://github.com/agent-substrate/substrate/issues/398) *(open — "misleading 'no free workers' on locality-restricted resume"; same error string, RELATED via the fast-fail-vs-backoff design question, but its locality mechanism is a no-op on our single-node cluster — see "RULED OUT" above)*. Searched `no free workers available`, `AssignWorker locality`, `resume no free workers` — #398 is the sole prior report of this string; **no report matching the per-template in-pool assignment-contention framing on a single node.**
 
 **Recommended direction (for whoever picks up the bisect):**
 
-- Bisect the upstream resume path across the ~2026-07-07 onset to decide saturation vs. #398 locality-restriction. If #398: our RED is a symptom of that open upstream issue → cross-link, no new filing. If genuine saturation: the fix class is **backoff/queue on `no free workers` at resume** (fast-fail is the defect) and/or right-sizing the per-test pool for the concurrent-namespace count.
-- a4-side mitigation that would GREEN the suite without touching upstream: lower per-test `Replicas` × concurrency to fit the single node, or serialize the per-test namespaces — but confirm the root cause first so a config band-aid doesn't mask an upstream resume regression.
+- Bisect the upstream golden-resume / worker-assignment path across the 2026-07-07 onset to decide sub-candidate (a) transient in-pool contention vs (b) eligibility (SandboxClass/WorkerSelector) mismatch — and whether the golden even needs a live pool worker to serve as a restore source, or could restore straight from its snapshot without occupying a slot.
+- **Design question (overlaps #398's spirit):** should golden-resume **backoff/requeue** rather than fast-fail `FailedPrecondition` when the pool is transiently full? A fast-fail on a recoverable-by-waiting condition is the defect either way.
+- a4-side mitigation that would GREEN the suite without an upstream fix: serialize the per-test namespaces (drop suite parallelism) so the per-template pools don't co-exist — but confirm the root cause first so a config band-aid doesn't mask an upstream resume regression. (Note: lowering `Replicas` would *worsen* in-pool contention, not help — the original "5→1-2" direction was backwards.)
 
 **Page-side notes (not part of any paste body)**
 
-- Evidence-only per **NO-BOT (alex, 2026-07-07)**: no upstream issue filed or planned by agents. a#5452 (OPEN) carries the live evidence trail (proximate mechanism established live by a4s1 2026-07-23; root-cause bisect pending).
-- Line pin `demo_test.go:524` is at upstream tip `961883a` (2026-07-23 spot-verify). The `AssignWorker` source line is deliberately **not** pinned until the bisect resolves which path is load-bearing — re-verify at filing time.
+- Evidence-only per **NO-BOT (alex, 2026-07-07)**: no upstream issue filed or planned by agents. a#5452 (OPEN) carries the live evidence trail (mechanism source-traced by a4s1 2026-07-23; upstream onset bisect pending).
+- Line pins: `demo_test.go:524` + `actor.go:31` are at upstream tip `961883a` (2026-07-23 spot-verify); the `cmd/ateapi/...` resume-path pins are from the live demo-cluster image `529a28de` and must be re-verified at tip at filing time.
 
 ## GKE / gVisor platform blockers
 
