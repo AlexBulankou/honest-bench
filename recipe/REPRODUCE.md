@@ -365,6 +365,21 @@ its record carries both the true-TTFE `pareto` **and**
 `true_ttfe_webhook_stamped_claims` (the `_count` at scrape time). Omit the
 count and the whole true-TTFE cell honestly reverts to the literal bases.
 
+**Producer of both fields (offline PHASE-B assembler).** The fire captures a
+cumulative Prometheus scrape at each rung boundary (`metrics-step-*.txt`); the
+canonical producer `harness.ttfe_stamp.build_true_ttfe_stamp` turns those
+captured scrape TEXTs into exactly the `{pareto,
+true_ttfe_webhook_stamped_claims}` stamp above — per-rung true-TTFE p95 from the
+HEADLINE_METRIC increment (`prom_ttfe.ttfe_by_launch_type_delta`) paired with the
+driver's offered/ready rates, and the webhook-stamped count off the same metric's
+`_count`. It is pure/offline (operates on captured text, no cluster/clock), so it
+runs at derive time and is fully unit-tested; `rungs_from_boundary_scrapes` pairs
+the N+1 boundary snapshots into the N rung windows. A rung whose selected
+`launch_type` did not measure is dropped from the pareto (never a fake 0), and the
+count is `None` (measured=False) until the webhook is live on the fired cluster —
+so the same code is dead-by-construction pre-deploy and auto-populates once the
+webhook stamps its first claim.
+
 ## Refreshing published cells: the canonical per-product command
 
 A **wholesale refresh** (re-running the suite to update `latest.json`) must carry
