@@ -73,6 +73,24 @@
         "thpt_under_5s_per_node": 0.0,
         "ttfe_p50_ms": 97398.8,
         "ttfe_p95_ms": 99800.2
+      },
+      {
+        "cluster_regime": "prewarmed",
+        "exec_success_rate": 1.0,
+        "measured_at": "2026-07-23",
+        "mode": "warm",
+        "n": 30,
+        "ttfe_p50_ms": 2069.69,
+        "ttfe_p95_ms": 2997.6
+      },
+      {
+        "cluster_regime": "prewarmed",
+        "exec_success_rate": 1.0,
+        "measured_at": "2026-07-23",
+        "mode": "cold",
+        "n": 30,
+        "ttfe_p50_ms": 12317.14,
+        "ttfe_p95_ms": 13148.42
       }
     ],
     "machine_type": "e2-standard-16",
