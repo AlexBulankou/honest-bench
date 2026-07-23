@@ -2988,7 +2988,7 @@ def _cb_thpt_cell(leg, key):
 
 
 def _concurrent_burst_regime_note(cb):
-    """Measurement-regime disclosure for the concurrent-burst block (a#4021 pre-stage).
+    """Measurement-regime disclosure for the concurrent-burst block (#4021 pre-stage).
 
     A concurrent-burst fire records its cluster regime implicitly via `measured_at`: fires on or
     after the 2026-07-20 ephemeral-CI cutover (_EPHEMERAL_CI_CUTOVER) run on a cold, single-fire

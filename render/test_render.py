@@ -3037,7 +3037,7 @@ def test_concurrent_burst_invalid_provenance_dropped_spine_renders():
 
 
 def test_concurrent_burst_regime_note_post_cutover_ephemeral():
-    # a#4021 pre-stage: a fire ON/AFTER the 2026-07-20 ephemeral-CI cutover discloses the cold
+    # #4021 pre-stage: a fire ON/AFTER the 2026-07-20 ephemeral-CI cutover discloses the cold
     # ephemeral regime so a reader never diffs it against a pre-cutover warm-persistent baseline.
     out = render.render_concurrent_burst(
         _matrix_results(_full_gvisor_scenarios(), concurrent_burst=_cb(measured_at="2026-07-24")))
