@@ -4213,8 +4213,8 @@ def test_north_star_delta_caveat_flags_big_regression():
         "> ⚠️ **Refresh delta:** **gVisor** regressed by 0.9s (0.9s → 1.8s, 2.0x) "
         "· verdict flip ✅→❌. A swing this large, or a bar-crossing flip, between "
         "consecutive published runs is flagged for a second look before trusting it as a "
-        "substrate signal — check for a machine-class change, a node-count change, a broken "
-        "measurement, or a real regression/fix."
+        "substrate signal — check for a machine-class change, a node-count change, a "
+        "node-image change, a broken measurement, or a real regression/fix."
     ) in out
 
 
@@ -4341,6 +4341,131 @@ def test_north_star_delta_caveat_no_node_count_clause_without_prior_node_count()
     )
     assert "**Kata + microVM** regressed" in out
     assert "node_count" not in out
+
+
+def test_north_star_delta_flag_node_image_clause_on_flagged_delta():
+    # A flagged delta that ALSO spans a node_image change carries the confound clause,
+    # after the verdict-flip clause (the GKE kubeletVersion floats on the unpinned RAPID
+    # channel, so a kernel/kubelet build swap is a confound on the TTFE swing).
+    flag = render._north_star_delta_flag(
+        "Kata + microVM", 3079, 963,
+        current_node_image="v1.31.2-gke.1000000",
+        prior_node_image="v1.31.1-gke.1846000",
+    )
+    assert flag == (
+        "**Kata + microVM** regressed by 2.116s (0.963s → 3.079s, 3.2x) "
+        "· verdict flip ✅→❌ · node_image v1.31.1-gke.1846000→v1.31.2-gke.1000000"
+    )
+
+
+def test_north_star_delta_flag_no_node_image_clause_when_unchanged_or_absent():
+    # Same node_image on both sides -> no clause; missing either side -> no clause;
+    # an empty/whitespace string must never render a "→" with a blank endpoint.
+    base = "**gVisor** regressed by 0.9s (0.9s → 1.8s, 2.0x) · verdict flip ✅→❌"
+    same = "v1.31.1-gke.1846000"
+    assert render._north_star_delta_flag(
+        "gVisor", 1800, 900, current_node_image=same, prior_node_image=same
+    ) == base
+    assert render._north_star_delta_flag(
+        "gVisor", 1800, 900, current_node_image=same, prior_node_image=None
+    ) == base
+    assert render._north_star_delta_flag(
+        "gVisor", 1800, 900, current_node_image=None, prior_node_image=same
+    ) == base
+    assert render._north_star_delta_flag(
+        "gVisor", 1800, 900, current_node_image="   ", prior_node_image=same
+    ) == base
+
+
+def test_north_star_delta_flag_node_image_clause_absent_when_no_delta():
+    # node_image differs but the ttfe is within threshold and no flip -> no flag at all
+    # (the clause rides ON a flagged delta; a bare build float is not a trust downgrade).
+    assert render._north_star_delta_flag(
+        "gVisor", 900, 950,
+        current_node_image="v1.31.2-gke.1000000",
+        prior_node_image="v1.31.1-gke.1846000",
+    ) is None
+
+
+def test_north_star_delta_flag_node_count_and_node_image_clauses_compose():
+    # Both confounds present on one flagged delta -> both clauses appear, node_count
+    # first then node_image (definition order), each after the verdict-flip clause.
+    flag = render._north_star_delta_flag(
+        "Kata + microVM", 3079, 963,
+        current_node_count=1, prior_node_count=2,
+        current_node_image="v1.31.2-gke.1000000",
+        prior_node_image="v1.31.1-gke.1846000",
+    )
+    assert flag == (
+        "**Kata + microVM** regressed by 2.116s (0.963s → 3.079s, 3.2x) "
+        "· verdict flip ✅→❌ · node_count 2→1 "
+        "· node_image v1.31.1-gke.1846000→v1.31.2-gke.1000000"
+    )
+
+
+def test_north_star_delta_caveat_surfaces_node_image_confound_end_to_end():
+    # End-to-end: a kata flip that also swapped the node image renders the node_image
+    # clause inline on the flagged delta, and the trailing cause list names it. Also
+    # proves node_image/prior_node_image survive _clean_provenance (schema round-trip).
+    kata_scen = [{
+        "name": "warmpool_cold_start", "outcome": "FAIL", "n": 30,
+        "sla_metrics": {"ttfe_p95_ms": 3079},
+    }]
+    out = render.render_north_star_caption(
+        _matrix_results(_full_gvisor_scenarios(), provenance={"runtime": "gvisor"}),
+        kata_results=_kata_results(
+            scenarios=kata_scen,
+            provenance={
+                "runtime": "kata-microvm",
+                "prior_warmpool_ttfe_p95_ms": 963.0,
+                "node_image": "v1.31.2-gke.1000000",
+                "prior_node_image": "v1.31.1-gke.1846000",
+            },
+        ),
+    )
+    assert "**Kata + microVM** regressed" in out
+    assert "· node_image v1.31.1-gke.1846000→v1.31.2-gke.1000000" in out
+    assert "a node-image change" in out
+
+
+def test_north_star_delta_caveat_no_node_image_clause_without_prior_node_image():
+    # prior_node_image absent (first stamped run / unchanged build) -> flagged delta
+    # renders WITHOUT the node_image clause, even though node_image itself is present.
+    kata_scen = [{
+        "name": "warmpool_cold_start", "outcome": "FAIL", "n": 30,
+        "sla_metrics": {"ttfe_p95_ms": 3079},
+    }]
+    out = render.render_north_star_caption(
+        _matrix_results(_full_gvisor_scenarios(), provenance={"runtime": "gvisor"}),
+        kata_results=_kata_results(
+            scenarios=kata_scen,
+            provenance={
+                "runtime": "kata-microvm",
+                "prior_warmpool_ttfe_p95_ms": 963.0,
+                "node_image": "v1.31.2-gke.1000000",
+            },
+        ),
+    )
+    assert "**Kata + microVM** regressed" in out
+    assert "node_image" not in out
+
+
+def test_provenance_node_image_fields_survive_clean_provenance():
+    # #4420 / hb#317: node_image, prior_node_image, and runsc_version are stamped by
+    # harness/run.py but were dropped by _clean_provenance until schema-declared. Assert
+    # the schema round-trip now preserves valid values and still drops malformed ones.
+    cleaned = render._clean_provenance({
+        "node_image": "v1.31.1-gke.1846000",
+        "prior_node_image": "v1.31.2-gke.1000000",
+        "runsc_version": "release-20260701.0",
+        "node_image_bad": "not-a-kubelet-version",
+    })
+    assert cleaned["node_image"] == "v1.31.1-gke.1846000"
+    assert cleaned["prior_node_image"] == "v1.31.2-gke.1000000"
+    assert cleaned["runsc_version"] == "release-20260701.0"
+    # a value failing the regex predicate is dropped, not surfaced
+    assert render._clean_provenance({"node_image": "not-a-kubelet-version"}) == {}
+    assert "node_image_bad" not in cleaned
 
 
 # ---------------------------------------------------------------------------

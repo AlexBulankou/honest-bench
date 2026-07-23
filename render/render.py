@@ -1554,7 +1554,8 @@ def _north_star_rows(results, kata_results=None):
 
 
 def _north_star_delta_flag(
-    label, current_p95, prior_p95, current_node_count=None, prior_node_count=None
+    label, current_p95, prior_p95, current_node_count=None, prior_node_count=None,
+    current_node_image=None, prior_node_image=None,
 ):
     """One flagged-runtime line, or None if this runtime has nothing to flag.
 
@@ -1568,6 +1569,13 @@ def _north_star_delta_flag(
     swing, so a reader can see that part of the delta may be a node-count artifact, not a
     pure substrate regression/fix. The clause rides ON a flagged delta only (it is never a
     flag on its own): a node_count change with no ttfe swing/flip is not a trust downgrade.
+
+    When the flagged delta ALSO spans a node_image change (prior != current, both
+    non-empty strings — the GKE kubeletVersion float on the unpinned RAPID channel), a
+    `· node_image X→Y` clause is appended for the same reason: a kernel/kubelet build swap
+    is a confound on the TTFE swing. Same ride-ON-a-flagged-delta rule (a node-image
+    change with no ttfe swing/flip is not a trust downgrade), and it composes with the
+    node_count clause — both can appear on one flag.
     """
     if not isinstance(current_p95, (int, float)) or not isinstance(prior_p95, (int, float)):
         return None
@@ -1595,6 +1603,14 @@ def _north_star_delta_flag(
         and current_node_count != prior_node_count
     ):
         flag += f" · node_count {prior_node_count}→{current_node_count}"
+    if (
+        isinstance(current_node_image, str)
+        and isinstance(prior_node_image, str)
+        and current_node_image.strip()
+        and prior_node_image.strip()
+        and current_node_image != prior_node_image
+    ):
+        flag += f" · node_image {prior_node_image}→{current_node_image}"
     return flag
 
 
@@ -1613,6 +1629,8 @@ def _north_star_delta_caveat(results, kata_results=None):
     prior_by_runtime = {}
     prior_nc_by_runtime = {}
     current_nc_by_runtime = {}
+    prior_ni_by_runtime = {}
+    current_ni_by_runtime = {}
     prov = _clean_provenance(results.get("provenance"))
     measured_runtime = prov.get("runtime") or "gvisor"
     prior_p95 = prov.get("prior_warmpool_ttfe_p95_ms")
@@ -1622,6 +1640,10 @@ def _north_star_delta_caveat(results, kata_results=None):
         current_nc_by_runtime[measured_runtime] = prov["node_count"]
     if isinstance(prov.get("prior_node_count"), int):
         prior_nc_by_runtime[measured_runtime] = prov["prior_node_count"]
+    if isinstance(prov.get("node_image"), str):
+        current_ni_by_runtime[measured_runtime] = prov["node_image"]
+    if isinstance(prov.get("prior_node_image"), str):
+        prior_ni_by_runtime[measured_runtime] = prov["prior_node_image"]
     if isinstance(kata_results, dict):
         kp = _clean_provenance(kata_results.get("provenance"))
         if kp.get("runtime") == "kata-microvm":
@@ -1632,6 +1654,10 @@ def _north_star_delta_caveat(results, kata_results=None):
                 current_nc_by_runtime["kata-microvm"] = kp["node_count"]
             if isinstance(kp.get("prior_node_count"), int):
                 prior_nc_by_runtime["kata-microvm"] = kp["prior_node_count"]
+            if isinstance(kp.get("node_image"), str):
+                current_ni_by_runtime["kata-microvm"] = kp["node_image"]
+            if isinstance(kp.get("prior_node_image"), str):
+                prior_ni_by_runtime["kata-microvm"] = kp["prior_node_image"]
 
     flags = []
     for label, p95, _cell, _p50, _n, _outcome in rows:
@@ -1645,6 +1671,8 @@ def _north_star_delta_caveat(results, kata_results=None):
             label, p95, prior,
             current_node_count=current_nc_by_runtime.get(rt),
             prior_node_count=prior_nc_by_runtime.get(rt),
+            current_node_image=current_ni_by_runtime.get(rt),
+            prior_node_image=prior_ni_by_runtime.get(rt),
         )
         if flag:
             flags.append(flag)
@@ -1654,8 +1682,8 @@ def _north_star_delta_caveat(results, kata_results=None):
     return (
         "> ⚠️ **Refresh delta:** " + "; ".join(flags) + ". A swing this large, or a bar-crossing "
         "flip, between consecutive published runs is flagged for a second look before trusting it "
-        "as a substrate signal — check for a machine-class change, a node-count change, a broken "
-        "measurement, or a real regression/fix."
+        "as a substrate signal — check for a machine-class change, a node-count change, a "
+        "node-image change, a broken measurement, or a real regression/fix."
     )
 
 
