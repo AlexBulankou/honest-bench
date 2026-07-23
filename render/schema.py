@@ -950,6 +950,8 @@ KATA_ACTIVATION_FIELDS = {
 # em-dash, never a fabricated 0). A non-empty legs list is REQUIRED; a malformed leg fails the
 # whole block CLOSED (no partial-lie table). mode is a closed enum, never free text.
 CONCURRENT_BURST_MODES = {"warm", "cold"}
+# Closed enum for the optional per-leg cluster_regime override (#5474) — see _concurrent_burst_leg_ok.
+CONCURRENT_BURST_CLUSTER_REGIMES = {"prewarmed", "ephemeral_ci"}
 
 
 def _concurrent_burst_leg_ok(v):
@@ -970,6 +972,24 @@ def _concurrent_burst_leg_ok(v):
         esr = v["exec_success_rate"]
         if not (isinstance(esr, (int, float)) and not isinstance(esr, bool) and 0.0 <= esr <= 1.0):
             return False
+    # OPTIONAL per-leg provenance override (#5474): legs fired on a different day than the
+    # block-level `measured_at` (e.g. a low-N true-per-sandbox leg landed later than the
+    # original N=300/500 burst) stamp their OWN date here rather than silently inheriting the
+    # block scalar — a shared block-level date across legs fired on different days/regimes is
+    # exactly the mixed-basis trust-surface problem this repo's own idiom forbids. Absent ⇒
+    # falls back to the block-level measured_at (render/render.py), so single-fire blocks (the
+    # common case) are unaffected.
+    if "measured_at" in v and not (isinstance(v["measured_at"], str) and v["measured_at"]):
+        return False
+    # OPTIONAL explicit cluster-regime override (#5474): the date-cutover heuristic in
+    # render.py's _concurrent_burst_regime_note() infers "ephemeral CI cluster" for any
+    # measured_at on/after _EPHEMERAL_CI_CUTOVER — a proxy that only holds for fires that
+    # actually ran through honest-bench's own CI harness. A leg fired out-of-band against a
+    # genuinely long-lived cluster (e.g. sandbox-scenarios-cluster) after that date must state
+    # its TRUE regime explicitly rather than let the date proxy fabricate a false claim — the
+    # same fail-closed-on-a-bad-proxy posture as every other guard in this schema.
+    if "cluster_regime" in v and v["cluster_regime"] not in CONCURRENT_BURST_CLUSTER_REGIMES:
+        return False
     return True
 
 
@@ -988,6 +1008,10 @@ CONCURRENT_BURST_FIELDS = {
     "node_count": lambda v: isinstance(v, int) and not isinstance(v, bool) and 0 < v < 10000,
     "machine_type": lambda v: isinstance(v, str) and bool(_MACHINE_TYPE.match(v)),
     "measured_at": lambda v: isinstance(v, str) and bool(v),
+    # OPTIONAL block-level cluster-regime override (#5474), same semantics as the per-leg
+    # override in _concurrent_burst_leg_ok — settable once for the whole block when every leg
+    # shares the same known-true regime, rather than repeating it on every leg.
+    "cluster_regime": lambda v: v in CONCURRENT_BURST_CLUSTER_REGIMES,
 }
 
 # --- #4083: warm-pool ACQUISITION-latency block (TOP-LEVEL warm_pool_acquisition object) ----

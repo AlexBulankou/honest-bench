@@ -2987,6 +2987,23 @@ def _cb_thpt_cell(leg, key):
     return "—"
 
 
+_CONCURRENT_BURST_EXPLICIT_REGIME_NOTES = {
+    "prewarmed": (
+        "> ℹ️ **Measurement regime:** this burst ran on a long-lived, **pre-warmed cluster** "
+        "(warm containerd cache), independently of when it fired. Not directly comparable to an "
+        "**ephemeral CI cluster** row above/below — a TTFE gap between differently-regimed rows "
+        "is at least partly a regime artifact, not a workload difference."
+    ),
+    "ephemeral_ci": (
+        "> ℹ️ **Measurement regime:** this burst ran on a cold, single-fire **ephemeral CI "
+        "cluster** (empty containerd cache; node-autoscaler + image-pull in the critical path), "
+        "independently of when it fired. Not directly comparable to a **pre-warmed cluster** row "
+        "above/below — a TTFE gap between differently-regimed rows is at least partly a regime "
+        "artifact, not a workload difference."
+    ),
+}
+
+
 def _concurrent_burst_regime_note(cb):
     """Measurement-regime disclosure for the concurrent-burst block (#4021 pre-stage).
 
@@ -3005,7 +3022,17 @@ def _concurrent_burst_regime_note(cb):
     mirroring the _ISO-guarded pattern in _runtime_choice_clause. `measured_at` may be a full ISO
     stamp or a bare YYYY-MM-DD (per CONCURRENT_BURST_FIELDS), so we validate only the date prefix
     without importing `re`.
+
+    OPTIONAL `cluster_regime` override (#5474): the date-cutover inference above is a PROXY — it
+    only holds for fires that actually ran through honest-bench's own CI harness. A leg fired
+    out-of-band against a known cluster (e.g. a manual low-N true-per-sandbox fire against the
+    genuinely long-lived sandbox-scenarios-cluster, dated after the cutover) states its TRUE
+    regime explicitly via this key, which takes precedence over the date inference entirely —
+    the proxy never overrides a known fact.
     """
+    explicit = cb.get("cluster_regime")
+    if explicit in _CONCURRENT_BURST_EXPLICIT_REGIME_NOTES:
+        return _CONCURRENT_BURST_EXPLICIT_REGIME_NOTES[explicit]
     ma = cb.get("measured_at")
     if not isinstance(ma, str):
         return ""
@@ -3084,14 +3111,56 @@ def render_concurrent_burst(results, heading="## Concurrent Burst — TTFE at N 
         ]
         lines.append("| " + " | ".join(row) + " |")
     lines.append("")
-    if cb.get("measured_at"):
-        lines.append(f"_Measured {cb['measured_at'][:10]} — concurrent-burst TTFE (point-in-time)._")
-        lines.append("")
-    regime = _concurrent_burst_regime_note(cb)
-    if regime:
-        lines.append(regime)
-        lines.append("")
+    lines.extend(_concurrent_burst_provenance_lines(cb))
     return "\n".join(lines)
+
+
+def _concurrent_burst_provenance_lines(cb):
+    """Per-date-group measured-at + regime disclosure (#5474).
+
+    Legs normally share one fire date (the block-level `measured_at`), in which case this
+    renders identically to the original single-line + single-note shape. When a leg carries its
+    OWN `measured_at` override (a later low-N leg landed alongside an earlier N=300/500 burst),
+    legs are grouped by their EFFECTIVE date (leg override, else the block scalar) and each group
+    gets its own dated subline + regime note, scoped to the legs it covers — so a reader is never
+    told a single date/regime applies to rows fired on different days (the mixed-basis trust-
+    surface problem this repo's own idiom forbids; see PR hb#359).
+    """
+    block_date = cb.get("measured_at")
+    block_regime = cb.get("cluster_regime")
+    groups = []  # [((date_or_None, regime_or_None), [leg, ...]), ...], first-seen order
+    for leg in cb["legs"]:
+        date = leg.get("measured_at") or block_date
+        regime = leg.get("cluster_regime") or block_regime
+        key = (date, regime)
+        for g_key, g_legs in groups:
+            if g_key == key:
+                g_legs.append(leg)
+                break
+        else:
+            groups.append((key, [leg]))
+
+    lines = []
+    single_group = len(groups) <= 1
+    for (date, regime), legs in groups:
+        if not date:
+            continue
+        if single_group:
+            lines.append(f"_Measured {date[:10]} — concurrent-burst TTFE (point-in-time)._")
+        else:
+            covers = ", ".join(
+                f"N={leg['n']} {_CONCURRENT_BURST_MODE_LABELS.get(leg['mode'], leg['mode'])}"
+                for leg in legs
+            )
+            lines.append(
+                f"_Measured {date[:10]} — concurrent-burst TTFE (point-in-time): {covers}._"
+            )
+        lines.append("")
+        regime_note = _concurrent_burst_regime_note({"measured_at": date, "cluster_regime": regime})
+        if regime_note:
+            lines.append(regime_note)
+            lines.append("")
+    return lines
 
 
 def render_cluster_scale(results):

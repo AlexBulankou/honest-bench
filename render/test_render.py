@@ -3082,6 +3082,63 @@ def test_concurrent_burst_regime_note_malformed_measured_at_no_note():
     assert render._concurrent_burst_regime_note({"measured_at": None}) == ""
 
 
+def test_concurrent_burst_leg_measured_at_overrides_block_date():
+    # #5474: a leg fired on a different day than the block's own `measured_at` (e.g. a low-N
+    # true-per-sandbox leg landed later than the original N=300/500 burst) must NOT be silently
+    # attributed to the block's date/regime — it gets its own dated subline + regime note, scoped
+    # to the legs it actually covers.
+    cb = _cb()
+    cb["legs"].append(
+        {"n": 30, "mode": "warm", "ttfe_p50_ms": 2069.69, "ttfe_p95_ms": 2997.60,
+         "exec_success_rate": 1.0, "measured_at": "2026-07-23"})
+    out = render.render_concurrent_burst(_matrix_results(_full_gvisor_scenarios(), concurrent_burst=cb))
+    # Both dates get their own subline, each scoped to its own legs.
+    assert "_Measured 2026-06-30 — concurrent-burst TTFE (point-in-time): N=300 Warm pool, N=300 Cold provision._" in out
+    assert "_Measured 2026-07-23 — concurrent-burst TTFE (point-in-time): N=30 Warm pool._" in out
+    # Each date gets its own (correctly-classified) regime note — 06-30 is pre-cutover warm, 07-23 is post-cutover ephemeral.
+    assert out.count("**Measurement regime:**") == 2
+    assert "pre-warmed cluster" in out
+    assert "ephemeral CI cluster" in out
+
+
+def test_concurrent_burst_leg_measured_at_invalid_dropped_falls_back_to_block_date():
+    # A leg with a present-but-invalid (non-string/empty) measured_at fails the WHOLE block
+    # closed (same "malformed leg -> closed" discipline as every other per-leg field).
+    cb = _cb()
+    cb["legs"].append(
+        {"n": 30, "mode": "warm", "ttfe_p50_ms": 2069.69, "ttfe_p95_ms": 2997.60, "measured_at": ""})
+    assert render.render_concurrent_burst(_matrix_results(_full_gvisor_scenarios(), concurrent_burst=cb)) == ""
+
+
+def test_concurrent_burst_leg_cluster_regime_override_beats_date_proxy():
+    # #5474: the date-cutover heuristic is a PROXY that only holds for fires that ran through
+    # honest-bench's own CI harness. A leg fired out-of-band against a KNOWN long-lived cluster
+    # (dated after the ephemeral-CI cutover) must state its true regime explicitly rather than
+    # let the date proxy fabricate a false "ephemeral CI cluster" claim.
+    cb = _cb()
+    cb["legs"].append(
+        {"n": 30, "mode": "warm", "ttfe_p50_ms": 2069.69, "ttfe_p95_ms": 2997.60,
+         "exec_success_rate": 1.0, "measured_at": "2026-07-23", "cluster_regime": "prewarmed"})
+    out = render.render_concurrent_burst(_matrix_results(_full_gvisor_scenarios(), concurrent_burst=cb))
+    assert out.count("**Measurement regime:**") == 2
+    # Both groups now read pre-warmed; the date-proxy never fabricates an "this burst ran on a
+    # cold ... ephemeral CI cluster" claim for the overridden (2026-07-23) group. (The pre-cutover
+    # group's ORIGINAL, unmodified note still carries a legitimate forward-looking mention of
+    # "ephemeral CI cluster" as a future-fires caveat — that phrase alone isn't the false claim.)
+    assert out.count("pre-warmed cluster") == 2
+    assert "this burst ran on a cold, single-fire **ephemeral CI cluster**" not in out
+
+
+def test_concurrent_burst_leg_cluster_regime_invalid_value_dropped():
+    # A leg with an out-of-enum cluster_regime fails the WHOLE block closed, same discipline as
+    # every other per-leg field.
+    cb = _cb()
+    cb["legs"].append(
+        {"n": 30, "mode": "warm", "ttfe_p50_ms": 2069.69, "ttfe_p95_ms": 2997.60,
+         "cluster_regime": "bare-metal"})
+    assert render.render_concurrent_burst(_matrix_results(_full_gvisor_scenarios(), concurrent_burst=cb)) == ""
+
+
 def _scale_proof_obj():
     return {
         "scale_points": [

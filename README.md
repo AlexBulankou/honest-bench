@@ -148,10 +148,16 @@ Each row is a **single all-at-once burst of N concurrent claims** (not a ramped 
 | 300 | Cold provision | 56.0294s | 58.4124s | 0 | 0 | 100% |
 | 500 | Warm pool | 11.188s | 15.374s | 0.052 | 0 | 100% |
 | 500 | Cold provision | 97.3988s | 99.8002s | 0 | 0 | 100% |
+| 30 | Warm pool | 2.06969s | 2.9976s | — | — | 100% |
+| 30 | Cold provision | 12.3171s | 13.1484s | — | — | 100% |
 
-_Measured 2026-06-30 — concurrent-burst TTFE (point-in-time)._
+_Measured 2026-06-30 — concurrent-burst TTFE (point-in-time): N=300 Warm pool, N=300 Cold provision, N=500 Warm pool, N=500 Cold provision._
 
 > ℹ️ **Measurement regime:** this burst ran on a long-lived, **pre-warmed cluster** (warm containerd cache). Fires on or after 2026-07-20 run on cold ephemeral CI clusters and are **not directly comparable** to this baseline.
+
+_Measured 2026-07-23 — concurrent-burst TTFE (point-in-time): N=30 Warm pool, N=30 Cold provision._
+
+> ℹ️ **Measurement regime:** this burst ran on a long-lived, **pre-warmed cluster** (warm containerd cache), independently of when it fired. Not directly comparable to an **ephemeral CI cluster** row above/below — a TTFE gap between differently-regimed rows is at least partly a regime artifact, not a workload difference.
 
 ### Saturation — the whole-cluster warm-hand-out ceiling
 
