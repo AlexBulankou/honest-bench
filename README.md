@@ -42,8 +42,8 @@ blocker — diagnosis plus file-ready patches and comments — is hand-maintaine
 
 | Runtime | Activation Mode | Throughput @ <5s TTFE (sb/s — node · cluster) | Throughput @ <1s TTFE (sb/s — node · cluster) | TTFE p50 | TTFE p95 | Execution Success (Honesty Check) |
 |---|---|---|---|---|---|---|
-| gVisor | Warm-pool hit (Base image) ⚠️ FAIL | 7.372 /node · ≥1.204 /cluster ⚠️ | 0 /node · ≥1.204 /cluster ⚠️*** | 3.0433s (count=30) | 4.0894s (count=30) | 100% |
-| gVisor | Unique-image cold (RL reality) | 0 /node · 0 /cluster ⚠️*** | 0 /node · 0 /cluster ⚠️*** | 3.6466s (count=30) | 3.7147s (count=30) | 100% |
+| gVisor | Warm-pool hit (Base image) ⚠️ FAIL | 4.36 /node · ≥1.204 /cluster ⚠️ | 0 /node · ≥1.204 /cluster ⚠️*** | 2.8629s (count=30) | 4.4408s (count=30) | 100% |
+| gVisor | Unique-image cold (RL reality) | 0 /node · 0 /cluster ⚠️*** | 0 /node · 0 /cluster ⚠️*** | 4.377s (count=30) | 5.1535s (count=30) | 100% |
 | gVisor | Resume-from-suspend | [pending (upstream-blocked)](WORK_IN_PROGRESS.md#upstream-blocked) [#873](https://github.com/kubernetes-sigs/agent-sandbox/issues/873)→[#1150 in review](https://github.com/kubernetes-sigs/agent-sandbox/pull/1150) | [pending (upstream-blocked)](WORK_IN_PROGRESS.md#upstream-blocked) [#873](https://github.com/kubernetes-sigs/agent-sandbox/issues/873)→[#1150 in review](https://github.com/kubernetes-sigs/agent-sandbox/pull/1150) | [pending (upstream-blocked)](WORK_IN_PROGRESS.md#upstream-blocked) [#873](https://github.com/kubernetes-sigs/agent-sandbox/issues/873)→[#1150 in review](https://github.com/kubernetes-sigs/agent-sandbox/pull/1150) | [pending (upstream-blocked)](WORK_IN_PROGRESS.md#upstream-blocked) [#873](https://github.com/kubernetes-sigs/agent-sandbox/issues/873)→[#1150 in review](https://github.com/kubernetes-sigs/agent-sandbox/pull/1150) | [pending (upstream-blocked)](WORK_IN_PROGRESS.md#upstream-blocked) [#873](https://github.com/kubernetes-sigs/agent-sandbox/issues/873)→[#1150 in review](https://github.com/kubernetes-sigs/agent-sandbox/pull/1150) |
 | Kata + microVM | Warm-pool hit (Base image) ⚠️ FAIL | 5.818 /node · 0.822 /cluster ⚠️ | 0 /node · [pending (cluster-fire)](WORK_IN_PROGRESS.md#cluster-fire) | 2.2344s (count=30) | 3.0787s (count=30) | 100% |
 | Kata + microVM | Unique-image cold (RL reality) | unk.*** | 0 /node · 0 /cluster | 3.2607s (count=30) | 3.5987s (count=30) | 100% |
@@ -92,16 +92,14 @@ A cell tagged `***` prints the best figure we measured, not an honest-empty `pen
 
 _Kata + microVM rows are measured in a separate run on the kata node pool: cluster_substrate=gke-kata · node_count=1 · generated-at=2026-07-23T16:04:13Z._
 
-_build: cluster_substrate=gke-sandbox · run_id=07d32f5a8d894f01aa04f6bec0936d8c · node_count=1_
-_generated-at: 2026-07-22T22:16:46Z_
+_build: cluster_substrate=gke-sandbox · run_id=6ccc3cb55ed144068f6eee9180498987 · node_count=1_
+_generated-at: 2026-07-23T22:21:37Z_
 
-_**North Star** — warm-pool-hit TTFE p95 < 1s (the spec doc bar): gVisor 4.0894s (count=30) ❌ not met (3.0894s above the bar) ⚠️ **scenario FAIL**; Kata + microVM 3.0787s (count=30) ❌ not met (2.0787s above the bar) ⚠️ **scenario FAIL**. An honest ❌ prints the measured gap to the bar (tagged `within sampling noise` when the miss sits inside the sample spread — it stays a ❌, the tag never flips a miss to a pass); `pending` = unmeasured (never a guess); † marks a p95 over fewer than N=30 samples._
+_**North Star** — warm-pool-hit TTFE p95 < 1s (the spec doc bar): gVisor 4.4408s (count=30) ❌ not met (3.4408s above the bar) ⚠️ **scenario FAIL**; Kata + microVM 3.0787s (count=30) ❌ not met (2.0787s above the bar) ⚠️ **scenario FAIL**. An honest ❌ prints the measured gap to the bar (tagged `within sampling noise` when the miss sits inside the sample spread — it stays a ❌, the tag never flips a miss to a pass); `pending` = unmeasured (never a guess); † marks a p95 over fewer than N=30 samples._
 
-_**Stretch bar** — warm-pool-hit TTFE p95 < 0.5s (an aspiration above the North Star, not the North Star itself; the step-up curve grades sustained creation-rate against it — see [DETAILS.md](DETAILS.md)): gVisor 4.0894s (count=30) ❌ not met (3.5894s above the bar) ⚠️ **scenario FAIL**; Kata + microVM 3.0787s (count=30) ❌ not met (2.5787s above the bar) ⚠️ **scenario FAIL**._
+_**Stretch bar** — warm-pool-hit TTFE p95 < 0.5s (an aspiration above the North Star, not the North Star itself; the step-up curve grades sustained creation-rate against it — see [DETAILS.md](DETAILS.md)): gVisor 4.4408s (count=30) ❌ not met (3.9408s above the bar) ⚠️ **scenario FAIL**; Kata + microVM 3.0787s (count=30) ❌ not met (2.5787s above the bar) ⚠️ **scenario FAIL**._
 
 > ⚠️ **Scenario FAIL:** the warm-pool-hit scenario's own outcome is **FAIL** for **gVisor**, **Kata + microVM** — the p95 above is a real measurement that MISSED its SLA, not a passing warm hit. It is still graded against the bar and carried forward as the refresh baseline honestly (an SLA-failing number is disclosed, never softened into a green cell); a later refresh whose scenario returns to PASS clears this.
-
-> ⚠️ **Warm-slower-than-cold:** the warm-pool-hit p95 is ABOVE the unique-image cold-start p95 for **gVisor** warm 4.0894s (count=30) > cold 3.7147s (count=30) — a backwards result (warm is meant to be the fast path). Both rows clear the N=30 comparability floor, so this is not a small-sample inversion. The cause is not asserted here (candidates: the warm fire not gating on pool-Ready before probing, a silent image-pull on the warm hit, or a real tail regression); a later refresh whose warm p95 returns below cold clears this.
 
 > ⚠️ **Refresh delta:** **Kata + microVM** regressed by 2.1159s (0.9628s → 3.0787s, 3.2x) · verdict flip ✅→❌. A swing this large, or a bar-crossing flip, between consecutive published runs is flagged for a second look before trusting it as a substrate signal — check for a machine-class change, a node-count change, a node-image change, a broken measurement, or a real regression/fix.
 
@@ -112,7 +110,7 @@ _**Stretch bar** — warm-pool-hit TTFE p95 < 0.5s (an aspiration above the Nort
 The tables above are the raw measurements. If you build *on* sandboxes but do not run the cluster yourself, here is what they mean in practice:
 
 - **Keep a warm pool sized to demand and a new sandbox is ready quickly** — a claim against a ready pool skips the fresh-node startup path. The exact wait to budget is in the operating envelope below once that measurement lands.
-- **A warm-pool hit is about 3.3× faster than starting cold (gVisor).** If start-up latency matters to you, the warm pool is the single biggest lever — size it for your steady demand and most claims never pay the cold path. (This ratio is the dedicated warm-vs-cold leg — a separate point-in-time measurement from the Core Metrics matrix rows above, so do not reproduce it by dividing the matrix cells.)
+- **A warm-pool hit is about 4× faster than starting cold (gVisor).** If start-up latency matters to you, the warm pool is the single biggest lever — size it for your steady demand and most claims never pay the cold path. (This ratio is the dedicated warm-vs-cold leg — a separate point-in-time measurement from the Core Metrics matrix rows above, so do not reproduce it by dividing the matrix cells.)
 - **Big simultaneous bursts still work — 300 sandboxes asked for at once settled in ~6.9s.** But that is the pool-overflow regime: the wait climbs toward the cold-start number as claims outrun ready slots, so plan the pool around your steady rate, not your worst spike.
 - **Rule of thumb for pool size:** start near your typical concurrent demand (≈0.75× of it) and tune from there. This is a planning heuristic, not one of the measured numbers above.
 - **Both runtimes are measured — choose by isolation need.** In the measurements above, warm-pool latency is comparable between them; gVisor delivers the higher per-node throughput, while Kata + microVM puts each sandbox in its own VM for hardware-grade isolation. If unsure, start with gVisor and move only the workloads that need a VM boundary to Kata.
@@ -159,13 +157,9 @@ Each row is a **single all-at-once burst of N concurrent claims** (not a ramped 
 | 30 | Warm pool | 2.06969s | 2.9976s | — | — | 100% |
 | 30 | Cold provision | 12.3171s | 13.1484s | — | — | 100% |
 
-_Measured 2026-06-30 — concurrent-burst TTFE (point-in-time): N=300 Warm pool, N=300 Cold provision, N=500 Warm pool, N=500 Cold provision._
+_Measured 2026-06-30 — concurrent-burst TTFE (point-in-time)._
 
 > ℹ️ **Measurement regime:** this burst ran on a long-lived, **pre-warmed cluster** (warm containerd cache). Fires on or after 2026-07-20 run on cold ephemeral CI clusters and are **not directly comparable** to this baseline.
-
-_Measured 2026-07-23 — concurrent-burst TTFE (point-in-time): N=30 Warm pool, N=30 Cold provision._
-
-> ℹ️ **Measurement regime:** this burst ran on a long-lived, **pre-warmed cluster** (warm containerd cache), independently of when it fired. Not directly comparable to an **ephemeral CI cluster** row above/below — a TTFE gap between differently-regimed rows is at least partly a regime artifact, not a workload difference.
 
 ### Saturation — the whole-cluster warm-hand-out ceiling
 
