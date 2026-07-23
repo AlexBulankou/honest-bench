@@ -3019,8 +3019,10 @@ def render_warm_vs_cold(results):
     lines.append("")
     n_note = f" over n={wc['n_warm']} warm claims" if "n_warm" in wc else ""
     lines.append(
-        f"_Speedup = cold ÷ warm, computed from the displayed values{n_note}; the warm leg "
-        "is the p50 so half of warm claims beat it._")
+        f"_Speedup = cold ÷ warm, computed from the displayed values{n_note}; both legs are "
+        "medians (p50) — the warm leg over its warm-pool claims and the cold leg over the "
+        "true-cold distribution — so half of warm claims and half of cold starts run slower "
+        "than the values shown._")
     lines.append("")
     # Machine-class-change caveat (PR#313 review): data-keyed off the SAME
     # run-level provenance the build banner stamps (see _machine_class_caveat) — renders

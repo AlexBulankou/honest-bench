@@ -9,9 +9,14 @@ division themselves and has no guard that the two numbers are even commensurable
 explicit AND honest-by-construction.
 
     Inputs : warm leg  -- per-claim warm-pool latencies (one semantic), and
-             cold leg  -- a single cold-path latency sample (n=1 cold path).
+             cold leg  -- ONE cold-path latency value. This classifier takes it as a
+             single scalar, but the production fire path (run.maybe_warm_vs_cold) feeds
+             the native_digest_cold scenario's ttfe p50 -- i.e. the MEDIAN of the
+             true-cold distribution, not one raw cold start. So the published headline
+             is a median-vs-median comparison (warm p50 vs cold p50), and the render
+             footnote discloses both legs as p50s.
     Output : warm_p50_ms = percentile(warm_samples_ms, 50)
-             cold_ms     = the cold sample
+             cold_ms     = the cold p50 supplied by the caller
              speedup     = cold_ms / warm_p50_ms  (so "warm is N times faster")
     Why    : a single cold-start number says nothing about what the warm pool BUYS
              you. The speedup ratio is the portable headline: a stranger reruns both
