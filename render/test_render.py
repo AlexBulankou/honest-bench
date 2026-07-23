@@ -4344,6 +4344,89 @@ def test_north_star_delta_caveat_no_node_count_clause_without_prior_node_count()
 
 
 # ---------------------------------------------------------------------------
+# #4420 trust-surface: the North Star p95 is sourced from warmpool_cold_start
+# REGARDLESS of that scenario's own outcome, so a FAILing run's p95 would render
+# as a clean measurement (and be carried forward as the refresh baseline) with no
+# FAIL disclosure. Mirror render_cluster_saturation's own outcome=FAIL headline.
+# ---------------------------------------------------------------------------
+
+def test_north_star_caption_discloses_scenario_fail():
+    # a kata warm-pool run marked FAIL surfaces the loud scenario-FAIL caveat block AND
+    # tags the inline entry — the p95 (over the bar) is disclosed as an SLA miss, not softened.
+    kata_scen = [{
+        "name": "warmpool_cold_start", "outcome": "FAIL", "n": 30,
+        "sla_metrics": {"ttfe_p50_ms": 2400, "ttfe_p95_ms": 3079},
+    }]
+    out = render.render_north_star_caption(
+        _matrix_results(_full_gvisor_scenarios(), provenance={"runtime": "gvisor"}),
+        kata_results=_kata_results(
+            scenarios=kata_scen,
+            provenance={"runtime": "kata-microvm"},
+        ),
+    )
+    assert "**Scenario FAIL:**" in out
+    assert "own outcome is **FAIL**" in out
+    assert "**scenario FAIL**" in out  # inline entry tag
+    # gVisor row passed, so it must NOT be named in the FAIL caveat
+    fail_line = [l for l in out.splitlines() if "Scenario FAIL:" in l][0]
+    assert "Kata + microVM" in fail_line
+    assert "gVisor" not in fail_line
+
+
+def test_north_star_caption_fail_overrides_green_verdict():
+    # the silent-downgrade case #4420 targets: a FAIL run whose p95 CLEARS the bar would
+    # otherwise render a green ✅. The scenario-FAIL tag must ride the entry so it can't read
+    # as a clean pass; the caveat block must still fire.
+    kata_scen = [{
+        "name": "warmpool_cold_start", "outcome": "FAIL", "n": 30,
+        "sla_metrics": {"ttfe_p50_ms": 400, "ttfe_p95_ms": 500},  # under the 1s bar
+    }]
+    out = render.render_north_star_caption(
+        _matrix_results(_full_gvisor_scenarios(), provenance={"runtime": "gvisor"}),
+        kata_results=_kata_results(
+            scenarios=kata_scen,
+            provenance={"runtime": "kata-microvm"},
+        ),
+    )
+    kata_entry = [l for l in out.splitlines() if "Kata + microVM 0.5s" in l]
+    assert kata_entry, out
+    assert "✅ met" in kata_entry[0]  # bar grade is genuinely a pass
+    assert "**scenario FAIL**" in kata_entry[0]  # ...but the FAIL is NOT silent
+    assert "**Scenario FAIL:**" in out
+
+
+def test_north_star_caption_no_fail_caveat_when_all_pass():
+    out = render.render_north_star_caption(
+        _matrix_results(_full_gvisor_scenarios(), provenance={"runtime": "gvisor"})
+    )
+    assert "Scenario FAIL" not in out
+    assert "scenario FAIL" not in out
+
+
+def test_matrix_discloses_scenario_fail():
+    # a FAIL warmpool row keeps its real metrics but tags the mode label loudly and emits
+    # the caveat block below the table.
+    scen = _full_gvisor_scenarios()
+    scen[0]["outcome"] = "FAIL"  # warmpool_cold_start FAILs
+    out = render.render_matrix(_matrix_results(scen))
+    warm_line = [l for l in out.splitlines() if "Warm-pool hit" in l][0]
+    assert "⚠️ FAIL" in warm_line
+    # the real metrics are still present (a FAIL is honest data, not suppressed like pending)
+    assert "0.9s (count=200)" in _unlink(warm_line)
+    assert "**Scenario FAIL:**" in out
+    assert "SLA not met" in out
+    # the two PASS rows are NOT tagged
+    cold_line = [l for l in out.splitlines() if "Unique-image cold" in l][0]
+    assert "⚠️ FAIL" not in cold_line
+
+
+def test_matrix_no_fail_caveat_when_all_pass():
+    out = render.render_matrix(_matrix_results(_full_gvisor_scenarios()))
+    assert "Scenario FAIL" not in out
+    assert "⚠️ FAIL" not in out
+
+
+# ---------------------------------------------------------------------------
 # #4164 / hb#132: render_storage_config — "Which storage class should you pick?"
 # Closed-enum ({ephemeral,pd,snapshot}) data-keyed guidance section. Fixtures use
 # only generic public-safe class names (never a sandbox.a4/ label prefix, volume,

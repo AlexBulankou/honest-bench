@@ -42,12 +42,14 @@ blocker — diagnosis plus file-ready patches and comments — is hand-maintaine
 
 | Runtime | Activation Mode | Throughput @ <5s TTFE (sb/s — node · cluster) | Throughput @ <1s TTFE (sb/s — node · cluster) | TTFE p50 | TTFE p95 | Execution Success (Honesty Check) |
 |---|---|---|---|---|---|---|
-| gVisor | Warm-pool hit (Base image) | 7.372 /node · ≥1.204 /cluster ⚠️ | 0 /node · ≥1.204 /cluster ⚠️*** | 3.0433s (count=30) | 4.0894s (count=30) | 100% |
+| gVisor | Warm-pool hit (Base image) ⚠️ FAIL | 7.372 /node · ≥1.204 /cluster ⚠️ | 0 /node · ≥1.204 /cluster ⚠️*** | 3.0433s (count=30) | 4.0894s (count=30) | 100% |
 | gVisor | Unique-image cold (RL reality) | 0 /node · 0 /cluster ⚠️*** | 0 /node · 0 /cluster ⚠️*** | 3.6466s (count=30) | 3.7147s (count=30) | 100% |
 | gVisor | Resume-from-suspend | [pending (upstream-blocked)](WORK_IN_PROGRESS.md#upstream-blocked) [#873](https://github.com/kubernetes-sigs/agent-sandbox/issues/873)→[#1150 in review](https://github.com/kubernetes-sigs/agent-sandbox/pull/1150) | [pending (upstream-blocked)](WORK_IN_PROGRESS.md#upstream-blocked) [#873](https://github.com/kubernetes-sigs/agent-sandbox/issues/873)→[#1150 in review](https://github.com/kubernetes-sigs/agent-sandbox/pull/1150) | [pending (upstream-blocked)](WORK_IN_PROGRESS.md#upstream-blocked) [#873](https://github.com/kubernetes-sigs/agent-sandbox/issues/873)→[#1150 in review](https://github.com/kubernetes-sigs/agent-sandbox/pull/1150) | [pending (upstream-blocked)](WORK_IN_PROGRESS.md#upstream-blocked) [#873](https://github.com/kubernetes-sigs/agent-sandbox/issues/873)→[#1150 in review](https://github.com/kubernetes-sigs/agent-sandbox/pull/1150) | [pending (upstream-blocked)](WORK_IN_PROGRESS.md#upstream-blocked) [#873](https://github.com/kubernetes-sigs/agent-sandbox/issues/873)→[#1150 in review](https://github.com/kubernetes-sigs/agent-sandbox/pull/1150) |
-| Kata + microVM | Warm-pool hit (Base image) | 5.818 /node · 0.822 /cluster ⚠️ | 0 /node · [pending (cluster-fire)](WORK_IN_PROGRESS.md#cluster-fire) | 2.2344s (count=30) | 3.0787s (count=30) | 100% |
+| Kata + microVM | Warm-pool hit (Base image) ⚠️ FAIL | 5.818 /node · 0.822 /cluster ⚠️ | 0 /node · [pending (cluster-fire)](WORK_IN_PROGRESS.md#cluster-fire) | 2.2344s (count=30) | 3.0787s (count=30) | 100% |
 | Kata + microVM | Unique-image cold (RL reality) | unk.*** | 0 /node · 0 /cluster | 3.2607s (count=30) | 3.5987s (count=30) | 100% |
 | Kata + microVM | Resume-from-suspend | [N/A](WORK_IN_PROGRESS.md#na-by-construction) | [N/A](WORK_IN_PROGRESS.md#na-by-construction) | [N/A](WORK_IN_PROGRESS.md#na-by-construction) | [N/A](WORK_IN_PROGRESS.md#na-by-construction) | [N/A](WORK_IN_PROGRESS.md#na-by-construction) |
+
+_⚠️ **Scenario FAIL:** **gVisor** Warm-pool hit (Base image); **Kata + microVM** Warm-pool hit (Base image) — the row above carries a real measurement whose own scenario outcome is **FAIL** (SLA not met), not a passing warm hit. The numbers are honest data, disclosed as a miss rather than dropped or greened; a later refresh whose scenario returns to PASS clears this._
 
 ### Max Density (sandboxes per vCPU)
 
@@ -93,9 +95,11 @@ _Kata + microVM rows are measured in a separate run on the kata node pool: clust
 _build: cluster_substrate=gke-sandbox · run_id=07d32f5a8d894f01aa04f6bec0936d8c · node_count=1_
 _generated-at: 2026-07-22T22:16:46Z_
 
-_**North Star** — warm-pool-hit TTFE p95 < 1s (the spec doc bar): gVisor 4.0894s (count=30) ❌ not met (3.0894s above the bar); Kata + microVM 3.0787s (count=30) ❌ not met (2.0787s above the bar). An honest ❌ prints the measured gap to the bar (tagged `within sampling noise` when the miss sits inside the sample spread — it stays a ❌, the tag never flips a miss to a pass); `pending` = unmeasured (never a guess); † marks a p95 over fewer than N=30 samples._
+_**North Star** — warm-pool-hit TTFE p95 < 1s (the spec doc bar): gVisor 4.0894s (count=30) ❌ not met (3.0894s above the bar) ⚠️ **scenario FAIL**; Kata + microVM 3.0787s (count=30) ❌ not met (2.0787s above the bar) ⚠️ **scenario FAIL**. An honest ❌ prints the measured gap to the bar (tagged `within sampling noise` when the miss sits inside the sample spread — it stays a ❌, the tag never flips a miss to a pass); `pending` = unmeasured (never a guess); † marks a p95 over fewer than N=30 samples._
 
-_**Stretch bar** — warm-pool-hit TTFE p95 < 0.5s (an aspiration above the North Star, not the North Star itself; the step-up curve grades sustained creation-rate against it — see [DETAILS.md](DETAILS.md)): gVisor 4.0894s (count=30) ❌ not met (3.5894s above the bar); Kata + microVM 3.0787s (count=30) ❌ not met (2.5787s above the bar)._
+_**Stretch bar** — warm-pool-hit TTFE p95 < 0.5s (an aspiration above the North Star, not the North Star itself; the step-up curve grades sustained creation-rate against it — see [DETAILS.md](DETAILS.md)): gVisor 4.0894s (count=30) ❌ not met (3.5894s above the bar) ⚠️ **scenario FAIL**; Kata + microVM 3.0787s (count=30) ❌ not met (2.5787s above the bar) ⚠️ **scenario FAIL**._
+
+> ⚠️ **Scenario FAIL:** the warm-pool-hit scenario's own outcome is **FAIL** for **gVisor**, **Kata + microVM** — the p95 above is a real measurement that MISSED its SLA, not a passing warm hit. It is still graded against the bar and carried forward as the refresh baseline honestly (an SLA-failing number is disclosed, never softened into a green cell); a later refresh whose scenario returns to PASS clears this.
 
 > ⚠️ **Refresh delta:** **Kata + microVM** regressed by 2.1159s (0.9628s → 3.0787s, 3.2x) · verdict flip ✅→❌. A swing this large, or a bar-crossing flip, between consecutive published runs is flagged for a second look before trusting it as a substrate signal — check for a machine-class change, a node-count change, a broken measurement, or a real regression/fix.
 
