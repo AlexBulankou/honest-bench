@@ -3036,6 +3036,52 @@ def test_concurrent_burst_invalid_provenance_dropped_spine_renders():
     assert "docker.pkg.dev" not in out  # internal registry path never reaches the page
 
 
+def test_concurrent_burst_regime_note_post_cutover_ephemeral():
+    # #4021 pre-stage: a fire ON/AFTER the 2026-07-20 ephemeral-CI cutover discloses the cold
+    # ephemeral regime so a reader never diffs it against a pre-cutover warm-persistent baseline.
+    out = render.render_concurrent_burst(
+        _matrix_results(_full_gvisor_scenarios(), concurrent_burst=_cb(measured_at="2026-07-24")))
+    assert "**Measurement regime:**" in out
+    assert "cold, single-fire **ephemeral CI cluster**" in out
+    assert "not directly comparable to pre-2026-07-20 warm-persistent baselines" in out
+    # cutover boundary is inclusive (>= cutover ⇒ ephemeral); a full-ISO stamp works too.
+    out_iso = render.render_concurrent_burst(
+        _matrix_results(_full_gvisor_scenarios(),
+                        concurrent_burst=_cb(measured_at="2026-07-20T09:15:00Z")))
+    assert "**ephemeral CI cluster**" in out_iso
+
+
+def test_concurrent_burst_regime_note_pre_cutover_warm():
+    # A fire BEFORE the cutover discloses the pre-warmed baseline regime (both polarities surfaced).
+    out = render.render_concurrent_burst(
+        _matrix_results(_full_gvisor_scenarios(), concurrent_burst=_cb(measured_at="2026-07-04")))
+    assert "**Measurement regime:**" in out
+    assert "long-lived, **pre-warmed cluster**" in out
+    assert "not directly comparable" in out
+    # pre-cutover branch never claims THIS burst ran on the cold ephemeral cluster.
+    assert "this burst ran on a cold" not in out
+
+
+def test_concurrent_burst_regime_note_absent_measured_at_no_note():
+    # No measured_at ⇒ no regime claim (fail-safe: never fabricate a regime).
+    cb = _cb()
+    del cb["measured_at"]
+    out = render.render_concurrent_burst(_matrix_results(_full_gvisor_scenarios(), concurrent_burst=cb))
+    assert "## Concurrent Burst — TTFE at N simultaneous claims" in out  # spine still renders
+    assert "Measurement regime:" not in out
+
+
+def test_concurrent_burst_regime_note_malformed_measured_at_no_note():
+    # A present-but-non-date-shaped measured_at is dropped by the closed-schema cleaner AND, even if
+    # it slipped through, the helper's date-prefix guard returns "" — no fabricated regime claim.
+    assert render._concurrent_burst_regime_note({"measured_at": "last-tuesday"}) == ""
+    assert render._concurrent_burst_regime_note({"measured_at": "2026/07/24"}) == ""
+    assert render._concurrent_burst_regime_note({"measured_at": "2026-7-4"}) == ""
+    assert render._concurrent_burst_regime_note({"measured_at": ""}) == ""
+    assert render._concurrent_burst_regime_note({}) == ""
+    assert render._concurrent_burst_regime_note({"measured_at": None}) == ""
+
+
 def _scale_proof_obj():
     return {
         "scale_points": [
