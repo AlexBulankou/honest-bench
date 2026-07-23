@@ -1,32 +1,33 @@
 {
-  "generated_at": "2026-07-05T15:32:54Z",
+  "generated_at": "2026-07-23T16:04:13Z",
   "product": "sandbox-kata",
   "provenance": {
     "cluster_substrate": "gke-kata",
     "cold_start_mode": "cold-provision",
-    "node_count": 2,
-    "run_id": "ca8d8d28e34c4fdd9cd168515fbdba29",
+    "node_count": 1,
+    "prior_warmpool_ttfe_p95_ms": 962.8,
+    "run_id": "64170e8203e24f8fb2bd17766c5adf82",
     "runtime": "kata-microvm"
   },
   "scenarios": [
     {
       "n": 30,
       "name": "warmpool_cold_start",
-      "outcome": "PASS",
+      "outcome": "FAIL",
       "sla_metrics": {
-        "bind_p50_ms": 494.6,
-        "bind_p95_ms": 698.7,
+        "bind_p50_ms": 1883.2,
+        "bind_p95_ms": 2744.7,
         "density_per_vcpu": 1.26,
-        "exec_p50_ms": 242.3,
-        "exec_p95_ms": 266.0,
+        "exec_p50_ms": 352.0,
+        "exec_p95_ms": 389.9,
         "exec_success_rate": 1.0,
-        "thpt_cluster_node_count": 5,
+        "thpt_cluster_node_count": 5.0,
         "thpt_slo_basis": "true_ttfe",
-        "thpt_under_1s_per_node": 18.624,
+        "thpt_under_1s_per_node": 0.0,
         "thpt_under_5s_per_cluster": 0.822,
-        "thpt_under_5s_per_node": 18.624,
-        "ttfe_p50_ms": 733.0,
-        "ttfe_p95_ms": 962.8
+        "thpt_under_5s_per_node": 5.818,
+        "ttfe_p50_ms": 2234.4,
+        "ttfe_p95_ms": 3078.7
       }
     },
     {
@@ -34,14 +35,14 @@
       "name": "native_digest_cold",
       "outcome": "PASS",
       "sla_metrics": {
-        "bind_p50_ms": 2665.7,
-        "bind_p95_ms": 2910.1,
-        "exec_p50_ms": 187.2,
-        "exec_p95_ms": 252.8,
+        "bind_p50_ms": 2800.9,
+        "bind_p95_ms": 3113.6,
+        "exec_p50_ms": 468.8,
+        "exec_p95_ms": 511.5,
         "exec_success_rate": 1.0,
         "thpt_slo_basis_5s": "unresolved_bounds_bar_bracketed",
-        "ttfe_p50_ms": 2853.7,
-        "ttfe_p95_ms": 3126.3
+        "ttfe_p50_ms": 3260.7,
+        "ttfe_p95_ms": 3598.7
       }
     }
   ]
