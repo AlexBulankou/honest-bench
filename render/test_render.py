@@ -4213,8 +4213,8 @@ def test_north_star_delta_caveat_flags_big_regression():
         "> ⚠️ **Refresh delta:** **gVisor** regressed by 0.9s (0.9s → 1.8s, 2.0x) "
         "· verdict flip ✅→❌. A swing this large, or a bar-crossing flip, between "
         "consecutive published runs is flagged for a second look before trusting it as a "
-        "substrate signal — check for a machine-class change, a broken measurement, or a "
-        "real regression/fix."
+        "substrate signal — check for a machine-class change, a node-count change, a broken "
+        "measurement, or a real regression/fix."
     ) in out
 
 
@@ -4257,6 +4257,90 @@ def test_north_star_delta_caveat_joins_multiple_flags():
     assert "**Kata + microVM** regressed" in out
     caveat_line = out.split("Refresh delta:** ", 1)[1].split(". A swing", 1)[0]
     assert "; " in caveat_line
+
+
+def test_north_star_delta_flag_node_count_clause_on_flagged_delta():
+    # A flagged delta that ALSO spans a node_count change carries the confound clause,
+    # after the verdict-flip clause (mirrors today's real kata flip: 2 nodes -> 1 node).
+    flag = render._north_star_delta_flag(
+        "Kata + microVM", 3079, 963, current_node_count=1, prior_node_count=2
+    )
+    assert flag == (
+        "**Kata + microVM** regressed by 2.116s (0.963s → 3.079s, 3.2x) "
+        "· verdict flip ✅→❌ · node_count 2→1"
+    )
+
+
+def test_north_star_delta_flag_no_node_count_clause_when_unchanged_or_absent():
+    # Same node_count on both sides -> no clause; missing either side -> no clause;
+    # a bool must never alias a count (bool is an int subclass).
+    base = "**gVisor** regressed by 0.9s (0.9s → 1.8s, 2.0x) · verdict flip ✅→❌"
+    assert render._north_star_delta_flag(
+        "gVisor", 1800, 900, current_node_count=2, prior_node_count=2
+    ) == base
+    assert render._north_star_delta_flag(
+        "gVisor", 1800, 900, current_node_count=1, prior_node_count=None
+    ) == base
+    assert render._north_star_delta_flag(
+        "gVisor", 1800, 900, current_node_count=None, prior_node_count=2
+    ) == base
+    assert render._north_star_delta_flag(
+        "gVisor", 1800, 900, current_node_count=True, prior_node_count=2
+    ) == base
+
+
+def test_north_star_delta_flag_node_count_clause_absent_when_no_delta():
+    # node_count differs but the ttfe is within threshold and no flip -> no flag at all
+    # (the clause rides ON a flagged delta; a bare capacity change is not a trust downgrade).
+    assert render._north_star_delta_flag(
+        "gVisor", 900, 950, current_node_count=1, prior_node_count=2
+    ) is None
+
+
+def test_north_star_delta_caveat_surfaces_node_count_confound_end_to_end():
+    # End-to-end: a kata flip that halved the warm-pool node_count (2->1) renders the
+    # node_count clause inline on the flagged delta, and the trailing cause list names it.
+    kata_scen = [{
+        "name": "warmpool_cold_start", "outcome": "FAIL", "n": 30,
+        "sla_metrics": {"ttfe_p95_ms": 3079},
+    }]
+    out = render.render_north_star_caption(
+        _matrix_results(_full_gvisor_scenarios(), provenance={"runtime": "gvisor"}),
+        kata_results=_kata_results(
+            scenarios=kata_scen,
+            provenance={
+                "runtime": "kata-microvm",
+                "prior_warmpool_ttfe_p95_ms": 963.0,
+                "node_count": 1,
+                "prior_node_count": 2,
+            },
+        ),
+    )
+    assert "**Kata + microVM** regressed" in out
+    assert "· node_count 2→1" in out
+    assert "a node-count change" in out
+
+
+def test_north_star_delta_caveat_no_node_count_clause_without_prior_node_count():
+    # prior_node_count absent (first stamped run / unchanged capacity) -> flagged delta
+    # renders WITHOUT the node_count clause, even though node_count itself is present.
+    kata_scen = [{
+        "name": "warmpool_cold_start", "outcome": "FAIL", "n": 30,
+        "sla_metrics": {"ttfe_p95_ms": 3079},
+    }]
+    out = render.render_north_star_caption(
+        _matrix_results(_full_gvisor_scenarios(), provenance={"runtime": "gvisor"}),
+        kata_results=_kata_results(
+            scenarios=kata_scen,
+            provenance={
+                "runtime": "kata-microvm",
+                "prior_warmpool_ttfe_p95_ms": 963.0,
+                "node_count": 1,
+            },
+        ),
+    )
+    assert "**Kata + microVM** regressed" in out
+    assert "node_count" not in out
 
 
 # ---------------------------------------------------------------------------

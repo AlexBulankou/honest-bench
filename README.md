@@ -97,7 +97,7 @@ _**North Star** — warm-pool-hit TTFE p95 < 1s (the spec doc bar): gVisor 4.089
 
 _**Stretch bar** — warm-pool-hit TTFE p95 < 0.5s (an aspiration above the North Star, not the North Star itself; the step-up curve grades sustained creation-rate against it — see [DETAILS.md](DETAILS.md)): gVisor 4.0894s (count=30) ❌ not met (3.5894s above the bar); Kata + microVM 3.0787s (count=30) ❌ not met (2.5787s above the bar)._
 
-> ⚠️ **Refresh delta:** **Kata + microVM** regressed by 2.1159s (0.9628s → 3.0787s, 3.2x) · verdict flip ✅→❌. A swing this large, or a bar-crossing flip, between consecutive published runs is flagged for a second look before trusting it as a substrate signal — check for a machine-class change, a broken measurement, or a real regression/fix.
+> ⚠️ **Refresh delta:** **Kata + microVM** regressed by 2.1159s (0.9628s → 3.0787s, 3.2x) · verdict flip ✅→❌. A swing this large, or a bar-crossing flip, between consecutive published runs is flagged for a second look before trusting it as a substrate signal — check for a machine-class change, a node-count change, a broken measurement, or a real regression/fix.
 
 > ℹ️ **Regime note:** every automated refresh since **2026-07-20** measures a brand-new, single-node ephemeral CI cluster with an empty containerd cache per run — a deliberately cold pull (see "Reproduce it" below). Numbers published **before 2026-07-20** (e.g. the 2026-07-04 baseline) were instead measured on a long-lived, pre-warmed internal cluster, not by this repo's own CI. If you're comparing today's cold-start figures against an older citation of this page and see a large jump, that's this regime switch — not a code or controller regression.
 

@@ -1514,13 +1514,21 @@ def _north_star_rows(results, kata_results=None):
     return rows
 
 
-def _north_star_delta_flag(label, current_p95, prior_p95):
+def _north_star_delta_flag(
+    label, current_p95, prior_p95, current_node_count=None, prior_node_count=None
+):
     """One flagged-runtime line, or None if this runtime has nothing to flag.
 
     Flags a >=NORTH_STAR_DELTA_FACTOR swing in EITHER direction, or a verdict flip
     against NORTH_STAR_TTFE_P95_MS (✅↔❌) — either condition alone is enough to flag,
     matching the "downgrade OR loses information" trigger in the trust-surface doctrine
     rather than requiring both.
+
+    When the flagged delta also spans a node_count change (prior != current, both ints),
+    a `· node_count X→Y` clause is appended — the warm-pool capacity is a confound on the
+    swing, so a reader can see that part of the delta may be a node-count artifact, not a
+    pure substrate regression/fix. The clause rides ON a flagged delta only (it is never a
+    flag on its own): a node_count change with no ttfe swing/flip is not a trust downgrade.
     """
     if not isinstance(current_p95, (int, float)) or not isinstance(prior_p95, (int, float)):
         return None
@@ -1540,6 +1548,14 @@ def _north_star_delta_flag(label, current_p95, prior_p95):
     )
     if flipped:
         flag += " · verdict flip " + ("✅→❌" if prior_pass else "❌→✅")
+    if (
+        isinstance(current_node_count, int)
+        and not isinstance(current_node_count, bool)
+        and isinstance(prior_node_count, int)
+        and not isinstance(prior_node_count, bool)
+        and current_node_count != prior_node_count
+    ):
+        flag += f" · node_count {prior_node_count}→{current_node_count}"
     return flag
 
 
@@ -1556,17 +1572,27 @@ def _north_star_delta_caveat(results, kata_results=None):
     label_to_rt = {v: k for k, v in RUNTIME_LABELS.items()}
 
     prior_by_runtime = {}
+    prior_nc_by_runtime = {}
+    current_nc_by_runtime = {}
     prov = _clean_provenance(results.get("provenance"))
     measured_runtime = prov.get("runtime") or "gvisor"
     prior_p95 = prov.get("prior_warmpool_ttfe_p95_ms")
     if isinstance(prior_p95, (int, float)):
         prior_by_runtime[measured_runtime] = prior_p95
+    if isinstance(prov.get("node_count"), int):
+        current_nc_by_runtime[measured_runtime] = prov["node_count"]
+    if isinstance(prov.get("prior_node_count"), int):
+        prior_nc_by_runtime[measured_runtime] = prov["prior_node_count"]
     if isinstance(kata_results, dict):
         kp = _clean_provenance(kata_results.get("provenance"))
         if kp.get("runtime") == "kata-microvm":
             kata_prior = kp.get("prior_warmpool_ttfe_p95_ms")
             if isinstance(kata_prior, (int, float)):
                 prior_by_runtime["kata-microvm"] = kata_prior
+            if isinstance(kp.get("node_count"), int):
+                current_nc_by_runtime["kata-microvm"] = kp["node_count"]
+            if isinstance(kp.get("prior_node_count"), int):
+                prior_nc_by_runtime["kata-microvm"] = kp["prior_node_count"]
 
     flags = []
     for label, p95, _cell, _p50, _n in rows:
@@ -1576,7 +1602,11 @@ def _north_star_delta_caveat(results, kata_results=None):
         prior = prior_by_runtime.get(rt)
         if prior is None:
             continue
-        flag = _north_star_delta_flag(label, p95, prior)
+        flag = _north_star_delta_flag(
+            label, p95, prior,
+            current_node_count=current_nc_by_runtime.get(rt),
+            prior_node_count=prior_nc_by_runtime.get(rt),
+        )
         if flag:
             flags.append(flag)
 
@@ -1585,8 +1615,8 @@ def _north_star_delta_caveat(results, kata_results=None):
     return (
         "> ⚠️ **Refresh delta:** " + "; ".join(flags) + ". A swing this large, or a bar-crossing "
         "flip, between consecutive published runs is flagged for a second look before trusting it "
-        "as a substrate signal — check for a machine-class change, a broken measurement, or a real "
-        "regression/fix."
+        "as a substrate signal — check for a machine-class change, a node-count change, a broken "
+        "measurement, or a real regression/fix."
     )
 
 

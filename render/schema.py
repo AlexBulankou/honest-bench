@@ -206,6 +206,13 @@ PROVENANCE_FIELDS = {
     # verdict-flip caveats in render_north_star_caption. A positive float/int,
     # bool excluded (bool is an int subclass).
     "prior_warmpool_ttfe_p95_ms": lambda v: isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0,
+    # Prior-run node_count (mirrors prior_machine_type's pattern): stamped by
+    # build_provenance only when it differs from the current node_count — drives
+    # the node-count-change clause on the North Star refresh-delta caveat, so a
+    # delta driven partly by a warm-pool node-count change (e.g. 2→1) reads as a
+    # capacity-confounded swing, not a pure substrate regression/fix. A positive
+    # int, bool excluded (bool is an int subclass).
+    "prior_node_count": lambda v: isinstance(v, int) and not isinstance(v, bool) and 0 < v < 10000,
 }
 
 # scenario internal-name -> public display label. A scenario whose name is not in this
