@@ -336,6 +336,26 @@ def _read_prior_provenance_machine_type(out_path: pathlib.Path) -> str | None:
     return mt if isinstance(mt, str) and mt else None
 
 
+def _read_prior_provenance_node_count(out_path: pathlib.Path) -> int | None:
+    """Read the existing results file's provenance.node_count.
+
+    Best-effort, mirroring _read_prior_provenance_machine_type: a missing/malformed
+    file or an absent/non-int node_count means there is nothing to compare against,
+    so return None (build_provenance then omits prior_node_count and no node-count
+    clause renders on the North Star delta caveat). bool is rejected (bool is an int
+    subclass) so a stray True/False can't alias a count.
+    """
+    try:
+        prior = json.loads(out_path.read_text())
+    except (FileNotFoundError, ValueError):
+        return None
+    prov = prior.get("provenance") if isinstance(prior, dict) else None
+    nc = prov.get("node_count") if isinstance(prov, dict) else None
+    if isinstance(nc, bool) or not isinstance(nc, int) or nc <= 0:
+        return None
+    return nc
+
+
 def _read_prior_warmpool_ttfe_p95(out_path: pathlib.Path) -> float | None:
     """Read the existing results file's warmpool_cold_start TTFE p95 (hb#5414).
 
@@ -1303,6 +1323,7 @@ def build_provenance(
     product: str = results_schema.DEFAULT_PRODUCT,
     prior_machine_type: str | None = None,
     prior_warmpool_ttfe_p95: float | None = None,
+    prior_node_count: int | None = None,
 ) -> dict:
     prov = {
         "cluster_substrate": substrate,
@@ -1339,6 +1360,16 @@ def build_provenance(
         # record (the very first stamped run) never emits a spurious comparison.
         if prior_machine_type and prior_machine_type != machine_type:
             prov["prior_machine_type"] = prior_machine_type
+    # Prior-run node_count (mirrors prior_machine_type's "only if it differs" gate):
+    # carry the PREVIOUSLY published node_count forward as its own field so the
+    # renderer can data-key a node-count-change clause on the North Star refresh-delta
+    # caveat off two closed-schema-validated ints. Stamped only when the warm-pool
+    # capacity actually changed (e.g. 2→1): a same-capacity refresh needs no clause,
+    # and a run with no prior node_count on record never emits a spurious comparison.
+    # Run-level (not sandbox-gated), same as prior_machine_type — node_count is a
+    # run-level property stamped for every product.
+    if prior_node_count and prior_node_count != prov["node_count"]:
+        prov["prior_node_count"] = prior_node_count
     # Matrix runtime column (#3942/#830): emitted only for sandbox-family products
     # so render flips that runtime's rows to measured and the other to pending.
     runtime = _matrix_runtime_for(product)
@@ -1451,6 +1482,7 @@ def main(argv=None) -> int:
     prior_provisioning_rate_sweep = _read_prior_provisioning_rate_sweep(out)
     prior_machine_type = _read_prior_provenance_machine_type(out)
     prior_warmpool_ttfe_p95 = _read_prior_warmpool_ttfe_p95(out)
+    prior_node_count = _read_prior_provenance_node_count(out)
     raw = merge_seed_placeholders(raw, prior_scenarios)
     # Per-mode SLO cluster-rate legs (hb#132/#149): fresh env-armed sweep
     # derivations merge first (fresh wins), then prior committed triples carry
@@ -1577,6 +1609,7 @@ def main(argv=None) -> int:
             substrate, args.product,
             prior_machine_type=prior_machine_type,
             prior_warmpool_ttfe_p95=prior_warmpool_ttfe_p95,
+            prior_node_count=prior_node_count,
         ),
         generated_at=generated_at, product=args.product,
         scale_proof=scale_proof, stepup=stepup, warm_vs_cold=warm_vs_cold_obj,
