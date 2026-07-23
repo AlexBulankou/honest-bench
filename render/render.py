@@ -2987,6 +2987,48 @@ def _cb_thpt_cell(leg, key):
     return "—"
 
 
+def _concurrent_burst_regime_note(cb):
+    """Measurement-regime disclosure for the concurrent-burst block (a#4021 pre-stage).
+
+    A concurrent-burst fire records its cluster regime implicitly via `measured_at`: fires on or
+    after the 2026-07-20 ephemeral-CI cutover (_EPHEMERAL_CI_CUTOVER) run on a cold, single-fire
+    ephemeral CI cluster (empty containerd cache, node-autoscaler + image-pull in the critical
+    path); earlier fires ran on a long-lived, pre-warmed cluster (warm cache). Cross-regime the
+    two are NOT directly comparable — a TTFE gap is at least partly a regime artifact, not a
+    workload difference. This note makes that explicit so a reader never diffs a post-cutover
+    300→500-concurrent row against a pre-2026-07-20 warm-persistent baseline as apples-to-apples.
+
+    Both polarities are surfaced (post-cutover cold-ephemeral AND pre-cutover warm-persistent) so
+    the disclosure is symmetric regardless of which regime the fire landed in.
+
+    Fail-safe: an absent or non-date-shaped `measured_at` returns "" (no fabricated regime claim),
+    mirroring the _ISO-guarded pattern in _runtime_choice_clause. `measured_at` may be a full ISO
+    stamp or a bare YYYY-MM-DD (per CONCURRENT_BURST_FIELDS), so we validate only the date prefix
+    without importing `re`.
+    """
+    ma = cb.get("measured_at")
+    if not isinstance(ma, str):
+        return ""
+    day = ma[:10]
+    if len(day) != 10 or day[4] != "-" or day[7] != "-":
+        return ""
+    if not (day[:4].isdigit() and day[5:7].isdigit() and day[8:10].isdigit()):
+        return ""
+    if day >= _EPHEMERAL_CI_CUTOVER[:10]:
+        return (
+            "> ℹ️ **Measurement regime:** this burst ran on a cold, single-fire **ephemeral CI "
+            "cluster** (empty containerd cache; node-autoscaler + image-pull in the critical "
+            "path). It is **not directly comparable to pre-2026-07-20 warm-persistent baselines** "
+            "— a TTFE gap against an earlier long-lived-cluster run is at least partly a regime "
+            "artifact, not a workload difference."
+        )
+    return (
+        "> ℹ️ **Measurement regime:** this burst ran on a long-lived, **pre-warmed cluster** "
+        "(warm containerd cache). Fires on or after 2026-07-20 run on cold ephemeral CI clusters "
+        "and are **not directly comparable** to this baseline."
+    )
+
+
 def render_concurrent_burst(results, heading="## Concurrent Burst — TTFE at N simultaneous claims"):
     """Render the concurrent-burst sweep block (#4021), or "" when INERT.
 
@@ -3044,6 +3086,10 @@ def render_concurrent_burst(results, heading="## Concurrent Burst — TTFE at N 
     lines.append("")
     if cb.get("measured_at"):
         lines.append(f"_Measured {cb['measured_at'][:10]} — concurrent-burst TTFE (point-in-time)._")
+        lines.append("")
+    regime = _concurrent_burst_regime_note(cb)
+    if regime:
+        lines.append(regime)
         lines.append("")
     return "\n".join(lines)
 
