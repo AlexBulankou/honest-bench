@@ -48,6 +48,10 @@ CTRL_PORT = 8080
 # autoscales 0->2. Rung 1 (1 claim) absorbs the cold node scale-up; rung 2 (2
 # claims) measures with nodes present. Both rungs produce a real cold pareto point.
 RUNG_SIZES = [1, 2]
+# Cold-sweep provenance: the WarmPool is created at replicas=0 so every claim pays a
+# real cold provision. Single-sourced here so the manifest build and the record's
+# params.warmpool_size stamp can never disagree on what "cold" meant for this run.
+WARMPOOL_SIZE = 0
 BIND_TIMEOUT_S = int(os.environ.get("KATA_SWEEP_BIND_TIMEOUT_S", "900"))
 OUT_FILE = os.environ.get("KATA_SWEEP_OUT", "/tmp/kata-cold-ttfe-sweep.json")
 
@@ -146,10 +150,10 @@ def main():
             group=tpl_g, version=tpl_v, namespace=NAMESPACE, plural=tpl_p,
             body=wcs._build_template_manifest(template_name),
         )
-        log(f"creating WarmPool {pool_name} (replicas=0 -> every claim is cold)")
+        log(f"creating WarmPool {pool_name} (replicas={WARMPOOL_SIZE} -> every claim is cold)")
         custom.create_namespaced_custom_object(
             group=swp_g, version=swp_v, namespace=NAMESPACE, plural=swp_p,
-            body=wcs._build_warmpool_manifest(pool_name, template_name, 0),
+            body=wcs._build_warmpool_manifest(pool_name, template_name, WARMPOOL_SIZE),
         )
 
         boundary_texts = []
@@ -224,6 +228,7 @@ def main():
             "params": {
                 "runtime_class": RUNTIME_CLASS,
                 "cluster_nodes": node_count,
+                "warmpool_size": WARMPOOL_SIZE,
             },
             "true_ttfe_webhook_stamped_claims": stamp["true_ttfe_webhook_stamped_claims"],
             "pareto": stamp["pareto"],
