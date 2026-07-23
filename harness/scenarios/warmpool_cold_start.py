@@ -333,6 +333,48 @@ def _run_node_count_sampler(core_v1, stop_event, samples: list[tuple[float, int]
         stop_event.wait(interval_s)
 
 
+def _sample_pool_ready(custom, pool_name: str) -> int:
+    """Best-effort SandboxWarmPool.status.readyReplicas; -1 on any failure.
+
+    Diagnostic sampler — never raises (mirrors _sample_node_count).
+    """
+    group, version, plural = _SWP_GVR
+    try:
+        obj = custom.get_namespaced_custom_object(
+            group=group, version=version, namespace=_NAMESPACE,
+            plural=plural, name=pool_name,
+        )
+        status = (obj or {}).get("status") or {}
+        return int(status.get("readyReplicas") or 0)
+    except Exception as e:  # noqa: BLE001 — diagnostic sampler must never break the run
+        log.warning("pool-ready sample failed: %s", e)
+        return -1
+
+
+def _run_pool_ready_sampler(custom, pool_name: str, stop_event,
+                             samples: list[tuple[float, int]],
+                             interval_s: float) -> None:
+    """Loop sampling (monotonic-ts, readyReplicas) into `samples` until stop_event fires.
+
+    hb#379: `_wait_for_pool_warm` proves the pool crossed target_ready ONCE, at the
+    instant the gate polls succeed — it says nothing about whether the pool SUSTAINS
+    that ready count once the claim burst starts consuming (and the controller starts
+    replenishing) pool members. A published warm-tier bind_p95 statistically
+    indistinguishable from the fully-cold bind_p95 (hb#379 finding) is consistent with
+    either a hard capacity wall (readyReplicas never really holds at target on this
+    node shape) or a fast post-gate drain (readyReplicas holds at the gate instant then
+    collapses the moment claims fire). Sampling readyReplicas on its own background
+    thread through the pool-warm + claim-burst windows — same shape as the hb#319
+    node-count sampler, started/stopped alongside it — makes that distinction directly
+    visible in the fire log instead of inferred post-hoc from smeared bind latencies.
+    Diagnostic-only: never affects PASS/FAIL or published metrics.
+    """
+    t_start = time.monotonic()
+    while not stop_event.is_set():
+        samples.append((time.monotonic() - t_start, _sample_pool_ready(custom, pool_name)))
+        stop_event.wait(interval_s)
+
+
 def _wait_for_pool_warm(
     custom, *, pool_name: str, target_ready: int, timeout_s: int,
 ) -> dict:
@@ -812,6 +854,24 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
     )
     _node_thread.start()
 
+    # hb#379 diagnostic: sample WarmPool.status.readyReplicas on a background
+    # thread through the same pool-warm + claim-burst window as the hb#319
+    # node-count sampler above. `_wait_for_pool_warm` only proves the pool
+    # crossed target_ready ONCE, at the instant the gate polls succeed — it
+    # says nothing about whether the pool SUSTAINS that ready count once the
+    # claim burst starts consuming (and the controller starts replenishing)
+    # pool members. Continuous sampling makes a hard capacity wall vs. a fast
+    # post-gate drain directly visible in the fire log. Diagnostic-only:
+    # never affects PASS/FAIL or published metrics.
+    _pool_ready_stop = threading.Event()
+    _pool_ready_samples: list[tuple[float, int]] = []
+    _pool_ready_thread = threading.Thread(
+        target=_run_pool_ready_sampler,
+        args=(custom, pool_name, _pool_ready_stop, _pool_ready_samples, _NODE_SAMPLE_INTERVAL_S),
+        daemon=True,
+    )
+    _pool_ready_thread.start()
+
     try:
         log.info(
             "waiting for WarmPool %s to reach readyReplicas=%d (window=%ds)",
@@ -1067,6 +1127,19 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
                 min(counts) if counts else "<all-failed>",
                 max(counts) if counts else "<all-failed>",
                 [(round(t, 1), c) for t, c in _node_samples],
+            )
+        _pool_ready_stop.set()
+        _pool_ready_thread.join(timeout=_NODE_SAMPLE_INTERVAL_S + 5.0)
+        if _pool_ready_samples:
+            ready_counts = [c for _, c in _pool_ready_samples if c >= 0]
+            log.info(
+                "hb#379 pool-ready diagnostic: target=%d, %d samples over "
+                "%.1fs, min=%s max=%s series=%s",
+                _POOL_REPLICAS,
+                len(_pool_ready_samples), _pool_ready_samples[-1][0],
+                min(ready_counts) if ready_counts else "<all-failed>",
+                max(ready_counts) if ready_counts else "<all-failed>",
+                [(round(t, 1), c) for t, c in _pool_ready_samples],
             )
         _cleanup(
             custom, claim_names=claim_names,
