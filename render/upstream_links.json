@@ -1,7 +1,7 @@
 {
   "_meta": {
     "seeded_from": "UPSTREAM_BLOCKERS.md rev 6",
-    "last_verified": "2026-07-22",
+    "last_verified": "2026-07-23",
     "freshness": "Rides every UPSTREAM_BLOCKERS.md refresh PR; link states hand-verified at each refresh."
   },
   "classes": {
@@ -25,7 +25,7 @@
       ]
     },
     "no-compliant-rung": {
-      "renders_at": "legend-only today (no matrix cell currently renders this class): the cold cells graduated independently — gVisor unique-image-cold to controller_cold_floor_zero_corroborated (honest-zero, hb#230/#214, needs NO webhook), Kata unique-image-cold to unresolved_bounds_bar_bracketed (5s) + derived-zero (1s). The true-TTFE basis this class's fix (#761) enables could only tighten the Kata cold 5s unresolved-bounds cell — and only after the webhook is DEPLOYED on the Kata measurement cluster AND the PHASE-B scrape is wired into harness.run (prom_ttfe is offline PHASE-A only, not imported in run.py).",
+      "renders_at": "legend-only today (no matrix cell currently renders this class): the cold cells graduated independently — gVisor unique-image-cold to controller_cold_floor_zero_corroborated (honest-zero, hb#230/#214, needs NO webhook), Kata unique-image-cold NOW to true_ttfe @ 0.822/cluster (5s), node_count=5; 1s honestly pending (cold ttfe_p95=2475ms > 1000ms). #761's true-TTFE basis was ADOPTED on the Kata cold 5s cell 2026-07-23 via a webhook-corroborated cold step-up sweep — the webhook-inject-timestamp example was DEPLOYED on the Kata measurement cluster and 3 cold claims were stamped, so the cell now publishes true_ttfe on main (superseding the prior unresolved_bounds_bar_bracketed). Remaining adoption gap: the Kata cold writer is a MANUAL sweep (not yet an automated pipeline refresh), and the gVisor cold cell still publishes the floor-zero basis until its next refresh adopts true_ttfe (prom_ttfe is offline PHASE-A only, not imported in run.py; the cold SLO-rate cells come from the out-of-process CL2 step-up sweep).",
       "refs": [
         {
           "repo": "kubernetes-sigs/agent-sandbox",
@@ -33,7 +33,7 @@
           "kind": "issue",
           "role": "blocks",
           "status": "closed",
-          "note": "auto-closed 2026-07-22T17:43:51Z (state_reason=completed, by kubernetes-prow[bot]) via #761's 'Fixes #751' — 1s after the merge. The upstream tracking issue closing does NOT graduate any honest-bench cell: the webhook is still undeployed + the PHASE-B scrape unwired, so no true_ttfe writer exists here (adoption gap remains open)."
+          "note": "auto-closed 2026-07-22T17:43:51Z (state_reason=completed, by kubernetes-prow[bot]) via #761's 'Fixes #751' — 1s after the merge. Adoption update (2026-07-23): the Kata cold 5s cell now publishes a true_ttfe basis — the webhook-inject-timestamp example was DEPLOYED on the Kata measurement cluster and a webhook-corroborated cold sweep stamped 3 claims, so a true_ttfe writer now exists for that cell (published on main). Remaining: the Kata writer is a manual sweep (not yet automated pipeline refresh) and the gVisor cold cell adopts on its next refresh."
         },
         {
           "repo": "kubernetes-sigs/agent-sandbox",
@@ -41,7 +41,7 @@
           "kind": "pr",
           "role": "fix-in-flight",
           "status": "merged",
-          "note": "merged 2026-07-22T17:43:50Z; necessary-but-not-sufficient — webhook not yet deployed + PHASE-B scrape unwired, so no true_ttfe writer exists here yet (adoption not yet complete)"
+          "note": "merged 2026-07-22T17:43:50Z; adopted on the Kata cold 5s cell 2026-07-23 via a webhook-corroborated cold sweep (webhook deployed, 3 claims stamped, cell now true_ttfe @ 0.822/cluster on main). Remaining adoption: automate the Kata cold refresh + adopt on the gVisor cold cell at its next refresh."
         }
       ]
     },
