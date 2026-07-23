@@ -92,6 +92,13 @@
           "kind": "pr",
           "role": "fix-in-flight",
           "status": "merged"
+        },
+        {
+          "repo": "agent-substrate/substrate",
+          "number": 475,
+          "kind": "pr",
+          "role": "fix-in-flight",
+          "status": "merged"
         }
       ]
     }
