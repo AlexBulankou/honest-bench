@@ -68,6 +68,16 @@ substitutions:
   # (FATAL) if this is empty.
   _CLUSTER: ""
   _REGION: "us-central1"
+  # hb#379: the warmpool_cold_start graduation-shape knobs (default = the committed
+  # published shape, 30 resident / 40 fired — unchanged default behavior). Overridable
+  # at fire time without editing this file. NOTE: this cluster is the shared, standing
+  # scenarios cluster (see collision-ack requirement above) — a sweep fire here needs
+  # the SAME collision-ack as any other fire against this cluster, and a value below 30
+  # will trip check_n_regression on publish (harness/run.py; BENCH_ALLOW_N_REGRESSION=1
+  # to deliberately downgrade, or let the refusal stop a diagnostic-only sweep short of
+  # the PR step).
+  _WARMPOOL_POOL_REPLICAS: "30"
+  _WARMPOOL_CLAIM_COUNT: "40"
 
 steps:
   # Single orchestration step: auth -> preconditions -> cold-honesty guard ->
@@ -83,8 +93,8 @@ steps:
       # graduated cells at n=5 / n=1, which the harness refuses (check_n_regression).
       - "BENCH_CLUSTER_SUBSTRATE=gke-kata"
       - "WARMPOOL_COLD_START_RUNTIME_CLASS=kata-clh"
-      - "WARMPOOL_COLD_START_POOL_REPLICAS=30"
-      - "WARMPOOL_COLD_START_CLAIM_COUNT=40"
+      - "WARMPOOL_COLD_START_POOL_REPLICAS=${_WARMPOOL_POOL_REPLICAS}"
+      - "WARMPOOL_COLD_START_CLAIM_COUNT=${_WARMPOOL_CLAIM_COUNT}"
       - "WARMPOOL_COLD_START_WARMUP_TIMEOUT_S=600"
       - "WARMPOOL_COLD_START_BIND_TIMEOUT_S=600"
       - "NATIVE_DIGEST_COLD_RUNTIME_CLASS=kata-clh"

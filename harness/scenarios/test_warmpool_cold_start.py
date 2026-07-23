@@ -282,6 +282,76 @@ def test_template_kata_pins_class_toleration_and_selector():
     assert spec["nodeSelector"] == {"nested-virtualization": "enabled"}
 
 
+# ---- hb#379: _sample_pool_ready / _run_pool_ready_sampler (continuous
+# readyReplicas diagnostic sampler, mirrors the hb#319 node-count sampler) ----
+
+class _FakeCustomOkOnce:
+    """Returns a fixed readyReplicas value; raises if called more than `calls`."""
+
+    def __init__(self, ready: int):
+        self._ready = ready
+
+    def get_namespaced_custom_object(self, group, version, namespace, plural, name):
+        return {"status": {"readyReplicas": self._ready}}
+
+
+class _FakeCustomRaises:
+    def get_namespaced_custom_object(self, group, version, namespace, plural, name):
+        raise RuntimeError("boom")
+
+
+class _FakeCustomNoStatus:
+    def get_namespaced_custom_object(self, group, version, namespace, plural, name):
+        return {}
+
+
+def test_sample_pool_ready_returns_ready_replicas():
+    assert cell._sample_pool_ready(_FakeCustomOkOnce(7), "pool-x") == 7
+
+
+def test_sample_pool_ready_missing_status_reads_as_zero():
+    assert cell._sample_pool_ready(_FakeCustomNoStatus(), "pool-x") == 0
+
+
+def test_sample_pool_ready_never_raises_returns_negative_one():
+    assert cell._sample_pool_ready(_FakeCustomRaises(), "pool-x") == -1
+
+
+def test_run_pool_ready_sampler_appends_until_stopped():
+    import threading
+
+    custom = _FakeCustomOkOnce(3)
+    stop_event = threading.Event()
+    samples: list = []
+
+    # interval_s=0 -> the loop's stop_event.wait(0) returns immediately each
+    # pass, so we stop it ourselves after it has had a chance to append.
+    def _stop_after_first():
+        while len(samples) < 3:
+            pass
+        stop_event.set()
+
+    stopper = threading.Thread(target=_stop_after_first, daemon=True)
+    stopper.start()
+    cell._run_pool_ready_sampler(custom, "pool-x", stop_event, samples, 0.0)
+    stopper.join(timeout=5.0)
+
+    assert len(samples) >= 3
+    assert all(ready == 3 for _, ready in samples)
+    # timestamps are monotonically non-decreasing elapsed-since-start floats
+    assert all(t >= 0 for t, _ in samples)
+
+
+def test_run_pool_ready_sampler_stopped_immediately_yields_no_samples():
+    import threading
+
+    stop_event = threading.Event()
+    stop_event.set()  # already stopped before the loop's first check
+    samples: list = []
+    cell._run_pool_ready_sampler(_FakeCustomRaises(), "pool-x", stop_event, samples, 0.0)
+    assert samples == []
+
+
 def _run_all():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:

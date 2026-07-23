@@ -8,6 +8,16 @@
 #   gcloud builds triggers run hb-refresh-gke-sandbox --project=<PROJECT> \
 #     --substitutions=_POOL_REPLICAS=10,_MACHINE_TYPE=n2-standard-16,_REGION=us-central1
 #
+# hb#379 ONE-OFF SWEEP (warmpool_cold_start pool-capacity diagnostic): override
+# _WARMPOOL_POOL_REPLICAS/_WARMPOOL_CLAIM_COUNT (default 30/40, the committed
+# published shape) without editing this file, e.g.:
+#   gcloud builds triggers run hb-refresh-gke-sandbox --project=<PROJECT> \
+#     --substitutions=_WARMPOOL_POOL_REPLICAS=10,_WARMPOOL_CLAIM_COUNT=10
+# A value below 30 will trip check_n_regression on publish — add
+# BENCH_ALLOW_N_REGRESSION=1 as a measure-step env override only if you actually
+# intend to publish the downgraded cell; a pure capacity-sweep fire is not
+# expected to publish and can let that refusal stop it short of the PR step.
+#
 # DEBUG ITERATION (hb#311): a `measure`-stage bug found via this trigger costs
 # a full ~25min create+teardown fire per layer peeled (a prior 4-bug chain
 # was 4 such fires — "fire-as-linter"). Set _KEEP_CLUSTER_ON_FAILURE=1 to skip
@@ -61,6 +71,17 @@ substitutions:
   _MACHINE_TYPE: "n2-standard-16"
   _REGION: "us-central1"
   _KEEP_CLUSTER_ON_FAILURE: "0"   # "1" = skip teardown trap on a FAILED measure step (hb#311)
+  # hb#379: the warmpool_cold_start graduation-shape knobs (default = the committed
+  # published shape, 30 resident / 40 fired — unchanged default behavior). Overridable
+  # at fire time (--substitutions=_WARMPOOL_POOL_REPLICAS=10,_WARMPOOL_CLAIM_COUNT=...)
+  # for a one-off empirical sweep of the pool's sustainable ceiling on this node shape,
+  # without editing this file. A sweep value below 30 WILL trip check_n_regression on
+  # publish — pass BENCH_ALLOW_N_REGRESSION=1 too (see harness/run.py) if the fire is a
+  # deliberate diagnostic-only sweep you do not intend to merge, or just let public-safety/
+  # the n-regression refusal stop it short of publishing (the pool-ready + node-count
+  # diagnostics in the build log are the point of the sweep, not the published cell).
+  _WARMPOOL_POOL_REPLICAS: "30"
+  _WARMPOOL_CLAIM_COUNT: "40"
 
 steps:
   # PRE-FIRE FUNCTIONAL PROBE: a policy READ (`gcloud projects get-iam-policy`)
@@ -114,8 +135,8 @@ steps:
       # refuses (check_n_regression). Canonical block: recipe/REPRODUCE.md,
       # "Refreshing published cells".
       - "WARMPOOL_COLD_START_RUNTIME_CLASS=gvisor"
-      - "WARMPOOL_COLD_START_POOL_REPLICAS=30"
-      - "WARMPOOL_COLD_START_CLAIM_COUNT=40"
+      - "WARMPOOL_COLD_START_POOL_REPLICAS=${_WARMPOOL_POOL_REPLICAS}"
+      - "WARMPOOL_COLD_START_CLAIM_COUNT=${_WARMPOOL_CLAIM_COUNT}"
       - "WARMPOOL_COLD_START_WARMUP_TIMEOUT_S=600"
       - "WARMPOOL_COLD_START_BIND_TIMEOUT_S=600"
       - "SUSPEND_RESUME_RUNTIME_CLASS=gvisor"
