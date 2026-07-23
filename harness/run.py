@@ -356,6 +356,25 @@ def _read_prior_provenance_node_count(out_path: pathlib.Path) -> int | None:
     return nc
 
 
+def _read_prior_provenance_node_image(out_path: pathlib.Path) -> str | None:
+    """Read the existing results file's provenance.node_image (hb#317 confound).
+
+    Best-effort, mirroring _read_prior_provenance_node_count: a missing/malformed
+    file or an absent/non-string node_image means there is nothing to compare
+    against, so return None (build_provenance then omits prior_node_image and no
+    node-image clause renders on the North Star delta caveat).
+    """
+    try:
+        prior = json.loads(out_path.read_text())
+    except (FileNotFoundError, ValueError):
+        return None
+    prov = prior.get("provenance") if isinstance(prior, dict) else None
+    ni = prov.get("node_image") if isinstance(prov, dict) else None
+    if not isinstance(ni, str) or not ni.strip():
+        return None
+    return ni.strip()
+
+
 def _read_prior_warmpool_ttfe_p95(out_path: pathlib.Path) -> float | None:
     """Read the existing results file's warmpool_cold_start TTFE p95 (hb#5414).
 
@@ -1324,6 +1343,7 @@ def build_provenance(
     prior_machine_type: str | None = None,
     prior_warmpool_ttfe_p95: float | None = None,
     prior_node_count: int | None = None,
+    prior_node_image: str | None = None,
 ) -> dict:
     prov = {
         "cluster_substrate": substrate,
@@ -1395,6 +1415,15 @@ def build_provenance(
         node_image = os.environ.get("BENCH_NODE_IMAGE", "").strip()
         if node_image:
             prov["node_image"] = node_image
+            # Prior-run node_image (mirrors prior_node_count's "only if it differs"
+            # gate): carry the PREVIOUSLY published node_image forward as its own field
+            # so the renderer can data-key a node-image-change clause on the North Star
+            # refresh-delta caveat off two closed-schema-validated kubeletVersions.
+            # Stamped only when the node image actually changed (a GKE node-image float
+            # on the unpinned RAPID channel): a same-image refresh needs no clause, and a
+            # run with no prior node_image on record never emits a spurious comparison.
+            if prior_node_image and prior_node_image != node_image:
+                prov["prior_node_image"] = prior_node_image
         runsc_version = os.environ.get("BENCH_RUNSC_VERSION", "").strip()
         if runsc_version:
             prov["runsc_version"] = runsc_version
@@ -1483,6 +1512,7 @@ def main(argv=None) -> int:
     prior_machine_type = _read_prior_provenance_machine_type(out)
     prior_warmpool_ttfe_p95 = _read_prior_warmpool_ttfe_p95(out)
     prior_node_count = _read_prior_provenance_node_count(out)
+    prior_node_image = _read_prior_provenance_node_image(out)
     raw = merge_seed_placeholders(raw, prior_scenarios)
     # Per-mode SLO cluster-rate legs (hb#132/#149): fresh env-armed sweep
     # derivations merge first (fresh wins), then prior committed triples carry
@@ -1610,6 +1640,7 @@ def main(argv=None) -> int:
             prior_machine_type=prior_machine_type,
             prior_warmpool_ttfe_p95=prior_warmpool_ttfe_p95,
             prior_node_count=prior_node_count,
+            prior_node_image=prior_node_image,
         ),
         generated_at=generated_at, product=args.product,
         scale_proof=scale_proof, stepup=stepup, warm_vs_cold=warm_vs_cold_obj,

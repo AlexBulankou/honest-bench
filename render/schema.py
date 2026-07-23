@@ -155,6 +155,15 @@ _IMAGE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]*:[A-Za-z0-9][A-Za-z0-9._-]*$")
 _MACHINE_TYPE = re.compile(
     r"^[a-z][a-z0-9]*-(standard|highmem|highcpu|micro|small|medium)(-[0-9]+)?$"
 )
+# GKE node-image proxy (hb#317): the kubeletVersion string carries the GKE build
+# suffix that maps 1:1 to a node-image release, e.g. v1.31.1-gke.1846000. Public,
+# non-secret GKE version identifier; bounded tightly so free-text can never ride the
+# field. A value that is not a recognizable GKE kubeletVersion shape is dropped.
+_NODE_IMAGE = re.compile(r"^v[0-9]+\.[0-9]+\.[0-9]+-gke\.[0-9]+$")
+# gVisor runsc version (hb#317): the last field of `runsc --version`, e.g.
+# release-20240115.0 or a git-describe token. Bounded generic version token — no
+# path/URL/credential shape can ride it.
+_RUNSC_VERSION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 
 # DELIBERATELY NOT allow-listed: any GCP project / infra identifier (e.g. a `project`
 # field). It is infra-noise irrelevant to a customer-facing benchmark page, so it stays
@@ -213,6 +222,22 @@ PROVENANCE_FIELDS = {
     # capacity-confounded swing, not a pure substrate regression/fix. A positive
     # int, bool excluded (bool is an int subclass).
     "prior_node_count": lambda v: isinstance(v, int) and not isinstance(v, bool) and 0 < v < 10000,
+    # Node-image proxy + gVisor runsc version (hb#317): stamped by build_provenance
+    # from BENCH_NODE_IMAGE (kubeletVersion) / BENCH_RUNSC_VERSION when present. These
+    # were stamped by the harness since hb#317 but were NOT schema-declared, so
+    # _clean_provenance silently dropped them at render-read time — declaring them here
+    # makes the node-side build first-class (readable historically + validatable), the
+    # precondition hb#317 deferred as a non-goal. Sandbox-family only (gated on `runtime`
+    # in build_provenance).
+    "node_image": lambda v: isinstance(v, str) and bool(_NODE_IMAGE.match(v)),
+    "runsc_version": lambda v: isinstance(v, str) and bool(_RUNSC_VERSION.match(v)),
+    # Prior-run node_image (mirrors prior_node_count's "only if it differs" gate):
+    # stamped by build_provenance only when the node image actually changed — drives
+    # the node-image-change clause on the North Star refresh-delta caveat, so a delta
+    # driven partly by a GKE node-image float (kernel/kubelet, unpinned on the RAPID
+    # channel) reads as a node-build-confounded swing, not a pure substrate
+    # regression/fix. Same GKE kubeletVersion shape as node_image.
+    "prior_node_image": lambda v: isinstance(v, str) and bool(_NODE_IMAGE.match(v)),
 }
 
 # scenario internal-name -> public display label. A scenario whose name is not in this
