@@ -134,7 +134,7 @@ steps:
         # shared cluster — it only asserts the fulfilment chain is present before
         # firing real claims against it.
         echo "==> read-only precondition: SandboxClaim CRD + agent-sandbox-controller Deployment present"
-        kubectl get crd sandboxclaims.agents.x-k8s.io >/dev/null
+        kubectl get crd sandboxclaims.extensions.agents.x-k8s.io >/dev/null
         kubectl -n agent-sandbox-system get deploy agent-sandbox-controller >/dev/null
 
         # COLD-HONESTY GUARD (the pre-fire assertion #5459 exists to automate): a
