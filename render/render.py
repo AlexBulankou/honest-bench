@@ -350,14 +350,28 @@ def render_trend(history_rows):
     lines.append("| " + " | ".join(header) + " |")
     lines.append("|" + "|".join(["---"] * len(header)) + "|")
     prev = None
+    prev_n = None
+    any_low_n_delta = False
     for r in rows:
         count = r["sandboxes_ready_under_1s"]
+        n = r["n"]
         if prev is None:
             delta = "—"
         else:
             d = count - prev
             delta = f"+{d:g}" if d >= 0 else f"{d:g}"
+            # Comparability guard: a Δ is a cross-build RANKING of the COUNT, so it is only a
+            # trustworthy build-over-build signal when BOTH builds cleared the same
+            # N>=TTFE_COMPARABILITY_MIN_N sample floor the matrix uses for cross-sample TTFE
+            # ranking. Below it the swing can be sampling noise rather than a real move — mark
+            # the Δ (never silently rank), mirroring the matrix's both-rows-clear comparison
+            # gate. The COUNT itself stays unmarked: it is an honest raw measurement of its own
+            # build; the guard belongs on the explicit comparison artifact, not the datum.
+            if n < TTFE_COMPARABILITY_MIN_N or prev_n < TTFE_COMPARABILITY_MIN_N:
+                delta += f" {_LOW_N_MARK}"
+                any_low_n_delta = True
         prev = count
+        prev_n = n
         cells = [
             f"`{r['controller_digest'][:19]}…`",
             r["generated_at"][:10],
@@ -368,6 +382,13 @@ def render_trend(history_rows):
         ]
         lines.append("| " + " | ".join(cells) + " |")
     lines.append("")
+    if any_low_n_delta:
+        lines.append(
+            f"_{_LOW_N_MARK} Δ spans a build whose burst sampled fewer than "
+            f"N={TTFE_COMPARABILITY_MIN_N} claims — too few to rank build-over-build; the swing "
+            f"may be sampling noise, not a real move._"
+        )
+        lines.append("")
     return "\n".join(lines)
 
 
