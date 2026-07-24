@@ -2873,6 +2873,7 @@ def _su(**over):
         "verdict": "saturated",
         "max_flat_rate": 300, "north_star_breach_rate": 500, "saturation_rate": 800,
         "node_count": 37, "machine_type": "e2-standard-16", "sld_s": 60, "wpr": 0.8,
+        "warmpool_size": 30,  # hb#4364 warm(>0)/cold(0) provenance discriminator
         "measured_at": "2026-06-30T04:30:00Z",
     }
     base.update(over)
@@ -2990,8 +2991,27 @@ def test_stepup_proxy_only_renders_study_heading_not_saturation_point():
 
 def test_stepup_sweep_params_subline():
     out = render.render_stepup(_matrix_results(_full_gvisor_scenarios(), stepup=_su()))
-    assert "37 nodes, e2-standard-16, SLD 60s, WPR 0.8" in out
+    assert "37 nodes, e2-standard-16, warm pool 30, SLD 60s, WPR 0.8" in out
     assert "measured 2026-06-30" in out
+
+
+def test_stepup_sweep_subline_warmpool_zero_is_cold_label():
+    # warmpool_size=0 is explicit cold provenance (kata_cold sweep) — render the honest
+    # "cold (no warm pool)" label, never the misleading "warm pool 0" (hb#4364).
+    out = render.render_stepup(_matrix_results(_full_gvisor_scenarios(), stepup=_su(warmpool_size=0)))
+    assert "cold (no warm pool)" in out
+    assert "warm pool 0" not in out
+
+
+def test_stepup_sweep_subline_warmpool_absent_omitted():
+    # No warmpool_size pin ⇒ the discriminator is simply omitted from the subline, never
+    # fabricated to a cold/warm label (honesty spine).
+    su = _su()
+    del su["warmpool_size"]
+    out = render.render_stepup(_matrix_results(_full_gvisor_scenarios(), stepup=su))
+    assert "37 nodes, e2-standard-16, SLD 60s, WPR 0.8" in out
+    assert "warm pool" not in out
+    assert "cold (no warm pool)" not in out
 
 
 # --- knee-bracket: two-axis (acquisition-compliant + TTFE-collapsed) render ---------------
