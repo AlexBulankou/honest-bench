@@ -3014,6 +3014,39 @@ def test_stepup_sweep_subline_warmpool_absent_omitted():
     assert "cold (no warm pool)" not in out
 
 
+def test_stepup_pareto_cost_column_omitted_when_no_point_has_cost():
+    # The default _su() pareto points carry no cost_usd_per_1k_ready ⇒ the True-TTFE table
+    # renders WITHOUT a cost column (axis never enabled → omit, never a column of dashes).
+    out = render.render_stepup(_matrix_results(_full_gvisor_scenarios(), stepup=_su()))
+    assert "| Offered rate (/s) | TTFE p50 | TTFE p95 | TTFE p99 | Ready /s |" in out
+    assert "Cost ($/1k ready)" not in out
+
+
+def test_stepup_pareto_cost_column_rendered_when_any_point_has_cost():
+    # When enrich_pareto_cost stamped the item-4 axis, the True-TTFE table grows a Cost column
+    # and each point renders its $/1k-ready figure (hb#4364 cost display leg).
+    su = _su()
+    for pt, c in zip(su["pareto_points"], (0.42, 0.44, 0.51, 0.9, 1.5)):
+        pt["cost_usd_per_1k_ready"] = c
+    out = render.render_stepup(_matrix_results(_full_gvisor_scenarios(), stepup=su))
+    assert "| Offered rate (/s) | TTFE p50 | TTFE p95 | TTFE p99 | Ready /s | Cost ($/1k ready) |" in out
+    assert "$0.42" in out
+    assert "$1.5" in out
+
+
+def test_stepup_pareto_cost_partial_coverage_renders_dash():
+    # Cost stamped on some points but not others (mixed machine-shape resolvability): the column
+    # renders, the uncosted point shows a partial-coverage "—", never a fabricated 0.
+    su = _su()
+    su["pareto_points"][0]["cost_usd_per_1k_ready"] = 0.42
+    # remaining points intentionally carry no cost
+    out = render.render_stepup(_matrix_results(_full_gvisor_scenarios(), stepup=su))
+    assert "Cost ($/1k ready)" in out
+    assert "$0.42" in out
+    assert "| $0 |" not in out  # a missing cost is never fabricated to a $0 cell
+    assert "| — |" in out  # the uncosted points render a partial-coverage dash
+
+
 # --- knee-bracket: two-axis (acquisition-compliant + TTFE-collapsed) render ---------------
 def _knee(**over):
     # The #4560 knee-bracket shape: NO true-TTFE pareto_points / saturation_point (both null in

@@ -464,6 +464,11 @@ def _fmt_wait(ms):
     return f"~{round(ms / 1000.0, 1):g}s"
 
 
+def _fmt_usd(v):
+    """A USD cost figure, 2dp, no trailing zeros: 0.42 -> $0.42, 1.5 -> $1.5, 12 -> $12."""
+    return f"${round(v, 2):g}"
+
+
 def _exec_cell(rate, n_total, n_succ=None):
     """Doc's exec-success ("Honesty Check") cell.
 
@@ -4263,7 +4268,16 @@ def render_stepup(results):
 
     # True-TTFE Pareto table.
     if pts:
+        # Cost ($/1k ready) is the step-up item-4 axis — stamped per point by the adapter's
+        # enrich_pareto_cost only when the cluster shape resolves a rate (unknown machine_type /
+        # non-positive ready leaves it ABSENT, honest "pending"). Render the column ONLY when at
+        # least one point actually carries a cost, so an axis that was never enabled is omitted
+        # entirely rather than shown as a full column of dashes falsely implying a failed measure;
+        # a point missing cost while siblings have it gets a partial-coverage "—".
+        any_cost = any("cost_usd_per_1k_ready" in p for p in pts)
         header = ["Offered rate (/s)", "TTFE p50", "TTFE p95", "TTFE p99", "Ready /s"]
+        if any_cost:
+            header.append("Cost ($/1k ready)")
         lines.append("| " + " | ".join(header) + " |")
         lines.append("|" + "|".join(["---"] * len(header)) + "|")
         for p in sorted(pts, key=lambda q: q["offered_rate_per_s"]):
@@ -4274,6 +4288,8 @@ def render_stepup(results):
                 _fmt_secs(p["ttfe_p99_ms"]) if "ttfe_p99_ms" in p else "—",
                 _fmt_num(p["ready_per_s"]) if "ready_per_s" in p else "—",
             ]
+            if any_cost:
+                cells.append(_fmt_usd(p["cost_usd_per_1k_ready"]) if "cost_usd_per_1k_ready" in p else "—")
             lines.append("| " + " | ".join(cells) + " |")
         lines.append("")
 
