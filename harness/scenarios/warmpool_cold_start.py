@@ -695,6 +695,34 @@ def _add_gate_diagnostic_metrics(
     return sla_metrics
 
 
+def _min_ready_during_burst(
+    samples: list[tuple[float, int]],
+    sampler_t0: float,
+    burst_start_abs: float,
+) -> int | None:
+    """Return the minimum readyReplicas held from burst start onward, or None.
+
+    hb#379: `_wait_for_pool_warm` proves the pool crossed target_ready ONCE, at
+    the gate-poll instant — it says nothing about whether readyReplicas is
+    SUSTAINED once the claim burst starts consuming (and the controller starts
+    replenishing) pool members. `samples` is the raw (rel_t, readyReplicas)
+    series from `_run_pool_ready_sampler`, `rel_t` relative to `sampler_t0`.
+    Filtering to `sampler_t0 + rel_t >= burst_start_abs` drops the pre-burst
+    warm-up window on purpose — including it would dilute or mask the churn
+    signal this metric exists to capture. A failed poll reads -1 (see
+    `_sample_pool_ready`) and is excluded, same as the diagnostic log line.
+
+    Returns None when there are no valid in-burst samples (e.g. the sampler
+    never got a successful read once the burst started).
+    """
+    ready_during_burst = [
+        ready
+        for rel_t, ready in samples
+        if ready >= 0 and (sampler_t0 + rel_t) >= burst_start_abs
+    ]
+    return min(ready_during_burst) if ready_during_burst else None
+
+
 def _activation_window_s(
     create_times: dict[str, float], bound_at: dict[str, float],
 ) -> float | None:
@@ -989,6 +1017,11 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
     # never affects PASS/FAIL or published metrics.
     _pool_ready_stop = threading.Event()
     _pool_ready_samples: list[tuple[float, int]] = []
+    # Captured here (not read back from the thread) so `run()` can convert each
+    # sample's thread-relative `rel_t` to an absolute monotonic timestamp
+    # comparable to `create_times` below — sub-ms skew from the thread's own
+    # `t_start` a few lines later is negligible for a burst-window filter.
+    _pool_ready_sampler_t0 = time.monotonic()
     _pool_ready_thread = threading.Thread(
         target=_run_pool_ready_sampler,
         args=(custom, pool_name, _pool_ready_stop, _pool_ready_samples, _NODE_SAMPLE_INTERVAL_S),
@@ -1190,6 +1223,23 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
         sla_metrics = _add_gate_diagnostic_metrics(
             sla_metrics, breakdown, warm_max=warm_max, pool_replicas=_POOL_REPLICAS,
         )
+        # hb#379: promote the readyReplicas-churn sampler above from
+        # diagnostic-log-only to a published metric. No-op in cold-baseline
+        # mode (no warm tier to sustain, same precedent as
+        # `_add_gate_diagnostic_metrics`); the under-delivery path already
+        # returned above (`under is not None`), so `sla_metrics` here is
+        # always a dict. Snapshot `_pool_ready_samples` via `list(...)` —
+        # the background thread keeps sampling until `finally` stops it, but
+        # the burst is already complete by this point, so a few extra
+        # post-burst samples in the snapshot don't affect the min().
+        if _POOL_REPLICAS > 0:
+            min_ready = _min_ready_during_burst(
+                list(_pool_ready_samples),
+                _pool_ready_sampler_t0,
+                min(create_times.values()),
+            )
+            if min_ready is not None:
+                sla_metrics["warmpool_gate_min_ready_during_burst"] = min_ready
         sep = breakdown["separation_observed"]
         sep_str = f"{sep:.2f}x" if sep is not None else "<no-cold-tier>"
         clause = (
