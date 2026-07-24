@@ -4423,6 +4423,14 @@ def render_stepup(results):
         params.append(f"{_fmt_num(su['node_count'])} nodes")
     if "machine_type" in su:
         params.append(su["machine_type"])
+    # warmpool_size: warm(>0)/cold(0) provenance discriminator (hb#4364). 0 is a LEGITIMATE
+    # stamped value (explicit cold provenance, e.g. the kata_cold sweep) — render it as the honest
+    # "cold (no warm pool)" label, never the misleading "warm pool 0"; absent stays omitted (never
+    # fabricated). Carried this far by _coerce_stepup + STEPUP_PARETO_FIELDS; this is the display
+    # leg that finally surfaces the discriminator on the page beside the cluster shape.
+    if "warmpool_size" in su:
+        wps = su["warmpool_size"]
+        params.append("cold (no warm pool)" if wps == 0 else f"warm pool {_fmt_num(wps)}")
     if "sld_s" in su:
         params.append(f"SLD {_fmt_num(su['sld_s'])}s")
     if "wpr" in su:
