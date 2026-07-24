@@ -59,8 +59,13 @@ WIP_CATALOG = {
             "Yes — the per-activation-mode cluster-throughput fire that emits the per-cluster "
             "fields is the deliverable that graduates these halves."
         ),
-        "eta": f"Gated on the per-mode cluster-throughput fire ([hb#132]({_HB}/132)).",
-        "trace": f"[hb#132]({_HB}/132) (dual per-node + per-cluster throughput).",
+        "eta": (
+            f"No open blocker — [hb#132]({_HB}/132) shipped the dual per-node/per-cluster "
+            "mechanism (closed 2026-07-11; gVisor's per-cluster cells already use it). The "
+            "Kata warm-pool-hit `<1s` cell just awaits its own manually-invoked Kata "
+            "cluster-throughput fire — no scheduled date, next time the fire is run."
+        ),
+        "trace": f"[hb#132]({_HB}/132) (dual per-node + per-cluster throughput, closed/shipped).",
     },
     "trust-gate": {
         "title": "SLO-rate fire ran; derivation refused by the trust gate (`trust-gate`)",
@@ -142,9 +147,11 @@ WIP_CATALOG = {
             + ". No honest-bench-side measurement can graduate it until the upstream fix lands."
         ),
         "eta": (
-            "Gated on the upstream agent-sandbox resume-graduation fix. There is no "
-            "honest-bench-side date — the cell graduates to a real number the moment upstream "
-            "lands, not when a run is scheduled."
+            "Gated on the upstream agent-sandbox resume-graduation fix — "
+            "[agent-sandbox#1150](https://github.com/kubernetes-sigs/agent-sandbox/pull/1150) "
+            "is OPEN, in review (last activity 2026-07-22; not yet merged as of 2026-07-24). "
+            "No honest-bench-side date — the cell graduates to a real number the moment that "
+            "PR merges and a fresh resume probe run lands, not when a run is scheduled."
         ),
         "trace": (
             "Upstream agent-sandbox controller (resume graduation): "

@@ -776,13 +776,13 @@ def test_matrix_per_bar_basis_starstar_only_on_uncorroborated_bar():
     # hb#230 ask (a): both bases are certification FLOORS (literal-upper-bound and
     # uncorroborated-acq), so both cluster figures carry the `≥` prefix.
     assert cells[2] == "4 /node · ≥38 /cluster ⚠️"       # corroborated floor bar: ≥, NO ***
-    assert cells[3] == "4 /node · ≥1.2 /cluster ⚠️***"   # uncorroborated floor bar: ≥ + ***
+    assert cells[3] == "4 /node · ≥1.2 /cluster ⚠️***U"  # uncorroborated floor bar: ≥ + ***U
 
 
 def test_matrix_per_bar_basis_unresolved_bounds_renders_unk():
     # hb#230 Kata-cold ruling: a bar whose measurement WAS taken but whose bar sits inside
     # the [lower, upper] TTFE bracket carries the unresolved-bounds basis and NO landed
-    # number. It renders `unk.***` (NOT `pending` — pending implies unmeasured), keyed off
+    # number. It renders `unk.***K` (NOT `pending` — pending implies unmeasured), keyed off
     # the per-bar stamp for exactly that bar. The sibling bar with a real honest-0 basis is
     # unaffected.
     scen = _full_gvisor_scenarios()
@@ -792,7 +792,7 @@ def test_matrix_per_bar_basis_unresolved_bounds_renders_unk():
     out = render.render_matrix(_matrix_results(scen))
     warm_line = [l for l in out.splitlines() if "Warm-pool hit" in l][0]
     cells = [_unlink(c.strip()) for c in warm_line.strip("|").split("|")]
-    assert cells[2] == "unk.***"           # unresolved bar: unk. + ***
+    assert cells[2] == "unk.***K"          # unresolved bar: unk. + ***K
     assert cells[3] == "4 /node · pending (cluster-fire)"  # sibling bar untouched
 
 
@@ -817,7 +817,7 @@ def test_matrix_per_bar_invalid_basis_drops_that_bars_cluster_figure():
     assert cells[2] == f"4 /node · pending ({render._CLUSTER_FIRE})"  # 5s figure dropped
     # hb#230 ask (a): the surviving 1s figure is an uncorroborated-acq floor → `≥` prefix
     # (320 > sizing target, so no ⚠️).
-    assert cells[3] == "4 /node · ≥320 /cluster***"                   # 1s floor figure kept + ***
+    assert cells[3] == "4 /node · ≥320 /cluster***U"                  # 1s floor figure kept + ***U
     assert "made_up_basis" not in out
 
 
@@ -848,7 +848,7 @@ def test_matrix_resume_gvisor_ceiling_per_column_units():
     # a DURATION, so it may only land in the two TTFE columns. The earlier revision filled it
     # across all five cells, stamping `≥34.6s` into the two THROUGHPUT columns (a rate) and the
     # EXECUTION-SUCCESS column (a %) — a units mismatch. Correct per-column render: throughput
-    # `0*** (upstream-blocked)`, TTFE `≥34.6s***`, success `0/N completed***`.
+    # `0***R (upstream-blocked)`, TTFE `≥34.6s***R`, success `0/N completed***R`.
     scen = _full_gvisor_scenarios()
     scen[2] = {
         "name": "suspend_resume", "outcome": "pending",
@@ -860,11 +860,11 @@ def test_matrix_resume_gvisor_ceiling_per_column_units():
     cells = [_unlink(c.strip()) for c in resume_line.strip("|").split("|")]
     # cells[0]=Runtime, cells[1]=Mode, cells[2..6]=the five metric cells:
     # [2]=throughput<5s, [3]=throughput<1s, [4]=TTFE p50, [5]=TTFE p95, [6]=execution success.
-    assert cells[2] == "0*** (upstream-blocked)", f"throughput<5s = {cells[2]!r}"
-    assert cells[3] == "0*** (upstream-blocked)", f"throughput<1s = {cells[3]!r}"
-    assert cells[4] == "≥34.6s***", f"TTFE p50 = {cells[4]!r}"
-    assert cells[5] == "≥34.6s***", f"TTFE p95 = {cells[5]!r}"
-    assert cells[6] == "0/1376 completed***", f"execution success = {cells[6]!r}"
+    assert cells[2] == "0***R (upstream-blocked)", f"throughput<5s = {cells[2]!r}"
+    assert cells[3] == "0***R (upstream-blocked)", f"throughput<1s = {cells[3]!r}"
+    assert cells[4] == "≥34.6s***R", f"TTFE p50 = {cells[4]!r}"
+    assert cells[5] == "≥34.6s***R", f"TTFE p95 = {cells[5]!r}"
+    assert cells[6] == "0/1376 completed***R", f"execution success = {cells[6]!r}"
 
 
 def test_matrix_resume_gvisor_no_ceiling_falls_back_to_pending():
@@ -885,7 +885,7 @@ def test_matrix_resume_gvisor_graduated_row_ignores_vestigial_ceiling():
     # hb#230 finding #1 (transition-guard doctrine): the Fork-5 ceiling override is gated on
     # sc_pending. If the gVisor resume row ever GRADUATES (outcome=="PASS") but still carries a
     # vestigial resume_probe_ceiling_ms, an ungated override would MASK the five real graduated
-    # metrics behind a stale `≥Xs***` — a silent trust downgrade. A graduated row must fall
+    # metrics behind a stale `≥Xs***R` — a silent trust downgrade. A graduated row must fall
     # through to the normal per-cell metric rendering, ceiling ignored.
     scen = _full_gvisor_scenarios()  # scen[2] suspend_resume is PASS n=1376 with real metrics
     scen[2]["resume_probe_ceiling_ms"] = 34604.4  # vestigial, must NOT mask the graduated cells
@@ -919,9 +919,10 @@ def test_matrix_resume_kata_na_unaffected_by_ceiling():
 def test_starstar_footnote_renders_all_classes_with_upstream_links():
     # hb#230 (doctrine flip): once ANY matrix cell earns a `***`, the ONE consolidated caveat
     # block renders below the matrix, naming ALL FOUR caveat classes once each with their
-    # upstream refs (the cells carry a bare `***`; the links live only in this block). Trigger
-    # it via the resume ceiling (Class C) — the block is all-or-nothing, so every class prose
-    # must appear regardless of which single cell tripped it.
+    # upstream refs (the cells carry a per-basis letter-suffixed tag — `***U`/`***Z`/`***K`/
+    # `***R`, hb#404; the links live only in this block). Trigger it via the resume ceiling
+    # (Class C) — the block is all-or-nothing, so every class prose must appear regardless of
+    # which single cell tripped it.
     scen = _full_gvisor_scenarios()
     scen[2] = {
         "name": "suspend_resume", "outcome": "pending",
@@ -929,12 +930,12 @@ def test_starstar_footnote_renders_all_classes_with_upstream_links():
         "resume_probe_ceiling_ms": 34604.4, "n": 1376,
     }
     out = render.render_matrix(_matrix_results(scen))
-    assert "**Published-with-caveat cells (`***`)**" in out
+    assert "**Published-with-caveat cells (`***U` / `***Z` / `***K` / `***R`)**" in out
     # all four class bullets present, once each
-    assert "**Uncorroborated acquire-side rate**" in out
-    assert "**Cold-start floor zero**" in out
-    assert "**Unresolved bounds**" in out
-    assert "**Resume probe ceiling**" in out
+    assert "**`***U` — Uncorroborated acquire-side rate**" in out
+    assert "**`***Z` — Cold-start floor zero**" in out
+    assert "**`***K` — Unresolved bounds**" in out
+    assert "**`***R` — Resume probe ceiling**" in out
     # each class carries its upstream refs (link label survives; _unlink only strips WIP links)
     assert "agent-sandbox#940" in out and "agent-sandbox#1087" in out  # trust-gate (Class A)
     assert "agent-sandbox#751" in out and "agent-sandbox#761" in out  # no-compliant-rung (B/Kata)
@@ -966,7 +967,7 @@ def test_starstar_footnote_triggered_by_acq_uncorroborated_basis():
     out = render.render_matrix(_matrix_results(scen))
     warm_line = [l for l in out.splitlines() if "Warm-pool hit" in l][0]
     assert "***" in warm_line  # the cell earned the caveat mark
-    assert "**Published-with-caveat cells (`***`)**" in out
+    assert "**Published-with-caveat cells (`***U` / `***Z` / `***K` / `***R`)**" in out
 
 
 def test_matrix_literal_basis_note_with_coarse_p95_caption():
