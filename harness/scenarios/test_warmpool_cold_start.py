@@ -420,6 +420,102 @@ def test_run_pool_ready_sampler_stopped_immediately_yields_no_samples():
     assert samples == []
 
 
+# ---- hb#379: _wait_for_pool_warm stability-window (reject a single-tick flicker) ----
+
+class _FakeCustomSequence:
+    """Returns successive readyReplicas values from a fixed list, one per call.
+
+    Holds the last value once the sequence is exhausted (mirrors a pool that
+    settles at its final observed state rather than raising).
+    """
+
+    def __init__(self, ready_sequence: list[int]):
+        self._seq = list(ready_sequence)
+        self._i = 0
+
+    def get_namespaced_custom_object(self, group, version, namespace, plural, name):
+        ready = self._seq[min(self._i, len(self._seq) - 1)]
+        self._i += 1
+        return {"status": {"readyReplicas": ready}}
+
+
+def _no_sleep(_seconds):
+    pass
+
+
+def test_wait_for_pool_warm_returns_on_first_poll_when_stability_polls_is_one():
+    custom = _FakeCustomOkOnce(5)
+    orig_sleep = cell.time.sleep
+    cell.time.sleep = _no_sleep
+    try:
+        obj = cell._wait_for_pool_warm(
+            custom, pool_name="pool-x", target_ready=5, timeout_s=10,
+        )
+    finally:
+        cell.time.sleep = orig_sleep
+    assert obj["status"]["readyReplicas"] == 5
+
+
+def test_wait_for_pool_warm_requires_consecutive_polls_before_returning():
+    # First poll hits target, second drops below (reset), third+fourth+fifth
+    # hold at/above target -> must not return before the 3rd consecutive hit.
+    custom = _FakeCustomSequence([5, 3, 5, 5, 5])
+    orig_sleep = cell.time.sleep
+    cell.time.sleep = _no_sleep
+    try:
+        obj = cell._wait_for_pool_warm(
+            custom, pool_name="pool-x", target_ready=5, timeout_s=10,
+            stability_polls=3,
+        )
+    finally:
+        cell.time.sleep = orig_sleep
+    assert obj["status"]["readyReplicas"] == 5
+    # returned right after the 3rd consecutive at/above-target poll (index 4,
+    # the 5th call: polls at indices 2,3,4 are the 3 consecutive hits)
+    assert custom._i == 5
+
+
+def test_wait_for_pool_warm_flicker_never_sustains_times_out():
+    # Alternates below/at-target forever -> consecutive streak never reaches 2.
+    calls = {"n": 0}
+
+    class _Flicker:
+        def get_namespaced_custom_object(self, group, version, namespace, plural, name):
+            calls["n"] += 1
+            ready = 5 if calls["n"] % 2 else 4
+            return {"status": {"readyReplicas": ready}}
+
+    fake_deadline = [0.0]
+
+    def _fake_monotonic():
+        # advance by 1s per call to time.monotonic() so the while-loop's
+        # deadline check eventually trips without a real sleep.
+        fake_deadline[0] += 1.0
+        return fake_deadline[0]
+
+    orig_sleep = cell.time.sleep
+    orig_monotonic = cell.time.monotonic
+    cell.time.sleep = _no_sleep
+    cell.time.monotonic = _fake_monotonic
+    try:
+        try:
+            cell._wait_for_pool_warm(
+                _Flicker(), pool_name="pool-x", target_ready=5, timeout_s=5,
+                stability_polls=2,
+            )
+            raised = False
+        except RuntimeError as exc:
+            raised = True
+            msg = str(exc)
+    finally:
+        cell.time.sleep = orig_sleep
+        cell.time.monotonic = orig_monotonic
+
+    assert raised, "expected a flicker that never sustains 2 consecutive polls to time out"
+    assert "did not sustain readyReplicas>=5" in msg
+    assert "2 consecutive poll(s)" in msg
+
+
 def _run_all():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:
