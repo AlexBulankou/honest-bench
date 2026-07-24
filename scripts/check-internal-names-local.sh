@@ -22,7 +22,15 @@
 set -uo pipefail
 
 SECRET="honest-bench-internal-name-denylist"
-PROJECT="alexbu-gke-dev-d"
+# Resolved at runtime, never hardcoded — the project id is itself one of the
+# denylisted names, so a literal here would be exactly the self-leak this
+# script exists to prevent. `gcloud config get-value project` reads whatever
+# the ambient environment already has configured.
+PROJECT="$(gcloud config get-value project 2>/dev/null)"
+if [ -z "$PROJECT" ]; then
+  echo "check-internal-names-local: could not resolve the active gcloud project — failing closed." >&2
+  exit 1
+fi
 
 if [ -z "${GOOGLE_APPLICATION_CREDENTIALS:-}" ]; then
   echo "check-internal-names-local: GOOGLE_APPLICATION_CREDENTIALS not set — this check needs" >&2
