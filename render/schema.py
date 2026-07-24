@@ -894,6 +894,9 @@ STEPUP_PARETO_FIELDS = {
     "wpr": lambda v: isinstance(v, (int, float)) and not isinstance(v, bool) and 0.0 <= v <= 1.0,
     "node_count": lambda v: isinstance(v, int) and not isinstance(v, bool) and 0 < v < 10000,
     "machine_type": lambda v: isinstance(v, str) and bool(_MACHINE_TYPE.match(v)),
+    # warmpool_size: warm(>0)/cold(0) provenance discriminator for the sweep (hb#4364). Unlike
+    # node_count the floor is 0 (explicit cold provenance is a real stamped value, not absence).
+    "warmpool_size": lambda v: isinstance(v, int) and not isinstance(v, bool) and 0 <= v < 10000,
     # measured_at: ISO-8601-ish instant the sweep ran (non-empty string), same as scale_proof.
     "measured_at": lambda v: isinstance(v, str) and bool(v),
 }
