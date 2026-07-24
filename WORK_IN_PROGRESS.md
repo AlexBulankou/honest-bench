@@ -23,8 +23,8 @@ _Anchors and the entry set are generated from the closed pending-reason enum —
 - **What:** The per-**cluster** sustained creation throughput — how many sandboxes/sec the whole cluster holds under that row's SLO bar. It is the second half of each dual throughput cell (`per-node · per-cluster`); the per-node half has already landed.
 - **Why absent:** **not-yet-measured.** The per-node engineering rate is measured, but the validated per-cluster figure needs its own schema-validated cluster-saturation fire. We refuse to print a per-node × N extrapolation — that fiction breaks above the controller reconcile ceiling — so the cluster half stays `pending (cluster-fire)` until a real per-mode cluster fire lands the `thpt_*_per_cluster` fields.
 - **In flight:** Yes — the per-activation-mode cluster-throughput fire that emits the per-cluster fields is the deliverable that graduates these halves.
-- **ETA:** Gated on the per-mode cluster-throughput fire ([hb#132](https://github.com/AlexBulankou/honest-bench/issues/132)).
-- **Trace:** [hb#132](https://github.com/AlexBulankou/honest-bench/issues/132) (dual per-node + per-cluster throughput).
+- **ETA:** No open blocker — [hb#132](https://github.com/AlexBulankou/honest-bench/issues/132) shipped the dual per-node/per-cluster mechanism (closed 2026-07-11; gVisor's per-cluster cells already use it). The Kata warm-pool-hit `<1s` cell just awaits its own manually-invoked Kata cluster-throughput fire — no scheduled date, next time the fire is run.
+- **Trace:** [hb#132](https://github.com/AlexBulankou/honest-bench/issues/132) (dual per-node + per-cluster throughput, closed/shipped).
 
 <a id="trust-gate"></a>
 
@@ -53,7 +53,7 @@ _Anchors and the entry set are generated from the closed pending-reason enum —
 - **What:** TTFE and throughput for the **resume-from-suspend** activation mode — restore a previously-suspended sandbox and run the first instruction.
 - **Why absent:** **Gated (upstream).** The run itself lands, but an upstream controller gap holds graduation: on gVisor the suspended condition never clears. This is a known upstream gap, NOT an unrun or failed cell. (The Kata + microVM resume cell is a separate story — `na-by-construction`, because this CRIU-based metric does not transfer to the Kata VM isolation model.)
 - **In flight:** Yes — tracked upstream in the agent-sandbox controller: [agent-sandbox#873](https://github.com/kubernetes-sigs/agent-sandbox/issues/873) (issue, open) → fix [agent-sandbox#1150](https://github.com/kubernetes-sigs/agent-sandbox/pull/1150) (PR, in review). No honest-bench-side measurement can graduate it until the upstream fix lands.
-- **ETA:** Gated on the upstream agent-sandbox resume-graduation fix. There is no honest-bench-side date — the cell graduates to a real number the moment upstream lands, not when a run is scheduled.
+- **ETA:** Gated on the upstream agent-sandbox resume-graduation fix — [agent-sandbox#1150](https://github.com/kubernetes-sigs/agent-sandbox/pull/1150) is OPEN, in review (last activity 2026-07-22; not yet merged as of 2026-07-24). No honest-bench-side date — the cell graduates to a real number the moment that PR merges and a fresh resume probe run lands, not when a run is scheduled.
 - **Trace:** Upstream agent-sandbox controller (resume graduation): [agent-sandbox#873](https://github.com/kubernetes-sigs/agent-sandbox/issues/873) (issue, open) → fix [agent-sandbox#1150](https://github.com/kubernetes-sigs/agent-sandbox/pull/1150) (PR, in review).
 
 <a id="requires-gvisor-runtime"></a>

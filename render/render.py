@@ -680,7 +680,7 @@ _SLO_BASIS_NOTES = {
         "derived from the literal exec-probe warm p95 — an UPPER bound on TTFE (includes "
         "exec setup overhead), so compliance at the bar is conservative; this basis fills "
         "the <5s cell — it cannot itself certify the stricter <1s bar, so any <1s figure "
-        "shown is credited under the acquire-side *** basis below, not this one — throughput "
+        "shown is credited under the acquire-side `***U` basis below, not this one — throughput "
         "is the acquisition rate: fulfilled (claim->bound)/s, steady-state, pending claims "
         "excluded; trust-gated per rung on agreement with the independent controller "
         "completion rate (divergent rungs are ineligible)"
@@ -755,14 +755,16 @@ _SLO_BASIS_NOTES = {
 #   - Class A: the uncorroborated acquire-side rate (controller cross-check dropped)
 #   - Fork 4: the cold-start honest-ZERO (cold floor over both bars, acq clean)
 #   - Kata-cold: the unresolved-bounds cell (bar inside the [lower, upper] bracket)
-# All three point at the ONE consolidated *** footnote block below the matrix.
-_STARSTAR_BASES = frozenset(
-    {
-        "acq_fulfilled+acq_p95_uncorroborated",
-        "controller_cold_floor_zero_corroborated",
-        "unresolved_bounds_bar_bracketed",
-    }
-)
+# Each basis maps to its OWN letter-suffixed tag (disambiguation, hb#404) rather than a
+# shared bare "***" — a reader can tell which caveat applies from the tag alone, without
+# cross-referencing by row/column position. All four (incl. the resume-ceiling "R" tag,
+# a separate hardcoded path not driven by this map) point at the ONE consolidated
+# footnote block below the matrix.
+_STARSTAR_TAGS = {
+    "acq_fulfilled+acq_p95_uncorroborated": "***U",
+    "controller_cold_floor_zero_corroborated": "***Z",
+    "unresolved_bounds_bar_bracketed": "***K",
+}
 
 
 # hb#230 ask (a) — certification-floor prefix. A per-cluster figure produced by one of
@@ -952,7 +954,20 @@ def render_matrix(results, kata_results=None):
             # caption the weakest credited sample count so the reader can weigh it.
             if n_exec_ok is not None and 20 <= n_exec_ok < 100:
                 note = f"{note}; coarse p95 (n={n_exec_ok} warm-exec samples)"
-            lines.append(f"*{RUNTIME_LABELS[rt]} per-cluster rates: {note}.*")
+            # hb#404: prefix each disclosure line with the same per-cell tag the cell
+            # itself would carry — a *** basis names its letter; a non-*** basis (e.g.
+            # the literal-upper-bound leg, which fills the cell clean) says so
+            # explicitly rather than leaving the reader to infer "no tag" from absence.
+            tag = _STARSTAR_TAGS.get(basis)
+            if tag:
+                prefix = f"**[`{tag}`]** "
+            else:
+                base_prefix = basis.split("+", 1)[0]
+                label = "-".join(
+                    "TTFE" if part == "ttfe" else part for part in base_prefix.split("_")
+                )
+                prefix = f"**[no `***` tag — {label} basis]** "
+            lines.append(f"{prefix}*{RUNTIME_LABELS[rt]} per-cluster rates: {note}.*")
     lines.append("")
     lines.append("| " + " | ".join(header) + " |")
     lines.append("|" + "|".join(["---"] * len(header)) + "|")
@@ -1018,10 +1033,10 @@ def render_matrix(results, kata_results=None):
             # row must fall through to normal per-cell metric rendering.
             resume_ceiling_ms = sc.get("resume_probe_ceiling_ms") if sc else None
             if is_resume and rt == "gvisor" and resume_ceiling_ms is not None and sc_pending:
-                ceiling_tok = f"≥{resume_ceiling_ms / 1000.0:.1f}s***"
-                thpt_tok = "0*** (upstream-blocked)"
+                ceiling_tok = f"≥{resume_ceiling_ms / 1000.0:.1f}s***R"
+                thpt_tok = "0***R (upstream-blocked)"
                 n_attempts = sc["n"] if (sc and sc.get("n")) else 0
-                success_tok = f"0/{n_attempts} completed***"
+                success_tok = f"0/{n_attempts} completed***R"
                 resume_cells = [thpt_tok, thpt_tok, ceiling_tok, ceiling_tok, success_tok]
                 lines.append(
                     "| " + " | ".join([rt_label, mode_label] + resume_cells) + " |"
@@ -1089,11 +1104,11 @@ def render_matrix(results, kata_results=None):
                 # (pointing at the consolidated footnote); the corroborated literal bases
                 # stay clean (Fork 3). Computed once, applied to whichever token renders.
                 bar_basis = _bar_basis(m, bar_s)
-                star = "***" if bar_basis in _STARSTAR_BASES else ""
+                star = _STARSTAR_TAGS.get(bar_basis, "")
                 if node_key not in m:
                     # hb#230 Kata-cold ruling: the unresolved-bounds cell — a measurement
                     # WAS taken but the bar sits inside the [lower, upper] bracket, so no
-                    # claim is supportable either direction. Render `unk.***` (NOT pending
+                    # claim is supportable either direction. Render `unk.***K` (NOT pending
                     # — pending implies unmeasured). Keyed off the per-bar basis stamp the
                     # regen script emits for exactly this cell.
                     if bar_basis == "unresolved_bounds_bar_bracketed":
@@ -1265,7 +1280,8 @@ def render_matrix(results, kata_results=None):
         "different caveats) because each bar's cluster figure is credited under its own basis "
         "— and may even coincide numerically while resting on DIFFERENT bases (e.g. a literal-"
         "TTFE floor at the <5s bar and an acquire-side floor at the <1s bar landing on the same "
-        "number), distinguished by the per-cell caveat tag (`***`), not by the digits."
+        "number), distinguished by the per-cell caveat tag (`***U`/`***Z`/`***K` — see below), "
+        "not by the digits."
     )
     lines.append(
         "- **`≥y /cluster` (certification floor)** — a per-cluster figure prefixed `≥` is a LOWER "
@@ -1278,7 +1294,7 @@ def render_matrix(results, kata_results=None):
         "uncertifiable. The floor graduates to a bare measured rate the moment the upstream fix "
         "(agent-sandbox#1087) lands and the ladder is re-fired. A `≥` figure below the cluster "
         "sizing target still carries ⚠️ (the floor itself is under target); an uncorroborated "
-        "floor also carries `***` (see the caveat block below)."
+        "floor also carries `***U` (see the caveat block below)."
     )
     lines.append(
         "- **honest `0`** — the measurement ran and could not hold the bar: the measured TTFE p95 misses "
@@ -1301,7 +1317,7 @@ def render_matrix(results, kata_results=None):
         "contradiction: the TTFE p95 is the acquire-side exec-probe (clean here), but the "
         "throughput gate is the CONTROLLER cold-start floor, a SEPARATE and higher measurement "
         "that exceeds both bars at every rate — so no compliant operating point exists and the "
-        "rate is a measured `0` (tagged `***`; see the cold-start floor zero note in the caveat "
+        "rate is a measured `0` (tagged `***Z`; see the cold-start floor zero note in the caveat "
         "block below)."
     )
     lines.append(
@@ -1321,8 +1337,8 @@ def render_matrix(results, kata_results=None):
         "(the resume path's Suspended condition never clears) holds the SLO-compliant figure; it "
         "graduates to a real number the moment the upstream fix lands, not merely when a run is "
         "scheduled. When the probe recorded a wall-clock ceiling (the time spent waiting out the "
-        "never-clearing condition), that ceiling now PRINTS as `≥N.Ns***` — a floor the resume "
-        "never beat, not a resume time; see the `***` block below. A cell with no recorded "
+        "never-clearing condition), that ceiling now PRINTS as `≥N.Ns***R` — a floor the resume "
+        "never beat, not a resume time; see the `***R` block below. A cell with no recorded "
         "ceiling stays `pending (upstream-blocked)`. "
         "Tracked upstream: " + upstream_prose_refs("upstream-blocked") + "."
     )
@@ -1373,57 +1389,68 @@ def render_matrix(results, kata_results=None):
     # its upstream link lives ONLY here (the cells carry the bare `***`, no inline ref). Gated
     # on the matrix-only snapshot so the block never renders when no cell earned a caveat.
     if matrix_has_starstar:
-        lines.append("**Published-with-caveat cells (`***`)**")
+        lines.append("**Published-with-caveat cells (`***U` / `***Z` / `***K` / `***R`)**")
         lines.append("")
         lines.append(
-            "A cell tagged `***` prints the best figure we measured, not an honest-empty "
-            "`pending`: the measurement exists but carries a bound or a single-source caveat, "
-            "spelled out below. The number is real — read it with its caveat. Each class "
-            "graduates to a clean figure when its upstream fix lands."
+            "A cell tagged `***<letter>` prints the best figure we measured, not an "
+            "honest-empty `pending`: the measurement exists but carries a bound or a "
+            "single-source caveat, spelled out below. Each letter names a distinct "
+            "measurement basis, so a cell's tag alone tells you which caveat below applies "
+            "— no need to cross-reference by row/column position. The number is real — read "
+            "it with its caveat. Each class graduates to a clean figure when its upstream "
+            "fix lands."
         )
         lines.append("")
         lines.append(
-            "- **Uncorroborated acquire-side rate** (warm-pool-hit SLO-rate cells) — the "
-            "published rate is fulfilled (claim→bound)/s at the highest rung whose acquisition "
-            "p95 cleared the bar, with the independent controller-completion cross-check DROPPED. "
-            "It is SINGLE-SOURCE, so it can read HIGHER than a cross-corroborated cell (the "
-            "two-trust-tier split) — and it is the highest OFFERED rung, NOT a saturation "
-            "ceiling: the ladder was not driven to saturation, so the true sustainable rate is at "
-            "least this and likely higher. Controller corroboration is unavailable because the "
-            "upstream controller startup-latency histogram double-records Ready transitions on "
-            "stale-informer replays, inflating the controller leg ~1.7–2× on warm-pool-fulfilled "
-            "paths (cold control legs PASS the same gate). "
+            "- **`***U` — Uncorroborated acquire-side rate** (warm-pool-hit SLO-rate cells) "
+            "— the published rate is fulfilled (claim→bound)/s at the highest rung whose "
+            "acquisition p95 cleared the bar, with the independent controller-completion "
+            "cross-check DROPPED. It is SINGLE-SOURCE, so it can read HIGHER than a "
+            "cross-corroborated cell (the two-trust-tier split) — and it is the highest "
+            "OFFERED rung, NOT a saturation ceiling: the ladder was not driven to saturation, "
+            "so the true sustainable rate is at least this and likely higher. Controller "
+            "corroboration is unavailable because the upstream controller startup-latency "
+            "histogram double-records Ready transitions on stale-informer replays, inflating "
+            "the controller leg ~1.7–2× on warm-pool-fulfilled paths (cold control legs PASS "
+            "the same gate). "
             "Tracked upstream: " + upstream_prose_refs("trust-gate") + "."
         )
         lines.append(
-            "- **Cold-start floor zero** (unique-image-cold SLO-rate cells) — a MEASURED zero, "
-            "not an absence: the controller cold-start floor (~14.7s p50) exceeds BOTH throughput "
-            "bars at every offered rate (rate-independent), so no compliant operating point "
-            "exists. The zero is the sandbox cold-start floor, not an acquire-path miss — the "
-            "acquire-side latency is clean sub-second (~5/s) at every rung. Corroborated by a "
-            "controller-MEASURED (trusted) rung whose cold p50 is also over both bars, so it is "
-            "never asserted from the controller-untrusted floor rung alone. "
+            "- **`***Z` — Cold-start floor zero** (unique-image-cold SLO-rate cells) — a "
+            "MEASURED zero, not an absence: the controller cold-start floor (~14.7s p50) "
+            "exceeds BOTH throughput bars at every offered rate (rate-independent), so no "
+            "compliant operating point exists. The zero is the sandbox cold-start floor, not "
+            "an acquire-path miss — the acquire-side latency is clean sub-second (~5/s) at "
+            "every rung. Corroborated by a controller-MEASURED (trusted) rung whose cold p50 "
+            "is also over both bars, so it is never asserted from the controller-untrusted "
+            "floor rung alone. "
             "Tracked upstream: " + upstream_prose_refs("no-compliant-rung") + "."
         )
         lines.append(
-            "- **Unresolved bounds** (`unk.***`, Kata + microVM unique-image-cold 5s cell) — a "
-            "measurement was taken, but the true TTFE p95 is bounded in [~2.5s, ~8.4s] at "
-            "0.05–0.07/s: the controller-cold proxy (lower bound) does not breach the 5s bar and "
-            "the literal exec-probe (upper bound) does not clear it, so no claim is supportable "
-            "either direction. The exec-probe upper bound includes Kata exec websocket setup "
-            "overhead; the 5s bar sits INSIDE the bracket — no supportable claim either way. "
+            "- **`***K` — Unresolved bounds** (`unk.***K`, Kata + microVM unique-image-cold "
+            "5s cell) — a measurement was taken, but the true TTFE p95 is bounded in "
+            "[~2.5s, ~8.4s] at 0.05–0.07/s: the controller-cold proxy (lower bound) does not "
+            "breach the 5s bar and the literal exec-probe (upper bound) does not clear it, so "
+            "no claim is supportable either direction. The exec-probe upper bound includes "
+            "Kata exec websocket setup overhead; the 5s bar sits INSIDE the bracket — no "
+            "supportable claim either way. "
             "Tracked upstream: " + upstream_prose_refs("no-compliant-rung") + "."
         )
         lines.append(
-            "- **Resume probe ceiling** (`≥N.Ns***`, the two TTFE cells of the Resume-from-suspend "
-            "× gVisor row) — the resume never completed (the upstream Suspended condition never "
-            "clears), so the probe recorded only the wall-clock ceiling it spent waiting. That "
-            "ceiling PRINTS as a floor (`≥N.Ns`) in the TTFE columns — the resume takes AT LEAST "
-            "this long — not a resume time; do not rank it against a real completion distribution. "
-            "The two throughput columns read `0*** (upstream-blocked)` and execution success reads "
-            "`0/N completed***`: zero of N probe attempts completed, so the true rate is zero (a "
-            "duration is not a rate). "
-            "Tracked upstream: " + upstream_prose_refs("upstream-blocked") + "."
+            "- **`***R` — Resume probe ceiling** (`≥N.Ns***R`, the two TTFE cells of the "
+            "Resume-from-suspend × gVisor row — not yet manifested: the row currently reads "
+            "`pending (upstream-blocked)`, and this basis applies from the first probe run "
+            "that records a wall-clock ceiling) — the resume never completed (the upstream "
+            "Suspended condition never clears), so the probe recorded only the wall-clock "
+            "ceiling it spent waiting. That ceiling PRINTS as a floor (`≥N.Ns`) in the TTFE "
+            "columns — the resume takes AT LEAST this long — not a resume time; do not rank "
+            "it against a real completion distribution. The two throughput columns read "
+            "`0***R (upstream-blocked)` and execution success reads `0/N completed***R`: "
+            "zero of N probe attempts completed, so the true rate is zero (a duration is not "
+            "a rate). "
+            "Tracked upstream: " + upstream_prose_refs("upstream-blocked") + ", ETA: once "
+            "that PR merges and a fresh resume probe run lands (see "
+            "[WORK_IN_PROGRESS.md#upstream-blocked](WORK_IN_PROGRESS.md#upstream-blocked))."
         )
         lines.append("")
 
