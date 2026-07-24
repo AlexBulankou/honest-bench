@@ -420,6 +420,62 @@ def test_run_pool_ready_sampler_stopped_immediately_yields_no_samples():
     assert samples == []
 
 
+# ---- _min_ready_during_burst: hb#379 durable churn metric (promotes the sampler
+# above from diagnostic-log-only to a published sla_metrics key) ----
+#
+# `samples` are (rel_t, readyReplicas) relative to `sampler_t0`; the helper
+# converts each to an absolute monotonic timestamp and filters to
+# `>= burst_start_abs` before taking the min, so pre-burst warm-up samples
+# never dilute the churn signal.
+
+def test_min_ready_during_burst_takes_min_of_in_burst_samples():
+    # sampler_t0=100 -> absolute sample times are 100, 105, 110, 115.
+    # burst starts at t=107 -> only the last two (110, 115) count.
+    samples = [(0.0, 5), (5.0, 5), (10.0, 2), (15.0, 4)]
+    result = cell._min_ready_during_burst(samples, sampler_t0=100.0, burst_start_abs=107.0)
+    assert result == 2
+
+
+def test_min_ready_during_burst_excludes_pre_burst_warmup_dip():
+    # A dip during warm-up (before burst_start) must NOT be reported — only
+    # samples from burst start onward matter.
+    samples = [(0.0, 0), (1.0, 1), (2.0, 5), (3.0, 5), (4.0, 5)]
+    result = cell._min_ready_during_burst(samples, sampler_t0=0.0, burst_start_abs=2.0)
+    assert result == 5
+
+
+def test_min_ready_during_burst_excludes_failed_polls():
+    # -1 marks a failed poll (see _sample_pool_ready) -- never a real ready
+    # count, must be excluded even though it's numerically the minimum.
+    samples = [(0.0, 3), (1.0, -1), (2.0, 3)]
+    result = cell._min_ready_during_burst(samples, sampler_t0=0.0, burst_start_abs=0.0)
+    assert result == 3
+
+
+def test_min_ready_during_burst_boundary_sample_included():
+    # A sample exactly at burst_start_abs is IN-burst (>=, not >).
+    samples = [(0.0, 4)]
+    result = cell._min_ready_during_burst(samples, sampler_t0=10.0, burst_start_abs=10.0)
+    assert result == 4
+
+
+def test_min_ready_during_burst_no_in_burst_samples_returns_none():
+    # All samples are before burst start -> no in-burst data -> None.
+    samples = [(0.0, 5), (1.0, 5)]
+    result = cell._min_ready_during_burst(samples, sampler_t0=0.0, burst_start_abs=100.0)
+    assert result is None
+
+
+def test_min_ready_during_burst_empty_samples_returns_none():
+    assert cell._min_ready_during_burst([], sampler_t0=0.0, burst_start_abs=0.0) is None
+
+
+def test_min_ready_during_burst_all_failed_polls_returns_none():
+    samples = [(0.0, -1), (1.0, -1)]
+    result = cell._min_ready_during_burst(samples, sampler_t0=0.0, burst_start_abs=0.0)
+    assert result is None
+
+
 # ---- hb#379: _wait_for_pool_warm stability-window (reject a single-tick flicker) ----
 
 class _FakeCustomSequence:
