@@ -460,42 +460,100 @@ def test_trend_single_build_is_baseline_no_delta():
 
 def test_trend_two_builds_show_signed_delta():
     # #3918 DoD: build-over-build deltas are REAL (computed from the two COUNTs), not asserted.
+    # Both builds clear the N>=30 comparability floor, so the Δ is a clean signal (no † marker).
     rows = [
         _hrow(controller_digest="sha256:" + "a" * 64, generated_at="2026-06-27T10:00:00Z",
-              sandboxes_ready_under_1s=9),
+              sandboxes_ready_under_1s=9, n=40),
         _hrow(controller_digest="sha256:" + "b" * 64, generated_at="2026-06-28T10:00:00Z",
-              sandboxes_ready_under_1s=14),
+              sandboxes_ready_under_1s=14, n=40),
     ]
     out = render.render_trend(rows)
     # newer build shows +5 vs the prior build's 9
     assert "| 14 | +5 | " in out
     # baseline (older) build still has the em-dash
     assert "| 9 | — | " in out
+    # both builds cleared the floor ⇒ no small-sample footnote
+    assert render._LOW_N_MARK not in out
 
 
 def test_trend_negative_delta_signed():
     rows = [
         _hrow(controller_digest="sha256:" + "a" * 64, generated_at="2026-06-27T10:00:00Z",
-              sandboxes_ready_under_1s=14),
+              sandboxes_ready_under_1s=14, n=40),
         _hrow(controller_digest="sha256:" + "b" * 64, generated_at="2026-06-28T10:00:00Z",
-              sandboxes_ready_under_1s=11),
+              sandboxes_ready_under_1s=11, n=40),
     ]
     out = render.render_trend(rows)
     assert "| 11 | -3 | " in out
+    assert render._LOW_N_MARK not in out
 
 
 def test_trend_orders_oldest_first_regardless_of_input_order():
     rows = [
         _hrow(controller_digest="sha256:" + "b" * 64, generated_at="2026-06-28T10:00:00Z",
-              sandboxes_ready_under_1s=14),
+              sandboxes_ready_under_1s=14, n=40),
         _hrow(controller_digest="sha256:" + "a" * 64, generated_at="2026-06-27T10:00:00Z",
-              sandboxes_ready_under_1s=9),
+              sandboxes_ready_under_1s=9, n=40),
     ]
     out = render.render_trend(rows)
     # the 2026-06-27 (count 9, baseline) row must precede the 2026-06-28 (count 14) row
     assert out.index("2026-06-27") < out.index("2026-06-28")
     assert "| 9 | — | " in out
     assert "| 14 | +5 | " in out
+
+
+def test_trend_delta_marked_low_n_when_current_build_undersized():
+    # Comparability guard: the Δ into a build whose burst sampled < N=30 claims carries the †
+    # marker (the swing may be sampling noise, not a real build-over-build move) + a footnote.
+    rows = [
+        _hrow(controller_digest="sha256:" + "a" * 64, generated_at="2026-06-27T10:00:00Z",
+              sandboxes_ready_under_1s=9, n=40),
+        _hrow(controller_digest="sha256:" + "b" * 64, generated_at="2026-06-28T10:00:00Z",
+              sandboxes_ready_under_1s=14, n=10),
+    ]
+    out = render.render_trend(rows)
+    assert f"| 14 | +5 {render._LOW_N_MARK} | " in out
+    # the baseline row (no Δ) is never marked
+    assert "| 9 | — | " in out
+    # footnote present, references the N floor
+    assert render._LOW_N_MARK in out
+    assert "N=30" in out
+
+
+def test_trend_delta_marked_low_n_when_prior_build_undersized():
+    # A cross-build Δ is a RANKING of both builds — an undersized PRIOR build taints it too.
+    rows = [
+        _hrow(controller_digest="sha256:" + "a" * 64, generated_at="2026-06-27T10:00:00Z",
+              sandboxes_ready_under_1s=9, n=10),
+        _hrow(controller_digest="sha256:" + "b" * 64, generated_at="2026-06-28T10:00:00Z",
+              sandboxes_ready_under_1s=14, n=40),
+    ]
+    out = render.render_trend(rows)
+    assert f"| 14 | +5 {render._LOW_N_MARK} | " in out
+
+
+def test_trend_no_footnote_when_all_builds_clear_floor():
+    # Clean multi-build history (every burst >= N=30): no † anywhere, no small-sample footnote.
+    rows = [
+        _hrow(controller_digest="sha256:" + "a" * 64, generated_at="2026-06-26T10:00:00Z",
+              sandboxes_ready_under_1s=9, n=50),
+        _hrow(controller_digest="sha256:" + "b" * 64, generated_at="2026-06-27T10:00:00Z",
+              sandboxes_ready_under_1s=14, n=50),
+        _hrow(controller_digest="sha256:" + "c" * 64, generated_at="2026-06-28T10:00:00Z",
+              sandboxes_ready_under_1s=12, n=50),
+    ]
+    out = render.render_trend(rows)
+    assert "| 14 | +5 | " in out
+    assert "| 12 | -2 | " in out
+    assert render._LOW_N_MARK not in out
+
+
+def test_trend_single_build_low_n_has_no_delta_marker():
+    # A lone build is a baseline with no Δ, so even a small burst carries no marker/footnote
+    # (there is nothing to rank it against).
+    out = render.render_trend([_hrow(n=5)])
+    assert "| 9 | — | " in out
+    assert render._LOW_N_MARK not in out
 
 
 def test_trend_malformed_row_dropped():
