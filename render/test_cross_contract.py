@@ -564,6 +564,7 @@ def test_emit_to_render_stepup_pareto_convergence():
         "wpr": 0.75,
         "node_count": 510,
         "machine_type": "e2-standard-16",
+        "warmpool_size": 2,  # hb#4364 provenance discriminator — exercise the emit/render carry
         "measured_at": "2026-06-29T07:40:00Z",
         # The controller-startup LOWER-BOUND proxy block (#3975) — exercised alongside a populated
         # true-TTFE pareto so the convergence check covers BOTH tables' vocabularies at once.

@@ -49,6 +49,7 @@ def _nested(**over):
             "collapse_p95_ms": 2000.0,
             "machine_type": "e2-standard-16",
             "cluster_nodes": 150,
+            "warmpool_size": 2,
         },
         "steps": [],  # not read by the adapter (pareto carries the curve)
         "saturation": {
@@ -85,6 +86,7 @@ def test_flatten_renames_and_lifts():
     _check(flat["sld_s"] == 20.0 and flat["wpr"] == 0.75, "sld_s/wpr lifted from params")
     _check(flat["node_count"] == 150, "params.cluster_nodes -> node_count")
     _check(flat["machine_type"] == "e2-standard-16", "machine_type lifted from params")
+    _check(flat["warmpool_size"] == 2, "params.warmpool_size lifted to top level (hb#4364)")
 
 
 def test_flatten_non_dict_is_empty():
@@ -114,9 +116,31 @@ def test_convergence_full_record_round_trips():
     _check(out["sld_s"] == 20.0 and out["wpr"] == 0.75, "Little's-law scalars survive")
     _check(out["node_count"] == 150, "node_count (renamed) survives")
     _check(out["machine_type"] == "e2-standard-16", "machine_type survives")
+    _check(out["warmpool_size"] == 2, "warmpool_size provenance survives the round trip (hb#4364)")
     # None characteristic rates must be OMITTED, not carried as null.
     _check("north_star_breach_rate" not in out, "None breach rate omitted, not null")
     _check("saturation_rate" not in out, "None saturation rate omitted, not null")
+
+
+def test_convergence_warmpool_size_zero_is_cold_provenance():
+    # 0 is a LEGITIMATE stamped value (explicit cold provenance) — it must survive, NOT be
+    # dropped as if absent. This is the semantic that separates warmpool_size (floor 0) from
+    # node_count (floor >0) in the schema.
+    rec = _nested()
+    rec["params"]["warmpool_size"] = 0
+    out = rs._coerce_stepup(a.stepup_nested_to_flat(rec))
+    _check(out is not None and out.get("warmpool_size") == 0,
+           "warmpool_size=0 (cold provenance) carried, not dropped")
+
+
+def test_convergence_warmpool_size_absent_omitted_not_fabricated():
+    # A record with NO warmpool_size pin (the pre-hb#4364 gap): the adapter lifts None and the
+    # schema OMITS it — never fabricated to 0, which would falsely assert "measured cold".
+    rec = _nested()
+    del rec["params"]["warmpool_size"]
+    out = rs._coerce_stepup(a.stepup_nested_to_flat(rec))
+    _check(out is not None, "record still coerces without a warmpool_size pin")
+    _check("warmpool_size" not in out, "absent warmpool_size omitted, never fabricated to 0")
 
 
 def test_convergence_shakeout_cluster_nodes_null_omitted():

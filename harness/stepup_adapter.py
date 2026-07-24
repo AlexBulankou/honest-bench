@@ -19,7 +19,7 @@ flatten — it renames two keys and lifts two nested objects to the top level:
   - ``pareto``            -> ``pareto_points``   (per-point keys already match the schema)
   - ``params.cluster_nodes`` -> ``node_count``   (the schema's name for the same scalar)
   - ``saturation.{verdict, north_star_breach_rate, saturation_rate, max_flat_rate}`` -> top level
-  - ``params.{sld_s, wpr, machine_type}``                                            -> top level
+  - ``params.{sld_s, wpr, machine_type, warmpool_size}``                             -> top level
 
 It does NOT validate, clamp, or fabricate — `_coerce_stepup` is the single closed-schema
 gate and is tolerant of `None`/absent for every optional, so a shakeout run whose
@@ -67,6 +67,13 @@ def stepup_nested_to_flat(rec):
         "wpr": params.get("wpr"),
         "node_count": params.get("cluster_nodes"),
         "machine_type": params.get("machine_type"),
+        # warmpool_size is the warm(>0)/cold(0) provenance discriminator for the sweep
+        # (hb#4364). The producer records it under `params.warmpool_size`; lift it verbatim so
+        # a stamped value survives to the flat `_coerce_stepup` shape instead of being dropped
+        # at this boundary. Pure relabel like the scalars above — a null/absent value passes
+        # through and the schema omits it (never fabricated); 0 is a LEGITIMATE stamped value
+        # (explicit cold provenance), not a sentinel-for-absent.
+        "warmpool_size": params.get("warmpool_size"),
     }
 
     measured_at = rec.get("measured_at")

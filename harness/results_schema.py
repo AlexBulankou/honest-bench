@@ -835,6 +835,14 @@ def _coerce_stepup(raw):
     mt = raw.get("machine_type")
     if isinstance(mt, str) and _MACHINE_TYPE_RE.match(mt):
         out["machine_type"] = mt
+    # warmpool_size: the warm(>0)/cold(0) provenance discriminator for the sweep (hb#4364).
+    # Carried as a public-safe pos-int-OR-ZERO — unlike node_count, 0 is a LEGITIMATE stamped
+    # value (explicit cold provenance, mirroring the kata_cold sweep's warmpool_size=0), so the
+    # lower bound is >=0 not >0. Absent/None/invalid -> OMITTED (honesty spine: a missing pin
+    # is never fabricated to 0, which would falsely assert "measured cold").
+    wps = raw.get("warmpool_size")
+    if not isinstance(wps, bool) and isinstance(wps, int) and 0 <= wps < 10000:
+        out["warmpool_size"] = wps
     ma = raw.get("measured_at")
     if isinstance(ma, str) and ma:
         out["measured_at"] = ma
