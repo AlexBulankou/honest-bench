@@ -49,23 +49,46 @@ WIP_CATALOG = {
             "throughput cell (`per-node · per-cluster`); the per-node half has already landed."
         ),
         "why": (
-            "**not-yet-measured.** The per-node engineering rate is measured, but the validated "
-            "per-cluster figure needs its own schema-validated cluster-saturation fire. We refuse "
-            "to print a per-node × N extrapolation — that fiction breaks above the controller "
-            "reconcile ceiling — so the cluster half stays `pending (cluster-fire)` until a real "
-            "per-mode cluster fire lands the `thpt_*_per_cluster` fields."
+            "**not-yet-measured**, except where noted below. The per-node engineering rate is "
+            "measured, but the validated per-cluster figure needs its own schema-validated "
+            "cluster-saturation fire. We refuse to print a per-node × N extrapolation — that "
+            "fiction breaks above the controller reconcile ceiling — so the cluster half stays "
+            "`pending (cluster-fire)` until a real per-mode cluster fire lands the "
+            "`thpt_*_per_cluster` fields. **Kata `<1s` cell, current state:** that fire is a "
+            "separate harness step from the routine per-node TTFE refresh — "
+            f"[hb#359]({_HB}/359) (2026-07-23) ran it, and adopted a webhook-corroborated "
+            "true-TTFE basis on the `<5s` cell (now 0.822/cluster, replacing the retired "
+            "acquire-side-uncorroborated ≥0.133/cluster). On that SAME fire the representative "
+            "cold rung measured ttfe_p95=2475ms — over the `<1s` bar — so the `<1s` cluster half "
+            "was atomically dropped rather than carried forward on the retired weaker basis "
+            "(no stale acq-basis key survives a downgrade). This is measured and honestly "
+            "missed, not unmeasured: `pending (cluster-fire)` here means \"this rung didn't "
+            "qualify,\" not \"nobody has looked yet.\" Not gated by "
+            "[agent-sandbox#940](https://github.com/kubernetes-sigs/agent-sandbox/issues/940) "
+            "(the warm-pool-only controller-histogram trust gate below) or by any rung-ladder "
+            "defect — the ladder ran cleanly and reported honestly."
         ),
         "in_flight": (
             "Yes — the per-activation-mode cluster-throughput fire that emits the per-cluster "
-            "fields is the deliverable that graduates these halves."
+            "fields is the deliverable that graduates these halves. For the Kata `<1s` cell "
+            "specifically, the next `scripts/kata_cold_ttfe_sweep.py` re-fire is what could "
+            "graduate it — either a rung/config that clears `<1s`, or corroboration that the "
+            "Kata microVM cold-start floor is architecturally over 1s at every rate (which "
+            "would convert this to an honest measured-floor marker instead of staying "
+            "open-ended `pending`)."
         ),
         "eta": (
             f"No open blocker — [hb#132]({_HB}/132) shipped the dual per-node/per-cluster "
             "mechanism (closed 2026-07-11; gVisor's per-cluster cells already use it). The "
-            "Kata warm-pool-hit `<1s` cell just awaits its own manually-invoked Kata "
-            "cluster-throughput fire — no scheduled date, next time the fire is run."
+            "Kata warm-pool-hit `<1s` cell needs another manually-invoked, collision-acked fire "
+            "of `scripts/kata_cold_ttfe_sweep.py` (shared cluster) — no scheduled date, next "
+            "time the fire is run; the mechanism is not the gap, a qualifying measurement is."
         ),
-        "trace": f"[hb#132]({_HB}/132) (dual per-node + per-cluster throughput, closed/shipped).",
+        "trace": (
+            f"[hb#132]({_HB}/132) (dual per-node + per-cluster throughput, closed/shipped); "
+            f"[hb#359]({_HB}/359) (2026-07-23 true-TTFE adoption fire that produced the "
+            "current honest-miss state on the Kata `<1s` cell; internal tracking a#5396 box-4)."
+        ),
     },
     "trust-gate": {
         "title": "SLO-rate fire ran; derivation refused by the trust gate (`trust-gate`)",
