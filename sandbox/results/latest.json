@@ -93,7 +93,7 @@
     "measured_at": "2026-06-30",
     "node_count": 20
   },
-  "generated_at": "2026-07-24T01:24:44Z",
+  "generated_at": "2026-07-24T02:39:15Z",
   "kata_activation": {
     "cold_ready": [
       {
@@ -126,8 +126,8 @@
     "machine_type": "n2-standard-16",
     "node_count": 1,
     "node_image": "v1.36.0-gke.4681000",
-    "prior_warmpool_ttfe_p95_ms": 4440.8,
-    "run_id": "973f515ad7424b2c90bc9b057b7f3f21",
+    "prior_warmpool_ttfe_p95_ms": 9904.1,
+    "run_id": "fb221f89ac774605a41ea07d960dbd49",
     "runtime": "gvisor"
   },
   "provisioning_rate_sweep": {
@@ -192,10 +192,10 @@
       "name": "burst_create",
       "outcome": "FAIL",
       "sla_metrics": {
-        "density_per_vcpu": 0.020833333333333332,
+        "density_per_vcpu": 0.10416666666666667,
         "exec_success_rate": 1.0,
-        "sandboxes_exec_under_1s": 0.0,
-        "sandboxes_ready_under_1s": 1.0
+        "sandboxes_exec_under_1s": 1.0,
+        "sandboxes_ready_under_1s": 5.0
       }
     },
     {
@@ -203,11 +203,11 @@
       "name": "warmpool_cold_start",
       "outcome": "FAIL",
       "sla_metrics": {
-        "bind_p50_ms": 4844.2,
-        "bind_p95_ms": 9282.3,
+        "bind_p50_ms": 4721.7,
+        "bind_p95_ms": 8403.5,
         "density_per_vcpu": 5.98,
-        "exec_p50_ms": 718.7,
-        "exec_p95_ms": 1315.5,
+        "exec_p50_ms": 1503.3,
+        "exec_p95_ms": 2827.1,
         "exec_success_rate": 1.0,
         "thpt_cluster_node_count": 10.0,
         "thpt_slo_basis_1s": "acq_fulfilled+acq_p95_uncorroborated",
@@ -216,12 +216,12 @@
         "thpt_under_1s_per_cluster": 1.204,
         "thpt_under_1s_per_node": 0.0,
         "thpt_under_5s_per_cluster": 1.204,
-        "thpt_under_5s_per_node": 1.169,
-        "ttfe_p50_ms": 5668.6,
-        "ttfe_p95_ms": 9904.1,
-        "warmpool_gate_cold_min_ms": 9569.452215999945,
-        "warmpool_gate_separation_ratio": 1.0246196587187077,
-        "warmpool_gate_warm_max_ms": 9339.516506999871
+        "thpt_under_5s_per_node": 1.067,
+        "ttfe_p50_ms": 6282.4,
+        "ttfe_p95_ms": 11102.2,
+        "warmpool_gate_cold_min_ms": 8591.903258000002,
+        "warmpool_gate_separation_ratio": 1.016396730749315,
+        "warmpool_gate_warm_max_ms": 8453.296826000042
       }
     },
     {
@@ -229,10 +229,10 @@
       "name": "native_digest_cold",
       "outcome": "PASS",
       "sla_metrics": {
-        "bind_p50_ms": 3806.7,
-        "bind_p95_ms": 4498.4,
-        "exec_p50_ms": 564.7,
-        "exec_p95_ms": 748.6,
+        "bind_p50_ms": 4049.4,
+        "bind_p95_ms": 4656.9,
+        "exec_p50_ms": 563.5,
+        "exec_p95_ms": 952.0,
         "exec_success_rate": 1.0,
         "thpt_cluster_node_count": 9.0,
         "thpt_slo_basis": "controller_cold_floor_zero_corroborated",
@@ -241,8 +241,8 @@
         "thpt_under_1s_per_node": 0.0,
         "thpt_under_5s_per_cluster": 0.0,
         "thpt_under_5s_per_node": 0.0,
-        "ttfe_p50_ms": 4391.5,
-        "ttfe_p95_ms": 5247.7
+        "ttfe_p50_ms": 4641.8,
+        "ttfe_p95_ms": 5263.8
       }
     },
     {
@@ -252,9 +252,9 @@
       "pending_reason": "upstream-blocked",
       "sla_metrics": {
         "exec_success_rate": 1.0,
-        "suspend_latency_ms": 2305.9,
-        "ttfe_p50_ms": 35709.7,
-        "ttfe_p95_ms": 35709.7
+        "suspend_latency_ms": 2766.5,
+        "ttfe_p50_ms": 35670.6,
+        "ttfe_p95_ms": 35670.6
       }
     },
     {
@@ -262,8 +262,8 @@
       "name": "session_turnover",
       "outcome": "PASS",
       "sla_metrics": {
-        "refill_latency_ms": 1068.3185739999317,
-        "refill_p90_ms": 1524.683221000032
+        "refill_latency_ms": 1084.000414000002,
+        "refill_p90_ms": 1432.0689659998607
       }
     },
     {
@@ -296,12 +296,12 @@
     "warmpool_size": 600
   },
   "warm_vs_cold": {
-    "cold_ms": 4391.5,
-    "measured_at": "2026-07-24T01:24:44Z",
+    "cold_ms": 4641.8,
+    "measured_at": "2026-07-24T02:39:15Z",
     "n_warm": 10,
     "runtime_class": "gvisor",
     "semantic": "ttfe",
-    "speedup": 1.585,
-    "warm_p50_ms": 2770.6
+    "speedup": 2.867,
+    "warm_p50_ms": 1618.8
   }
 }
