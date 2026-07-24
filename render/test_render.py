@@ -4561,16 +4561,26 @@ def test_matrix_no_fail_caveat_when_all_pass():
 # never fires on the low-N sampling inversion TTFE_COMPARABILITY_MIN_N marks.
 # ---------------------------------------------------------------------------
 
-def _inversion_scenarios(warm_p95, cold_p95, warm_n=30, cold_n=30):
+def _inversion_scenarios(warm_p95, cold_p95, warm_n=30, cold_n=30,
+                         warm_bind=None, cold_bind=None):
     # gVisor scenario list with warm/cold p95 + N dialed for the inversion guard.
+    # Optional bind_p95_ms exercises the bind leg — deliberately absent by default so the
+    # ttfe-only tests are unaffected. bind_p95_ms is stripped from the public matrix, so the
+    # tripwire reads it from the raw emit; the fixture places it in the raw sla_metrics here.
+    warm_m = {"ttfe_p50_ms": 400, "ttfe_p95_ms": warm_p95}
+    cold_m = {"ttfe_p50_ms": 400, "ttfe_p95_ms": cold_p95}
+    if warm_bind is not None:
+        warm_m["bind_p95_ms"] = warm_bind
+    if cold_bind is not None:
+        cold_m["bind_p95_ms"] = cold_bind
     return [
         {
             "name": "warmpool_cold_start", "outcome": "PASS", "n": warm_n,
-            "sla_metrics": {"ttfe_p50_ms": 400, "ttfe_p95_ms": warm_p95},
+            "sla_metrics": warm_m,
         },
         {
             "name": "native_digest_cold", "outcome": "PASS", "n": cold_n,
-            "sla_metrics": {"ttfe_p50_ms": 400, "ttfe_p95_ms": cold_p95},
+            "sla_metrics": cold_m,
         },
     ]
 
@@ -4652,6 +4662,78 @@ def test_warm_cold_inversion_caveat_wired_into_caption():
         _matrix_results(_full_gvisor_scenarios(), provenance={"runtime": "gvisor"})
     )
     assert "Warm-slower-than-cold" not in clean
+
+
+def test_warm_cold_inversion_caveat_fires_on_bind_leg_only():
+    # TTFE ordered correctly (warm 0.9s < cold 1.56s) but the BIND leg is inverted
+    # (warm 1.2s > cold 0.8s) — the #379 signature: warm-pool under-delivery hides in the
+    # bind leg while total latency still reads clean. The tripwire must fire and name ONLY
+    # the bind leg (bind is the mechanistically-primary contamination tell).
+    out = render._warm_cold_inversion_caveat(
+        _matrix_results(
+            _inversion_scenarios(900, 1560, warm_n=200, cold_n=200,
+                                 warm_bind=1200, cold_bind=800),
+            provenance={"runtime": "gvisor"},
+        )
+    )
+    assert "Warm-slower-than-cold:" in out
+    assert "gVisor" in out
+    assert "bind warm 1.2s > cold 0.8s" in out
+    # TTFE ordered correctly, so it must NOT be reported as an inverted leg
+    assert "TTFE warm" not in out
+
+
+def test_warm_cold_inversion_caveat_reports_both_legs():
+    # both legs inverted (the live gVisor state): bind warm 8.4s > cold 4.7s AND
+    # ttfe warm 11.1s > cold 5.3s — both must be named in one caveat.
+    out = render._warm_cold_inversion_caveat(
+        _matrix_results(
+            _inversion_scenarios(11100, 5300, warm_n=30, cold_n=30,
+                                 warm_bind=8400, cold_bind=4700),
+            provenance={"runtime": "gvisor"},
+        )
+    )
+    assert "Warm-slower-than-cold:" in out
+    assert "bind warm 8.4s > cold 4.7s" in out
+    assert "TTFE warm 11.1s > cold 5.3s" in out
+
+
+def test_warm_cold_inversion_caveat_clean_when_both_legs_ordered():
+    # bind AND ttfe both correctly ordered (warm below cold on each) — auto-clear, empty.
+    out = render._warm_cold_inversion_caveat(
+        _matrix_results(
+            _inversion_scenarios(900, 1560, warm_n=200, cold_n=200,
+                                 warm_bind=600, cold_bind=1100),
+            provenance={"runtime": "gvisor"},
+        )
+    )
+    assert out == ""
+
+
+def test_warm_cold_inversion_caveat_bind_suppressed_when_low_n():
+    # bind leg inverted but the cold row is below the N=30 floor — the N gate covers BOTH
+    # legs (a low-N draw inverts either leg purely from sampling), so nothing fires.
+    out = render._warm_cold_inversion_caveat(
+        _matrix_results(
+            _inversion_scenarios(900, 1560, warm_n=200, cold_n=5,
+                                 warm_bind=1200, cold_bind=800),
+            provenance={"runtime": "gvisor"},
+        )
+    )
+    assert out == ""
+
+
+def test_warm_cold_inversion_caveat_bind_absent_falls_back_to_ttfe():
+    # no bind_p95_ms emitted at all (older emit / missing key): the bind leg is simply
+    # skipped and the ttfe leg still guards — no crash, ttfe inversion still disclosed.
+    out = render._warm_cold_inversion_caveat(
+        _matrix_results(
+            _inversion_scenarios(4089, 3715, warm_n=200, cold_n=200),
+            provenance={"runtime": "gvisor"},
+        )
+    )
+    assert "TTFE warm 4.089s > cold 3.715s" in out
+    assert "bind warm" not in out
 
 
 # ---------------------------------------------------------------------------

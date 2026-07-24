@@ -1768,34 +1768,67 @@ def _north_star_fail_caveat(rows):
     )
 
 
+def _raw_sla_p95(scenarios, name, key):
+    """Read one sla_metrics value straight from the RAW scenario list, by scenario name.
+
+    bind_p95_ms is deliberately NOT in MATRIX_METRIC_FIELDS — it never becomes a public matrix
+    cell — so _matrix_scenarios strips it. The inversion tripwire's bind leg needs it, so it is
+    read here from the raw emit: disclosure-only, no new published cell, no schema-contract change.
+    Returns None on any missing / non-numeric / bool shape (so a caller treats it as absent).
+    """
+    if not isinstance(scenarios, list):
+        return None
+    for s in scenarios:
+        if isinstance(s, dict) and s.get("name") == name:
+            m = s.get("sla_metrics")
+            if isinstance(m, dict):
+                v = m.get(key)
+                if isinstance(v, (int, float)) and not isinstance(v, bool):
+                    return v
+            return None
+    return None
+
+
 def _warm_cold_inversion_caveat(results, kata_results=None):
-    """Loud disclosure when a runtime's warm-pool-hit p95 exceeds its own cold-start p95.
+    """Loud disclosure when a runtime's warm-pool-hit path is slower than its own cold-start path.
 
     Warm-pool activation (warmpool_cold_start) is meant to be the FAST path — a pre-warmed
-    pool hands off an already-running sandbox, so its TTFE p95 must sit at or below the
-    unique-image cold-start (native_digest_cold) p95, which pays the full image pull + boot.
-    When the published matrix shows warm p95 > cold p95, the trust surface is rendering a
-    backwards number: a reader ranking the warm and cold rows top-to-bottom would conclude
-    warm is the slow path. Per the trust-surface doctrine (#4420: a surface must fail loud
-    while degraded, never render the bad value silently), that inversion is disclosed as a
-    standing caveat rather than left to read as a clean pair of green cells.
+    pool hands off an already-running sandbox, so its latency must sit at or below the
+    unique-image cold-start (native_digest_cold), which pays the full image pull + boot.
+    When the published matrix shows warm > cold, the trust surface is rendering a backwards
+    number: a reader ranking the warm and cold rows top-to-bottom would conclude warm is the
+    slow path. Per the trust-surface doctrine (#4420: a surface must fail loud while degraded,
+    never render the bad value silently), that inversion is disclosed as a standing caveat
+    rather than left to read as a clean pair of green cells.
+
+    TWO legs are checked, because TTFE ≈ bind_leg + exec_leg and the two localize the fault:
+      - **bind** (bind_p95_ms) is the mechanistically-primary tell for warm-pool under-delivery.
+        A genuine warm hit binds an already-running pod ~instantly, so a warm bind p95 at/above
+        the cold bind p95 means the "warm" population is blended with genuinely-cold claims (the
+        #379 signature — the issue is literally named `gVisor bind_p95 ≈ cold bind_p95`). bind is
+        read from the RAW emit (it is stripped from the public matrix), so this adds no cell.
+      - **TTFE** (ttfe_p95_ms) is total latency — the downstream shadow of the same contamination.
+        A TTFE-only inversion whose bind leg is clean points instead at the exec phase, not the pool.
+    Whichever leg(s) are inverted are named; the breakdown lets a reader localize the fault
+    without the tripwire asserting one.
 
     CAUSE-AGNOSTIC by design: it asserts no mechanism (a warm fire not gating on pool-Ready
     before probing, a silent image-pull on the warm hit, or a genuine tail regression are all
     candidates — pinning the cause drives the FIX and is a separate lane). It only reports that
     the live numbers are inverted. It is a guard-then-fill tripwire: it fires ONLY on live
-    inverted data and AUTO-CLEARS the instant a refresh returns warm p95 below cold p95.
+    inverted data and AUTO-CLEARS the instant a refresh returns warm below cold on every leg.
 
     Gated on BOTH rows having N >= TTFE_COMPARABILITY_MIN_N so it never fires on sampling
     noise — a low-N cold row can read faster than a high-N warm row purely from a lucky draw
     (exactly the cross-row inversion TTFE_COMPARABILITY_MIN_N exists to mark), which is NOT a
-    real warm>cold condition. Returns "" when no runtime is inverted so the caller can
-    unconditionally append it. Mirrors _north_star_fail_caveat's shape (pure function of
-    (results, kata_results); loud "> ⚠️" block; auto-clearing).
+    real warm>cold condition. pending rows are skipped (no real measurement). Returns "" when
+    no runtime/leg is inverted so the caller can unconditionally append it. Mirrors
+    _north_star_fail_caveat's shape (pure function; loud "> ⚠️" block; auto-clearing).
     """
     prov = _clean_provenance(results.get("provenance"))
     measured_runtime = prov.get("runtime") or "gvisor"
     sources = {measured_runtime: _matrix_scenarios(results.get("scenarios"))}
+    raw_sources = {measured_runtime: results.get("scenarios")}
     if (
         isinstance(kata_results, dict)
         and kata_results.get("product") == "sandbox-kata"
@@ -1804,6 +1837,7 @@ def _warm_cold_inversion_caveat(results, kata_results=None):
         kp = _clean_provenance(kata_results.get("provenance"))
         if kp.get("runtime") == "kata-microvm":
             sources["kata-microvm"] = _matrix_scenarios(kata_results.get("scenarios"))
+            raw_sources["kata-microvm"] = kata_results.get("scenarios")
 
     inverted = []
     for rt in MATRIX_RUNTIMES:
@@ -1814,35 +1848,57 @@ def _warm_cold_inversion_caveat(results, kata_results=None):
         cold = rt_scen.get("native_digest_cold")
         if not warm or not cold:
             continue
-        warm_p95 = warm["metrics"].get("ttfe_p95_ms")
-        cold_p95 = cold["metrics"].get("ttfe_p95_ms")
         warm_n = warm.get("n")
         cold_n = cold.get("n")
-        if not isinstance(warm_p95, (int, float)) or isinstance(warm_p95, bool):
-            continue
-        if not isinstance(cold_p95, (int, float)) or isinstance(cold_p95, bool):
-            continue
         if not isinstance(warm_n, int) or isinstance(warm_n, bool):
             continue
         if not isinstance(cold_n, int) or isinstance(cold_n, bool):
             continue
         if warm_n < TTFE_COMPARABILITY_MIN_N or cold_n < TTFE_COMPARABILITY_MIN_N:
             continue
-        if warm_p95 > cold_p95:
-            inverted.append((RUNTIME_LABELS[rt], warm_p95, cold_p95, warm_n, cold_n))
+        # A pending row carries no real measurement (its matrix metrics are suppressed to {});
+        # never read an inversion off it.
+        if warm.get("outcome") == "pending" or cold.get("outcome") == "pending":
+            continue
+
+        legs = []  # (leg_label, warm_val, cold_val) for each inverted leg
+        # bind leg — from the RAW emit (stripped from the matrix); primary contamination tell.
+        raw = raw_sources.get(rt)
+        warm_bind = _raw_sla_p95(raw, "warmpool_cold_start", "bind_p95_ms")
+        cold_bind = _raw_sla_p95(raw, "native_digest_cold", "bind_p95_ms")
+        if warm_bind is not None and cold_bind is not None and warm_bind > cold_bind:
+            legs.append(("bind", warm_bind, cold_bind))
+        # TTFE leg — from the cleaned matrix metrics; downstream total-latency shadow.
+        warm_ttfe = warm["metrics"].get("ttfe_p95_ms")
+        cold_ttfe = cold["metrics"].get("ttfe_p95_ms")
+        warm_ttfe_ok = isinstance(warm_ttfe, (int, float)) and not isinstance(warm_ttfe, bool)
+        cold_ttfe_ok = isinstance(cold_ttfe, (int, float)) and not isinstance(cold_ttfe, bool)
+        if warm_ttfe_ok and cold_ttfe_ok and warm_ttfe > cold_ttfe:
+            legs.append(("TTFE", warm_ttfe, cold_ttfe))
+
+        if legs:
+            inverted.append((RUNTIME_LABELS[rt], warm_n, cold_n, legs))
     if not inverted:
         return ""
     who = "; ".join(
-        f"**{lbl}** warm {_fmt_secs(w)} (count={wn}) > cold {_fmt_secs(c)} (count={cn})"
-        for lbl, w, c, wn, cn in inverted
+        f"**{lbl}** (warm count={wn}, cold count={cn}): "
+        + ", ".join(
+            f"{leg} warm {_fmt_secs(w)} > cold {_fmt_secs(c)}" for leg, w, c in legs
+        )
+        for lbl, wn, cn, legs in inverted
     )
     return (
-        "> ⚠️ **Warm-slower-than-cold:** the warm-pool-hit p95 is ABOVE the unique-image "
-        f"cold-start p95 for {who} — a backwards result (warm is meant to be the fast path). "
-        f"Both rows clear the N={TTFE_COMPARABILITY_MIN_N} comparability floor, so this is not "
-        "a small-sample inversion. The cause is not asserted here (candidates: the warm fire "
-        "not gating on pool-Ready before probing, a silent image-pull on the warm hit, or a "
-        "real tail regression); a later refresh whose warm p95 returns below cold clears this."
+        "> ⚠️ **Warm-slower-than-cold:** the warm-pool-hit path is SLOWER than the unique-image "
+        f"cold-start path for {who} — a backwards result (warm is meant to be the fast path). "
+        f"Both rows clear the N={TTFE_COMPARABILITY_MIN_N} comparability floor, so this is not a "
+        "small-sample inversion. The per-leg breakdown localizes it: the **bind** leg (pod-bind "
+        "latency) is where warm-pool under-delivery shows up — a real warm hit binds an "
+        "already-running pod ~instantly, so an inverted bind p95 means the warm population is "
+        "blended with genuinely-cold claims; the **TTFE** leg is total latency (bind + exec), so "
+        "a TTFE-only inversion with a clean bind leg points instead at the exec phase, not the "
+        "pool. The cause is not asserted here (candidates: the warm fire not gating on pool-Ready "
+        "before probing, a silent image-pull on the warm hit, or a real tail regression); a later "
+        "refresh whose warm legs return below cold clears this."
     )
 
 
