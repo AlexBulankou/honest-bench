@@ -158,4 +158,4 @@ _Capability note: this is an **administrative** (operator- or user-driven) suspe
 |---|---|
 | Median (p50) | 2.7665s |
 
-_Suspend latency is measured per-cycle as the wall-clock from the `operatingMode=Suspended` patch return to the terminal Suspended state; the median and tail are percentiles of the measured suspend distribution._
+_Suspend latency is measured per-cycle as the wall-clock from the `operatingMode=Suspended` patch return to the terminal Suspended state; the median is the 50th percentile of the measured suspend distribution._

@@ -1786,6 +1786,8 @@ def test_session_turnover_renders_median_with_n_footnote():
     assert "## Warm-Pool Turnover — Sustained-Churn Refill Latency" in out
     assert "| Median (p50) (over 5 cycles) | 4.2s |" in out
     assert "| Tail (p90) | 7.8s |" in out
+    # caption claims a tail iff the tail row is rendered
+    assert "the median and tail are percentiles" in out
 
 
 def test_session_turnover_median_only_no_footnote_no_tail():
@@ -1795,6 +1797,9 @@ def test_session_turnover_median_only_no_footnote_no_tail():
     assert "| Median (p50) | 4.2s |" in out
     assert "cycles)" not in out  # the "(over N cycles)" footnote must be absent
     assert "Tail (p90)" not in out
+    # tail row suppressed ⇒ caption must NOT claim a tail; it states the median-only percentile
+    assert "the median is the 50th percentile" in out
+    assert "median and tail" not in out
 
 
 def test_session_turnover_n_from_sla_metrics_ignored():
@@ -1864,6 +1869,9 @@ def test_suspend_latency_renders_median_only():
     assert "## Administrative Suspend Latency" in out
     assert "| Median (p50) | 4.2s |" in out
     assert "Tail (p90)" not in out
+    # tail row suppressed ⇒ caption must NOT claim a tail; it states the median-only percentile
+    assert "the median is the 50th percentile" in out
+    assert "median and tail" not in out
 
 
 def test_suspend_latency_renders_median_and_p90():
@@ -1872,6 +1880,8 @@ def test_suspend_latency_renders_median_and_p90():
     )
     assert "| Median (p50) | 4.2s |" in out
     assert "| Tail (p90) | 7.8s |" in out
+    # caption claims a tail iff the tail row is rendered
+    assert "the median and tail are percentiles" in out
 
 
 def test_suspend_latency_closed_schema_drops_foreign_keys():

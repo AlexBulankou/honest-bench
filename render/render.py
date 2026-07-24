@@ -2646,10 +2646,17 @@ def render_session_turnover(results):
     if turn["refill_p90"] is not None:
         lines.append(f"| Tail (p90) | {_fmt_secs(turn['refill_p90'])} |")
     lines.append("")
+    # The tail row is suppressed when no p90 was emitted (a single-cycle fire); keep the caption's
+    # percentile claim in lockstep with the rows actually rendered so prose never promises a tail
+    # the table omits.
+    pctile_clause = (
+        "the median and tail are percentiles"
+        if turn["refill_p90"] is not None
+        else "the median is the 50th percentile"
+    )
     lines.append(
         "_Refill latency is measured per-cycle as the wall-clock from a claim release to the warm "
-        "pool returning to full readiness; the median and tail are percentiles of the completed-"
-        "cycle distribution._"
+        f"pool returning to full readiness; {pctile_clause} of the completed-cycle distribution._"
     )
     lines.append("")
     return "\n".join(lines)
@@ -2730,10 +2737,18 @@ def render_suspend_latency(results):
     if susp["suspend_p90"] is not None:
         lines.append(f"| Tail (p90) | {_fmt_secs(susp['suspend_p90'])} |")
     lines.append("")
+    # The tail row is suppressed when no p90 was emitted (a single-cycle fire); keep the caption's
+    # percentile claim in lockstep with the rows actually rendered so prose never promises a tail
+    # the table omits.
+    pctile_clause = (
+        "the median and tail are percentiles"
+        if susp["suspend_p90"] is not None
+        else "the median is the 50th percentile"
+    )
     lines.append(
         "_Suspend latency is measured per-cycle as the wall-clock from the "
-        "`operatingMode=Suspended` patch return to the terminal Suspended state; the median and "
-        "tail are percentiles of the measured suspend distribution._"
+        f"`operatingMode=Suspended` patch return to the terminal Suspended state; {pctile_clause} "
+        "of the measured suspend distribution._"
     )
     lines.append("")
     return "\n".join(lines)
