@@ -516,7 +516,7 @@ series=[(0.0,0),(3.1,0),(6.2,0),(9.3,13),(12.3,30),(15.4,22),(19.0,12),(22.1,7),
 
 `readyReplicas` swings 30→13→30→22→12→**7**→7→18 inside the measured window — a meaningful share of the 40-claim burst fires while the pool sits well below capacity, and `warm_max_ms` (8453.3ms) sits suspiciously close to `cold_min_ms` (8591.9ms) — too slow for a genuine "adopt an already-Ready pod" bind, and closer to full provisioning time.
 
-**Code-grounded root cause** (read against `extensions/controllers/sandboxwarmpool_controller.go` at the tip `aee6d3b96615f4c63ad1f8703e5d73642cee5722` — the same commit now live on `sandbox-scenarios-cluster`'s deployed controller, re-verified line-for-line against the original triangulation done at tip `018c610`):
+**Code-grounded root cause** (read against `extensions/controllers/sandboxwarmpool_controller.go` at the tip `aee6d3b96615f4c63ad1f8703e5d73642cee5722` — the same commit now live on our deployed sandbox-measurement cluster's controller, re-verified line-for-line against the original triangulation done at tip `018c610`):
 
 - `currentReplicas := int32(len(activeSandboxes))` (`:162`) — `activeSandboxes` includes sandboxes that **exist but are not yet Ready** (only pruned if stuck-unready past a 5-minute grace, `:139-149`).
 - The create branch fires on `if currentReplicas < desiredReplicas && tmplErr == nil` (`:185`) — it stops creating replacements the instant enough Sandbox CRs *exist* to hit the target, regardless of readiness.
