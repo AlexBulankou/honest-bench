@@ -109,6 +109,30 @@ def _sample_node_count(core_v1):
         return None
 
 
+def assemble_record(boundary_texts, rates, *, runtime_class, node_count, warmpool_size):
+    """Pure offline assembly: boundary scrapes + per-rung rates -> the sweep record.
+
+    Factored out of the fire path so the honesty-critical decision — that the stamp is
+    built against the COLD launch-type series (``build_true_ttfe_stamp``'s default,
+    never overridden here) — is unit-testable with captured scrape text and no live
+    cluster. Mirrors the gVisor warm sibling's ``assemble_record`` (and record shape)
+    exactly (``{params, true_ttfe_webhook_stamped_claims, pareto}``) so the shared
+    slo_rate read-back guard consumes both identically; only the launch_type the stamp
+    is built against and the ``params`` values differ.
+    """
+    rungs = rungs_from_boundary_scrapes(boundary_texts, rates)
+    stamp = build_true_ttfe_stamp(rungs)  # launch_type=cold (default), HEADLINE_METRIC
+    return {
+        "params": {
+            "runtime_class": runtime_class,
+            "cluster_nodes": node_count,
+            "warmpool_size": warmpool_size,
+        },
+        "true_ttfe_webhook_stamped_claims": stamp["true_ttfe_webhook_stamped_claims"],
+        "pareto": stamp["pareto"],
+    }
+
+
 def main():
     k8s_config.load_kube_config()
     custom = k8s_client.CustomObjectsApi()
@@ -215,39 +239,33 @@ def main():
         node_count = _sample_node_count(core_v1)
         log(f"node_count sampled: {node_count}")
 
-        rungs = rungs_from_boundary_scrapes(boundary_texts, rates)
-        stamp = build_true_ttfe_stamp(rungs)  # launch_type=cold, HEADLINE_METRIC
-        log(f"assembled stamp: pareto_points={len(stamp['pareto'])} "
-            f"true_ttfe_webhook_stamped_claims={stamp['true_ttfe_webhook_stamped_claims']}")
-        for pt in stamp["pareto"]:
+        record = assemble_record(
+            boundary_texts, rates,
+            runtime_class=RUNTIME_CLASS, node_count=node_count,
+            warmpool_size=WARMPOOL_SIZE,
+        )
+        log(f"assembled stamp: pareto_points={len(record['pareto'])} "
+            f"true_ttfe_webhook_stamped_claims={record['true_ttfe_webhook_stamped_claims']}")
+        for pt in record["pareto"]:
             log(f"  pareto: offered={pt.get('offered_rate_per_s'):.4f}/s "
                 f"ready={pt.get('ready_per_s'):.4f}/s "
                 f"ttfe_p95_ms={pt.get('ttfe_p95_ms')}")
 
-        record = {
-            "params": {
-                "runtime_class": RUNTIME_CLASS,
-                "cluster_nodes": node_count,
-                "warmpool_size": WARMPOOL_SIZE,
-            },
-            "true_ttfe_webhook_stamped_claims": stamp["true_ttfe_webhook_stamped_claims"],
-            "pareto": stamp["pareto"],
-        }
         with open(OUT_FILE, "w") as f:
             json.dump(record, f, indent=2)
         log(f"wrote sweep record -> {OUT_FILE}")
         print(json.dumps(record, indent=2), flush=True)
 
         # Corroboration preview (the exact gate slo_rate applies).
-        cnt = stamp["true_ttfe_webhook_stamped_claims"]
+        cnt = record["true_ttfe_webhook_stamped_claims"]
         corroborated = isinstance(cnt, int) and not isinstance(cnt, bool) and cnt >= 1
-        has_pareto = len(stamp["pareto"]) >= 1
+        has_pareto = len(record["pareto"]) >= 1
         if corroborated and has_pareto:
             log("PREVIEW: true-TTFE corroborated (count>=1) AND >=1 pareto point "
                 "-> derive should select basis=true_ttfe")
         else:
             log(f"PREVIEW: NOT true-TTFE-ready (corroborated={corroborated} "
-                f"pareto_points={len(stamp['pareto'])}) — investigate before publish")
+                f"pareto_points={len(record['pareto'])}) — investigate before publish")
     finally:
         cleanup()
 
