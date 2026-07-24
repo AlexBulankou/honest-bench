@@ -60,6 +60,35 @@ def test_required_class_present_with_issue_and_fix_pr():
     assert any(r["role"] == "fix-in-flight" for r in refs)
 
 
+def test_fix_partial_merged_role_loads_and_renders_as_fix():
+    # regression for the fix-partial-merged role (dd63bb1/#1114 on trust-gate):
+    # the role was added to the shipped JSON but omitted from _ROLES, crashing
+    # the loader at import and breaking the whole render/freshness pipeline.
+    # It is a "fix" role, so both formatters must show its status + fix affordance.
+    assert "fix-partial-merged" in upstream_links._ROLES
+    assert "fix-partial-merged" in upstream_links._FIX_ROLES
+    ref = {
+        "repo": "kubernetes-sigs/agent-sandbox",
+        "number": 1114,
+        "kind": "pr",
+        "role": "fix-partial-merged",
+        "status": "merged",
+    }
+    assert upstream_links._cell_token(ref) == (
+        "[#1114 merged](https://github.com/kubernetes-sigs/agent-sandbox/pull/1114)"
+    )
+    assert upstream_links._prose_token(ref) == (
+        "fix [agent-sandbox#1114](https://github.com/kubernetes-sigs/agent-sandbox/pull/1114)"
+        " (PR, merged)"
+    )
+    # and the loader accepts it end-to-end
+    data = {"classes": _required_classes(
+        **{"trust-gate": {"refs": [_valid_ref(), ref]}}
+    )}
+    loaded = _load_data(data)
+    assert loaded["classes"]["trust-gate"]["refs"][1]["role"] == "fix-partial-merged"
+
+
 def test_all_shipped_refs_point_at_public_oss_repos():
     # public-safety: every ref in the shipped mapping is a public upstream OSS
     # repo — never an internal tracker (a#NNNN prose is wip.py's lane, not here).
