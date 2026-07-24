@@ -29,7 +29,13 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 _LINKS_PATH = os.path.join(_HERE, "upstream_links.json")
 
 _KINDS = {"issue", "pr"}
-_ROLES = {"blocks", "fix-in-flight"}
+# "fix" roles carry a live status and render with a "fix" affordance; a bare
+# "blocks" ref does not. "fix-partial-merged" = a fix PR that merged but only
+# partially closes the class, so the blocker/trust-gate stands until verified
+# (e.g. dd63bb1/#1114 closed the re-record leg; the stale-informer-replay leg
+# is still gated pending a corpus re-fire) — distinct from unmerged fix-in-flight.
+_FIX_ROLES = {"fix-in-flight", "fix-partial-merged"}
+_ROLES = {"blocks"} | _FIX_ROLES
 _STATUSES = {"open", "in-review", "merged", "closed"}
 
 # Public-safety allow-list, enforced at LOAD time (hb#182 follow-up): every
@@ -105,7 +111,7 @@ def ref_url(ref):
 def _cell_token(ref):
     """Compact per-ref markdown link: [#873](url) or [#1150 in review](url)."""
     label = "#%d" % ref["number"]
-    if ref["role"] == "fix-in-flight":
+    if ref["role"] in _FIX_ROLES:
         label += " %s" % STATUS_LABELS[ref["status"]]
     return "[%s](%s)" % (label, ref_url(ref))
 
@@ -122,7 +128,7 @@ def _prose_token(ref):
     kind_label = "PR" if ref["kind"] == "pr" else "issue"
     link = "[%s#%d](%s)" % (short, ref["number"], ref_url(ref))
     tail = "(%s, %s)" % (kind_label, STATUS_LABELS[ref["status"]])
-    if ref["role"] == "fix-in-flight":
+    if ref["role"] in _FIX_ROLES:
         return "fix %s %s" % (link, tail)
     return "%s %s" % (link, tail)
 
