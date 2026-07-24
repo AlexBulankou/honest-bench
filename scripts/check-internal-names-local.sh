@@ -70,17 +70,20 @@ if [ "${#denylist[@]}" -eq 0 ]; then
 fi
 echo "check-internal-names-local: ${#denylist[@]} name(s) loaded from Secret Manager."
 
+staged_mode=0
 if [ "${1:-}" = "--staged" ]; then
-  files_args=(--cached)
-else
-  files_args=()
+  staged_mode=1
+  mapfile -t staged_files < <(git diff --cached --name-only --diff-filter=ACM 2>/dev/null)
 fi
 
 hits=0
 for name in "${denylist[@]}"; do
-  if [ "${#files_args[@]}" -gt 0 ]; then
-    matches="$(git diff "${files_args[@]}" -G "$name" --name-only 2>/dev/null | while read -r f; do
-      [ -f "$f" ] && grep -F -n -I -- "$name" "$f" 2>/dev/null | sed "s|^|${f}:|"
+  if [ "$staged_mode" -eq 1 ]; then
+    # Read the STAGED blob (git index), not the on-disk working-tree file —
+    # an edit-after-stage would otherwise scan content that isn't what's
+    # about to be committed (hb#407).
+    matches="$(for f in "${staged_files[@]}"; do
+      git show ":$f" 2>/dev/null | grep -F -n -I -- "$name" | sed "s|^|${f}:|"
     done)"
   else
     matches="$(git grep -F -n -I -- "$name" 2>/dev/null || true)"
