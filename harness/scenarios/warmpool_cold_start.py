@@ -195,6 +195,26 @@ _BIND_TIMEOUT_S = int(
 )
 _POLL_S = 0.05  # per-claim thread poll — must be << the warm threshold
 
+# hb#411: the finally-block cleanup can run inside the sub-92s `a4-hb-refresh@`
+# IAM-strike window (hold-hb-refresh-iam.sh documents this as an accepted
+# residual gap), where every delete 403s. A single best-effort pass then leaks
+# the pool + all member sandboxes on the SHARED, persistent cluster, backing
+# real billed nodes. Retry the whole remaining object set together (one shared
+# backoff rides out the single IAM window regardless of object count — retrying
+# 40 claims independently would take ~1h) long enough to outlast that window.
+# Gaps between MAX_ATTEMPTS passes: 4,8,16,32,32,32 = 124s, comfortably past the
+# documented sub-92s strike. Env-tunable for recalibration. Only paid on the
+# failure path — a clean cleanup deletes on the first pass and never sleeps.
+_CLEANUP_MAX_ATTEMPTS = int(
+    os.environ.get("WARMPOOL_COLD_START_CLEANUP_MAX_ATTEMPTS", "7")
+)
+_CLEANUP_BACKOFF_BASE_S = float(
+    os.environ.get("WARMPOOL_COLD_START_CLEANUP_BACKOFF_BASE_S", "4.0")
+)
+_CLEANUP_BACKOFF_CAP_S = float(
+    os.environ.get("WARMPOOL_COLD_START_CLEANUP_BACKOFF_CAP_S", "32.0")
+)
+
 # hb#379: a bare `readyReplicas >= target_ready` gate certifies "warm" on a
 # SINGLE instantaneous poll — indistinguishable from a momentary peak that is
 # already draining. Starting the claim burst against a pool mid-drain pushes
@@ -819,31 +839,69 @@ def _under_delivery_outcome(
 
 def _cleanup(
     custom, *, claim_names: list[str], pool_name: str, template_name: str,
-) -> None:
-    """Best-effort delete: all claims, then pool, then template."""
+    max_attempts: int | None = None, backoff_base_s: float | None = None,
+    backoff_cap_s: float | None = None, sleep=time.sleep,
+) -> list[str]:
+    """Delete all claims, then pool, then template — retrying the batch to ride
+    out a transient IAM strike (hb#411).
+
+    Retries the WHOLE remaining object set together across up to `max_attempts`
+    passes with exponential backoff (capped), so the shared IAM-strike window is
+    waited out ONCE regardless of object count. A 404 counts as deleted (already
+    gone). On the happy path every delete succeeds on the first pass and no sleep
+    is paid.
+
+    Returns the list of `label/name` descriptors that STILL failed to delete
+    after all attempts (empty == fully cleaned). A non-empty return is a real
+    leak of billed capacity on the shared, persistent cluster, so it is also
+    logged LOUD (ERROR, per the #4420 fail-loud-on-degrade idiom) rather than
+    swallowed as a WARNING — a silently-leaked pool is exactly the quiet degrade
+    that idiom forbids. `sleep`/`max_attempts`/backoff are injectable for tests.
+    """
     from kubernetes.client.exceptions import ApiException
-    for name in claim_names:
-        try:
-            custom.delete_namespaced_custom_object(
-                group=_CLM_GVR[0], version=_CLM_GVR[1], namespace=_NAMESPACE,
-                plural=_CLM_GVR[2], name=name,
-            )
-        except ApiException as e:
-            if e.status != 404:
-                log.warning("cleanup: delete claim %s failed: %s", name, e)
-    for (label, gvr, name) in (
+    if max_attempts is None:
+        max_attempts = _CLEANUP_MAX_ATTEMPTS
+    if backoff_base_s is None:
+        backoff_base_s = _CLEANUP_BACKOFF_BASE_S
+    if backoff_cap_s is None:
+        backoff_cap_s = _CLEANUP_BACKOFF_CAP_S
+
+    pending = [("claim", _CLM_GVR, n) for n in claim_names]
+    pending += [
         ("warmpool", _SWP_GVR, pool_name),
         ("template", _TPL_GVR, template_name),
-    ):
-        group, version, plural = gvr
-        try:
-            custom.delete_namespaced_custom_object(
-                group=group, version=version, namespace=_NAMESPACE,
-                plural=plural, name=name,
-            )
-        except ApiException as e:
-            if e.status != 404:
-                log.warning("cleanup: delete %s %s failed: %s", label, name, e)
+    ]
+    for attempt in range(1, max_attempts + 1):
+        still: list = []
+        for (label, gvr, name) in pending:
+            group, version, plural = gvr
+            try:
+                custom.delete_namespaced_custom_object(
+                    group=group, version=version, namespace=_NAMESPACE,
+                    plural=plural, name=name,
+                )
+            except ApiException as e:
+                if e.status == 404:
+                    continue  # already gone — counts as deleted
+                still.append((label, gvr, name))
+                log.warning(
+                    "cleanup: delete %s %s failed (attempt %d/%d): %s",
+                    label, name, attempt, max_attempts, e,
+                )
+        pending = still
+        if not pending:
+            break
+        if attempt < max_attempts:
+            sleep(min(backoff_base_s * 2 ** (attempt - 1), backoff_cap_s))
+
+    leaked = [f"{label}/{name}" for (label, _gvr, name) in pending]
+    if leaked:
+        log.error(
+            "cleanup: LEAKED %d object(s) after %d attempts — these back billed "
+            "capacity on the SHARED cluster and need manual/reaper deletion: %s",
+            len(leaked), max_attempts, ", ".join(leaked),
+        )
+    return leaked
 
 
 def run(scenario_name: str) -> tuple[str, str, dict]:

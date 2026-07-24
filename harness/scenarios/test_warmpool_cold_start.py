@@ -516,6 +516,132 @@ def test_wait_for_pool_warm_flicker_never_sustains_times_out():
     assert "2 consecutive poll(s)" in msg
 
 
+# ---- hb#411: _cleanup batch-retry rides out the IAM-strike window ----
+# The finally-block cleanup can run inside the sub-92s a4-hb-refresh@ IAM strip,
+# where every delete 403s. A single best-effort pass then leaks the pool + 30
+# member sandboxes on the SHARED cluster (billed nodes). _cleanup now retries the
+# WHOLE remaining set together (shared backoff, so object count doesn't blow up
+# the wait) and returns the still-leaked descriptors (empty == clean) so a real
+# leak is a loud, testable signal instead of swallowed WARNINGs. sleep + attempt
+# budget are injected so these stay cluster-free and instant.
+
+from kubernetes.client.exceptions import ApiException as _ApiException  # noqa: E402
+
+
+class _FakeDeleteOK:
+    """Every delete succeeds; records deleted names."""
+
+    def __init__(self):
+        self.deleted: list = []
+
+    def delete_namespaced_custom_object(self, group, version, namespace, plural, name):
+        self.deleted.append(name)
+        return {}
+
+
+class _FakeDeleteStatus:
+    """Every delete raises ApiException with a fixed status (403 strip / 404 gone)."""
+
+    def __init__(self, status):
+        self._status = status
+
+    def delete_namespaced_custom_object(self, group, version, namespace, plural, name):
+        raise _ApiException(status=self._status)
+
+
+class _FakeDeleteRecoversAfter:
+    """403s until the injected sleep has fired `recover_after` times, then succeeds.
+
+    Ties "which retry pass we're on" to the shared sleep counter, so a fixture can
+    model 'IAM re-settles after N backoffs' without touching wall-clock time.
+    """
+
+    def __init__(self, recover_after, sleep_counter):
+        self._recover_after = recover_after
+        self._counter = sleep_counter  # 1-element list mutated by the fake sleep
+        self.deleted: list = []
+
+    def delete_namespaced_custom_object(self, group, version, namespace, plural, name):
+        if self._counter[0] < self._recover_after:
+            raise _ApiException(status=403)
+        self.deleted.append(name)
+        return {}
+
+
+def _counting_sleep():
+    calls = [0]
+
+    def _sleep(_secs):
+        calls[0] += 1
+
+    return calls, _sleep
+
+
+def test_cleanup_happy_path_deletes_all_and_never_sleeps():
+    fake = _FakeDeleteOK()
+    calls, sleep = _counting_sleep()
+    leaked = cell._cleanup(
+        fake, claim_names=_names(3), pool_name="pool-x", template_name="tmpl-x",
+        sleep=sleep,
+    )
+    assert leaked == []
+    # 3 claims + pool + template all deleted on the first pass
+    assert len(fake.deleted) == 5
+    assert "pool-x" in fake.deleted and "tmpl-x" in fake.deleted
+    assert calls[0] == 0  # clean cleanup pays no backoff
+
+
+def test_cleanup_retries_and_recovers_when_iam_resettles():
+    calls, sleep = _counting_sleep()
+    fake = _FakeDeleteRecoversAfter(recover_after=2, sleep_counter=calls)
+    leaked = cell._cleanup(
+        fake, claim_names=_names(3), pool_name="pool-x", template_name="tmpl-x",
+        max_attempts=7, backoff_base_s=0.0, backoff_cap_s=0.0, sleep=sleep,
+    )
+    assert leaked == []  # recovered before the attempt budget ran out
+    assert calls[0] == 2  # slept twice (passes 1+2 failed), succeeded on pass 3
+    assert len(fake.deleted) == 5
+
+
+def test_cleanup_leaks_loud_when_iam_never_resettles():
+    calls, sleep = _counting_sleep()
+    leaked = cell._cleanup(
+        _FakeDeleteStatus(403), claim_names=_names(3),
+        pool_name="pool-x", template_name="tmpl-x",
+        max_attempts=3, backoff_base_s=0.0, backoff_cap_s=0.0, sleep=sleep,
+    )
+    # every object still leaked; descriptors carry label + name for the reaper
+    assert len(leaked) == 5
+    assert "warmpool/pool-x" in leaked
+    assert "template/tmpl-x" in leaked
+    assert "claim/claim00" in leaked
+    # slept between each of the 3 attempts, but not after the last
+    assert calls[0] == 2
+
+
+def test_cleanup_treats_404_as_deleted_no_retry():
+    calls, sleep = _counting_sleep()
+    leaked = cell._cleanup(
+        _FakeDeleteStatus(404), claim_names=_names(3),
+        pool_name="pool-x", template_name="tmpl-x",
+        max_attempts=7, backoff_base_s=0.0, backoff_cap_s=0.0, sleep=sleep,
+    )
+    assert leaked == []      # 404 == already gone
+    assert calls[0] == 0     # nothing to retry, no backoff
+
+
+def test_cleanup_empty_claim_list_still_deletes_pool_and_template():
+    fake = _FakeDeleteOK()
+    calls, sleep = _counting_sleep()
+    leaked = cell._cleanup(
+        fake, claim_names=[], pool_name="pool-x", template_name="tmpl-x",
+        sleep=sleep,
+    )
+    assert leaked == []
+    assert fake.deleted == ["pool-x", "tmpl-x"]
+    assert calls[0] == 0
+
+
 def _run_all():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:
