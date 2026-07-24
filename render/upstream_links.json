@@ -1,7 +1,7 @@
 {
   "_meta": {
     "seeded_from": "UPSTREAM_BLOCKERS.md rev 6",
-    "last_verified": "2026-07-23",
+    "last_verified": "2026-07-24",
     "freshness": "Rides every UPSTREAM_BLOCKERS.md refresh PR; link states hand-verified at each refresh."
   },
   "classes": {
@@ -72,7 +72,16 @@
           "number": 1087,
           "kind": "pr",
           "role": "fix-in-flight",
-          "status": "in-review"
+          "status": "in-review",
+          "note": "still OPEN/unmerged (public API 2026-07-24: state=open, merged=false; no OWNER approval). DISTINCT from the merged #1114 below: #1087 = ClaimFirstReadyAnnotation + drainObservedTime/CompareAndDelete + live-read (its stale-informer-replay leg is the more targeted fix, still unmerged). #1087 rebased ONTO post-#1114 main, so dd63bb1 appears as an ancestor in its branch but did not originate there."
+        },
+        {
+          "repo": "kubernetes-sigs/agent-sandbox",
+          "number": 1114,
+          "kind": "pr",
+          "role": "fix-partial-merged",
+          "status": "merged",
+          "note": "MERGED 2026-07-22T18:19:52Z (merge_sha dd63bb1b2), on main tip aee6d3b (git merge-base --is-ancestor verified). SEPARATE PR from #1087, DISTINCT implementation: CreationLatencyRecordedAnnotation (internal/metrics/metrics.go:39) persisted via Patch + cache-backed r.Get (sandboxclaim_controller.go:163, guard :1891). SCOPE: definitively closes the suspend/resume re-record leg; whether it closes the LOAD-BEARING stale-informer-replay leg is UNVERIFIED against merged-main — the guard reads a cache-backed claim, so a replay serving a pre-annotation snapshot could still slip past both it and the oldReady early-return. Needs an empirical SampleCount re-run + scripts/gate_d_corpus_baseline.py --verdict corpus re-fire on a build including dd63bb1 before the trust-gate is cleared."
         }
       ]
     },
