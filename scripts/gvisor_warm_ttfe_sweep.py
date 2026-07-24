@@ -44,7 +44,7 @@ import time
 import urllib.request
 
 # The scenario module reads these at IMPORT — set before importing it. gVisor warm
-# is the sandbox-scenarios-cluster's gke-sandbox substrate (kata uses gke-kata).
+# runs on the persistent scenarios cluster's gke-sandbox substrate (kata uses gke-kata).
 os.environ.setdefault("WARMPOOL_COLD_START_RUNTIME_CLASS", "gvisor")
 os.environ.setdefault("BENCH_CLUSTER_SUBSTRATE", "gke-sandbox")
 os.environ.setdefault("BENCH_NAMESPACE", "default")
