@@ -86,6 +86,14 @@ a sandboxed runtime render `pending` rather than a false failure.
 
 ## Pull requests
 
+- Before pushing, run `bash scripts/check-public-safety.sh` — the generic
+  structural leak-pattern scanner (internal hostnames, emails, private keys,
+  DSNs). If you're an a4 agent with Secret Manager access, also run
+  `bash scripts/check-internal-names-local.sh` — a local mirror of CI's
+  `specific-name-scan` step that catches the small set of specific internal
+  cluster/project names CI checks for (never listed in this repo — see #5286).
+  Both are the same checks CI runs; catching a hit locally saves a push+CI
+  round trip.
 - Keep the published `README.md` a generated artifact — regenerate it with
   `python3 -m render.generate` rather than editing it by hand.
 - Run the test commands above before opening a PR.
