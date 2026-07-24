@@ -224,6 +224,50 @@ def test_cold_start_mode_no_label_when_no_cold_start_ms():
     assert "(cold-pull)" not in out
 
 
+def test_runsc_version_renders_in_build_banner():
+    # hb#317 follow-up: a valid runsc_version in provenance surfaces in the _build: banner —
+    # the runtime-side reproducibility qualifier (analogue of controller_image/digest). It was
+    # stamped + schema-declared but had no render leg, so it rendered nowhere; this asserts the
+    # leg exists.
+    out = _render(
+        {
+            "product": "sandbox",
+            "provenance": {"runtime": "gvisor", "runsc_version": "release-20260701.0"},
+            "scenarios": [{"name": "warmpool_cold_start", "outcome": "PASS", "n": 1}],
+        }
+    )
+    assert "runsc_version=release-20260701.0" in out
+
+
+def test_runsc_version_absent_renders_no_banner_entry():
+    # INERT-when-absent: no runsc_version in provenance ⇒ no banner entry (byte-unchanged from
+    # a non-gVisor / unstamped run). Same discipline as machine_type's `if k in prov` guard —
+    # the field appears only on a run that actually stamped it.
+    out = _render(
+        {
+            "product": "sandbox",
+            "provenance": {"cluster_substrate": "gke-sandbox"},
+            "scenarios": [{"name": "warmpool_cold_start", "outcome": "PASS", "n": 1}],
+        }
+    )
+    assert "runsc_version=" not in out
+
+
+def test_runsc_version_invalid_dropped_no_banner_entry():
+    # The render guard is SECONDARY to the harness emitter's validation: an out-of-schema
+    # runsc_version fails its predicate in _clean_provenance and is dropped, so no banner entry
+    # renders and the raw value never reaches the page.
+    out = _render(
+        {
+            "product": "sandbox",
+            "provenance": {"runtime": "gvisor", "runsc_version": "SECRET RIG (ask ops)"},
+            "scenarios": [{"name": "warmpool_cold_start", "outcome": "PASS", "n": 1}],
+        }
+    )
+    assert "runsc_version=" not in out
+    assert "SECRET RIG" not in out
+
+
 def test_badge_scope_suffixes_isolation_pass_cell():
     # #3905: a valid badge_scope renders as a suffix on the scenario's PASS cell, so the
     # public badge says exactly what the PASS asserts (control-plane admission, not
