@@ -3054,10 +3054,20 @@ def render_scale_proof(results, heading="## Scale Proof (Linearity Check)"):
         return ""
     nodes = " → ".join(str(p["node_count"]) for p in sp["points"])
     dens_seq = " → ".join(_fmt_num(p["density"]) for p in sp["points"])
+    # Surface the retention RATIO behind each verdict so the ✅/⚠️ is falsifiable against the
+    # documented 0.9 flat-threshold (a reader sees 0.15 < 0.9 ⇒ ⚠️, 0.98 ≥ 0.9 ⇒ ✅) rather than
+    # a bald token whose earning number is hidden. Before this, the throughput leg rendered a
+    # verdict-only "⚠️ No" with NO figure — the worse-performing leg disclosed LESS than the
+    # passing density leg (which already shows its per-point sequence), an unfalsifiable claim.
+    # Density keeps its per-point sequence (the decay shape); throughput has no reliable per-point
+    # series in the emit (often absent — see the stale live scale data), so the ratio is the
+    # number it can honestly show. Both read the already-present retention keys — no schema change.
     dens_verdict = _flat_verdict(sp["density_retention"])
     if sp["density_retention"] is not None:
-        dens_verdict += f" ({dens_seq})"
+        dens_verdict += f" ({_fmt_ratio(sp['density_retention'])}× · {dens_seq})"
     thpt_verdict = _flat_verdict(sp["thpt_retention"])
+    if sp["thpt_retention"] is not None:
+        thpt_verdict += f" ({_fmt_ratio(sp['thpt_retention'])}×)"
 
     header = ["Nodes Tested", "Density Holds Flat?", "Throughput Holds Flat?"]
     lines = [heading, ""]

@@ -2299,7 +2299,7 @@ def test_scale_proof_renders_linearity_row():
     )
     out = render.render_scale_proof(results)
     assert "## Scale Proof (Linearity Check)" in out
-    assert "| 1 → 2 → 4 | ✅ Yes (1.88 → 1.86 → 1.85) | ✅ Yes |" in out
+    assert "| 1 → 2 → 4 | ✅ Yes (0.98× · 1.88 → 1.86 → 1.85) | ✅ Yes (0.99×) |" in out
 
 
 def test_scale_proof_measured_at_renders_dated_subline():
@@ -2393,8 +2393,66 @@ def test_scale_proof_density_retention_derived_when_absent():
     )
     out = render.render_scale_proof(results)
     # 1.9/2.0 = 0.95 within ±10% ⇒ ✅ Yes; thpt absent ⇒ pending
-    assert "✅ Yes (2 → 1.9)" in out
+    assert "✅ Yes (0.95× · 2 → 1.9)" in out
     assert "pending" in out  # thpt_retention column
+
+
+def test_scale_proof_throughput_warn_surfaces_its_ratio():
+    # The falsifiability fix: a ⚠️ throughput verdict must show the retention ratio that EARNED
+    # it (0.15 < 0.9 ⇒ ⚠️), not a bald token. Mirrors the stale live scale data where the
+    # throughput leg had no per-point series and rendered a number-less "⚠️ No".
+    results = _matrix_results(
+        _full_gvisor_scenarios(),
+        scale_proof={
+            "scale_points": [
+                {"node_count": 1, "density": 0.63},
+                {"node_count": 16, "density": 0.63},
+            ],
+            "density_retention": 1.0,
+            "thpt_retention": 0.15,
+        },
+    )
+    out = render.render_scale_proof(results)
+    # density flat ⇒ ✅ with its ratio; throughput sags ⇒ ⚠️ but now carries 0.15×
+    assert "✅ Yes (1× · 0.63 → 0.63)" in out
+    assert "⚠️ No (0.15×)" in out
+
+
+def test_scale_proof_throughput_ratio_absent_stays_bald_pending():
+    # thpt_retention absent AND underivable (no per-point throughput) ⇒ the verdict stays a bald
+    # "pending", never a fabricated ratio. Guards against surfacing a number that doesn't exist.
+    results = _matrix_results(
+        _full_gvisor_scenarios(),
+        scale_proof={
+            "scale_points": [
+                {"node_count": 1, "density": 1.88},
+                {"node_count": 2, "density": 1.86},
+            ],
+            "density_retention": 0.984,
+        },
+    )
+    out = render.render_scale_proof(results)
+    assert "✅ Yes (0.98× · 1.88 → 1.86)" in out
+    # throughput column: no ratio to show ⇒ bald pending, no "(...)" parenthetical
+    assert "pending" in out
+    assert "pending (" not in out
+
+
+def test_scale_proof_superlinear_throughput_surfaces_beat_ratio():
+    # A superlinear throughput beat (1.35 ≥ 0.9) reads ✅ and surfaces its 1.35× ratio — the
+    # falsifiability fix applies to the beat direction too, not just the sag.
+    results = _matrix_results(
+        _full_gvisor_scenarios(),
+        scale_proof={
+            "scale_points": [
+                {"node_count": 1, "density": 1.88},
+                {"node_count": 4, "density": 2.40},
+            ],
+            "thpt_retention": 1.35,
+        },
+    )
+    out = render.render_scale_proof(results)
+    assert "✅ Yes (1.35×)" in out
 
 
 def test_scale_proof_orders_points_by_node_count():
@@ -3283,7 +3341,7 @@ def test_cluster_scale_both_present_combined_section_demotes_subheadings():
     assert "## Scale Proof (Linearity Check)" not in out
     assert "## Concurrent Burst — TTFE at N simultaneous claims" not in out
     # both tables' data still lands under the merged section.
-    assert "| 1 → 2 → 4 | ✅ Yes (1.88 → 1.86 → 1.85) | ✅ Yes |" in out
+    assert "| 1 → 2 → 4 | ✅ Yes (0.98× · 1.88 → 1.86 → 1.85) | ✅ Yes (0.99×) |" in out
     assert "| 300 | Warm pool | 6.8743s | 9.393s | 0.392 | 0 | 100% |" in out
 
 

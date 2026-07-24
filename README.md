@@ -140,7 +140,7 @@ Four questions a bigger cluster raises: does throughput stay flat as you add nod
 
 | Nodes Tested | Density Holds Flat? | Throughput Holds Flat? |
 |---|---|---|
-| 1 → 2 → 4 → 8 → 16 | ✅ Yes (0.63 → 0.63 → 0.63 → 0.63 → 0.63) | ⚠️ No |
+| 1 → 2 → 4 → 8 → 16 | ✅ Yes (1× · 0.63 → 0.63 → 0.63 → 0.63 → 0.63) | ⚠️ No (0.15×) |
 
 _The density values in this row are the per-node density retained at each node count (a linearity series — does per-node density stay flat as the cluster grows?), not the absolute Max Density per vCPU (reported separately in DETAILS)._
 
