@@ -52,9 +52,13 @@ class TestClassifyRegime(unittest.TestCase):
 class TestExtractRungs(unittest.TestCase):
     def _record(self):
         # one warm rung with the classic 2x double-count: acq_n=36, ctrl_event_count=72
+        # (provenance-clean: controller_measured True + a real span source, so the
+        # ratio/rel-diff are not nulled by the degradation guard)
         return {
             "steps": [
-                {"controller_completed_per_s": 0.24663799, "ctrl_event_count": 72, "claims_created": 36},
+                {"controller_completed_per_s": 0.24663799, "ctrl_event_count": 72,
+                 "claims_created": 36, "controller_measured": True,
+                 "ctrl_span_source": "acq-window"},
             ],
             "literal_ttfe": {
                 "pareto": [
@@ -80,6 +84,86 @@ class TestExtractRungs(unittest.TestCase):
         r = mod.extract_rungs("x-warm.json", rec)[0]
         self.assertIsNone(r["ratio"])
         self.assertEqual(r["ctrl_event_count"], None)
+
+
+class TestCtrlProvenance(unittest.TestCase):
+    def test_measured_with_span_is_ok(self):
+        self.assertTrue(mod.ctrl_provenance_ok(
+            {"controller_measured": True, "ctrl_span_source": "acq-window"}))
+
+    def test_unmeasured_is_degraded(self):
+        # controller_measured False -> estimated span, not a real measurement
+        self.assertFalse(mod.ctrl_provenance_ok(
+            {"controller_measured": False, "ctrl_span_source": "acq-window"}))
+
+    def test_missing_span_source_is_degraded(self):
+        # provenance-blind: span source unrecorded
+        self.assertFalse(mod.ctrl_provenance_ok(
+            {"controller_measured": True, "ctrl_span_source": None}))
+
+    def test_absent_fields_are_degraded(self):
+        # a step that carries neither field cannot be trusted as measured
+        self.assertFalse(mod.ctrl_provenance_ok({}))
+
+
+class TestProvenanceExclusion(unittest.TestCase):
+    def _degraded_record(self):
+        # the legD-kata-cold shape: an UNMEASURED ctrl leg carrying a real
+        # ctrl_event_count that would otherwise be consumed into the ratio
+        return {
+            "steps": [
+                {"controller_completed_per_s": 0.1, "ctrl_event_count": 21,
+                 "controller_measured": False, "ctrl_span_source": "acq-window"},
+            ],
+            "literal_ttfe": {
+                "pareto": [
+                    {"offered_rate_per_s": 0.05, "acq_fulfilled_per_s": 0.05,
+                     "controller_completed_per_s": 0.1, "acq_n": 21},
+                ]
+            },
+        }
+
+    def test_degraded_rung_nulls_ratio_and_rel_diff(self):
+        r = mod.extract_rungs("permode-legD-kata-cold.json", self._degraded_record())[0]
+        # ctrl_event_count is preserved for diagnostics, but the derived axes
+        # are nulled so downstream populations exclude the unmeasured leg
+        self.assertEqual(r["ctrl_event_count"], 21)
+        self.assertTrue(r["provenance_degraded"])
+        self.assertIsNone(r["ratio"])
+        self.assertIsNone(r["rel_diff"])
+
+    def test_summarize_counts_degraded_by_regime(self):
+        rungs = [
+            {"regime": "warm_sub", "ratio": 1.75, "rel_diff": 0.5,
+             "provenance_degraded": False},
+            {"regime": "warm_sub", "ratio": None, "rel_diff": None,
+             "provenance_degraded": True},
+            {"regime": "cold", "ratio": None, "rel_diff": None,
+             "provenance_degraded": True},
+        ]
+        s = mod.summarize(rungs)
+        self.assertEqual(s["provenance_degraded_total"], 2)
+        self.assertEqual(s["provenance_degraded_by_regime"]["warm_sub"], 1)
+        self.assertEqual(s["provenance_degraded_by_regime"]["cold"], 1)
+
+    def test_verdict_holds_when_exclusion_empties_cold_control(self):
+        # warm reads pre-fix, but the ONLY cold rung is provenance-degraded
+        # (nulled ratio) -> cold control empty -> fail-closed INSUFFICIENT_DATA,
+        # never a definitive PRESENT/CLEARED on a mechanism that isn't isolated
+        rungs = [
+            {"regime": "warm_sub", "ratio": 1.75, "rel_diff": 0.5,
+             "provenance_degraded": False},
+            {"regime": "warm_sub", "ratio": 1.80, "rel_diff": 0.5,
+             "provenance_degraded": False},
+            {"regime": "warm_sub", "ratio": 1.70, "rel_diff": 0.5,
+             "provenance_degraded": False},
+            {"regime": "cold", "ratio": None, "rel_diff": None,
+             "provenance_degraded": True},
+        ]
+        v = mod.verdict(rungs)
+        self.assertEqual(v["state"], "INSUFFICIENT_DATA")
+        self.assertEqual(v["cold_provenance_degraded"], 1)
+        self.assertIn("provenance-degraded", v["reason"])
 
 
 class TestSummarize(unittest.TestCase):

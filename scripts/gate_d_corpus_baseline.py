@@ -26,6 +26,15 @@ What it computes, joining each pareto rung's acq leg to its ctrl raw counts
        - warm high-rate      : <1.0      (controller throughput-limited above the
                                           knee -- a DISTINCT confound, not replay)
 
+Provenance guard: the ctrl leg only counts toward any population when it is a
+genuine controller measurement (controller_measured is True AND ctrl_span_source
+is present). An unmeasured/estimated or provenance-blind ctrl leg is excluded
+from both the ratio and the rel-diff — a ratio built on an estimated denominator
+would let the cold CONTROL (the rung the verdict leans on to isolate the
+mechanism) rest on a non-measurement. Exclusions are surfaced, not silent; if the
+exclusion thins the cold control or the warm rungs below the minimum, the verdict
+falls to INSUFFICIENT_DATA (fail-closed HOLD), never a definitive call.
+
 Read-only over the committed corpus. No cluster, no network, no fire.
 
 Post-as#1087-merge expectation: the warm sub-saturation ratio collapses toward
@@ -109,6 +118,21 @@ def classify_regime(filename, offered_rate):
     return "warm_sub"
 
 
+def ctrl_provenance_ok(step):
+    """True iff this step's ctrl leg is a genuine controller measurement.
+
+    Gate-(d)'s whole verdict rests on the ctrl leg (ctrl_event_count / span)
+    being a real controller /metrics count, not an estimate. A step whose
+    controller_measured is not True, or whose ctrl_span_source is absent, is
+    provenance-degraded: its ctrl rate/count is a floor/estimate, so a ratio or
+    rel-diff built on it compares acq against an untrustworthy denominator.
+    Per the trust-surface fail-closed idiom, such a leg must not count toward a
+    graduation-permitting population — the verdict HOLDs on measured legs only.
+    """
+    return (step.get("controller_measured") is True
+            and bool(step.get("ctrl_span_source")))
+
+
 def extract_rungs(filename, record):
     """Join each literal_ttfe.pareto rung (acq leg) to its steps[] ctrl raw counts.
 
@@ -130,13 +154,27 @@ def extract_rungs(filename, record):
         offered = rung.get("offered_rate_per_s")
         step = steps_by_ctrl.get(round(float(ctrl_rate), 9), {}) if ctrl_rate is not None else {}
         ctrl_event_count = step.get("ctrl_event_count")
+        # A ctrl leg that is not a genuine controller measurement is
+        # provenance-degraded: null its ratio AND rel-diff so every downstream
+        # population (summarize + verdict) uniformly excludes it via the
+        # existing `is not None` filters. The exclusion is surfaced (not silent)
+        # via the provenance_degraded marker below — a quiet drop of a rung
+        # would itself be the kind of trust-surface degrade this guards against.
+        provenance_ok = ctrl_provenance_ok(step)
         ratio = (ctrl_event_count / acq_n) if (ctrl_event_count and acq_n) else None
+        rd = rel_diff(acq_rate, ctrl_rate)
+        if not provenance_ok:
+            ratio = None
+            rd = None
         rungs.append({
             "file": filename,
             "offered_rate_per_s": offered,
             "acq_n": acq_n,
             "ctrl_event_count": ctrl_event_count,
-            "rel_diff": rel_diff(acq_rate, ctrl_rate),
+            "controller_measured": step.get("controller_measured"),
+            "ctrl_span_source": step.get("ctrl_span_source"),
+            "provenance_degraded": not provenance_ok,
+            "rel_diff": rd,
             "ratio": ratio,
             "regime": classify_regime(filename, offered),
         })
@@ -162,10 +200,14 @@ def summarize(rungs):
         "rel_diff_pass_gate": sum(1 for x in rel if x <= GATE_TOL),
         "rel_diff_total": len(rel),
         "ratio_by_regime": {},
+        "provenance_degraded_total": sum(1 for r in rungs if r.get("provenance_degraded")),
+        "provenance_degraded_by_regime": {},
     }
     for regime in ("warm_sub", "cold", "warm_high"):
         vals = [r["ratio"] for r in rungs if r["regime"] == regime and r["ratio"] is not None]
         out["ratio_by_regime"][regime] = _stats(vals)
+        out["provenance_degraded_by_regime"][regime] = sum(
+            1 for r in rungs if r["regime"] == regime and r.get("provenance_degraded"))
     return out
 
 
@@ -193,12 +235,19 @@ def verdict(rungs):
     AMBIGUOUS (intermediate / mechanism-unclear, HOLD), INSUFFICIENT_DATA
     (too few warm rungs or no cold control, HOLD).
     """
+    # ratio / rel_diff on provenance-degraded rungs were already nulled in
+    # extract_rungs, so these `is not None` filters exclude an unmeasured ctrl
+    # leg here — the verdict populations are measured-leg-only by construction.
     warm_ratios = [r["ratio"] for r in rungs
                    if r["regime"] == "warm_sub" and r["ratio"] is not None]
     cold_ratios = [r["ratio"] for r in rungs
                    if r["regime"] == "cold" and r["ratio"] is not None]
     warm_rel = [r["rel_diff"] for r in rungs
                 if r["regime"] == "warm_sub" and r["rel_diff"] is not None]
+    cold_degraded = sum(1 for r in rungs
+                        if r["regime"] == "cold" and r.get("provenance_degraded"))
+    warm_degraded = sum(1 for r in rungs
+                        if r["regime"] == "warm_sub" and r.get("provenance_degraded"))
 
     def _v(state, reason, **extra):
         out = {"state": state, "reason": reason,
@@ -208,15 +257,21 @@ def verdict(rungs):
                "cold_ratio_median": (statistics.median(cold_ratios)
                                      if cold_ratios else None),
                "warm_pass_fraction": (sum(1 for x in warm_rel if x <= GATE_TOL)
-                                      / len(warm_rel)) if warm_rel else None}
+                                      / len(warm_rel)) if warm_rel else None,
+               "cold_provenance_degraded": cold_degraded,
+               "warm_provenance_degraded": warm_degraded}
         out.update(extra)
         return out
 
     if len(warm_ratios) < MIN_WARM_RUNGS or not cold_ratios or not warm_rel:
+        excl = ""
+        if cold_degraded or warm_degraded:
+            excl = (f" (excluded {warm_degraded} warm + {cold_degraded} cold "
+                    f"provenance-degraded ctrl legs)")
         return _v("INSUFFICIENT_DATA",
                   f"need >= {MIN_WARM_RUNGS} warm rungs with a ratio, a cold "
                   f"control, and warm rel-diffs; have warm_ratio={len(warm_ratios)} "
-                  f"cold={len(cold_ratios)} warm_rel={len(warm_rel)}")
+                  f"cold={len(cold_ratios)} warm_rel={len(warm_rel)}{excl}")
 
     warm_med = statistics.median(warm_ratios)
     cold_med = statistics.median(cold_ratios)
@@ -292,7 +347,12 @@ def main(argv):
         "warm_high": "warm high-rate (controller-lag <1.0)",
     }
     for regime, label in labels.items():
-        print(f"  {label:44} {_fmt(s['ratio_by_regime'][regime])}")
+        deg = s["provenance_degraded_by_regime"][regime]
+        deg_note = f"  [+{deg} excluded: provenance-degraded]" if deg else ""
+        print(f"  {label:44} {_fmt(s['ratio_by_regime'][regime])}{deg_note}")
+    if s["provenance_degraded_total"]:
+        print(f"provenance-degraded ctrl legs excluded (not controller-measured "
+              f"or span-source absent): {s['provenance_degraded_total']}")
     print(f"\nfalsification verdict: {v['state']}")
     print(f"  {v['reason']}")
     return 0
