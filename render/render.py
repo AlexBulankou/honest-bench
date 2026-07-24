@@ -3188,12 +3188,27 @@ def render_warm_vs_cold(results):
     # always defined and positive — this also closes an emitter speedup<=0.
     speedup = _fmt_num(wc["cold_ms"] / wc["warm_p50_ms"])
     cold = _COLD_LEG.get(wc.get("cold_start_mode"), _COLD_LEG_DEFAULT)
+    # Small-sample comparability guard (#414 sibling): the speedup is a cross-sample RANKING of
+    # the warm leg against the cold leg, so it inherits the same N>=TTFE_COMPARABILITY_MIN_N floor
+    # the matrix p95 cells and the build-over-build trend Δ already use. When the warm leg's p50
+    # rests on fewer than the floor's worth of claims the ratio may be sampling noise, so we (a)
+    # dagger the ratio wherever it is quoted and (b) swap the headline's portability CLAIM for an
+    # explicit provisional caveat — a "reproduce it on your own cluster" promise is exactly what an
+    # under-sampled ratio cannot keep. n_warm absent ⇒ sample size unknown ⇒ no marker (we mark
+    # KNOWN-low n, never an unknown as if it were low; mirrors the matrix's n-present gate).
+    low_n = "n_warm" in wc and wc["n_warm"] < TTFE_COMPARABILITY_MIN_N
+    mark = f" {_LOW_N_MARK}" if low_n else ""
+    portability = (
+        f"but this ratio rests on only n={wc['n_warm']} warm claims — fewer than "
+        f"N={TTFE_COMPARABILITY_MIN_N}, too few to rank reliably, so treat it as provisional."
+        if low_n else
+        "the ratio is the portable headline you can reproduce on your own cluster."
+    )
     lines = ["## Warm-vs-Cold Speedup", ""]
     lines.append(
-        f"A warm-pool provision is **{speedup}× faster** than {cold['descriptor']} "
+        f"A warm-pool provision is **{speedup}× faster**{mark} than {cold['descriptor']} "
         f"({rt_label}). {cold['mechanism']} Both legs are measured the same way "
-        f"({sem_label}); the ratio is the portable headline you can reproduce on your own "
-        "cluster.")
+        f"({sem_label}); {portability}")
     lines.append("")
     header = ["Leg", _SEMANTIC_LABELS[wc["semantic"]].split(" ")[0] + " (p50)"]
     lines.append("| " + " | ".join(header) + " |")
@@ -3207,7 +3222,7 @@ def render_warm_vs_cold(results):
     warm_n = f", n={wc['n_warm']}" if "n_warm" in wc else ""
     lines.append(f"| Warm-pool hit ({rt_label}{warm_n}) | {_fmt_secs(wc['warm_p50_ms'])} |")
     lines.append(f"| {cold['leg']} | {_fmt_secs(wc['cold_ms'])} |")
-    lines.append(f"| Speedup (warm is N× faster) | {speedup}× |")
+    lines.append(f"| Speedup (warm is N× faster) | {speedup}×{mark} |")
     lines.append("")
     n_note = f" over n={wc['n_warm']} warm claims" if "n_warm" in wc else ""
     lines.append(
@@ -3216,6 +3231,13 @@ def render_warm_vs_cold(results):
         "true-cold distribution — so half of warm claims and half of cold starts run slower "
         "than the values shown._")
     lines.append("")
+    if low_n:
+        lines.append(
+            f"_{_LOW_N_MARK} The warm leg's p50 is drawn from only n={wc['n_warm']} claims — "
+            f"fewer than the N={TTFE_COMPARABILITY_MIN_N} sample floor the page uses across its "
+            "cross-sample rankings (matrix p95 cells, build-over-build trend Δ); the speedup may "
+            "be sampling noise, not a stable ratio you can reproduce._")
+        lines.append("")
     # Machine-class-change caveat (PR#313 review): data-keyed off the SAME
     # run-level provenance the build banner stamps (see _machine_class_caveat) — renders
     # only when this run's rig differs from the prior published run's, so a speedup delta

@@ -2725,6 +2725,66 @@ def test_warm_vs_cold_unknown_mode_inert():
     assert render.render_warm_vs_cold(results) == ""
 
 
+# --- warm-vs-cold small-sample comparability guard (#414 sibling) -------------------------
+def test_warm_vs_cold_low_n_marks_speedup_in_headline_and_table():
+    # A warm leg below the N=30 comparability floor daggers the ratio wherever it is quoted —
+    # the headline number AND the table cell — so a reader cannot quote either surface unmarked.
+    out = render.render_warm_vs_cold(
+        _matrix_results(_full_gvisor_scenarios(), warm_vs_cold=_wc(n_warm=10)))
+    assert f"**10× faster** {render._LOW_N_MARK} than" in out
+    assert f"| Speedup (warm is N× faster) | 10× {render._LOW_N_MARK} |" in out
+
+
+def test_warm_vs_cold_low_n_headline_drops_portability_claim():
+    # The block's whole selling point is "reproduce it on your own cluster" — the one promise an
+    # under-sampled ratio CANNOT keep. Below the floor the headline must swap that claim for an
+    # explicit provisional caveat, not keep over-claiming portability.
+    out = render.render_warm_vs_cold(
+        _matrix_results(_full_gvisor_scenarios(), warm_vs_cold=_wc(n_warm=10)))
+    assert "portable headline you can reproduce" not in out
+    assert "rests on only n=10 warm claims" in out
+    assert "N=30" in out
+    assert "treat it as provisional" in out
+
+
+def test_warm_vs_cold_low_n_footnote_present():
+    # A dedicated dagger footnote explains the marker once and names the shared page-wide floor.
+    out = render.render_warm_vs_cold(
+        _matrix_results(_full_gvisor_scenarios(), warm_vs_cold=_wc(n_warm=10)))
+    assert f"_{render._LOW_N_MARK} The warm leg's p50 is drawn from only n=10 claims" in out
+    assert "N=30 sample floor" in out
+
+
+def test_warm_vs_cold_at_floor_is_not_low_n():
+    # Boundary: n_warm == the floor is NOT below it (strict <), so no marker and the portability
+    # claim stands — the guard must never fire one sample early.
+    out = render.render_warm_vs_cold(
+        _matrix_results(_full_gvisor_scenarios(), warm_vs_cold=_wc(n_warm=30)))
+    assert render._LOW_N_MARK not in out
+    assert "portable headline you can reproduce" in out
+    assert "provisional" not in out
+
+
+def test_warm_vs_cold_n_warm_absent_never_marked_low_n():
+    # Absent n_warm ⇒ sample size UNKNOWN, not known-low. We mark known-low n only; an unknown is
+    # never rendered as if it were undersized (that would be a fabricated caveat). The pre-existing
+    # portability claim is retained unchanged.
+    wc = _wc()
+    del wc["n_warm"]
+    out = render.render_warm_vs_cold(_matrix_results(_full_gvisor_scenarios(), warm_vs_cold=wc))
+    assert render._LOW_N_MARK not in out
+    assert "portable headline you can reproduce" in out
+
+
+def test_warm_vs_cold_high_n_byte_unchanged_no_marker():
+    # The common case (default n_warm=200, well above the floor) renders with no marker and the
+    # original portability headline — the guard is invisible until a real undersized leg appears.
+    out = render.render_warm_vs_cold(
+        _matrix_results(_full_gvisor_scenarios(), warm_vs_cold=_wc()))
+    assert render._LOW_N_MARK not in out
+    assert "the ratio is the portable headline you can reproduce on your own cluster." in out
+
+
 # --- step-up saturation render (#4030 saturation_point framing) ---------------------------
 def _su(**over):
     base = {
