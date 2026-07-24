@@ -609,6 +609,43 @@ def _classify_latencies(
     return (absolute_ok or separation_ok), breakdown
 
 
+def _add_gate_diagnostic_metrics(
+    sla_metrics: dict,
+    breakdown: dict,
+    *,
+    warm_max: float | None,
+    pool_replicas: int,
+) -> dict:
+    """Mutate + return `sla_metrics` with numeric hb#379 gate-diagnostic keys.
+
+    The excerpt string that names WHY the gate passed/failed (warm_max /
+    cold_path_min / separation) is deliberately NEVER persisted (run.py:
+    `del excerpt`, the raw-failure_excerpt public-safety rule), so a committed
+    FAIL row previously carried no way to tell "absolute ceiling missed" from
+    "separation ratio missed" or by how much. These three pure numbers close
+    that gap without touching the excerpt-scrubbing rule. Numeric-only keys
+    need no results_schema change — `_coerce_sla_metrics` auto-passes any
+    finite-number key by shape, not by name allow-list.
+
+    No-ops (returns `sla_metrics` unchanged) when there is no warm tier to
+    describe: pool_replicas == 0 (cold-baseline mode, no gate applies),
+    sla_metrics isn't a dict, or warm_max is None (under-delivery — the gate
+    already emits its own honest-FAIL triple with empty sla_metrics).
+    """
+    if pool_replicas <= 0 or not isinstance(sla_metrics, dict) or warm_max is None:
+        return sla_metrics
+    sla_metrics["warmpool_gate_warm_max_ms"] = warm_max * 1000.0
+    if breakdown["cold_path_min_s"] is not None:
+        sla_metrics["warmpool_gate_cold_min_ms"] = (
+            breakdown["cold_path_min_s"] * 1000.0
+        )
+    if breakdown["separation_observed"] is not None:
+        sla_metrics["warmpool_gate_separation_ratio"] = (
+            breakdown["separation_observed"]
+        )
+    return sla_metrics
+
+
 def _activation_window_s(
     create_times: dict[str, float], bound_at: dict[str, float],
 ) -> float | None:
@@ -1062,6 +1099,9 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
                 if warm_max is not None
                 else {}
             )
+        sla_metrics = _add_gate_diagnostic_metrics(
+            sla_metrics, breakdown, warm_max=warm_max, pool_replicas=_POOL_REPLICAS,
+        )
         sep = breakdown["separation_observed"]
         sep_str = f"{sep:.2f}x" if sep is not None else "<no-cold-tier>"
         clause = (
