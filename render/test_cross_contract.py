@@ -513,7 +513,7 @@ def test_emit_to_render_scale_proof_convergence_doc_linearity():
     # (the asymmetric verdict); density verdict carries the per-node sequence inline.
     out = render.render_scale_proof(results)
     assert "## Scale Proof (Linearity Check)" in out
-    assert "| 1 → 2 → 4 | ✅ Yes (1.88 → 1.88 → 1.88) | ✅ Yes |" in out, (
+    assert "| 1 → 2 → 4 | ✅ Yes (1× · 1.88 → 1.88 → 1.88) | ✅ Yes (1×) |" in out, (
         "scale-proof linearity row drifted from the doc's flat claim:\n" + out
     )
 
