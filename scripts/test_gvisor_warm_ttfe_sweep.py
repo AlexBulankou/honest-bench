@@ -8,6 +8,16 @@ testable decision is `assemble_record` — that the stamp is built against
 slo_rate read-back guard's contract. These tests pin exactly that, cross-checking the
 numeric p95/count against the prom_ttfe primitives rather than re-deriving quantile math.
 
+The second block (test_*_graduat* / test_*_never_graduates* / test_*_fails_closed) is
+the END-TO-END composition proof: the sweep's REAL `assemble_record` output, flowed
+through the exact `stepup_adapter -> slo_rate` seam the render matrix uses, graduates the
+1s bar to the BARE `true_ttfe` basis (off the `***U` acq-uncorroborated floor the gVisor
+warm-pool cell rests on today). The per-seam units are each already tested in isolation
+(assemble_record here; adapter in harness/test_stepup_adapter.py; basis-pick in
+harness/test_slo_rate.py) — this composition pins that they COMPOSE under the producer's
+exact emitted shape, so a cross-contract drift (e.g. a `params.cluster_nodes` rename)
+fails here OFFLINE, before the heavy shared-cluster fire (#4364), not after it.
+
 The module sets three os.environ knobs at import (runtime/substrate/namespace) via
 setdefault, so importing it here is side-effect-safe.
 """
@@ -19,6 +29,8 @@ _sys.path.insert(0, _HB_ROOT)
 _sys.path.insert(0, _os.path.join(_HB_ROOT, "scripts"))
 
 from harness import prom_ttfe as p  # noqa: E402
+from harness import slo_rate as _slo  # noqa: E402
+from harness import stepup_adapter as _adapter  # noqa: E402
 import gvisor_warm_ttfe_sweep as sweep  # noqa: E402
 
 
@@ -156,6 +168,75 @@ def test_module_config_constants():
     _check(sweep.WARMUP_STABILITY_POLLS > 1,
            "hb#379: a warm gate needs >1 consecutive poll to reject a draining peak")
     _check(sweep.RUNTIME_CLASS == "gvisor", "runtime pinned to gvisor")
+
+
+def _graduate(rec):
+    """Producer record -> adapter flatten -> slo_rate basis decision.
+
+    The exact seam the render matrix uses: `stepup_adapter.stepup_nested_to_flat`
+    relabels the nested producer record into the flat shape, then
+    `slo_rate.slo_sla_metrics_from_stepup` picks the basis + fills the bars. Returns
+    the sla_metrics dict ({} when nothing derivable).
+    """
+    return _slo.slo_sla_metrics_from_stepup(_adapter.stepup_nested_to_flat(rec))
+
+
+def test_warm_record_graduates_1s_bar_to_true_ttfe():
+    # THE load-bearing end-to-end honesty proof of what firing #4364 buys: a real
+    # webhook-corroborated WARM sweep record graduates the 1s bar to the BARE true_ttfe
+    # basis (off the ***U acq-uncorroborated floor the gVisor warm-pool cell rests on
+    # today). Pinned offline so a cross-contract shape drift fails HERE, not after the
+    # heavy shared-cluster fire.
+    rec = sweep.assemble_record(
+        [_W0, _W1, _W2], _RATES,
+        runtime_class="gvisor", node_count=4, warmpool_size=2,
+    )
+    out = _graduate(rec)
+    _check(out.get("thpt_slo_basis") == "true_ttfe",
+           f"warm+corroborated -> bare true_ttfe basis (got {out.get('thpt_slo_basis')})")
+    _check("thpt_under_1s_per_cluster" in out,
+           "the 1s bar graduates (present) — the #4364 residual this sweep closes")
+    _check("thpt_under_5s_per_cluster" in out,
+           "the 5s bar also derives under the true_ttfe basis")
+    _check(out.get("thpt_cluster_node_count") == 4,
+           "node_count flows params.cluster_nodes -> flat.node_count -> out")
+    _check("thpt_slo_n_exec_ok" not in out,
+           "a true_ttfe triple never carries the literal-basis exec-sample count")
+    # The graduated 1s rate is the slo_rate primitive on the SAME pareto, not a
+    # fabricated number: max ready_per_s among rungs whose p95 <= 1000ms.
+    flat = _adapter.stepup_nested_to_flat(rec)
+    exp_1s = _slo.slo_cluster_rate(flat["pareto_points"], 1000)
+    _check(exp_1s is not None and out["thpt_under_1s_per_cluster"] == round(exp_1s, 3),
+           "graduated 1s rate == slo_cluster_rate primitive (honesty spine preserved)")
+
+
+def test_cold_only_record_never_graduates_as_warm():
+    # A pool that measured COLD (warm launch_type absent -> empty warm pareto) never
+    # graduates the warm true_ttfe basis, even though the full-population webhook count
+    # accrues. No warm bars AND no literal_ttfe leg -> the seam yields honest nothing
+    # ({}): a cold measurement is NEVER dressed as a warm graduated rate.
+    c0 = _cold_scrape([(1000, 0), (2500, 0), ("+Inf", 0)], 0, 0.0)
+    c1 = _cold_scrape([(1000, 0), (2500, 6), ("+Inf", 10)], 10, 22000.0)
+    rec = sweep.assemble_record(
+        [c0, c1], [_RATES[0]],
+        runtime_class="gvisor", node_count=4, warmpool_size=2,
+    )
+    _check(_graduate(rec) == {}, "cold-only -> no basis, honest empty seam output")
+
+
+def test_webhook_absent_record_fails_closed():
+    # Webhook not deployed (no HEADLINE_METRIC anywhere): empty pareto + count None.
+    # The read-back guard fails closed -> no true_ttfe basis. Proves a fire against a
+    # cluster whose webhook is dead can't silently fabricate a graduated bar.
+    empty = "# no webhook metric yet\n"
+    rec = sweep.assemble_record(
+        [empty, empty, empty], _RATES,
+        runtime_class="gvisor", node_count=4, warmpool_size=2,
+    )
+    out = _graduate(rec)
+    _check(out.get("thpt_slo_basis") != "true_ttfe",
+           "webhook-absent must never graduate the true_ttfe basis")
+    _check(out == {}, "no metric -> honest empty seam output")
 
 
 if __name__ == "__main__":
