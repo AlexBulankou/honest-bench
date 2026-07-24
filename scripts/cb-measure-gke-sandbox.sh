@@ -1,0 +1,199 @@
+#!/usr/bin/env bash
+# Extracted from cloudbuild-refresh-gke-sandbox.yaml's `measure` step (was an
+# inline `args: [-c, |...]` block scalar). The inline script grew past Cloud
+# Build's per-arg 10000-character limit (10837 chars at extraction time,
+# confirmed via `gcloud builds triggers describe ... --format=json`) and the
+# trigger stopped firing at all — "invalid .steps field: build step 1 arg 1
+# too long (max: 10000)" on ANY invocation, not just a substitution-specific
+# one. This file is the fix: keep the logic, move it out of the YAML so the
+# step's own `args` collapses to a short file reference.
+#
+# Because this now runs as a real script (not YAML text CB's substitution
+# engine scans), CB substitutions (${_REGION} etc.) can no longer be
+# dereferenced inline here — they must be resolved at the step-config level
+# via `env:`/`secretEnv:` and read here as plain shell env vars. The step's
+# `env:` block sets HB_REGION / HB_KEEP_CLUSTER_ON_FAILURE / BENCH_MACHINE_TYPE
+# for exactly this reason. Likewise, the doubled `$$` that CB-embedded scripts
+# require (to survive the substitution scanner) is gone — single `$` is
+# correct here, same as any normal bash script.
+set -euo pipefail
+
+REGION="$HB_REGION"
+# Short, valid GKE cluster name (<=40 chars, starts with a letter). BUILD_ID
+# is a 36-char UUID — too long to prefix — so key on a timestamp; a manual
+# trigger fires one at a time, so collision is not a concern.
+CLUSTER="hb-gvisor-ci-$(date +%s)"
+
+# Guaranteed teardown: fires on normal exit, `set -e` abort, or SIGTERM
+# (build timeout). The CB-native stand-in for `if: always()`. On a
+# FAILED measure step, _KEEP_CLUSTER_ON_FAILURE=1 (hb#311) skips the
+# delete so the cluster stays live for fast iteration — a successful
+# exit always tears down regardless of the flag.
+cleanup() {
+  local exit_code=$?
+  kill "${NODE_SAMPLER_PID:-}" 2>/dev/null || true
+  if [ "$exit_code" -ne 0 ] && [ "$HB_KEEP_CLUSTER_ON_FAILURE" = "1" ]; then
+    echo "==> [trap] measure FAILED (exit $exit_code) and _KEEP_CLUSTER_ON_FAILURE=1 — leaving cluster $CLUSTER live for debugging."
+    echo "==> [trap] manual reap when done: gcloud container clusters delete $CLUSTER --region $REGION --quiet"
+    return 0
+  fi
+  echo "==> [trap] tearing down ephemeral cluster $CLUSTER"
+  # Loud on failure (hb#382 follow-up): a bare `|| true` here used to
+  # swallow a mid-build IAM-strip 403 with zero build-time signal --
+  # the ONLY backstop was the age-based orphan reaper, up to ~90min
+  # later. Capture the real exit code and, on failure, (a) print a
+  # greppable ERROR line in the build log and
+  # (b) best-effort POST an immediate alert through the same #s-dev
+  # webhook sdev-delta-notify uses below, so a leak is known at
+  # build-failure time instead of on the reaper's next sweep. The
+  # delete's exit code is deliberately NOT re-raised as the step's
+  # own exit status: cleanup() runs inside an EXIT trap, so
+  # returning nonzero from it cannot change the build's
+  # already-determined exit code anyway (bash locks that in before
+  # running EXIT traps), and trying to would only risk masking the
+  # real measure-step failure this trap is reporting on.
+  # `local del_exit=$?` inside `if ! cmd; then` would capture the
+  # NEGATED test's status (always 0), not cmd's real exit -- so the
+  # delete's actual code is captured via `||` BEFORE the `if` runs.
+  local del_exit=0
+  gcloud container clusters delete "$CLUSTER" --region "$REGION" --quiet || del_exit=$?
+  if [ "$del_exit" -ne 0 ]; then
+    echo "==> [trap] ERROR: teardown FAILED (exit $del_exit) for cluster $CLUSTER in $REGION -- likely LEAKED and still billing. Manual reap: gcloud container clusters delete $CLUSTER --region $REGION --quiet"
+    if [ -n "${HB_SDEV_WEBHOOK:-}" ]; then
+      curl -sS -X POST -H "Content-Type: application/json" \
+        -d "{\"text\": \"honest-bench hb-refresh-gke-sandbox: teardown FAILED (exit $del_exit) for cluster $CLUSTER in $REGION -- likely leaked and still billing. Backstopped by the age-based orphan reaper (~90min), but check now: gcloud container clusters delete $CLUSTER --region $REGION --quiet\"}" \
+        "${HB_SDEV_WEBHOOK}" >/dev/null || echo "==> [trap] WARNING: #s-dev alert post also failed (non-fatal) -- relying on the orphan reaper backstop"
+    fi
+  fi
+}
+trap cleanup EXIT
+
+# kubeconfig isolated to /workspace so we never touch a shared path.
+export KUBECONFIG=/workspace/hb-refresh.kubeconfig
+
+# Harness deps. The cloud-sdk image's python3 is PEP-668 externally-managed,
+# so --break-system-packages is required (container is ephemeral — safe).
+pip install --quiet --no-cache-dir --break-system-packages -r harness/requirements.txt
+
+# `--sandbox` is NOT a `clusters create` flag at all (only `node-pools
+# create` has it — confirmed via `gcloud container clusters create --help`,
+# zero gVisor-related flags). #304's fix only corrected the flag's
+# syntax (space -> =) while the real defect was targeting the wrong
+# resource, so the trigger kept failing "unrecognized arguments" even
+# after that merge. Fix: create the cluster with a plain default pool,
+# then add a dedicated gVisor-sandboxed node pool (mirrors the
+# the persistent internal cluster's terraform: gVisor is per-nodepool, not
+# per-cluster). Harness pods request runtimeClassName=gvisor and land
+# on the sandboxed pool via its auto-applied taint/toleration.
+# --enable-network-policy (Calico) mirrors the persistent internal
+# cluster's terraform config. Without it the control-plane isolation
+# badges (cross_tenant_network_isolation, default_deny_egress) read
+# FAIL — not a flake, a real enforcement gap: NetworkPolicy objects
+# admit cleanly but nothing enforces them. See #314.
+echo "==> creating ephemeral cluster $CLUSTER in $REGION"
+gcloud container clusters create "$CLUSTER" \
+  --region "$REGION" \
+  --release-channel rapid \
+  --machine-type "$BENCH_MACHINE_TYPE" \
+  --node-locations "$REGION-a" \
+  --num-nodes 1 \
+  --enable-autoscaling --min-nodes 1 --max-nodes 3 \
+  --enable-network-policy \
+  --no-enable-basic-auth --no-issue-client-certificate
+
+echo "==> adding gVisor-sandboxed node pool to $CLUSTER"
+gcloud container node-pools create hb-gvisor-pool \
+  --cluster "$CLUSTER" \
+  --region "$REGION" \
+  --machine-type "$BENCH_MACHINE_TYPE" \
+  --node-locations "$REGION-a" \
+  --num-nodes 1 \
+  --enable-autoscaling --min-nodes 1 --max-nodes 3 \
+  --sandbox=type=gvisor
+
+gcloud container clusters get-credentials "$CLUSTER" --region "$REGION"
+
+# Background node-count sampler (hb#319 diagnostic): warmpool_cold_start asks
+# for 30 resident + 40 claims on hb-gvisor-pool's 1-3 node autoscale ceiling —
+# the leading hypothesis for hb#318's "warm slower than cold" anomaly is that
+# the burst saturates the 1-node floor and a reactive GKE scale-up (VM boot +
+# gVisor runtime init + kubelet join) lands inside the measured bind-time
+# window, smearing "warm" and "cold" together. This can't be reconstructed
+# post-hoc (the cluster is ephemeral, no retained autoscaler event history),
+# so sample hb-gvisor-pool's node count across the WHOLE measure phase and
+# print it at the end — confirms or rules out the ceiling directly from the
+# next fire's build log, no separate debugging fire required. Best-effort:
+# a sampler hiccup must never fail the measure step over a diagnostic.
+#
+# Stream EACH sample line to stdout as it's taken (prefixed hb319-sample,
+# easy to grep out of the full step log), not only the end-of-window `cat`
+# below. The first live fire (hb#319) lost the trailing `cat` dump to a
+# build-infra log-sink hiccup with the file itself still intact but the
+# one-shot end-of-window print never landing in the persisted log — spreading
+# the same data across ~20min of small, already-streamed lines makes a
+# single late-window log-sink gap survivable (only that gap's samples are
+# lost, not the whole series). The file + final `cat` stay as a convenience
+# recap; the per-sample echo is now the durable copy.
+NODE_SAMPLE_LOG=/workspace/hb319-node-count-sample.log
+: > "$NODE_SAMPLE_LOG"
+( while true; do
+    sample="hb319-sample $(date -u +%FT%TZ) nodes=$(kubectl get nodes -l cloud.google.com/gke-nodepool=hb-gvisor-pool --no-headers 2>/dev/null | wc -l | tr -d ' ')"
+    echo "$sample" || true
+    printf '%s\n' "$sample" >> "$NODE_SAMPLE_LOG" 2>/dev/null || true
+    sleep 3
+  done ) &
+NODE_SAMPLER_PID=$!
+
+# Node-image / gVisor runsc version provenance (hb#317, mirrors
+# machine_type's hb#313 pattern). These can only be resolved at
+# runtime against the live cluster (unlike BENCH_MACHINE_TYPE, which is
+# a static substitution known at submit time), so they're captured here
+# as inline `export`s consumed by the harness.run invocation below rather
+# than as static `env:` list entries.
+echo "==> capturing node-image / runsc version for provenance"
+gvisor_node=$(kubectl get nodes -l cloud.google.com/gke-nodepool=hb-gvisor-pool \
+  -o jsonpath='{.items[0].metadata.name}')
+# Node image: kubeletVersion carries the GKE build suffix (e.g.
+# v1.31.1-gke.1846000) that maps 1:1 to a node image release — a raw
+# osImage string (e.g. "Container-Optimized OS from Google") is too
+# generic to diff across GKE releases, so kubeletVersion is the proxy.
+export BENCH_NODE_IMAGE=$(kubectl get node "$gvisor_node" \
+  -o jsonpath='{.status.nodeInfo.kubeletVersion}' 2>/dev/null || echo "")
+# runsc has no K8s-API-visible version — it's a binary on the node's host
+# filesystem (GKE ships it at /home/kubernetes/bin/runsc). `kubectl debug
+# node/...` is the standard no-SSH way to chroot into a node's root fs;
+# the debug pod it creates is torn down along with the whole ephemeral
+# cluster by this step's EXIT trap. Best-effort: a failure here must
+# never fail the measure step over a nice-to-have provenance field
+# (fail open, not fail closed — this is metadata, not a benchmark
+# result). NOTE: the exact chroot path may need adjustment on the first
+# live fire (hb#311's "fire-as-linter" cost applies here too).
+export BENCH_RUNSC_VERSION=$(kubectl debug "node/$gvisor_node" \
+  --image=busybox -q -- chroot /host /home/kubernetes/bin/runsc --version \
+  2>/dev/null | head -1 | awk '{print $NF}' || echo "")
+echo "==> node_image=$BENCH_NODE_IMAGE runsc_version=$BENCH_RUNSC_VERSION"
+
+echo "==> installing OSS controller from upstream main"
+bash recipe/install-controller-from-main.sh
+
+# hb#5396: deploy the upstream TTFE-true mutating webhook (asbx#761) so
+# SandboxClaim CREATE is stamped with agents.x-k8s.io/webhook-first-observed-at,
+# giving the harness a ms-precision t0 for ClaimStartupLatency (the true_ttfe
+# basis). Runs AFTER the controller install (registers the SandboxClaim CRD +
+# the agent-sandbox-system namespace the webhook needs) and BEFORE harness.run
+# (the claims it measures must already be webhook-stamped).
+echo "==> deploying TTFE-true webhook (asbx#761, hb#5396)"
+bash recipe/deploy-ttfe-webhook.sh
+
+echo "==> running sandbox harness (gke-sandbox / gVisor)"
+python3 -m harness.run --product sandbox
+
+kill "$NODE_SAMPLER_PID" 2>/dev/null || true
+echo "==> hb-gvisor-pool node count over the measure window (hb#319 diagnostic, recap — the durable copy is the hb319-sample lines streamed above):"
+cat "$NODE_SAMPLE_LOG" 2>/dev/null || echo "(no samples captured)"
+
+echo "==> rendering README/DETAILS from results"
+python3 -m render.generate
+
+echo "==> public-safety gate (fail-closed)"
+bash scripts/check-public-safety.sh
