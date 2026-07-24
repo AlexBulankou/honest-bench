@@ -51,6 +51,7 @@ from schema import (
     WARM_BIND_FIELDS,
     WARM_POOL_ACQUISITION_FIELDS,
     WARM_VS_COLD_FIELDS,
+    WARMPOOL_SEPARATION_MIN_RATIO,
     _ISO,
 )
 from wip import NA_BY_CONSTRUCTION, build_work_in_progress, link_pending, wip_link
@@ -1902,6 +1903,90 @@ def _warm_cold_inversion_caveat(results, kata_results=None):
     )
 
 
+def _warmpool_separation_caveat(results, kata_results=None):
+    """Loud disclosure when the warm-pool separation ratio is below its gate.
+
+    warmpool_cold_start emits warmpool_gate_separation_ratio = cold_min / warm_max — the factor
+    by which the slowest warm-pool hit beats the fastest unique-image cold claim. It is the
+    CANONICAL warm-pool trust metric: a real pre-warmed pool hands off already-running sandboxes,
+    so its slowest hit should still clear the fastest cold start by a wide margin. The gate target
+    is WARMPOOL_SEPARATION_MIN_RATIO (1.8x). A ratio at ~1x means the warm and cold populations
+    overlap — "warm" and "cold" are statistically indistinguishable, so the published warm tier is
+    not demonstrably a fast path at all.
+
+    This is the QUANTITATIVE companion to _warm_cold_inversion_caveat: that caveat fires only when
+    warm p95 STRICTLY exceeds cold p95 (a backwards central tendency); this one fires on the
+    weaker-but-still-broken condition that the two distributions do not cleanly separate, which
+    holds even when warm p95 sits just below cold p95. Per #4420 the ratio is disclosed rather
+    than left un-rendered while it fails its gate.
+
+    Read from the RAW emit (the three warmpool_gate_* keys are not public matrix cells), so it
+    adds no cell and no schema-contract change. Cause-agnostic (asserts no mechanism), gated on
+    the warm row N >= TTFE_COMPARABILITY_MIN_N so it never fires on sampling noise, skips pending
+    rows, and AUTO-CLEARS the instant a refresh returns the ratio at/above the gate. Returns ""
+    when every runtime separates cleanly (or the metric is absent) so the caller can append it
+    unconditionally. Mirrors _warm_cold_inversion_caveat's shape.
+    """
+    prov = _clean_provenance(results.get("provenance"))
+    measured_runtime = prov.get("runtime") or "gvisor"
+    sources = {measured_runtime: _matrix_scenarios(results.get("scenarios"))}
+    raw_sources = {measured_runtime: results.get("scenarios")}
+    if (
+        isinstance(kata_results, dict)
+        and kata_results.get("product") == "sandbox-kata"
+        and "kata-microvm" not in sources
+    ):
+        kp = _clean_provenance(kata_results.get("provenance"))
+        if kp.get("runtime") == "kata-microvm":
+            sources["kata-microvm"] = _matrix_scenarios(kata_results.get("scenarios"))
+            raw_sources["kata-microvm"] = kata_results.get("scenarios")
+
+    failing = []  # (label, warm_n, ratio, warm_max_ms, cold_min_ms)
+    for rt in MATRIX_RUNTIMES:
+        rt_scen = sources.get(rt)
+        if rt_scen is None:
+            continue
+        warm = rt_scen.get("warmpool_cold_start")
+        if not warm:
+            continue
+        warm_n = warm.get("n")
+        if not isinstance(warm_n, int) or isinstance(warm_n, bool):
+            continue
+        if warm_n < TTFE_COMPARABILITY_MIN_N:
+            continue
+        if warm.get("outcome") == "pending":
+            continue
+        raw = raw_sources.get(rt)
+        ratio = _raw_sla_p95(raw, "warmpool_cold_start", "warmpool_gate_separation_ratio")
+        if ratio is None or ratio >= WARMPOOL_SEPARATION_MIN_RATIO:
+            continue
+        warm_max = _raw_sla_p95(raw, "warmpool_cold_start", "warmpool_gate_warm_max_ms")
+        cold_min = _raw_sla_p95(raw, "warmpool_cold_start", "warmpool_gate_cold_min_ms")
+        failing.append((RUNTIME_LABELS[rt], warm_n, ratio, warm_max, cold_min))
+    if not failing:
+        return ""
+
+    def _bounds(warm_max, cold_min):
+        if warm_max is None or cold_min is None:
+            return ""
+        return f" (slowest warm {_fmt_secs(warm_max)} vs fastest cold {_fmt_secs(cold_min)})"
+
+    who = "; ".join(
+        f"**{lbl}** (warm count={wn}): {ratio:.3g}x{_bounds(wmax, cmin)}"
+        for lbl, wn, ratio, wmax, cmin in failing
+    )
+    return (
+        "> ⚠️ **Warm/cold separation below gate:** the warm-pool separation ratio "
+        "(fastest cold start ÷ slowest warm-pool hit) is below the "
+        f"{WARMPOOL_SEPARATION_MIN_RATIO:g}x gate for {who} — at ~1x the warm and cold "
+        "populations overlap, so the published warm tier is not demonstrably faster than a "
+        f"unique-image cold start. The warm row clears the N={TTFE_COMPARABILITY_MIN_N} floor, so "
+        "this is not a small-sample artifact. The cause is not asserted here (the pool may be "
+        "under-delivering ready replicas, blending genuinely-cold claims into the warm tier); a "
+        "later refresh whose ratio returns to the gate clears this."
+    )
+
+
 def render_north_star_caption(results, kata_results=None):
     """One-line measured-verdict captions for the <1s North Star + 0.5s stretch bar.
 
@@ -1953,11 +2038,14 @@ def render_north_star_caption(results, kata_results=None):
     delta_caveat = _north_star_delta_caveat(results, kata_results)
     fail_caveat = _north_star_fail_caveat(rows)
     inversion_caveat = _warm_cold_inversion_caveat(results, kata_results)
+    separation_caveat = _warmpool_separation_caveat(results, kata_results)
     out = north_star + "\n\n" + stretch
     if fail_caveat:
         out += "\n\n" + fail_caveat
     if inversion_caveat:
         out += "\n\n" + inversion_caveat
+    if separation_caveat:
+        out += "\n\n" + separation_caveat
     if caveat:
         out += "\n\n" + caveat
     if delta_caveat:

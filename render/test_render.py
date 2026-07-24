@@ -4737,6 +4737,167 @@ def test_warm_cold_inversion_caveat_bind_absent_falls_back_to_ttfe():
 
 
 # ---------------------------------------------------------------------------
+# warmpool separation-ratio disclosure (_warmpool_separation_caveat). The
+# warmpool_cold_start scenario emits warmpool_gate_separation_ratio =
+# cold_min / warm_max (+ the two bound keys), but those three warmpool_gate_*
+# keys are not public matrix cells, so the caveat reads them from the RAW emit.
+# The QUANTITATIVE companion to the inversion caveat above: inversion fires only
+# on strict warm p95 > cold p95; separation fires on the weaker-but-broken
+# "distributions don't cleanly separate" (ratio < 1.8x), which holds even when
+# warm p95 sits just below cold p95. Per #4420 the failing ratio is disclosed
+# rather than left un-rendered. Gated on the warm row N >= 30 so a low-N draw
+# never trips it; auto-clears the instant the ratio returns to the gate.
+# ---------------------------------------------------------------------------
+
+def _separation_scenarios(ratio, warm_n=30, warm_max=None, cold_min=None,
+                          outcome="PASS"):
+    # gVisor scenario list carrying the three warmpool_gate_* keys in the RAW
+    # warmpool_cold_start sla_metrics. warm_max/cold_min are optional so the
+    # bounds-omitted-gracefully path can be exercised. ratio=None omits the key
+    # entirely (the absent-metric no-false-fire case).
+    warm_m = {"ttfe_p50_ms": 400, "ttfe_p95_ms": 8500}
+    if ratio is not None:
+        warm_m["warmpool_gate_separation_ratio"] = ratio
+    if warm_max is not None:
+        warm_m["warmpool_gate_warm_max_ms"] = warm_max
+    if cold_min is not None:
+        warm_m["warmpool_gate_cold_min_ms"] = cold_min
+    return [
+        {
+            "name": "warmpool_cold_start", "outcome": outcome, "n": warm_n,
+            "sla_metrics": warm_m,
+        },
+    ]
+
+
+def test_warmpool_separation_caveat_fires_when_ratio_below_gate():
+    # ratio 1.02x << 1.8x, warm N>=30 — the live gVisor state. Must disclose,
+    # name the ratio, and carry the slowest-warm/fastest-cold bounds.
+    out = render._warmpool_separation_caveat(
+        _matrix_results(
+            _separation_scenarios(1.0164, warm_n=200,
+                                  warm_max=8453.296826, cold_min=8591.903258),
+            provenance={"runtime": "gvisor"},
+        )
+    )
+    assert "Warm/cold separation below gate:" in out
+    assert "gVisor" in out
+    assert "1.02x" in out
+    assert "slowest warm 8.4533s vs fastest cold 8.5919s" in out
+    # cause-agnostic: no mechanism is asserted as fact
+    assert "cause is not asserted" in out
+
+
+def test_warmpool_separation_caveat_clean_when_ratio_at_or_above_gate():
+    # a clean pool separates (ratio 2.4x >= 1.8x) — emits nothing, auto-clear.
+    out = render._warmpool_separation_caveat(
+        _matrix_results(
+            _separation_scenarios(2.4, warm_n=200,
+                                  warm_max=3000, cold_min=7200),
+            provenance={"runtime": "gvisor"},
+        )
+    )
+    assert out == ""
+    # exactly at the gate is also clean (>= is passing).
+    at_gate = render._warmpool_separation_caveat(
+        _matrix_results(
+            _separation_scenarios(1.8, warm_n=200),
+            provenance={"runtime": "gvisor"},
+        )
+    )
+    assert at_gate == ""
+
+
+def test_warmpool_separation_caveat_suppressed_when_low_n():
+    # ratio below gate but the warm row is under the N=30 floor — a low-N draw
+    # can depress the ratio purely from sampling, so the guard must NOT fire.
+    out = render._warmpool_separation_caveat(
+        _matrix_results(
+            _separation_scenarios(1.0164, warm_n=5,
+                                  warm_max=8453, cold_min=8591),
+            provenance={"runtime": "gvisor"},
+        )
+    )
+    assert out == ""
+
+
+def test_warmpool_separation_caveat_absent_metric_no_false_fire():
+    # no warmpool_gate_separation_ratio emitted at all (older emit / missing
+    # key): nothing to disclose, no crash, empty string.
+    out = render._warmpool_separation_caveat(
+        _matrix_results(
+            _separation_scenarios(None, warm_n=200),
+            provenance={"runtime": "gvisor"},
+        )
+    )
+    assert out == ""
+
+
+def test_warmpool_separation_caveat_bounds_omitted_gracefully():
+    # ratio below gate but the warm_max/cold_min bound keys are absent — the
+    # ratio-only line still renders (no bounds clause, no crash).
+    out = render._warmpool_separation_caveat(
+        _matrix_results(
+            _separation_scenarios(1.0164, warm_n=200),
+            provenance={"runtime": "gvisor"},
+        )
+    )
+    assert "Warm/cold separation below gate:" in out
+    assert "1.02x" in out
+    # the bounds clause (" (slowest warm Xs vs fastest cold Ys)") is absent;
+    # "vs fastest cold" appears only in that clause, never in the prose header.
+    assert "vs fastest cold" not in out
+
+
+def test_warmpool_separation_caveat_skips_pending_row():
+    # a pending warm row carries no settled ratio — skip it, disclose nothing.
+    out = render._warmpool_separation_caveat(
+        _matrix_results(
+            _separation_scenarios(1.0164, warm_n=200,
+                                  warm_max=8453, cold_min=8591,
+                                  outcome="pending"),
+            provenance={"runtime": "gvisor"},
+        )
+    )
+    assert out == ""
+
+
+def test_warmpool_separation_caveat_flags_kata_independently():
+    # gVisor separates cleanly, Kata does not — only Kata is named, off the
+    # kata companion results.
+    kata_scen = _separation_scenarios(1.05, warm_n=40,
+                                      warm_max=8000, cold_min=8400)
+    out = render._warmpool_separation_caveat(
+        _matrix_results(
+            _separation_scenarios(2.4, warm_n=200, warm_max=3000, cold_min=7200),
+            provenance={"runtime": "gvisor"},
+        ),
+        kata_results=_kata_results(
+            scenarios=kata_scen, provenance={"runtime": "kata-microvm"},
+        ),
+    )
+    assert "Kata + microVM" in out
+    assert "gVisor" not in out
+
+
+def test_warmpool_separation_caveat_wired_into_caption():
+    # end-to-end: the caption assembles the separation caveat when the live
+    # ratio is below the gate, and stays absent on a clean run.
+    out = render.render_north_star_caption(
+        _matrix_results(
+            _separation_scenarios(1.0164, warm_n=200,
+                                  warm_max=8453.296826, cold_min=8591.903258),
+            provenance={"runtime": "gvisor"},
+        )
+    )
+    assert "Warm/cold separation below gate:" in out
+    clean = render.render_north_star_caption(
+        _matrix_results(_full_gvisor_scenarios(), provenance={"runtime": "gvisor"})
+    )
+    assert "Warm/cold separation below gate" not in clean
+
+
+# ---------------------------------------------------------------------------
 # #4164 / hb#132: render_storage_config — "Which storage class should you pick?"
 # Closed-enum ({ephemeral,pd,snapshot}) data-keyed guidance section. Fixtures use
 # only generic public-safe class names (never a sandbox.a4/ label prefix, volume,

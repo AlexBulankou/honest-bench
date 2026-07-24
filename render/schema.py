@@ -364,6 +364,14 @@ ACTIVATION_MODE_ROWS = (
 # value; the marker just says "don't rank this against a high-N row".
 TTFE_COMPARABILITY_MIN_N = 30
 
+# Warm-pool separation-ratio gate. warmpool_cold_start emits
+# warmpool_gate_separation_ratio = cold_min(fastest cold sample) / warm_max(slowest warm sample).
+# A clean warm pool separates cleanly from cold: the slowest warm hit still beats the fastest
+# cold claim by this factor. Below it, "warm" and "cold" overlap and the warm tier is not
+# demonstrably a fast path. Mirrors the harness gate (warmpool_cold_start._SEPARATION_RATIO);
+# the ratio is emitted but never rendered, so surfacing it when it fails is a #4420 disclosure.
+WARMPOOL_SEPARATION_MIN_RATIO = 1.8
+
 # Density is a per-RUNTIME property (holds across activation modes), not per-mode. The
 # renderer sources it from whichever of these scenarios carries density_per_vcpu, applies it
 # to the warm-pool + cold rows, and renders N/A on the resume row (matching the doc).
