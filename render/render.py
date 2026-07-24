@@ -280,6 +280,15 @@ def render_product(results):
         # change (e.g. an ephemeral CI cluster vs the persistent internal cluster)
         # is visible on the page, not silently folded into the same cluster_substrate label.
         "machine_type",
+        # hb#317 follow-up: the gVisor runtime (runsc) version these numbers were produced
+        # under — the runtime-side analogue of controller_image/digest. It was stamped by
+        # build_provenance (from BENCH_RUNSC_VERSION) and schema-declared since hb#317 so it
+        # survives _clean_provenance, but had no render leg, so it rendered nowhere — a
+        # carried-but-invisible reproducibility qualifier. Surfaced here on the same
+        # INERT-when-absent discipline as machine_type (the `if k in prov` guard below):
+        # sandbox-family-only (gated on `runtime` in build_provenance), so it appears only on
+        # a gVisor run that stamps it and is byte-unchanged on every run that does not.
+        "runsc_version",
     ]
     banner = [f"{k}={prov[k]}" for k in banner_order if k in prov]
     if banner:
