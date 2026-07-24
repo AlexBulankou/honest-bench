@@ -186,6 +186,74 @@ def test_under_delivery_leaves_warm_names_empty():
     assert bd["warm_names"] == []
 
 
+# ---- _add_gate_diagnostic_metrics: hb#379 numeric gate-diagnostic keys ----
+#
+# The excerpt string naming WHY the gate passed/failed is deliberately never
+# persisted (run.py deletes it, the raw-failure_excerpt public-safety rule), so a
+# committed FAIL row previously carried no numeric trace of warm_max/cold_min/
+# separation. These pin the three keys land correctly and the no-op cases stay
+# no-ops (cold-baseline mode, under-delivery, no-cold-tier).
+
+def test_gate_diagnostics_adds_all_three_keys_when_cold_tier_present():
+    latencies = {"c0": 1.5, "c1": 0.8, "c2": 1.2, "c3": 5.0, "c4": 9.0}
+    _, bd = cell._classify_latencies(
+        latencies, pool_replicas=3, abs_ceiling_s=2.5, separation_ratio=1.8,
+    )
+    sla_metrics = cell._add_gate_diagnostic_metrics(
+        {}, bd, warm_max=bd["warm_max_s"], pool_replicas=3,
+    )
+    assert sla_metrics["warmpool_gate_warm_max_ms"] == 1500.0
+    assert sla_metrics["warmpool_gate_cold_min_ms"] == 5000.0
+    assert sla_metrics["warmpool_gate_separation_ratio"] == bd["separation_observed"]
+
+
+def test_gate_diagnostics_omits_cold_and_separation_keys_when_no_cold_tier():
+    # claim_count == pool_replicas: no overflow claims, so no cold tier to
+    # separate from. warm_max still reported; cold/separation keys absent.
+    latencies = {"c0": 1.5, "c1": 0.8, "c2": 1.2}
+    _, bd = cell._classify_latencies(
+        latencies, pool_replicas=3, abs_ceiling_s=2.5, separation_ratio=1.8,
+    )
+    sla_metrics = cell._add_gate_diagnostic_metrics(
+        {}, bd, warm_max=bd["warm_max_s"], pool_replicas=3,
+    )
+    assert sla_metrics["warmpool_gate_warm_max_ms"] == 1500.0
+    assert "warmpool_gate_cold_min_ms" not in sla_metrics
+    assert "warmpool_gate_separation_ratio" not in sla_metrics
+
+
+def test_gate_diagnostics_noop_on_under_delivery():
+    # warm_max is None (under-delivery) -> no-op, sla_metrics returned unchanged.
+    latencies = {"c0": 1.5, "c1": None, "c2": None}
+    _, bd = cell._classify_latencies(
+        latencies, pool_replicas=3, abs_ceiling_s=2.5, separation_ratio=1.8,
+    )
+    sla_metrics = cell._add_gate_diagnostic_metrics(
+        {}, bd, warm_max=bd["warm_max_s"], pool_replicas=3,
+    )
+    assert sla_metrics == {}
+
+
+def test_gate_diagnostics_noop_in_cold_baseline_mode():
+    # pool_replicas == 0 (cold-baseline mode) -> no gate, no-op regardless of
+    # warm_max/sla_metrics contents.
+    sla_metrics = cell._add_gate_diagnostic_metrics(
+        {"some_key": 1.0}, {"cold_path_min_s": 1.0, "separation_observed": 2.0},
+        warm_max=1.5, pool_replicas=0,
+    )
+    assert sla_metrics == {"some_key": 1.0}
+
+
+def test_gate_diagnostics_noop_when_sla_metrics_not_a_dict():
+    # The TTFE-off under-delivery path can hand back a non-dict sentinel in
+    # theory; guard against mutating/crashing on it.
+    result = cell._add_gate_diagnostic_metrics(
+        None, {"cold_path_min_s": 1.0, "separation_observed": 2.0},
+        warm_max=1.5, pool_replicas=3,
+    )
+    assert result is None
+
+
 # ---- _under_delivery_outcome: honest FAIL row vs opaque assert crash (#4093) ----
 #
 # On the TTFE-on path, an under-delivered warm pool (warm_max_s is None) would hit
