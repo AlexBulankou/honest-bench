@@ -34,7 +34,7 @@ Posted for the record (no longer asks): comment 1 → #873 and comment 2 → #75
 >
 > **[CORRECTION 2026-07-24 — the 07-22 update above mis-attributes provenance AND overclaims closure. (1) `dd63bb1b2` reached main via the SEPARATE merged PR [#1114](https://github.com/kubernetes-sigs/agent-sandbox/pull/1114) (merged 2026-07-22T18:19:52Z), NOT #1087 (still OPEN). Merged-main's guard is `CreationLatencyRecordedAnnotation` (`metrics.go:39`) read cache-backed (`r.Get` :163, guard :1891) — a DIFFERENT const/read-path than #1087's `ClaimFirstReadyAnnotation` + live-read. (2) #1114 definitively closes the suspend/resume leg, but the stale-informer-replay leg (the subject of THIS comment) is UNVERIFIED against merged-main: the cache-backed guard could still be slipped by a pre-annotation stale-snapshot replay. The "structurally closes the stale-informer-replay double-count" claim is not yet established for the merged build — an empirical SampleCount re-run vs merged-main is still owed. Comment stays unposted (NO-BOT); provenance retained.]**
 
-## Worth raising in conversation (7) — nothing filed, per the no-filings rule
+## Worth raising in conversation (6) — nothing filed, per the no-filings rule
 
 No upstream issue exists for these (dup-search verified). Raise directly if the conversation opens; full technical bodies in the [detail page](UPSTREAM_BLOCKERS_DETAIL.md).
 
