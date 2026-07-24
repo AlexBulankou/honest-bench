@@ -11,9 +11,9 @@ The headline burst count is **pod-Ready** — but a pod can report Ready before 
 
 | Signal | Count |
 |---|---|
-| Pod-Ready <1s (weaker claim) | 10 |
-| Executed first-instruction <1s (TTFE, stronger claim) | 1 |
-| Ready-but-not-yet-run (gap) | 9 |
+| Pod-Ready <1s (weaker claim) | 1 |
+| Executed first-instruction <1s (TTFE, stronger claim) | 0 |
+| Ready-but-not-yet-run (gap) | 1 |
 | Execution success (Honesty Check) | 100% |
 
 _Pod-Ready ≥ executed-TTFE by construction; the gap is the over-claim a pod-Ready headline would hide._
@@ -24,9 +24,9 @@ Warm-hit TTFE (create → first-instruction result) splits into **bind** (create
 
 | Stage | p50 | p95 |
 |---|---|---|
-| Bind (create → bound, provisioning) | 2.2903s | 3.6006s |
-| Exec (websocket + first-instruction) | 0.4739s | 1.0685s |
-| **TTFE (total)** | **2.8629s** | **4.4408s** |
+| Bind (create → bound, provisioning) | 4.8442s | 9.2823s |
+| Exec (websocket + first-instruction) | 0.7187s | 1.3155s |
+| **TTFE (total)** | **5.6686s** | **9.9041s** |
 
 _Each row is an independently-measured percentile of its own per-claim distribution (exec is measured per-claim as TTFE − bind, then percentiled — not p50(TTFE) − p50(bind)). Percentiles do not sum, so bind and exec need not add exactly to the total TTFE._
 
@@ -36,27 +36,27 @@ Cold-start TTFE (create → first-instruction result) splits into **provision** 
 
 | Stage | p50 | p95 |
 |---|---|---|
-| Provision (create → Ready) | 3.8053s | 4.5726s |
-| Exec (websocket + first-instruction) | 0.495s | 0.7242s |
-| **TTFE (total)** | **4.377s** | **5.1535s** |
+| Provision (create → Ready) | 3.8067s | 4.4984s |
+| Exec (websocket + first-instruction) | 0.5647s | 0.7486s |
+| **TTFE (total)** | **4.3915s** | **5.2477s** |
 
 _Each row is an independently-measured value against the same shared t0 (exec is the measured residual TTFE − provision, not a subtraction of percentiles). For the single-sample cold cell the p50 and p95 are the one measured sample._
 
 ## Warm-vs-Cold Speedup
 
-A warm-pool provision is **4.00165× faster** than a true-cold start (gVisor). The warm pool keeps a ready slot so a claim skips the fresh-node image-pull path a cold start pays in full. Both legs are measured the same way (TTFE (executed first-instruction)); the ratio is the portable headline you can reproduce on your own cluster.
+A warm-pool provision is **1.58504× faster** than a true-cold start (gVisor). The warm pool keeps a ready slot so a claim skips the fresh-node image-pull path a cold start pays in full. Both legs are measured the same way (TTFE (executed first-instruction)); the ratio is the portable headline you can reproduce on your own cluster.
 
 | Leg | TTFE (p50) |
 |---|---|
-| Warm-pool hit (gVisor, n=10) | 1.0938s |
-| True-cold (unique-image) | 4.377s |
-| Speedup (warm is N× faster) | 4.00165× |
+| Warm-pool hit (gVisor, n=10) | 2.7706s |
+| True-cold (unique-image) | 4.3915s |
+| Speedup (warm is N× faster) | 1.58504× |
 
 _Speedup = cold ÷ warm, computed from the displayed values over n=10 warm claims; both legs are medians (p50) — the warm leg over its warm-pool claims and the cold leg over the true-cold distribution — so half of warm claims and half of cold starts run slower than the values shown._
 
 _This warm-vs-cold pair is a standalone point-in-time run; its warm-pool leg is a separate measurement from the Core Metrics matrix "Warm-pool hit" row (an independent run at its own operating point, refreshed on its own cadence). Read each block on its own terms — the two warm p50s are not directly comparable._
 
-_Measured 2026-07-23 — warm-vs-cold speedup (point-in-time; refreshed on the next TTFE fire)._
+_Measured 2026-07-24 — warm-vs-cold speedup (point-in-time; refreshed on the next TTFE fire)._
 
 ## Kata + microVM Activation (pod-Ready — NOT TTFE)
 
@@ -141,8 +141,8 @@ The matrix measures the **claim** side (a warm hit is sub-second). This block me
 
 | Refill latency | Value |
 |---|---|
-| Median (p50) (over 5 cycles) | 1.0254s |
-| Tail (p90) | 1.17108s |
+| Median (p50) (over 5 cycles) | 1.06832s |
+| Tail (p90) | 1.52468s |
 
 _Refill latency is measured per-cycle as the wall-clock from a claim release to the warm pool returning to full readiness; the median and tail are percentiles of the completed-cycle distribution._
 
@@ -154,6 +154,6 @@ _Capability note: this is an **administrative** (operator- or user-driven) suspe
 
 | Suspend latency | Value |
 |---|---|
-| Median (p50) | 4.3631s |
+| Median (p50) | 2.3059s |
 
 _Suspend latency is measured per-cycle as the wall-clock from the `operatingMode=Suspended` patch return to the terminal Suspended state; the median and tail are percentiles of the measured suspend distribution._
