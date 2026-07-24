@@ -21,7 +21,13 @@ under the producer's exact emitted shape, so a cross-contract drift (e.g. a
 fire, not after it.
 
 The module sets three os.environ knobs at import (runtime/substrate/namespace) via
-setdefault, so importing it here is side-effect-safe.
+setdefault, so importing it here is side-effect-safe standalone. Under a full-suite
+`pytest scripts/` run, though, the gVisor warm sibling (scripts/gvisor_warm_ttfe_sweep.py)
+sets the SAME WARMPOOL_COLD_START_RUNTIME_CLASS var via its own setdefault with a
+DIFFERENT default ("gvisor") and collects first alphabetically -- so this module's own
+setdefault would silently no-op and RUNTIME_CLASS would read back "gvisor" instead of
+"kata-clh". Force the value explicitly (not setdefault) right before the import below so
+this module's constant is correct regardless of what ran earlier in the same process.
 """
 import os as _os
 import sys as _sys
@@ -33,6 +39,11 @@ _sys.path.insert(0, _os.path.join(_HB_ROOT, "scripts"))
 from harness import prom_ttfe as p  # noqa: E402
 from harness import slo_rate as _slo  # noqa: E402
 from harness import stepup_adapter as _adapter  # noqa: E402
+
+# See module docstring: force (not setdefault) ahead of import to survive full-suite
+# collection order against the gVisor sibling's colliding setdefault default.
+_os.environ["WARMPOOL_COLD_START_RUNTIME_CLASS"] = "kata-clh"
+_os.environ["BENCH_CLUSTER_SUBSTRATE"] = "gke-kata"
 import kata_cold_ttfe_sweep as sweep  # noqa: E402
 
 
