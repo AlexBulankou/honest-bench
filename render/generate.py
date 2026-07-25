@@ -63,6 +63,7 @@ def _load_render():
         mod.render_vcpu_footprint,
         mod.render_storage_config,
         mod.render_recipe,
+        mod.render_trend,
     )
 
 
@@ -72,7 +73,15 @@ def _load_render():
  render_kata_activation, render_concurrent_burst, render_warm_pool_acquisition,
  render_at_scale_contention, render_cluster_saturation, render_provisioning_rate_sweep,
  render_session_turnover, render_suspend_latency, render_density_detail, render_vcpu_footprint,
- render_storage_config, render_recipe) = _load_render()
+ render_storage_config, render_recipe, render_trend) = _load_render()
+
+# Build-over-build throughput history (#3918/hb#439), relative to the repo root. The page
+# renders only the per-product latest.json snapshot, so it can show today's COUNT but not the
+# trajectory alex's #1 directive asks for. This file (sole-writer: render.accrue_history, one
+# upsert-by-digest row per distinct controller build) carries that trajectory; the trend table
+# is appended after the per-product loop. Absent/empty ⇒ no trend section (graceful
+# degradation), so the page never half-renders.
+_HISTORY_REL = "sandbox/results/history.jsonl"
 
 # Product -> results path, relative to the repo root (parent of render/).
 # The PUBLIC customer page is SANDBOX-ONLY (alex 2026-06-28): substrate demotes from a
@@ -177,6 +186,28 @@ def _repo_root():
     return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
+def _load_history(root):
+    """Read sandbox/results/history.jsonl into a list of dicts (malformed lines dropped); [] if absent.
+
+    render.render_trend re-validates every row through the closed schema, so a malformed line
+    that survives JSON parsing here is still dropped at render — this is parse-only.
+    """
+    path = os.path.join(root, _HISTORY_REL)
+    rows = []
+    if not os.path.exists(path):
+        return rows
+    with open(path) as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rows.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    return rows
+
+
 def build_readme(root=None):
     """Return the full README text: preamble + 9-col Core Metrics matrix + TTFE corroboration + warm-vs-cold + Scale Proof.
 
@@ -226,6 +257,13 @@ def build_readme(root=None):
         stepup = render_stepup(results)  # INERT today; standalone ## when a stepup object emits
         if stepup.strip():
             sections.append(stepup.rstrip())
+    # #3918/hb#439: the build-over-build throughput-COUNT trend, sourced from the sole-writer
+    # accrual store (render.accrue_history), appended once after the per-product loop — same
+    # graceful-degradation contract as the rest of this function: an absent/empty history
+    # renders no section rather than a blank or a guess.
+    trend = render_trend(_load_history(root))
+    if trend.strip():
+        sections.append(trend.rstrip())
     # #4164 / hb#132: "Which storage class should you pick?" is a single sandbox-wide guidance
     # section (customer-facing storage-config axis), sourced from the newest
     # sandbox/records/storage-config-*.json — so it renders ONCE after the per-product loop, placed

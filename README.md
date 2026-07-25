@@ -181,6 +181,16 @@ Under this contention, TTFE degrades to **1.6589s p50** / **2.0169s p95** — bu
 
 _Measured 2026-07-01 — warm-pool at-scale contention ceiling (point-in-time)._
 
+## Throughput — build-over-build
+
+The headline COUNT — sandboxes ready in <1s in a single 1.0s burst against one warm
+pool — tracked across distinct controller builds (oldest first). **Δ** is the change in
+COUNT vs the prior build; the first build is the baseline. Drive this COUNT up.
+
+| Build (controller digest) | Date | Sandboxes ready <1s | Δ | Density /vCPU | n |
+|---|---|---|---|---|---|
+| `sha256:6edaf7b6b22d…` | 2026-06-28 | 9 | — | 0.45 | 10 |
+
 ## Which storage class should you pick?
 
 Per-class results from a controlled storage-config fire (fixed workload). An unmeasured class renders `pending`; the per-row sample count is the trust gate.
