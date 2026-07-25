@@ -26,6 +26,7 @@ from schema import (
     GOAL_COLUMNS,
     HISTORY_FIELDS,
     KATA_ACTIVATION_FIELDS,
+    LIST_PRICE_AS_OF,
     MATRIX_METRIC_FIELDS,
     MATRIX_RUNTIMES,
     METRIC_LABELS,
@@ -4324,9 +4325,11 @@ def render_stepup(results):
             basis = su.get("cost_basis")
             if basis == "list_price":
                 lines.append(
-                    "Cost basis: **coarse public GCP on-demand list price** — an UPPER bound; real "
-                    "billing is materially lower under committed-use / spot / sustained-use discounts. "
-                    "Pass an explicit node-hour rate for the operator's real cost.")
+                    f"Cost basis: **coarse public GCP on-demand list price** (as of {LIST_PRICE_AS_OF}) "
+                    "— an UPPER bound; real billing is materially lower under committed-use / spot / "
+                    "sustained-use discounts, and a list price is a point-in-time snapshot that drifts "
+                    "as GCP prices change. Pass an explicit node-hour rate for the operator's real, "
+                    "current cost.")
                 lines.append("")
             elif basis == "operator_rate":
                 lines.append(

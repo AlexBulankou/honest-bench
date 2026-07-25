@@ -1843,6 +1843,31 @@ def test_cost_basis_enum_three_mirror_sync():
     )
 
 
+def test_list_price_as_of_two_mirror_sync():
+    """The list_price snapshot's as-of DATE lives in TWO independent mirrors — harness
+    cost.LIST_PRICE_AS_OF (canonical, the vintage of the _LIST_PRICE_USD_PER_NODE_HOUR
+    table) and render schema.LIST_PRICE_AS_OF (what the list_price basis footnote renders).
+    Neither imports the other (render stays offline-portable, same posture as the cost_basis
+    three-mirror above). A drift would render a STALE vintage next to fresh fallback rates
+    (or a fresh vintage next to stale rates) — a silent honesty regression exactly on the
+    staleness signal the date exists to give. This pins the two equal so bumping the table
+    (a new capture) forces both to move together.
+    """
+    import schema
+
+    sys.path.insert(0, _ROOT)
+    try:
+        from harness import cost as _cost
+    except Exception as exc:  # pragma: no cover - harness has its own deps
+        print(f"  (skip: harness cost not importable: {exc})")
+        return
+
+    assert schema.LIST_PRICE_AS_OF == _cost.LIST_PRICE_AS_OF, (
+        "as-of DRIFT: render schema.LIST_PRICE_AS_OF != harness cost.LIST_PRICE_AS_OF — the "
+        "list_price footnote would render a vintage that disagrees with the table it captions."
+    )
+
+
 def test_emit_to_render_session_turnover_convergence():
     """Convergence guard for the session-turnover refill-latency block (#3868).
 
