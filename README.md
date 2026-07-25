@@ -185,6 +185,8 @@ COUNT vs the prior build; the first build is the baseline. Drive this COUNT up.
 |---|---|---|---|---|---|
 | `sha256:6edaf7b6b22d…` | 2026-06-28 | 9 | — | 0.45 | 10 |
 
+_⚠️ The most recent fire (2026-07-25) measured a headline COUNT of 10 but is not reflected above — its provenance carries no `controller_digest`, so it cannot be anchored to a build. The trend is not advanced past 2026-06-28; fix the fire's provenance capture and this caveat clears on the next accrual._
+
 ## Which storage class should you pick?
 
 Per-class results from a controlled storage-config fire (fixed workload). An unmeasured class renders `pending`; the per-row sample count is the trust gate.

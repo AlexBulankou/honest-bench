@@ -54,6 +54,7 @@ from schema import (
     WARM_VS_COLD_FIELDS,
     WARMPOOL_SEPARATION_MIN_RATIO,
     _ISO,
+    _SHA256,
 )
 from wip import NA_BY_CONSTRUCTION, build_work_in_progress, link_pending, wip_link
 from upstream_links import upstream_cell_refs, upstream_prose_refs
@@ -336,7 +337,42 @@ def _clean_history(rows):
     return clean
 
 
-def render_trend(history_rows):
+def _latest_measured_count(latest_results):
+    """Return (count, digest_or_empty, date) for the latest fire's burst_create COUNT, or None.
+
+    Mirrors render.accrue_history._burst_count_row: the trend's headline COUNT is
+    `sla_metrics.sandboxes_ready_under_1s` on a PASS burst_create cell. `digest_or_empty` is the
+    provenance controller_digest AS PUBLISHED — the emitter drops the key when empty, so an
+    un-anchorable fire yields "" here; `date` is generated_at[:10]. None when the latest fire
+    carried no measurable COUNT (CASE-1 benign — nothing to reconcile against the trend).
+    """
+    if not isinstance(latest_results, dict):
+        return None
+    count = None
+    for s in latest_results.get("scenarios", []) or []:
+        if not isinstance(s, dict) or s.get("name") != "burst_create":
+            continue
+        if s.get("outcome") != "PASS":
+            return None
+        m = s.get("sla_metrics")
+        if not isinstance(m, dict):
+            return None
+        c = m.get("sandboxes_ready_under_1s")
+        if isinstance(c, bool) or not isinstance(c, (int, float)):
+            return None
+        count = c
+        break
+    if count is None:
+        return None
+    prov = latest_results.get("provenance")
+    prov = prov if isinstance(prov, dict) else {}
+    digest = prov.get("controller_digest") or ""
+    date = latest_results.get("generated_at")
+    date = date[:10] if isinstance(date, str) else ""
+    return count, digest, date
+
+
+def render_trend(history_rows, latest_results=None):
     """Render the build-over-build THROUGHPUT-COUNT trend table (#3918), or "" if empty.
 
     One row per distinct controller build (the accrual store is upsert-by-digest), oldest →
@@ -344,6 +380,17 @@ def render_trend(history_rows):
     carries a delta-vs-prior-build column — the build-over-build trajectory alex's #1 directive
     asks for, which a single latest.json snapshot cannot show. First build is the baseline
     (delta "—"); every later build shows the signed change in COUNT vs the build before it.
+
+    `latest_results` (the newest sandbox latest.json) is the trend-vs-latest divergence guard:
+    the table is sourced from history.jsonl alone, so a fresh fire that MEASURED the headline
+    COUNT but could not anchor to a build (empty controller_digest, dropped by the emitter) or
+    whose build is not yet accrued would otherwise leave this table showing its last frozen row
+    with no on-page signal that the newest measured COUNT diverged. The accrual's CASE-2 loud-fail
+    (render.accrue_history) protects the FIRE pipeline (rc=3); it does NOT protect this committed
+    render — the auto-refresh data PR commits a fresh latest.json beside a stale history. So when
+    the latest fire measured a COUNT whose build is not the newest row here, disclose it rather
+    than render stale-as-fresh (guard-then-fill; AGENTS.md "Transition guards on trust surfaces").
+    None ⇒ no guard (byte-identical to the pre-guard render for existing callers/tests).
     """
     rows = _clean_history(history_rows)
     if not rows:
@@ -399,6 +446,28 @@ def render_trend(history_rows):
             f"may be sampling noise, not a real move._"
         )
         lines.append("")
+    # Trend-vs-latest divergence guard (see docstring): when the newest fire measured the
+    # headline COUNT but its build is not the newest row above, the trend has silently frozen —
+    # say so on the page instead of rendering the last row as if it were current.
+    latest = _latest_measured_count(latest_results)
+    if latest is not None:
+        count, digest, date = latest
+        newest_digest = rows[-1]["controller_digest"]
+        anchored = isinstance(digest, str) and bool(_SHA256.match(digest))
+        if not (anchored and digest == newest_digest):
+            reason = (
+                "its build is not yet accrued into the trend"
+                if anchored
+                else "its provenance carries no `controller_digest`, so it cannot be anchored to "
+                "a build"
+            )
+            lines.append(
+                f"_⚠️ The most recent fire ({date}) measured a headline COUNT of {count:g} but is "
+                f"not reflected above — {reason}. The trend is not advanced past "
+                f"{rows[-1]['generated_at'][:10]}; fix the fire's provenance capture and this "
+                f"caveat clears on the next accrual._"
+            )
+            lines.append("")
     return "\n".join(lines)
 
 

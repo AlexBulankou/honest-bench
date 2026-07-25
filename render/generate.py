@@ -263,7 +263,16 @@ def build_readme(root=None):
     # accrual store (render.accrue_history), appended once after the per-product loop — same
     # graceful-degradation contract as the rest of this function: an absent/empty history
     # renders no section rather than a blank or a guess.
-    trend = render_trend(_load_history(root))
+    # Pass the newest sandbox fire so render_trend can disclose a measured-but-unanchored COUNT
+    # (trend-vs-latest divergence guard) instead of rendering a stale trend as if current.
+    sandbox_latest = None
+    sandbox_latest_rel = next((rel for p, rel in _PRODUCTS if p == "sandbox"), None)
+    if sandbox_latest_rel:
+        sandbox_latest_path = os.path.join(root, sandbox_latest_rel)
+        if os.path.exists(sandbox_latest_path):
+            with open(sandbox_latest_path) as fh:
+                sandbox_latest = json.load(fh)
+    trend = render_trend(_load_history(root), latest_results=sandbox_latest)
     if trend.strip():
         sections.append(trend.rstrip())
     # #4164 / hb#132: "Which storage class should you pick?" is a single sandbox-wide guidance
