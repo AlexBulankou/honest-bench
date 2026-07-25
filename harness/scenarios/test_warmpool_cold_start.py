@@ -186,6 +186,101 @@ def test_under_delivery_leaves_warm_names_empty():
     assert bd["warm_names"] == []
 
 
+# ---- provenance gating (hb#450): the warm tier draws only from genuine hits ----
+#
+# The upstream reconciler gates warm-pool refill on a COUNT of extant sandboxes,
+# not readyReplicas, so a claim burst stalls replenishment and readyReplicas
+# collapses mid-burst (hb#379). A depletion-cold blend (a claim served by a
+# replacement Sandbox created DURING the burst) can then bind fast enough to rank
+# into the top pool_replicas and contaminate warm p95/TTFE with cold latencies —
+# the 1.42s-vs-10.81s phantom-regression coin-flip. `warm_eligible` restricts the
+# warm candidate pool to claims that adopted a pre-warmed sandbox, so cold blends
+# can never enter the warm tier. These pin that behavior; warm_eligible=None (the
+# default + read-failure fallback) is byte-identical to the pre-fix rank-only path.
+
+def test_provenance_none_preserves_rank_only():
+    # The default (no snapshot / cold-baseline / read-failure fallback) is exactly
+    # the pre-fix rank-only behavior, and stamps warm_eligible_count=None.
+    latencies = {"c0": 1.5, "c1": 0.8, "c2": 1.2, "c3": 5.0, "c4": 9.0}
+    passed, bd = cell._classify_latencies(
+        latencies, pool_replicas=3, abs_ceiling_s=2.5, separation_ratio=1.8,
+    )
+    assert passed
+    assert bd["warm_names"] == ["c1", "c2", "c0"]
+    assert bd["warm_eligible_count"] is None
+
+
+def test_provenance_all_eligible_matches_rank_only():
+    # When every completed claim adopted a pre-warmed sandbox, provenance gating
+    # is a no-op: identical warm set + verdict to the rank-only path, just with a
+    # populated warm_eligible_count.
+    latencies = {"c0": 1.5, "c1": 0.8, "c2": 1.2, "c3": 5.0, "c4": 9.0}
+    passed, bd = cell._classify_latencies(
+        latencies, pool_replicas=3, abs_ceiling_s=2.5, separation_ratio=1.8,
+        warm_eligible={"c0", "c1", "c2", "c3", "c4"},
+    )
+    assert passed
+    assert bd["warm_names"] == ["c1", "c2", "c0"]
+    assert bd["warm_eligible_count"] == 5
+
+
+def test_provenance_excludes_fast_cold_blend_from_warm_tier():
+    # c2 binds fast (0.7s, 3rd fastest) but is a COLD BLEND (not in warm_eligible);
+    # c3/c4 are genuine pre-warmed hits that bound slow. Rank-only would pick
+    # {c0,c1,c2} and PASS on warm_max 0.7 — the exact phantom the fix kills.
+    # Provenance draws the warm tier from eligibles only: {c0,c1,c3}, warm_max 5.0,
+    # which fails both the absolute and separation clauses -> honest FAIL.
+    latencies = {"c0": 0.5, "c1": 0.6, "c2": 0.7, "c3": 5.0, "c4": 6.0}
+    eligible = {"c0", "c1", "c3", "c4"}  # c2 is the cold blend
+
+    # rank-only WOULD pass on the fast cold blend...
+    rank_passed, rank_bd = cell._classify_latencies(
+        latencies, pool_replicas=3, abs_ceiling_s=2.5, separation_ratio=1.8,
+    )
+    assert rank_passed and rank_bd["warm_names"] == ["c0", "c1", "c2"]
+
+    # ...provenance gating excludes it and reflects the real warm delivery.
+    passed, bd = cell._classify_latencies(
+        latencies, pool_replicas=3, abs_ceiling_s=2.5, separation_ratio=1.8,
+        warm_eligible=eligible,
+    )
+    assert not passed
+    assert bd["warm_names"] == ["c0", "c1", "c3"]
+    assert "c2" not in bd["warm_names"]
+    assert bd["warm_max_s"] == 5.0
+    assert bd["warm_eligible_count"] == 4
+    # the excluded fast blend rejoins the cold tier the separation gate measures.
+    assert bd["cold_path_min_s"] == 0.7
+
+
+def test_provenance_under_delivery_when_few_genuine_hits():
+    # All 5 claims bind fast, but only 2 adopted a pre-warmed sandbox -> fewer than
+    # pool_replicas genuine hits -> under-delivery FAIL even though completed==5.
+    latencies = {"c0": 0.5, "c1": 0.6, "c2": 0.7, "c3": 0.8, "c4": 0.9}
+    passed, bd = cell._classify_latencies(
+        latencies, pool_replicas=3, abs_ceiling_s=2.5, separation_ratio=1.8,
+        warm_eligible={"c0", "c1"},
+    )
+    assert not passed
+    assert bd["warm_names"] == []
+    assert bd["warm_max_s"] is None
+    assert bd["completed_count"] == 5
+    assert bd["warm_eligible_count"] == 2
+
+
+def test_provenance_empty_eligible_is_under_delivery():
+    # A fully-collapsed pool (zero genuine hits) is honest under-delivery, not a
+    # PASS off whatever bound cold.
+    latencies = {"c0": 0.5, "c1": 0.6, "c2": 0.7}
+    passed, bd = cell._classify_latencies(
+        latencies, pool_replicas=3, abs_ceiling_s=2.5, separation_ratio=1.8,
+        warm_eligible=set(),
+    )
+    assert not passed
+    assert bd["warm_eligible_count"] == 0
+    assert bd["warm_names"] == []
+
+
 # ---- _add_gate_diagnostic_metrics: hb#379 numeric gate-diagnostic keys ----
 #
 # The excerpt string naming WHY the gate passed/failed is deliberately never
