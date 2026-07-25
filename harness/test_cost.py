@@ -123,6 +123,12 @@ def test_resolve_helpers():
     _check(_close(c.resolve_usd_per_node_hour(0.42), 0.42), "explicit rate not returned")
     _check(_close(c.resolve_usd_per_node_hour(None, "n2d-standard-4"), 0.1626),
            "fallback to list price failed")
+    # n2-standard-16 is the live saturation-sweep shape; it must resolve via the
+    # fallback so the cost axis does not render pending for its own cluster shape.
+    _check(_close(c.list_price_usd_per_node_hour("n2-standard-16"), 0.7769),
+           "n2-standard-16 list price missing/wrong")
+    _check(_close(c.resolve_usd_per_node_hour(None, "n2-standard-16"), 0.7769),
+           "n2-standard-16 fallback to list price failed")
     _check(c.resolve_usd_per_node_hour(None, None) is None, "no inputs -> None")
 
 
