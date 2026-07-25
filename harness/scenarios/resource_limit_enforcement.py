@@ -35,7 +35,7 @@ This module is registered as a born-pending cell (#5634) following the
 session_turnover INERT-first precedent: the Cell + SCENARIO_LABELS vocabulary +
 seed row ship first as a complete, honest `pending (not-yet-measured)` slice
 with ZERO fire cost, and the controlled-overshoot probe is filled in on a later
-coordinated `sandbox-scenarios-cluster` fire (collision-ack a4s2, fire-day HIGH
+coordinated `sandbox-scenarios-cluster` fire (peer collision-ack, fire-day HIGH
 effort). Until then `run()` is a pure stdlib no-op that touches no cluster and
 reports not-yet-measured — the satisfied-substrate stub state. On kind the cell
 never reaches this module: run._run_one short-circuits on the unmet
