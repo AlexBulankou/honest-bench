@@ -188,7 +188,11 @@ steps:
         set -euo pipefail
 
         # No result change -> nothing to PR (parity with peter-evans's no-op skip).
-        if git diff --quiet -- sandbox/results/latest.json README.md DETAILS.md; then
+        # history.jsonl (hb#3918/hb#439) included: a build-over-build accrual can land a
+        # new/refreshed row with README/DETAILS otherwise unchanged (e.g. the COUNT is
+        # identical to the prior build but the digest/date differ) — without it here that
+        # accrual would silently never publish.
+        if git diff --quiet -- sandbox/results/latest.json sandbox/results/history.jsonl README.md DETAILS.md; then
           echo "No benchmark diff to publish — skipping PR."
           exit 0
         fi
@@ -203,7 +207,7 @@ steps:
 
         BRANCH="auto/refresh-gke-sandbox"
         git checkout -B "$$BRANCH"
-        git add sandbox/results/latest.json README.md DETAILS.md
+        git add sandbox/results/latest.json sandbox/results/history.jsonl README.md DETAILS.md
         git commit -m "data: auto-refresh benchmark results (substrate=gke-sandbox, gVisor)"
 
         # A fresh CB clone fetches only main, so it has no remote-tracking ref for

@@ -24,6 +24,15 @@ REGION="$HB_REGION"
 # trigger fires one at a time, so collision is not a concern.
 CLUSTER="hb-gvisor-ci-$(date +%s)"
 
+# suite_git_sha provenance (hb#439): the honest-bench commit this fire measured
+# against. Doesn't depend on the cluster, so capture it up front. CB checks out
+# a full clone into the workspace (confirmed by cloudbuild-unit-tests.yaml's own
+# `git rev-parse --git-dir` probe), so this always resolves to the real commit
+# — never an empty default. Feeds harness.run's build_provenance() the same
+# way BENCH_MACHINE_TYPE etc. do (plain env var, read at measure time).
+export BENCH_SUITE_GIT_SHA=$(git rev-parse HEAD 2>/dev/null || echo "")
+echo "==> suite_git_sha=$BENCH_SUITE_GIT_SHA"
+
 # Guaranteed teardown: fires on normal exit, `set -e` abort, or SIGTERM
 # (build timeout). The CB-native stand-in for `if: always()`. On a
 # FAILED measure step, _KEEP_CLUSTER_ON_FAILURE=1 (hb#311) skips the
@@ -176,6 +185,35 @@ echo "==> node_image=$BENCH_NODE_IMAGE runsc_version=$BENCH_RUNSC_VERSION"
 echo "==> installing OSS controller from upstream main"
 bash recipe/install-controller-from-main.sh
 
+# controller_digest provenance (hb#439, mirrors the node-image/runsc pattern
+# above): the resolved sha256 image digest of the LIVE controller container,
+# not the floating `:latest-main` tag install-controller-from-main.sh applies
+# — accrue_history.py keys the build-over-build history off this digest, so a
+# same-tag-different-content rebuild upstream must still be distinguishable.
+# `svc/agent-sandbox-controller` already exists as the stable lookup handle
+# for this Deployment (reused from scripts/gvisor_warm_ttfe_sweep.py's own
+# CTRL_NS/CTRL_SVC), so read its selector rather than hardcoding a label that
+# could drift from upstream's manifest. Wait for the rollout first: the
+# install script only checks the Deployment's spec (args), never waits for a
+# Pod to actually be Running, and `imageID` is a status field that's empty
+# until the image is pulled and the container starts. Best-effort like the
+# node-image/runsc capture above: a lookup failure must never fail the
+# measure step over a provenance field.
+echo "==> capturing controller image digest for provenance"
+kubectl -n agent-sandbox-system rollout status deploy/agent-sandbox-controller --timeout=180s || true
+CTRL_SELECTOR=$(kubectl get svc agent-sandbox-controller -n agent-sandbox-system \
+  -o jsonpath='{range $k,$v := .spec.selector}{$k}={$v},{end}' 2>/dev/null | sed 's/,$//' || true)
+CONTROLLER_POD=$(kubectl get pods -n agent-sandbox-system -l "$CTRL_SELECTOR" \
+  -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
+CONTROLLER_IMAGE_ID=$(kubectl get pod "$CONTROLLER_POD" -n agent-sandbox-system \
+  -o jsonpath='{.status.containerStatuses[0].imageID}' 2>/dev/null || echo "")
+# imageID is `<repo>@sha256:<hex>` once resolved — strip everything up to and
+# including the last `@` to leave the bare `sha256:<hex>` digest the schema
+# expects (render/schema.py's _SHA256). Empty CONTROLLER_IMAGE_ID -> empty
+# digest -> honest-skip downstream in accrue_history, not a fabricated value.
+export BENCH_CONTROLLER_DIGEST=$(echo "$CONTROLLER_IMAGE_ID" | sed -E 's/^.*@//')
+echo "==> controller_digest=$BENCH_CONTROLLER_DIGEST (pod=$CONTROLLER_POD)"
+
 # hb#5396: deploy the upstream TTFE-true mutating webhook (asbx#761) so
 # SandboxClaim CREATE is stamped with agents.x-k8s.io/webhook-first-observed-at,
 # giving the harness a ms-precision t0 for ClaimStartupLatency (the true_ttfe
@@ -191,6 +229,14 @@ python3 -m harness.run --product sandbox
 kill "$NODE_SAMPLER_PID" 2>/dev/null || true
 echo "==> hb-gvisor-pool node count over the measure window (hb#319 diagnostic, recap — the durable copy is the hb319-sample lines streamed above):"
 cat "$NODE_SAMPLE_LOG" 2>/dev/null || echo "(no samples captured)"
+
+# hb#3918/hb#439: upsert this build's burst_create COUNT into the build-over-build
+# history BEFORE rendering, so render_trend has the just-written row available.
+# Sole-writer contract (accrue_history.py) — honest-skips (no write, exit 0) if
+# latest.json carries no measurable PASS burst_create cell or the provenance
+# fields above didn't resolve, so a partial/failed fire never pollutes the trend.
+echo "==> accruing build-over-build throughput history (hb#3918/hb#439)"
+python3 -m render.accrue_history sandbox
 
 echo "==> rendering README/DETAILS from results"
 python3 -m render.generate
