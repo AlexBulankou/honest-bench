@@ -22,7 +22,10 @@
 #      trigger (no cluster, no GitHub token needed).
 #   3. REFRESH_SA — a DEDICATED least-privilege SA for the refresh trigger, with on
 #      PROJECT: roles/container.admin + roles/iam.serviceAccountUser +
-#      roles/compute.viewer, plus Secret Accessor on hb-refresh-github-token.
+#      roles/compute.viewer + roles/logging.logWriter, plus Secret Accessor on
+#      hb-refresh-github-token. logging.logWriter is required by the
+#      CLOUD_LOGGING_ONLY logging mode + the step-0 logWriter preflight probe;
+#      without it every fire dies at step 0 with an empty log.
 #   4. Secret Manager secret `hb-refresh-github-token` — a narrow GitHub token
 #      (contents:write + pull-requests:write on the repo) for the auto-refresh PR.
 #
@@ -106,7 +109,7 @@ echo "==> [4/4] gke-kata cold true_ttfe refresh (MANUAL, ON-DEMAND — no branch
 # Same MANUAL shape as [3/4] and the same dedicated REFRESH_SA — this refresh runs
 # against the PERSISTENT kata scenarios cluster (no ephemeral create/teardown), so
 # it needs no extra IAM beyond container.admin + serviceAccountUser + compute.viewer
-# + Secret Accessor already granted for the gVisor refresh. --branch pins only the
+# + logging.logWriter + Secret Accessor already granted for the gVisor refresh. --branch pins only the
 # checked-out ref; steps come from inline-config. The internal kata cluster name is
 # NOT baked here — it is passed at fire time via the _CLUSTER substitution (kept out
 # of the public config). Re-bake with scripts/rebake-manual-trigger.sh, NOT the
