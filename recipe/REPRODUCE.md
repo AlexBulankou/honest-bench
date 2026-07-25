@@ -482,7 +482,13 @@ repo secrets (`GCP_WIF_PROVIDER` / `GCP_SERVICE_ACCOUNT` / `GCP_PROJECT`) are
 retired. Point [`scripts/setup-cloud-build-triggers.sh`](../scripts/setup-cloud-build-triggers.sh)
 at your own project to create the triggers; the service account it uses needs, on
 the target project, `roles/container.admin`, `roles/iam.serviceAccountUser`,
-`roles/compute.viewer`, and Secret Accessor on the refresh GitHub-token secret.
+`roles/compute.viewer`, `roles/logging.logWriter`, and Secret Accessor on the
+refresh GitHub-token secret. `roles/logging.logWriter` is required because the
+refresh builds run with `options.logging: CLOUD_LOGGING_ONLY` (a custom-SA build
+cannot use the default GCS log bucket) and the first build step is a functional
+`gcloud logging write` preflight probe that fail-fasts before the ~25-min cluster
+spend if the SA cannot write to Cloud Logging — omit it and every fire dies at
+step 0 with an empty log.
 
 ## Reading the output
 
