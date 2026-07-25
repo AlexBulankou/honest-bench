@@ -861,7 +861,7 @@ def test_stepup_extra_keys_dropped():
     # the two specific leak names below. This is the stronger lock flagged on PR #80.
     _check(set(out) <= {"verdict", "pareto_points", "controller_startup", "north_star_breach_rate",
                         "saturation_rate", "max_flat_rate", "sld_s", "wpr", "node_count",
-                        "machine_type", "measured_at"},
+                        "machine_type", "cost_basis", "measured_at"},
            f"only contract keys at stepup top-level, got {sorted(out)}")
     _check(set(out["pareto_points"][0]) <= {"offered_rate_per_s", "ttfe_p95_ms", "ready_per_s",
                                             "ttfe_p50_ms", "ttfe_p99_ms", "cost_usd_per_1k_ready"},
@@ -1073,6 +1073,26 @@ def test_slo_basis_enum_matches_slo_rate_canonical():
     from harness.slo_rate import SLO_BASIS_ENUM as CANON
     _check(tuple(rs.SLO_BASIS_ENUM) == tuple(CANON),
            f"results_schema enum drifted from slo_rate: {rs.SLO_BASIS_ENUM} != {CANON}")
+
+def test_stepup_cost_basis_passthrough_and_gated():
+    # Step-up item-4: the sweep-level cost_basis carries through _coerce_stepup for every enum
+    # member, and any non-enum value is DROPPED (honest pending) — never leaked, since a
+    # free-text basis is the same PII/leak surface as any other stepup scalar.
+    base = {"pareto_points": [{"offered_rate_per_s": 10, "ttfe_p95_ms": 240.0}],
+            "verdict": "saturated"}
+    for basis in rs.COST_BASIS_ENUM:
+        out = rs.build_results([], _prov(), GEN_AT, stepup={**base, "cost_basis": basis})["stepup"]
+        _check(out.get("cost_basis") == basis, f"enum cost_basis carried: {basis}")
+    for bad in ("list-price", "", 1, None, True, "OPERATOR_RATE", "guess"):
+        out = rs.build_results([], _prov(), GEN_AT, stepup={**base, "cost_basis": bad})["stepup"]
+        _check("cost_basis" not in out, f"non-enum cost_basis dropped: {bad!r}")
+
+def test_cost_basis_enum_matches_cost_canonical():
+    # Cross-contract drift guard: this module's COST_BASIS_ENUM mirror must equal the canonical
+    # tuple in harness.cost (independent copies by design — same posture as SLO_BASIS above).
+    from harness.cost import COST_BASIS_ENUM as CANON
+    _check(tuple(rs.COST_BASIS_ENUM) == tuple(CANON),
+           f"results_schema enum drifted from cost: {rs.COST_BASIS_ENUM} != {CANON}")
 
 def test_sla_floor_zero_pairing_guard():
     # hb#214 part 1 (DRAFT): the schema-side fabricated-0 tripwire, fail-closed BOTH ways.

@@ -73,6 +73,21 @@ _LIST_PRICE_USD_PER_NODE_HOUR = {
 
 _SECONDS_PER_HOUR = 3600.0
 
+# Which price source produced the node-hour rate a cost was computed from. This is a
+# SWEEP-LEVEL fact (one sweep resolves ONE rate for all its Pareto points), stamped so
+# render can DISCLOSE the basis instead of publishing a bare number the reader must trust
+# blind. Mirrors the slo_rate.SLO_BASIS_ENUM disclosure posture: the honest-bench spine is
+# "say which basis produced this figure", and cost is no exception.
+#   operator_rate -- the operator's real committed billing rate (explicit usd_per_node_hour).
+#   list_price    -- the coarse public GCP on-demand LIST price fallback; real billing is
+#                    materially LOWER under CUD / spot / SUD, so a list_price cost is an
+#                    UPPER-BOUND estimate and render must caveat it as such.
+# The emitter (results_schema) + renderer (render/schema.py) keep independent mirrors of this
+# tuple; a drift is caught by the cross-contract test, not papered over by a shared import.
+COST_BASIS_OPERATOR_RATE = "operator_rate"
+COST_BASIS_LIST_PRICE = "list_price"
+COST_BASIS_ENUM = (COST_BASIS_OPERATOR_RATE, COST_BASIS_LIST_PRICE)
+
 
 def _is_pos_number(v) -> bool:
     """True iff v is a real (non-bool) number strictly greater than zero."""
@@ -102,6 +117,23 @@ def resolve_usd_per_node_hour(usd_per_node_hour: Optional[float] = None,
     if usd_per_node_hour is not None:
         return usd_per_node_hour if _is_pos_number(usd_per_node_hour) else None
     return list_price_usd_per_node_hour(machine_type)
+
+
+def resolve_cost_basis(usd_per_node_hour: Optional[float] = None,
+                       machine_type: Optional[str] = None) -> Optional[str]:
+    """Which price source resolve_usd_per_node_hour used: operator_rate | list_price | None.
+
+    The provenance twin of resolve_usd_per_node_hour, computed from the SAME inputs by the
+    SAME decision so the two never disagree: this returns non-None if and only if
+    resolve_usd_per_node_hour returns a rate. An explicit positive rate -> operator_rate; no
+    explicit rate but a known machine_type -> list_price; neither (or a non-positive explicit
+    rate) -> None. Stamped once per sweep so render can disclose whether a published cost is a
+    real committed rate or a coarse list-price upper bound (see COST_BASIS_ENUM)."""
+    if usd_per_node_hour is not None:
+        return COST_BASIS_OPERATOR_RATE if _is_pos_number(usd_per_node_hour) else None
+    if list_price_usd_per_node_hour(machine_type) is not None:
+        return COST_BASIS_LIST_PRICE
+    return None
 
 
 def cost_usd_per_1k_ready(ready_per_s: Optional[float], *,

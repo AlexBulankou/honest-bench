@@ -132,6 +132,63 @@ def test_resolve_helpers():
     _check(c.resolve_usd_per_node_hour(None, None) is None, "no inputs -> None")
 
 
+def test_resolve_cost_basis_operator_rate_wins():
+    # An explicit positive rate -> operator_rate, regardless of machine_type presence.
+    _check(c.resolve_cost_basis(usd_per_node_hour=0.30, machine_type="e2-standard-16")
+           == c.COST_BASIS_OPERATOR_RATE, "explicit positive rate must be operator_rate")
+    _check(c.resolve_cost_basis(usd_per_node_hour=0.30) == c.COST_BASIS_OPERATOR_RATE,
+           "explicit positive rate, no machine_type, must be operator_rate")
+
+
+def test_resolve_cost_basis_list_price_fallback():
+    # No explicit rate but a known machine_type -> list_price.
+    _check(c.resolve_cost_basis(machine_type="n2-standard-16") == c.COST_BASIS_LIST_PRICE,
+           "known machine_type with no explicit rate must be list_price")
+
+
+def test_resolve_cost_basis_none_when_no_price():
+    _check(c.resolve_cost_basis(machine_type="totally-unknown-x99") is None,
+           "unknown machine_type with no explicit rate must be None")
+    _check(c.resolve_cost_basis() is None, "no inputs must be None")
+
+
+def test_resolve_cost_basis_nonpositive_explicit_rate_none():
+    # A bad explicit rate must fail honestly (None), NOT fall through to list_price.
+    _check(c.resolve_cost_basis(usd_per_node_hour=0.0, machine_type="e2-standard-16") is None,
+           "explicit rate 0 must be None, not a fallthrough to list_price")
+    _check(c.resolve_cost_basis(usd_per_node_hour=-1.0, machine_type="e2-standard-16") is None,
+           "negative explicit rate must be None")
+
+
+def test_cost_basis_none_iff_rate_none():
+    # The load-bearing invariant: resolve_cost_basis returns non-None IFF resolve_usd_per_node_hour
+    # returns a rate. The two are computed from the same inputs by the same decision, so they must
+    # never disagree — a stamped basis with no resolvable rate (or a resolvable rate with no basis)
+    # would let render caveat a cost that doesn't exist, or publish one with no basis disclosure.
+    cases = [
+        dict(),
+        dict(machine_type="e2-standard-16"),
+        dict(machine_type="totally-unknown-x99"),
+        dict(usd_per_node_hour=0.30),
+        dict(usd_per_node_hour=0.30, machine_type="e2-standard-16"),
+        dict(usd_per_node_hour=0.0, machine_type="e2-standard-16"),
+        dict(usd_per_node_hour=-1.0),
+        dict(usd_per_node_hour=True),  # bool is not a number
+    ]
+    for kw in cases:
+        rate = c.resolve_usd_per_node_hour(**kw)
+        basis = c.resolve_cost_basis(**kw)
+        _check((rate is None) == (basis is None),
+               f"basis/rate None-agreement broke for {kw}: rate={rate} basis={basis}")
+
+
+def test_cost_basis_enum_membership():
+    _check(c.resolve_cost_basis(usd_per_node_hour=0.30) in c.COST_BASIS_ENUM,
+           "operator_rate must be in COST_BASIS_ENUM")
+    _check(c.resolve_cost_basis(machine_type="n2-standard-16") in c.COST_BASIS_ENUM,
+           "list_price must be in COST_BASIS_ENUM")
+
+
 def _load_render_schema():
     # render/ has no __init__.py on purpose (a `render` package would shadow render.py),
     # so `from render.schema import ...` only resolves as a namespace package. In a full

@@ -1812,6 +1812,37 @@ def test_slo_basis_enum_three_mirror_sync():
     )
 
 
+def test_cost_basis_enum_three_mirror_sync():
+    """Step-up item-4: the cost_basis enum is CLOSED and lives in THREE independent mirrors —
+    harness cost.COST_BASIS_ENUM (canonical, the resolve_cost_basis output), harness
+    results_schema.COST_BASIS_ENUM (the _coerce_stepup carry gate), and render
+    schema.COST_BASIS_VALUES (the stepup top-level predicate that fail-closes an unknown
+    basis). None imports another in production (offline-portability discipline), so a member
+    added to one and missed in another would either drop an honest basis (coercer/render
+    stricter than producer) or let an undisclosed basis render (producer stricter). This pins
+    all three equal — the same drift-guard posture as the SLO-basis three-mirror test above.
+    """
+    import schema
+
+    sys.path.insert(0, _ROOT)
+    try:
+        from harness import cost as _cost
+    except Exception as exc:  # pragma: no cover - harness has its own deps
+        print(f"  (skip: harness cost not importable: {exc})")
+        return
+
+    canonical = set(_cost.COST_BASIS_ENUM)
+    assert set(_rs.COST_BASIS_ENUM) == canonical, (
+        "enum DRIFT: harness results_schema.COST_BASIS_ENUM != cost.COST_BASIS_ENUM — "
+        "the _coerce_stepup carry would strip (or admit) a basis the producer disagrees on."
+    )
+    assert set(schema.COST_BASIS_VALUES) == canonical, (
+        "enum DRIFT: render schema.COST_BASIS_VALUES != harness cost.COST_BASIS_ENUM — "
+        "an honest stamped basis would fail-closed drop render-side (or an unknown basis "
+        "would render undisclosed)."
+    )
+
+
 def test_emit_to_render_session_turnover_convergence():
     """Convergence guard for the session-turnover refill-latency block (#3868).
 

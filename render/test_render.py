@@ -3119,6 +3119,52 @@ def test_stepup_pareto_cost_partial_coverage_renders_dash():
     assert "| — |" in out  # the uncosted points render a partial-coverage dash
 
 
+def test_stepup_cost_basis_list_price_footnote_rendered():
+    # A costed table whose sweep carries cost_basis="list_price" renders the UPPER-bound caveat:
+    # the reader must not read the coarse public list price as the operator's real billed cost.
+    su = _su()
+    for pt, c in zip(su["pareto_points"], (0.42, 0.44, 0.51, 0.9, 1.5)):
+        pt["cost_usd_per_1k_ready"] = c
+    su["cost_basis"] = "list_price"
+    out = render.render_stepup(_matrix_results(_full_gvisor_scenarios(), stepup=su))
+    assert "coarse public GCP on-demand list price" in out
+    assert "UPPER bound" in out
+
+
+def test_stepup_cost_basis_operator_rate_footnote_rendered():
+    # An operator-supplied rate stamps cost_basis="operator_rate" ⇒ the footnote states the figure
+    # is the operator's real committed rate (no upper-bound caveat).
+    su = _su()
+    for pt, c in zip(su["pareto_points"], (0.42, 0.44, 0.51, 0.9, 1.5)):
+        pt["cost_usd_per_1k_ready"] = c
+    su["cost_basis"] = "operator_rate"
+    out = render.render_stepup(_matrix_results(_full_gvisor_scenarios(), stepup=su))
+    assert "operator-supplied node-hour rate" in out
+    assert "coarse public GCP on-demand list price" not in out
+
+
+def test_stepup_cost_basis_footnote_absent_when_no_basis():
+    # Costed points but no cost_basis stamped (honest pending on the basis axis) ⇒ neither footnote
+    # line renders — the disclosure is byte-absent, never a guessed basis.
+    su = _su()
+    for pt, c in zip(su["pareto_points"], (0.42, 0.44, 0.51, 0.9, 1.5)):
+        pt["cost_usd_per_1k_ready"] = c
+    su.pop("cost_basis", None)
+    out = render.render_stepup(_matrix_results(_full_gvisor_scenarios(), stepup=su))
+    assert "coarse public GCP on-demand list price" not in out
+    assert "operator-supplied node-hour rate" not in out
+
+
+def test_stepup_cost_basis_footnote_absent_when_no_cost():
+    # cost_basis present but NO point carries a cost ⇒ the cost column is omitted, so the basis
+    # footnote must not render either (a basis line with no cost table would be an orphan caveat).
+    su = _su()
+    su["cost_basis"] = "list_price"  # stray basis with no costed points
+    out = render.render_stepup(_matrix_results(_full_gvisor_scenarios(), stepup=su))
+    assert "coarse public GCP on-demand list price" not in out
+    assert "operator-supplied node-hour rate" not in out
+
+
 # --- knee-bracket: two-axis (acquisition-compliant + TTFE-collapsed) render ---------------
 def _knee(**over):
     # The #4560 knee-bracket shape: NO true-TTFE pareto_points / saturation_point (both null in

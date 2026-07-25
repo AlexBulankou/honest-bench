@@ -4312,6 +4312,26 @@ def render_stepup(results):
                 cells.append(_fmt_usd(p["cost_usd_per_1k_ready"]) if "cost_usd_per_1k_ready" in p else "—")
             lines.append("| " + " | ".join(cells) + " |")
         lines.append("")
+        # Cost-BASIS disclosure (step-up item-4): a published Cost cell is only as trustworthy as
+        # the node-hour rate it was computed from, so name WHICH price source produced that rate
+        # rather than publishing a bare number the reader must trust blind. Keyed off the
+        # sweep-level cost_basis flag (schema-gated to operator_rate | list_price), same posture as
+        # the controller_startup lower_bound / SLO-basis caveats — a list_price cost is a coarse
+        # UPPER bound (real billing is materially lower under committed-use / spot / sustained-use),
+        # an operator_rate cost is the operator's real committed rate. Rendered only alongside a
+        # real cost column; no cost stamped => no basis line (honest pending, same absent spine).
+        if any_cost:
+            basis = su.get("cost_basis")
+            if basis == "list_price":
+                lines.append(
+                    "Cost basis: **coarse public GCP on-demand list price** — an UPPER bound; real "
+                    "billing is materially lower under committed-use / spot / sustained-use discounts. "
+                    "Pass an explicit node-hour rate for the operator's real cost.")
+                lines.append("")
+            elif basis == "operator_rate":
+                lines.append(
+                    "Cost basis: operator-supplied node-hour rate (the operator's real committed rate).")
+                lines.append("")
 
     # Claim-ACQUISITION axis — the DISTINCT compliant axis, rendered SEPARATELY from
     # TTFE so the page never averages the two into one verdict: a bracket can be acq-compliant
