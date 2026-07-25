@@ -265,6 +265,13 @@ SCENARIO_LABELS = {
     # the scenario is registered in scenario_map + fired — a cell only renders when its name
     # appears in results, so adding this label makes no public-page difference on its own.
     "session_turnover": "Warm-pool refill (churn)",
+    # Resource-limit enforcement (#5634): the honesty backstop the Max-Density headline lacks
+    # — density is count-of-Ready ÷ vCPU at a DECLARED footprint (#3868), but declared ≠
+    # enforced. Verifies the runtime CONFINES a sandbox to its footprint (gVisor: OOM-kill /
+    # CFS-throttle; Kata: hypervisor-hard VM boundary). INERT vocabulary until the fill-fire
+    # emits a measured value — a cell only renders when its name appears in results, so adding
+    # this label makes no public-page difference on its own (session_turnover precedent).
+    "resource_limit_enforcement": "Resource-limit enforcement",
     # substrate MVP
     "cold_reconcile": "Cold reconcile",
     "suspend_resume_carryover": "Suspend/resume carry-over",

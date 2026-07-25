@@ -282,6 +282,11 @@
       "badge_scope": "enforced",
       "name": "default_deny_egress",
       "outcome": "PASS"
+    },
+    {
+      "name": "resource_limit_enforcement",
+      "outcome": "pending",
+      "pending_reason": "not-yet-measured"
     }
   ],
   "warm_pool_acquisition": {
