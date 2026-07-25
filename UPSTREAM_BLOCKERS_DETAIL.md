@@ -711,7 +711,7 @@ The snapshot layout migrated to a manifest-based format (observed between 06-12 
 
 **Internal tracking a#3842 · file-ready issue for agent-substrate/substrate**
 
-> **STATUS 2026-07-23 — a4 e2e no longer triggers this; upstream converter bug STILL HOLDS.** #5448 (merged 2026-07-23T08:35Z) added a durable-dir volume to the demo `counter` ActorTemplate, and the per-test templates copy counter's `Volumes` (`internal/e2e/suites/demo/demo_test.go:556`), so `TestDurableDirLifecycle`'s DATA-scope legs now find `len(ddv)>0` and never reach the hard-fail. Demo-suite hard-fails went **29→0** and internal tracking **a#3842 is CLOSED**. This is an **a4-side sidestep, not an upstream fix** — the converter hard-error is byte-unchanged at `cmd/ateom-gvisor/main.go:289` (re-verified live at upstream tip `961883a`, 2026-07-23T04:15Z; drifted `:271`→`:289` only from the intervening imagecache work, string identical), so the staged DATA→FULL downgrade reference patch below is **retained, NOT retired** — the bug is a latent trap for any DATA-scope actor that declares zero durable-dir volumes. **The current demo e2e RED is a DISTINCT cause** — golden-actor resume `FailedPrecondition: no free workers available` — tracked at [§U7](#u7-golden-resume-no-free-workers) / a#5452, NOT this section. (This also resolves the historical §U2↔§U5 attribution tension: `TestActorLifecycle` is Full/Full and structurally never hit the DATA branch — see §U5 — so the demo RED it now shows is §U7's worker-saturation, not this DATA hard-fail.)
+> **STATUS 2026-07-23 — a4 e2e no longer triggers this; upstream converter bug STILL HOLDS.** #5448 (merged 2026-07-23T08:35Z) added a durable-dir volume to the demo `counter` ActorTemplate, and the per-test templates copy counter's `Volumes` (`internal/e2e/suites/demo/demo_test.go:556`), so `TestDurableDirLifecycle`'s DATA-scope legs now find `len(ddv)>0` and never reach the hard-fail. Demo-suite hard-fails went **29→0** and internal tracking **a#3842 is CLOSED**. This is an **a4-side sidestep, not an upstream fix** — the converter hard-error is byte-unchanged at `cmd/ateom-gvisor/main.go:289` (re-verified live at upstream tip `961883a`, 2026-07-23T04:15Z; drifted `:271`→`:289` only from the intervening imagecache work, string identical), so the staged DATA→FULL downgrade reference patch below is **retained, NOT retired** — the bug is a latent trap for any DATA-scope actor that declares zero durable-dir volumes. **The current demo e2e RED is a DISTINCT cause.** As of 2026-07-25 06:17Z (sha `aa1d14a7`) that cause is the just-landed #405 external-volume `TestExternalVolumeLifecycle` golden DATA-snapshot `WaitGoldenActor` timeout — tracked at [§U8](#u8-external-volume-golden-timeout) / a#5612 — NOT this section. (The DurableDir clear held: the suite ran 6 consecutive clean PASS 07-24 06:17Z→21:17Z with `TestDurableDirLifecycle` green, confirming #5448 sidestepped this DATA hard-fail; the 07-23→24 RED cause was [§U7](#u7-golden-resume-no-free-workers) / a#5452 no-free-workers, which was itself not observed across the 07-24 green streak.) (This also resolves the historical §U2↔§U5 attribution tension: `TestActorLifecycle` is Full/Full and structurally never hit the DATA branch — see §U5 — so the demo RED it later showed was never this DATA hard-fail.)
 
 **What's blocked** *(historical — the a4 demo suite no longer exercises this leg as of 2026-07-23; see STATUS banner above)*
 
@@ -1282,6 +1282,8 @@ if resp.GetActor().GetLatestSnapshotInfo().GetExternal() == nil {
 
 **Internal tracking a#5452 · evidence-only per NO-BOT (alex, 2026-07-07) — root-cause bisect: (b) ruled out, (a2) cold-start readiness race confirmed, (a1) ruled out for fast-recovery; upstream onset commit still to bisect. Filing, if any, is a human action, never agent-initiated**
 
+> **UPDATE 2026-07-25 — no-free-workers is NO LONGER the current cause of the demo suite RED, but the blocker stands (intermittent).** The suite ran **6 consecutive clean PASS 07-24 06:17Z→21:17Z** (shas `76bac5d0`×5, `2c327172`) — a full day with zero no-free-workers occurrences — then went RED again 07-25 06:17Z (sha `aa1d14a7`) from a **different** cause: the #405 external-volume `TestExternalVolumeLifecycle` timeout ([§U8](#u8-external-volume-golden-timeout) / a#5612). This confirms the (a2) cold-start-readiness-race diagnosis: the shortage is a **timing race**, so it fires only when N×5-pod concurrent startup pushes pod-readiness past the 90s `WaitGoldenActor` budget — a lucky-scheduling window (as 07-24 was) passes clean. The "continuously RED since 06-27" framing in the bullets below is therefore superseded: it held while §U2 masked the true cause, but the 07-24 green streak proves this symptom is intermittent, not continuous. Blocker retained as an intermittent worker-scarcity race; a#5452 stays OPEN.
+
 **What's blocked**
 
 - **The a4 demo e2e suite has been continuously RED since 2026-06-27T03:17Z** (last all-green PASS 2026-06-27T00:17Z, sha=`9d57db04`; 192 straight fails in `kb/substrate/health/e2e-history.jsonl`). The **golden** actor's **resume** fast-failing `rpc error: code = FailedPrecondition desc = no free workers available` is, as of 2026-07-23, the **sole** cause of the demo-suite RED across **both** `TestActorLifecycle` and `TestDurableDirLifecycle`, after #5448 cleared the §U2 DATA hard-fail (see [§U2 STATUS banner](#u2-data-snapshot-zero-ddv)). **The no-free-workers onset itself is INDETERMINATE** — the §U2 DATA snapshot hard-fail (a#3842) *masked* this symptom for the whole 06-27→07-23 window, so all that is provable is that it surfaced ≤ 07-23; the earlier "07-07T00:17Z onset" is **retracted** (unsupported by the raw data). Every failure is `/ateapi.Control/ResumeActor` on atespace `ate-golden` (`GoldenActorAtespace`), across the 5 distinct golden UUIDs (one per per-test ActorTemplate) — the golden is the lazily-resumed restore source for new actors and draws workers from the **same per-template WorkerPool** as that test's own actors (via `Spec.WorkerSelector`).
@@ -1329,6 +1331,61 @@ ERROR while resuming golden actor atespace=ate-golden
 
 - Evidence-only per **NO-BOT (alex, 2026-07-07)**: no upstream issue filed or planned by agents. a#5452 (OPEN) carries the live evidence trail (mechanism + (b)-ruled-out + (a2)-cold-start-race-confirmed / (a1)-ruled-out verdict by a4s1 2026-07-23; upstream onset commit still to bisect within the 06-27→07-23 masked window).
 - Line pins: `demo_test.go:517-529/541-548` + `actor.go:31` + `workflow.go:124-127` + `workflow_resume.go:119-140/213/263-292` + `actortemplate_controller.go` `PhaseResumeGoldenActor` are at upstream tip `961883a` (2026-07-23 source read of the `substrate-src` checkout at that sha); re-verify at tip at filing time.
+
+<a id="u8-external-volume-golden-timeout"></a>
+
+### §U8 — External-volume golden-actor bring-up times out (silent `WaitGoldenActor` timeout on the #405 per-actor external-volume flow)
+
+**Internal tracking a#5612 · evidence-only per NO-BOT (alex, 2026-07-07) — new failure class, onset `aa1d14a7`; controller stall reason not yet captured. Filing, if any, is a human action, never agent-initiated**
+
+**What's blocked**
+
+- The a4 demo e2e suite is RED at upstream HEAD `aa1d14a7` (2026-07-25 06:17Z fire) on a **net-new** test, `TestExternalVolumeLifecycle/onCommit:Data,_onPause:Data`. This is **distinct from** the now-cleared §U2/#295/#3842 DurableDir DATA-snapshot class (that suite ran 6 consecutive clean PASS 07-24 06:17Z→21:17Z with `TestDurableDirLifecycle` green — see the §U7 UPDATE 07-25 note and the §U2 STATUS banner).
+- No demo-suite green can return while this holds, so the substrate health report's upgrade-loop section stays RED and any metric gated on a green demo suite cannot graduate.
+
+**Mechanism (from the 06:17Z demo pod log, `substrate-demo-cluster`)**
+
+- The base `counter` ActorTemplate reaches Ready fine (`demo_test.go:612` — golden snapshot minted OK).
+- The `counter-ext-vol` ActorTemplate (created via `createActorTemplateWithExternalVolume`, `SnapshotScopeData` for **both** onCommit and onPause) **times out silently in `WaitGoldenActor` after 90s with `err=nil`** (`demo_test.go:621`, `last phase: WaitGoldenActor`) — a silent timeout, NOT a hard error. This is the load-bearing distinction from §U2, whose signature was an explicit hard error (`no durable-dir volumes found for DATA snapshot`).
+- The test skips on microVM (`if isMicroVMEnvironment() { t.Skip(...) }`); it ran and failed on our gVisor cluster.
+
+```
+demo_test.go:612: ActorTemplate counter is Ready with golden snapshot "gs://.../...VPMAF3LBJQCS5IWJ7IZ5GBOW4H"
+demo_test.go:621: Timed out waiting for ActorTemplate "counter-ext-vol" to be Ready after 1m30s (last phase: WaitGoldenActor, err: <nil>)
+--- FAIL: TestExternalVolumeLifecycle (0.00s)
+--- FAIL: TestExternalVolumeLifecycle/onCommit:Data,_onPause:Data (90.14s)
+```
+
+**Upstream attribution**
+
+- The test is **net-new**: `internal/e2e/suites/demo/demo_test.go:133` (`TestExternalVolumeLifecycle`), introduced by upstream [#405](https://github.com/agent-substrate/substrate/pull/405) "Add basic per-actor external volume flow" (commit `9300387f`).
+- `TestDurableDirLifecycle` still coexists at `demo_test.go:85`, so this is a **new test, not a rename** of the DurableDir case.
+- Onset = `aa1d14a7`, the first e2e fire to build upstream #405.
+
+**Evidence (e2e-history trajectory, `kb/substrate/health/e2e-history.jsonl`)**
+
+- 2026-07-24 06:17Z→21:17Z — 6 consecutive PASS fires (shas `76bac5d0`, `2c327172`); `TestDurableDirLifecycle` passes → §U2/#295/#3842 class cleared and no-free-workers (§U7) not observed for a full day.
+- 2026-07-25 06:17Z — FAIL at sha `aa1d14a7`, `failing_tests = ['TestExternalVolumeLifecycle', 'TestExternalVolumeLifecycle/onCommit:Data,_onPause:Data', 'TestPlatformMetricsEmitted']`.
+
+**Distinct from the substrate siblings on this page**
+
+| | §U2 / #295 / a#3842 (cleared) | §U8 / a#5612 (this, new) |
+|---|---|---|
+| Test | `TestDurableDirLifecycle` | `TestExternalVolumeLifecycle` |
+| Actor | demo `counter` (zero durable-dir volumes) | `counter-ext-vol` (external volume) |
+| Signature | hard error `no durable-dir volumes found for DATA snapshot` (`cmd/ateom-gvisor/main.go:289`) | silent `WaitGoldenActor` timeout, `err=nil` |
+| Status | a4 e2e no longer triggers (#5448); converter bug latent | fails at HEAD `aa1d14a7` |
+
+- `TestPlatformMetricsEmitted` (metrics suite, ~0.79s fast-fail) is a **separate intermittent** failure, not part of this class.
+
+**Recommended direction (for whoever picks up the diagnosis)**
+
+- The controller-side reason the `counter-ext-vol` golden DATA-snapshot take stalls is **not yet captured** beyond the silent `WaitGoldenActor` timeout in the demo pod log (unlike §U2's explicit hard error). Next step = reproduce the external-volume golden-take path and capture the controller / ateom-gvisor log for the `counter-ext-vol` actor to find where the DATA-scope snapshot stalls on the external-volume flow.
+
+**Page-side notes (not part of any paste body)**
+
+- Evidence-only per **NO-BOT (alex, 2026-07-07)**: no upstream issue filed or planned by agents. a#5612 (OPEN) carries the live evidence trail. Any actual upstream fix/filing stays alex-identity.
+- Line pins: `demo_test.go:133` (`TestExternalVolumeLifecycle`), `:85` (`TestDurableDirLifecycle` coexists), `:612`/`:621` (base-Ready vs ext-vol timeout) are at upstream HEAD `aa1d14a7` (2026-07-25); re-verify at tip at diagnosis time.
 
 ## GKE / gVisor platform blockers
 
