@@ -47,6 +47,11 @@
         "ttfe_p50_ms": 3256.2,
         "ttfe_p95_ms": 3494.9
       }
+    },
+    {
+      "name": "resource_limit_enforcement",
+      "outcome": "pending",
+      "pending_reason": "not-yet-measured"
     }
   ]
 }

@@ -87,6 +87,26 @@ SANDBOX_CELLS = (
         pending_reason="requires-gke",
         badge_scope="control-plane",
     ),
+    # Resource-limit enforcement (#5634): the honesty backstop the Max-Density headline
+    # lacks. Density = count-of-Ready ÷ vCPU at a DECLARED per-sandbox footprint (#3868),
+    # but declared ≠ enforced — a sandbox reaching Ready says nothing about whether the
+    # runtime HOLDS it to that footprint under load. gVisor packs ~5x denser (5.98 vs
+    # Kata's 1.26 sb/vCPU), so this axis verifies a runaway gVisor sandbox is OOM-killed
+    # (protecting its ~5 neighbors) / CFS-throttled rather than degrading the node —
+    # turning the density figure from an optimistic packing claim into a capacity-under-
+    # load guarantee. Same claimed-vs-enforced honesty pattern as the NetworkPolicy
+    # control-plane→enforced/FAIL flip (#3950). requires_substrate=gke-sandbox → it pends
+    # requires-gvisor-runtime on kind (needs runsc under host cgroups to test the OOM/CFS
+    # boundary); on a satisfied gke-sandbox node the (currently INERT) module reports
+    # not-yet-measured until the fill-fire implements the controlled-overshoot probe. NO
+    # static badge_scope: the enforced/FAIL split mirroring netpol #3950 lands with the
+    # fill-fire PR (a badge renders only on PASS, and its construction enum value does not
+    # exist yet — a naked badge_scope="enforced" would trip the #4629 over-claim guard).
+    Cell(
+        "resource_limit_enforcement",
+        requires_substrate="gke-sandbox",
+        pending_reason="requires-gvisor-runtime",
+    ),
 )
 
 # Substrate Phase-1: the agent-identity control-plane presence badge. Needs a real
@@ -127,6 +147,20 @@ SANDBOX_KATA_CELLS = (
     ),
     Cell(
         "native_digest_cold",
+        requires_substrate="gke-kata",
+        pending_reason="requires-kata-runtime",
+    ),
+    # Resource-limit enforcement (#5634), Kata side. The per-runtime angle is exactly why
+    # this axis earns its keep: enforcement mechanism differs by runtime. Kata+microVM
+    # gives each sandbox a hypervisor-hard memory/vCPU allocation, so the 1.26 sb/vCPU
+    # figure is inherently capacity-guaranteed — this cell verifies that VM boundary holds
+    # (a mem overshoot is contained by the guest, not the host node) and makes the 5.98-vs-
+    # 1.26 gap's robustness explicit rather than implied. requires_substrate=gke-kata → it
+    # pends requires-kata-runtime everywhere but the Kata pool; the (INERT) module reports
+    # not-yet-measured on a satisfied node until the fill-fire lands. NO badge_scope (same
+    # deferral as the gVisor side).
+    Cell(
+        "resource_limit_enforcement",
         requires_substrate="gke-kata",
         pending_reason="requires-kata-runtime",
     ),
