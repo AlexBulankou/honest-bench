@@ -24,9 +24,9 @@ Warm-hit TTFE (create → first-instruction result) splits into **bind** (create
 
 | Stage | p50 | p95 |
 |---|---|---|
-| Bind (create → bound, provisioning) | 3.0962s | 3.9129s |
-| Exec (websocket + first-instruction) | 0.9075s | 2.3171s |
-| **TTFE (total)** | **4.05s** | **5.9678s** |
+| Bind (create → bound, provisioning) | 0.8182s | 1.1388s |
+| Exec (websocket + first-instruction) | 0.2711s | 0.3276s |
+| **TTFE (total)** | **1.1173s** | **1.4227s** |
 
 _Each row is an independently-measured percentile of its own per-claim distribution (exec is measured per-claim as TTFE − bind, then percentiled — not p50(TTFE) − p50(bind)). Percentiles do not sum, so bind and exec need not add exactly to the total TTFE._
 
