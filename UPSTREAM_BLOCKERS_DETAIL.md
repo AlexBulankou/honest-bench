@@ -1343,7 +1343,7 @@ ERROR while resuming golden actor atespace=ate-golden
 - The a4 demo e2e suite is RED at upstream HEAD `aa1d14a7` (2026-07-25 06:17Z fire) on a **net-new** test, `TestExternalVolumeLifecycle/onCommit:Data,_onPause:Data`. This is **distinct from** the now-cleared §U2/#295/#3842 DurableDir DATA-snapshot class (that suite ran 6 consecutive clean PASS 07-24 06:17Z→21:17Z with `TestDurableDirLifecycle` green — see the §U7 UPDATE 07-25 note and the §U2 STATUS banner).
 - No demo-suite green can return while this holds, so the substrate health report's upgrade-loop section stays RED and any metric gated on a green demo suite cannot graduate.
 
-**Demo-test symptom (from the 06:17Z demo pod log, `substrate-demo-cluster`)**
+**Demo-test symptom (from the 06:17Z demo pod log)**
 
 - The base `counter` ActorTemplate reaches Ready fine (`demo_test.go:612` — golden snapshot minted OK).
 - The `counter-ext-vol` ActorTemplate (created via `createActorTemplateWithExternalVolume`, `SnapshotScopeData` for **both** onCommit and onPause) **times out silently in `WaitGoldenActor` after 90s with `err=nil`** (`demo_test.go:621`, `last phase: WaitGoldenActor`) — a silent timeout, NOT a hard error. This is the load-bearing distinction from §U2, whose signature was an explicit hard error (`no durable-dir volumes found for DATA snapshot`).
