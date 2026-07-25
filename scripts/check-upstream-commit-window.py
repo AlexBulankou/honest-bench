@@ -136,7 +136,12 @@ def _fetch_commits_between_refs(repo, old_ref, new_ref, token=None):
     Unlike the timestamp-window endpoint, `compare` names the two endpoints
     directly — no clock-skew risk, and it works even when `old_ref`/`new_ref`
     are branch names rather than SHAs. Raises on any fetch failure, same
-    contract as `_fetch_commits`."""
+    contract as `_fetch_commits`.
+
+    Caveat (PR #472 review): GitHub's compare API caps at 250 commits
+    total regardless of pagination — a window wider than that silently
+    truncates. Fine for any realistic fire-to-fire window; would need a
+    different endpoint (or chunked compares) for a >250-commit range."""
     headers = {
         "Accept": "application/vnd.github+json",
         "User-Agent": "honest-bench-upstream-commit-window",
@@ -168,7 +173,11 @@ def _fetch_commits(repo, since, until, token=None):
     """Return the list of commit JSON objects on `repo`'s default branch in
     (since, until], paginating the public commits endpoint. Raises on any
     fetch failure — the caller distinguishes "fetched, zero results" (a valid
-    empty candidate list) from "could not fetch" (UNKNOWN)."""
+    empty candidate list) from "could not fetch" (UNKNOWN).
+
+    Caveat (PR #472 review): this endpoint is default-branch-only —
+    correct for our `main`-tracking regime, but a commit merged to a
+    non-default branch in the window won't surface here."""
     headers = {
         "Accept": "application/vnd.github+json",
         "User-Agent": "honest-bench-upstream-commit-window",
