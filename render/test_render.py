@@ -626,6 +626,89 @@ def test_trend_unknown_field_not_rendered():
     assert "SYNTHETIC-HISTORY-LEAK" not in out
 
 
+# --- Trend-vs-latest divergence guard (guard-then-fill; a fresh measured COUNT that cannot
+# --- anchor to a build must not leave the trend rendering its last frozen row as if current) --
+
+
+def _latest(count=10, digest="", generated_at="2026-07-25T03:05:17Z", outcome="PASS",
+            with_metric=True):
+    # A minimal sandbox latest.json shape: one burst_create cell. `digest` is the PUBLISHED
+    # provenance controller_digest — "" mirrors the emitter dropping an empty key (an
+    # un-anchorable fire), a valid sha256 mirrors an anchorable one.
+    scen = {"name": "burst_create", "outcome": outcome}
+    if with_metric:
+        scen["sla_metrics"] = {"sandboxes_ready_under_1s": count}
+    prov = {}
+    if digest:
+        prov["controller_digest"] = digest
+    return {"scenarios": [scen], "provenance": prov, "generated_at": generated_at}
+
+
+def test_trend_divergence_caveat_when_latest_unanchored():
+    # The live 07-25 gap: latest.json measured a COUNT but its provenance carries no
+    # controller_digest (emitter dropped the empty key), so accrue_history froze the trend at
+    # its last build. The render must SAY the trend is stale, not show the frozen row as current.
+    out = render.render_trend([_hrow()], latest_results=_latest(count=10, digest=""))
+    assert "⚠️" in out
+    assert "measured a headline COUNT of 10" in out
+    assert "carries no `controller_digest`" in out
+    assert "not advanced past 2026-06-28" in out
+    assert "2026-07-25" in out
+
+
+def test_trend_divergence_caveat_when_latest_build_not_yet_accrued():
+    # latest.json IS anchorable (valid digest) but that build is not the newest history row —
+    # the accrual hasn't run yet. Distinct reason string; still a divergence, still disclosed.
+    out = render.render_trend(
+        [_hrow()], latest_results=_latest(count=12, digest="sha256:" + "e" * 64)
+    )
+    assert "⚠️" in out
+    assert "measured a headline COUNT of 12" in out
+    assert "not yet accrued into the trend" in out
+    assert "carries no `controller_digest`" not in out
+
+
+def test_trend_no_caveat_when_latest_anchored_to_newest_build():
+    # latest.json's published digest == the newest trend row's digest: the trend already
+    # reflects this fire. No divergence ⇒ no caveat (the healthy steady state).
+    newest = "sha256:" + "f" * 64
+    out = render.render_trend(
+        [_hrow(controller_digest=newest)],
+        latest_results=_latest(count=9, digest=newest),
+    )
+    assert "⚠️" not in out
+
+
+def test_trend_no_caveat_when_latest_has_no_measurable_count():
+    # CASE-1 benign: the latest fire carried no PASS burst_create COUNT (nothing to reconcile
+    # against the trend), so the guard stays silent even though latest_results is present.
+    for latest in (
+        _latest(outcome="FAIL"),
+        _latest(with_metric=False),
+        {"scenarios": [], "provenance": {}, "generated_at": "2026-07-25T03:05:17Z"},
+    ):
+        out = render.render_trend([_hrow()], latest_results=latest)
+        assert "⚠️" not in out
+
+
+def test_trend_none_latest_is_byte_identical_to_pre_guard():
+    # Backward-compat: the default (no latest passed) must render exactly as before the guard —
+    # existing callers/tests that pass only history_rows see no behavioral change.
+    rows = [
+        _hrow(controller_digest="sha256:" + "a" * 64, generated_at="2026-06-27T10:00:00Z",
+              sandboxes_ready_under_1s=9, n=40),
+        _hrow(controller_digest="sha256:" + "b" * 64, generated_at="2026-06-28T10:00:00Z",
+              sandboxes_ready_under_1s=14, n=40),
+    ]
+    assert render.render_trend(rows) == render.render_trend(rows, latest_results=None)
+
+
+def test_trend_empty_history_never_caveats_even_with_diverging_latest():
+    # render_trend early-returns "" on empty history; an un-anchorable latest cannot conjure a
+    # trend table (there is no frozen row to mislead), so the guard is out of scope here.
+    assert render.render_trend([], latest_results=_latest(count=10, digest="")) == ""
+
+
 # --- Goal 2.1: Core Metrics matrix + Scale Proof render tests --------------------------------
 
 
