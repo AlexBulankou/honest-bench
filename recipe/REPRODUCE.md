@@ -438,38 +438,51 @@ above — rather than committing the downgrade.
 
 ## Reproduce in CI (no laptop required)
 
-The same two paths above also run as **dispatch-only** GitHub Actions, so you can
-reproduce a headline from a fork without a local cluster — and read the run log to
-see every command:
+The gVisor and Kata GKE headlines each run as a **manual Cloud Build trigger**
+(the fleet rule is Cloud Build ONLY — no GitHub Actions), so you can reproduce a
+headline without a local cluster and read the build log to see every command:
 
-- **kind path** — [`.github/workflows/refresh.yml`](../.github/workflows/refresh.yml).
-  `workflow_dispatch` runs the whole portable suite (steps 1-3 above) on a
-  GitHub-hosted runner and opens a PR with the regenerated result. No secrets, no
-  cloud account — the kind cluster is created on the runner itself.
-- **gke-sandbox path** — [`.github/workflows/refresh-gke-sandbox.yml`](../.github/workflows/refresh-gke-sandbox.yml).
-  `workflow_dispatch` provisions a **fresh, ephemeral** GKE node pool with
-  `--sandbox type=gvisor`, installs the same upstream-main controller, fires the
+- **gke-sandbox (gVisor) path** — [`cloudbuild-refresh-gke-sandbox.yaml`](../cloudbuild-refresh-gke-sandbox.yaml).
+  Provisions a **fresh, ephemeral** GKE node pool with `--sandbox type=gvisor`,
+  installs the same upstream-main controller as the portable path, fires the
   burst-create headline under `runtimeClassName=gvisor` (the read-back guard
-  above confirms every backing pod landed on gVisor), opens a PR with the result,
-  and tears the cluster down in an `always()` step. A fresh node pool means an
-  empty containerd cache — a genuine cold pull, not a warmed-runner artifact.
+  above confirms every backing pod landed on gVisor), renders, runs the
+  public-safety fail-closed check, opens a PR with the result, and tears the
+  cluster down in a bash `EXIT` trap (the CB-native equivalent of a workflow's
+  `if: always()` teardown). A fresh node pool means an empty containerd cache — a
+  genuine cold pull, not a warmed-runner artifact. Fire it:
 
-Both schedules are **disabled by design**: an unattended kind run must never
-downgrade the live gVisor headline, and a real GKE cluster must never spin on a
-cron (spend) or auto-merge a headline shift. Every refresh is manual and opens a
-PR for a human to review before merge.
+  ```bash
+  gcloud builds triggers run hb-refresh-gke-sandbox --project=<PROJECT> \
+    --substitutions=_POOL_REPLICAS=10,_MACHINE_TYPE=n2-standard-16,_REGION=us-central1
+  ```
+- **gke-kata (Kata + microVM) path** — [`cloudbuild-refresh-gke-kata.yaml`](../cloudbuild-refresh-gke-kata.yaml).
+  Same shape, `kata-clh` RuntimeClass, scoped to the Kata scenarios. Fire it:
 
-The gke-sandbox workflow is reproducible by **anyone with a GCP project** — point
-it at your own by adding three repo secrets, then dispatch it:
+  ```bash
+  gcloud builds triggers run hb-refresh-gke-kata --project=<PROJECT>
+  ```
 
-| Secret | Value |
-|---|---|
-| `GCP_WIF_PROVIDER` | a Workload Identity Federation provider resource name (keyless OIDC auth — no long-lived key stored) |
-| `GCP_SERVICE_ACCOUNT` | the service account the provider impersonates (needs `container.admin` to create/delete the cluster) |
-| `GCP_PROJECT` | your GCP project id |
+The **portable kind path** (steps 1-3 above) needs no CI at all — it runs on any
+laptop with Docker and no cloud account. Its former CI-refresh workflow was **not
+migrated by design**: a kind run only downgrades the live gVisor headline to a
+`pending`/kind number, and kind-in-Cloud-Build (docker-in-docker) is fragile — so
+the portable suite is a local-only reproduce path now.
 
-Without those three secrets the workflow is **inert** — a dispatch fails fast at
-the auth step, so it can never spin a cluster (or incur spend) unattended.
+**Manual is the spend-arm.** Each GKE refresh binds to a trigger with **no
+branch/PR/schedule wiring**, so a real GKE cluster is never spun unattended: it
+fires only on an explicit `gcloud builds triggers run`, and it opens a PR for a
+human to review before merge — a cron (spend) or auto-merged headline shift can
+never happen.
+
+**Reproducible by anyone with a GCP project.** Auth is a dedicated
+least-privilege **Cloud Build service account** passed on the trigger — no
+Workload-Identity-Federation secrets, no long-lived keys. The three former GitHub
+repo secrets (`GCP_WIF_PROVIDER` / `GCP_SERVICE_ACCOUNT` / `GCP_PROJECT`) are
+retired. Point [`scripts/setup-cloud-build-triggers.sh`](../scripts/setup-cloud-build-triggers.sh)
+at your own project to create the triggers; the service account it uses needs, on
+the target project, `roles/container.admin`, `roles/iam.serviceAccountUser`,
+`roles/compute.viewer`, and Secret Accessor on the refresh GitHub-token secret.
 
 ## Reading the output
 
