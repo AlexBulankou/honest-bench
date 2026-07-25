@@ -14,7 +14,7 @@
           "kind": "pr",
           "role": "fix-in-flight",
           "status": "open",
-          "note": "Structural fix: binary-protobuf record encoding, so a proto field rename can no longer brick ListActors on a long-lived cluster. Open/stalled since 2026-07-02. GA blocker."
+          "note": "Structural fix: binary-protobuf record encoding, so a proto field rename can no longer brick ListActors on a long-lived cluster. Open since 2026-07-02; a maintainer commented 2026-07-24 asking the author to resolve conflicts (GitHub reports mergeable_state=dirty) -- live engagement, not abandoned, but not mergeable as-is. GA blocker."
         }
       ]
     },
