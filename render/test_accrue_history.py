@@ -61,6 +61,32 @@ def test_extract_row_skip_on_bad_required_field():
     assert accrue_history.extract_row(_latest(digest="sha256:NOT-HEX")) is None
 
 
+def test_candidate_row_none_when_no_count():
+    # CASE 1: a non-PASS burst_create carries no measurable COUNT ⇒ no candidate at all.
+    assert accrue_history._candidate_row(_latest(outcome="FAIL")) is None
+
+
+def test_candidate_row_present_even_when_provenance_bad():
+    # CASE 2 is distinguishable from CASE 1: a measured COUNT with unanchorable provenance still
+    # produces a CANDIDATE (the COUNT exists) — only validation, not measurement, fails.
+    cand = accrue_history._candidate_row(_latest(digest="sha256:NOT-HEX"))
+    assert cand is not None
+    assert cand["sandboxes_ready_under_1s"] == 9
+
+
+def test_validate_row_names_failing_provenance_field():
+    cand = accrue_history._candidate_row(_latest(digest="sha256:NOT-HEX"))
+    row, bad_key = accrue_history._validate_row(cand)
+    assert row is None
+    assert bad_key == "controller_digest"
+
+
+def test_validate_row_clean_returns_row_and_no_bad_key():
+    row, bad_key = accrue_history._validate_row(accrue_history._candidate_row(_latest()))
+    assert bad_key is None
+    assert set(row) == set(accrue_history.HISTORY_FIELDS)
+
+
 def _read(path):
     with open(path) as fh:
         return [json.loads(line) for line in fh if line.strip()]
@@ -122,6 +148,46 @@ def test_main_honest_skip_exit_zero_no_write(capsys=None):
         rc = accrue_history.main(["sandbox", "--latest", latest, "--history", history])
         assert rc == 0
         assert not os.path.exists(history)  # honest-skip: no file written
+
+
+def test_main_loud_fail_on_empty_digest_the_real_world_flake():
+    # The production failure mode: BENCH_CONTROLLER_DIGEST capture flaked, so provenance carries
+    # controller_digest="" while the burst COUNT WAS measured. Must fail LOUD + closed (rc=3),
+    # NOT emit the false "no measurable COUNT" honest-skip that froze the trend since 2026-06-28.
+    with tempfile.TemporaryDirectory() as d:
+        latest = os.path.join(d, "latest.json")
+        history = os.path.join(d, "history.jsonl")
+        with open(latest, "w") as fh:
+            json.dump(_latest(digest=""), fh)
+        rc = accrue_history.main(["sandbox", "--latest", latest, "--history", history])
+        assert rc == 3
+        assert not os.path.exists(history)  # fail-closed: no write
+
+
+def test_main_loud_fail_on_bad_digest():
+    with tempfile.TemporaryDirectory() as d:
+        latest = os.path.join(d, "latest.json")
+        history = os.path.join(d, "history.jsonl")
+        with open(latest, "w") as fh:
+            json.dump(_latest(digest="sha256:NOT-HEX"), fh)
+        rc = accrue_history.main(["sandbox", "--latest", latest, "--history", history])
+        assert rc == 3
+        assert not os.path.exists(history)
+
+
+def test_main_loud_fail_on_missing_provenance_key():
+    # controller_digest ABSENT from provenance entirely (vs empty-string) — still a measured
+    # COUNT that cannot anchor ⇒ loud fail, not a false no-COUNT skip.
+    res = _latest()
+    del res["provenance"]["controller_digest"]
+    with tempfile.TemporaryDirectory() as d:
+        latest = os.path.join(d, "latest.json")
+        history = os.path.join(d, "history.jsonl")
+        with open(latest, "w") as fh:
+            json.dump(res, fh)
+        rc = accrue_history.main(["sandbox", "--latest", latest, "--history", history])
+        assert rc == 3
+        assert not os.path.exists(history)
 
 
 def test_main_writes_and_is_idempotent():

@@ -232,9 +232,14 @@ cat "$NODE_SAMPLE_LOG" 2>/dev/null || echo "(no samples captured)"
 
 # hb#3918/hb#439: upsert this build's burst_create COUNT into the build-over-build
 # history BEFORE rendering, so render_trend has the just-written row available.
-# Sole-writer contract (accrue_history.py) — honest-skips (no write, exit 0) if
-# latest.json carries no measurable PASS burst_create cell or the provenance
-# fields above didn't resolve, so a partial/failed fire never pollutes the trend.
+# Sole-writer contract (accrue_history.py), two outcomes on a non-write:
+#   CASE 1 (exit 0, quiet) — latest.json carries no measurable PASS burst_create cell,
+#     so there is genuinely nothing to chart; a scenario-less/failed fire never pollutes.
+#   CASE 2 (exit 3, LOUD) — a COUNT *was* measured but the provenance fields above didn't
+#     resolve (e.g. BENCH_CONTROLLER_DIGEST flaked to ""), so the row can't anchor to a
+#     build. That is a trust-surface silent-degrade of alex's #1 throughput trend, so it
+#     fails the step deliberately (the EXIT trap still tears the cluster down) rather than
+#     freezing the trend while the fire reports green. Fix the digest capture, don't mask it.
 echo "==> accruing build-over-build throughput history (hb#3918/hb#439)"
 python3 -m render.accrue_history sandbox
 

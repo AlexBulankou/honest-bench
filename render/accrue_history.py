@@ -14,8 +14,14 @@ Contract (mirrors the fleet's other accrual stores):
   - Idempotent + upsert-by-digest: re-running on the same build refreshes that build's row
     (latest measurement of a build wins) rather than appending a duplicate, so the file is
     exactly one row per distinct build, ordered by generated_at.
-  - Honest-skip: a latest.json whose burst_create cell is not a PASS carrying the COUNT
-    metric produces NO row (you cannot chart a COUNT that was not measured). Exit 0, no write.
+  - Honest-skip vs loud-fail (two distinct None-cases — do not conflate):
+      CASE 1 (benign) — a latest.json whose burst_create cell is not a PASS carrying the COUNT
+        metric produces NO row (you cannot chart a COUNT that was not measured). Exit 0, no write.
+      CASE 2 (defect) — a COUNT *was* measured but a provenance field cannot anchor it to a
+        build (e.g. controller_digest empty because BENCH_CONTROLLER_DIGEST capture flaked).
+        Skipping this silently freezes the throughput trend while the fire reports success, so
+        it fails LOUD + closed (rc=3, naming the failing field + the measured count) rather than
+        emitting the misleading "no measurable COUNT" reason.
   - Closed-schema on the way in: only schema.HISTORY_FIELDS are extracted; the row is
     validated field-by-field before it is written, so no harness free-text reaches the file.
 
@@ -63,12 +69,14 @@ def _burst_count_row(results):
     return None
 
 
-def extract_row(results):
-    """Build a closed-schema history row from a parsed latest.json, or None to skip.
+def _candidate_row(results):
+    """Return the pre-validation candidate row, or None if no burst_create COUNT was measured.
 
-    Returns a dict containing exactly HISTORY_FIELDS keys, each value already validated; or
-    None when the run carries no measurable burst_create COUNT (honest-skip) or a required
-    field fails its predicate (cannot anchor the row to a build).
+    None here is CASE 1 — a legitimate honest-skip: the run carries no PASS burst_create cell
+    with the COUNT metric, so there is genuinely nothing to chart. This is distinct from
+    CASE 2 (a COUNT *was* measured but a provenance field cannot anchor it to a build), which
+    is a validated-None from `_validate_row` below — the caller must tell the two apart so it
+    can report an accurate reason instead of a false "no COUNT" skip.
     """
     measured = _burst_count_row(results)
     if measured is None:
@@ -76,7 +84,7 @@ def extract_row(results):
     count, density, n = measured
     prov = results.get("provenance") if isinstance(results, dict) else None
     prov = prov if isinstance(prov, dict) else {}
-    candidate = {
+    return {
         "generated_at": results.get("generated_at"),
         "controller_digest": prov.get("controller_digest"),
         "suite_git_sha": prov.get("suite_git_sha"),
@@ -86,17 +94,41 @@ def extract_row(results):
         "density_per_vcpu": density,
         "n": n,
     }
+
+
+def _validate_row(candidate):
+    """Validate a candidate against HISTORY_FIELDS. Return (row, None) or (None, bad_key).
+
+    `bad_key` names the first field that is missing or fails its predicate — i.e. the reason a
+    measured COUNT could not be anchored to a build (CASE 2). Keeping the failing key lets the
+    caller emit a loud, accurate diagnosis rather than a silent, misleading honest-skip.
+    """
     row = {}
     for key, ok in HISTORY_FIELDS.items():
         if key not in candidate:
-            return None
+            return None, key
         val = candidate[key]
         try:
             if not ok(val):
-                return None
+                return None, key
         except (TypeError, ValueError):
-            return None
+            return None, key
         row[key] = val
+    return row, None
+
+
+def extract_row(results):
+    """Build a closed-schema history row from a parsed latest.json, or None to skip.
+
+    Returns a dict containing exactly HISTORY_FIELDS keys, each value already validated; or
+    None when the run carries no measurable burst_create COUNT (honest-skip) or a required
+    field fails its predicate (cannot anchor the row to a build). Callers that need to tell
+    those two None-cases apart use `_candidate_row` + `_validate_row` directly (see main()).
+    """
+    candidate = _candidate_row(results)
+    if candidate is None:
+        return None
+    row, _ = _validate_row(candidate)
     return row
 
 
@@ -165,10 +197,31 @@ def main(argv=None):
         return 0
     with open(latest) as fh:
         results = json.load(fh)
-    row = extract_row(results)
-    if row is None:
+
+    candidate = _candidate_row(results)
+    if candidate is None:
+        # CASE 1: genuinely no measurable COUNT (burst_create absent or not PASS). A COUNT that
+        # was never measured cannot be charted — benign honest-skip, exit 0.
         sys.stderr.write("accrue_history: latest.json has no measurable burst_create COUNT — skip\n")
         return 0
+
+    row, bad_key = _validate_row(candidate)
+    if row is None:
+        # CASE 2: a COUNT *was* measured but the run cannot be anchored to a build (a provenance
+        # field is missing/invalid — e.g. BENCH_CONTROLLER_DIGEST capture flaked to ""). Skipping
+        # here silently freezes alex's #1 build-over-build throughput trend while the fire still
+        # reports success — a trust-surface silent-degrade. Fail LOUD + closed instead (rc=3): the
+        # fire reds, its EXIT-trap teardown still runs, and the accurate reason is on the log —
+        # never the old false "no measurable COUNT" message.
+        count = candidate.get("sandboxes_ready_under_1s")
+        bad_val = candidate.get(bad_key)
+        sys.stderr.write(
+            f"accrue_history: MEASURED burst_create count={count!r} but CANNOT anchor to a build "
+            f"— provenance field {bad_key!r} is missing/invalid ({bad_val!r}); trend NOT advanced. "
+            f"Fix provenance capture (BENCH_CONTROLLER_DIGEST / suite_git_sha) in the fire.\n"
+        )
+        return 3
+
     rows = upsert(row, history)
     sys.stderr.write(
         f"accrue_history: upserted build {row['controller_digest'][:19]} "
