@@ -71,6 +71,16 @@ _LIST_PRICE_USD_PER_NODE_HOUR = {
     "n2d-standard-4": 0.1626,
 }
 
+# As-of date of the list-price snapshot above, so a list_price cost carries a RENDERED
+# staleness signal instead of a bare number with no vintage. GCP list prices change over
+# time, so a stale list_price cost can over-state (the discount gap) AND drift (the price
+# moved since capture). This is the CONSERVATIVE base-table capture (2026-06); the one
+# later-added entry (n2-standard-16, 2026-07) came from the same source, so quoting the
+# older date understates freshness rather than over-claiming it -- the honest direction for
+# a staleness caveat. render mirrors this as schema.LIST_PRICE_AS_OF (no shared import; a
+# drift is caught by the cost-basis cross-contract test, same posture as COST_BASIS_ENUM).
+LIST_PRICE_AS_OF = "2026-06"
+
 _SECONDS_PER_HOUR = 3600.0
 
 # Which price source produced the node-hour rate a cost was computed from. This is a

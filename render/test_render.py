@@ -3129,6 +3129,11 @@ def test_stepup_cost_basis_list_price_footnote_rendered():
     out = render.render_stepup(_matrix_results(_full_gvisor_scenarios(), stepup=su))
     assert "coarse public GCP on-demand list price" in out
     assert "UPPER bound" in out
+    # the footnote must carry the snapshot's as-of vintage so the reader can judge staleness,
+    # not just the upper-bound direction — and it comes from the schema mirror, not a literal
+    from schema import LIST_PRICE_AS_OF as _asof
+    assert f"as of {_asof}" in out
+    assert "point-in-time snapshot" in out
 
 
 def test_stepup_cost_basis_operator_rate_footnote_rendered():

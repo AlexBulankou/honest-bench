@@ -424,6 +424,13 @@ SLO_BASIS_VALUES = frozenset(
 # so render must caveat a list_price cost as such.
 COST_BASIS_VALUES = frozenset(("operator_rate", "list_price"))
 
+# As-of date of the list_price snapshot the coarse fallback rates were captured at, so a
+# rendered list_price cost carries a staleness VINTAGE instead of a bare number. Independent
+# mirror of harness cost.LIST_PRICE_AS_OF (no shared import — render must stay offline-portable;
+# a drift is caught by the cost-basis cross-contract test). render surfaces this in the
+# list_price basis footnote so the reader can judge how stale the upper-bound cost may be.
+LIST_PRICE_AS_OF = "2026-06"
+
 # Matrix metric keys (per-scenario sla_metrics) -> closed-schema predicate. exec_success_n
 # is OPTIONAL (the numerator for the doc's "(1277/1376)" fraction); absent ⇒ render the bare
 # percentage. All are non-negative numerics; exec_success_rate is a 0..1 fraction.
