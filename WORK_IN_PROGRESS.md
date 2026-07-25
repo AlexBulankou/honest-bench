@@ -46,6 +46,16 @@ _Anchors and the entry set are generated from the closed pending-reason enum —
 - **ETA:** Gated on the upstream true-TTFE writer, or a future fire whose literal-basis p95 clears the bar at some measured rate.
 - **Trace:** Upstream agent-sandbox (end-to-end TTFE measurability): [agent-sandbox#751](https://github.com/kubernetes-sigs/agent-sandbox/issues/751) (issue, closed) → fix [agent-sandbox#761](https://github.com/kubernetes-sigs/agent-sandbox/pull/761) (PR, merged). Internal tracking a#3975 / a#4364.
 
+<a id="overshoot-inconclusive"></a>
+
+## Enforcement overshoot ran but did not classify (`overshoot-inconclusive`)
+
+- **What:** The resource-limit-enforcement cell: does the runtime CONFINE a sandbox to its declared memory footprint? The probe declares a small limit, then has the sandbox attempt a controlled over-limit allocation — an enforced runtime OOM-kills it at the limit (PASS), an unenforced one lets the over-allocation succeed (FAIL).
+- **Why absent:** **armed-but-inconclusive.** The probe ran on the live runtime, but the sandbox reached a terminal state that is neither a clean cgroup OOM-kill nor a clean over-limit survival — an unclassifiable exit. The cell degrades here rather than fabricate an enforcement badge or report a false breach: an armed probe that cannot read its own signal is honest-empty, not a verdict.
+- **In flight:** Yes — the controlled-overshoot confinement probe is built and arms on the coordinated substrate fire; a re-fire on the live runtime resolves the cell to PASS/FAIL. Internal tracking a#5634.
+- **ETA:** Next coordinated substrate fire of the enforcement probe.
+- **Trace:** Confinement-enforcement axis (the declared-vs-enforced density-honesty backstop). Internal tracking a#5634 / a#3868.
+
 <a id="upstream-blocked"></a>
 
 ## Resume-from-suspend is blocked upstream (`upstream-blocked`)

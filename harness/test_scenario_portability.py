@@ -344,6 +344,25 @@ def test_harness_enums_subset_of_render_allowlists():
         not missing_products,
         f"harness PRODUCT_ENUM values not in render PRODUCTS: {sorted(missing_products)}",
     )
+    # badge_scope / badge_construction (#3905/#3950/#5634): the harness emits these as the
+    # atomic enforcement-badge pair; render drops an out-of-enum value at the suffix boundary,
+    # so a harness value render does not accept silently loses the badge on the public page.
+    # This guards the resource_limit_enforcement footprint-overshoot construction the same way
+    # the reason/substrate checks above guard their families.
+    missing_scopes = set(results_schema.BADGE_SCOPE_ENUM) - render_schema.BADGE_SCOPES
+    _check(
+        not missing_scopes,
+        f"harness BADGE_SCOPE_ENUM values not in render BADGE_SCOPES "
+        f"(would drop the badge scope at render): {sorted(missing_scopes)}",
+    )
+    missing_constructions = (
+        set(results_schema.BADGE_CONSTRUCTION_ENUM) - render_schema.BADGE_CONSTRUCTIONS
+    )
+    _check(
+        not missing_constructions,
+        f"harness BADGE_CONSTRUCTION_ENUM values not in render BADGE_CONSTRUCTIONS "
+        f"(would drop the construction suffix at render): {sorted(missing_constructions)}",
+    )
 
 
 def test_suspend_resume_excluded_from_kata_suite_na_by_construction():

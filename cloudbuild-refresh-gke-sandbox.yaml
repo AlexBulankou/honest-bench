@@ -158,6 +158,18 @@ steps:
       # gke-sandbox managed-NP, so charter-#5 (#139) managed-NP disclosure does not
       # bind this arm.
       - "BENCH_NETPOL_DATAPLANE_PROBE=1"
+      # Resource-limit-enforcement probe (#5634, completes the #3868 footprint
+      # axis): arm the controlled-overshoot confinement probe so the
+      # resource_limit_enforcement cell publishes "enforced" BY CONSTRUCTION —
+      # the sandbox's OWN command allocates a fixed 256Mi against a declared 64Mi
+      # limit, and a cgroup OOM-kill (reason=OOMKilled / exit 137) is the single
+      # K8s-API-observable PASS signal (256Mi << node memory, so exit 137 can only
+      # be a cgroup kill, never a node-OOM). Fail-safe: an inconclusive probe
+      # degrades to pending(overshoot-inconclusive), so a probe-infra hiccup can
+      # never red the refresh. The cell allocates from its own declared footprint
+      # and reads only the terminal container state off the K8s API — no in-sandbox
+      # cgroup read, no managed-runtime disclosure, so charter-#5 does not bind it.
+      - "BENCH_RLIMIT_OVERSHOOT_PROBE=1"
       # Consumed by scripts/cb-measure-gke-sandbox.sh below. The step's script
       # used to live inline here and dereference ${_REGION} /
       # ${_KEEP_CLUSTER_ON_FAILURE} directly via CB's substitution engine —

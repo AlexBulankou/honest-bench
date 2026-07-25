@@ -151,6 +151,32 @@ WIP_CATALOG = {
             + ". Internal tracking a#3975 / a#4364."
         ),
     },
+    "overshoot-inconclusive": {
+        "title": "Enforcement overshoot ran but did not classify (`overshoot-inconclusive`)",
+        "what": (
+            "The resource-limit-enforcement cell: does the runtime CONFINE a sandbox to its "
+            "declared memory footprint? The probe declares a small limit, then has the sandbox "
+            "attempt a controlled over-limit allocation — an enforced runtime OOM-kills it at the "
+            "limit (PASS), an unenforced one lets the over-allocation succeed (FAIL)."
+        ),
+        "why": (
+            "**armed-but-inconclusive.** The probe ran on the live runtime, but the sandbox "
+            "reached a terminal state that is neither a clean cgroup OOM-kill nor a clean "
+            "over-limit survival — an unclassifiable exit. The cell degrades here rather than "
+            "fabricate an enforcement badge or report a false breach: an armed probe that cannot "
+            "read its own signal is honest-empty, not a verdict."
+        ),
+        "in_flight": (
+            "Yes — the controlled-overshoot confinement probe is built and arms on the "
+            "coordinated substrate fire; a re-fire on the live runtime resolves the cell to "
+            "PASS/FAIL. Internal tracking a#5634."
+        ),
+        "eta": "Next coordinated substrate fire of the enforcement probe.",
+        "trace": (
+            "Confinement-enforcement axis (the declared-vs-enforced density-honesty backstop). "
+            "Internal tracking a#5634 / a#3868."
+        ),
+    },
     "upstream-blocked": {
         "title": "Resume-from-suspend is blocked upstream (`upstream-blocked`)",
         "what": (
@@ -298,6 +324,7 @@ WIP_ORDER = (
     "cluster-fire",
     "trust-gate",
     "no-compliant-rung",
+    "overshoot-inconclusive",
     "upstream-blocked",
     "requires-gvisor-runtime",
     "requires-kata-runtime",
