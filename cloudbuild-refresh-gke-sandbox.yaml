@@ -158,7 +158,7 @@ steps:
       # gke-sandbox managed-NP, so charter-#5 (#139) managed-NP disclosure does not
       # bind this arm.
       - "BENCH_NETPOL_DATAPLANE_PROBE=1"
-      # Resource-limit-enforcement probe (a#5634, completes the a#3868 footprint
+      # Resource-limit-enforcement probe (#5634, completes the #3868 footprint
       # axis): arm the controlled-overshoot confinement probe so the
       # resource_limit_enforcement cell publishes "enforced" BY CONSTRUCTION —
       # the sandbox's OWN command allocates a fixed 256Mi against a declared 64Mi
