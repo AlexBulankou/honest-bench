@@ -3196,6 +3196,8 @@ def test_cost_methodology_rendered_when_cost_present():
     assert "operator_rate" in out
     assert "list_price" in out
     assert "UPPER bound" in out
+    # list_price is a point-in-time snapshot: over-states AND can drift stale
+    assert "point-in-time public snapshot" in out
     # honesty spine: an unresolvable rate leaves the cell absent, never fabricated to 0
     assert "never a fabricated" in out
 

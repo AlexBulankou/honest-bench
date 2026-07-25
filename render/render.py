@@ -4554,7 +4554,9 @@ def render_cost_methodology(results):
         "- **list_price** — no explicit rate, so the machine type (e.g. `e2-standard-16`, "
         "`n2-standard-16`) is looked up in a coarse **public GCP on-demand list-price** table. This "
         "is an **UPPER bound**: real billing is materially lower under committed-use, spot, and "
-        "sustained-use discounts. Pass an explicit rate for the operator's true cost."
+        "sustained-use discounts. It is also a **point-in-time public snapshot** — GCP list prices "
+        "change over time, so a list_price cost can drift stale as well as over-state. Both are "
+        "reasons to pass an explicit rate for the operator's true, current cost."
     )
     lines.append("")
     lines.append(
