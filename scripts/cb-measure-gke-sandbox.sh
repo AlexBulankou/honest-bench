@@ -193,26 +193,43 @@ bash recipe/install-controller-from-main.sh
 # `svc/agent-sandbox-controller` already exists as the stable lookup handle
 # for this Deployment (reused from scripts/gvisor_warm_ttfe_sweep.py's own
 # CTRL_NS/CTRL_SVC), so read its selector rather than hardcoding a label that
-# could drift from upstream's manifest. Wait for the rollout first: the
-# install script only checks the Deployment's spec (args), never waits for a
-# Pod to actually be Running, and `imageID` is a status field that's empty
-# until the image is pulled and the container starts. Best-effort like the
-# node-image/runsc capture above: a lookup failure must never fail the
-# measure step over a provenance field.
+# could drift from upstream's manifest.
+#
+# This capture is LOAD-BEARING, not best-effort. install-controller-from-main.sh
+# applies the base controller then the extensions controller LAST, both under the
+# same Deployment name — a rolling update. Reading an arbitrary items[0] pod races
+# the rollover: it can hit the still-Terminating base pod (wrong digest) or a
+# not-yet-started replica whose .status.containerStatuses[].imageID is still empty
+# (empty digest). hb#3918 (#447) makes an empty-digest-with-a-measured-COUNT a HARD
+# fail (rc=3) at the accrual step downstream — the correct honest behavior, but it
+# means a flaky capture REDs every refresh. So poll the NEWEST pod (the just-applied
+# extensions replica) until imageID resolves to a shape-valid sha256 digest.
 echo "==> capturing controller image digest for provenance"
 kubectl -n agent-sandbox-system rollout status deploy/agent-sandbox-controller --timeout=180s || true
 CTRL_SELECTOR=$(kubectl get svc agent-sandbox-controller -n agent-sandbox-system \
   -o jsonpath='{range $k,$v := .spec.selector}{$k}={$v},{end}' 2>/dev/null | sed 's/,$//' || true)
-CONTROLLER_POD=$(kubectl get pods -n agent-sandbox-system -l "$CTRL_SELECTOR" \
-  -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || echo "")
-CONTROLLER_IMAGE_ID=$(kubectl get pod "$CONTROLLER_POD" -n agent-sandbox-system \
-  -o jsonpath='{.status.containerStatuses[0].imageID}' 2>/dev/null || echo "")
 # imageID is `<repo>@sha256:<hex>` once resolved — strip everything up to and
 # including the last `@` to leave the bare `sha256:<hex>` digest the schema
-# expects (render/schema.py's _SHA256). Empty CONTROLLER_IMAGE_ID -> empty
-# digest -> honest-skip downstream in accrue_history, not a fabricated value.
-export BENCH_CONTROLLER_DIGEST=$(echo "$CONTROLLER_IMAGE_ID" | sed -E 's/^.*@//')
-echo "==> controller_digest=$BENCH_CONTROLLER_DIGEST (pod=$CONTROLLER_POD)"
+# expects (render/schema.py's _SHA256). Newest pod = the extensions replica that
+# won the rolling update; older Terminating base pods sort earlier and are skipped.
+BENCH_CONTROLLER_DIGEST=""
+CONTROLLER_POD=""
+for ((attempt=1; attempt<=12; attempt++)); do
+  CONTROLLER_POD=$(kubectl get pods -n agent-sandbox-system -l "$CTRL_SELECTOR" \
+    --sort-by=.metadata.creationTimestamp -o name 2>/dev/null | tail -1 | sed 's#^pod/##' || echo "")
+  if [ -n "$CONTROLLER_POD" ]; then
+    CONTROLLER_IMAGE_ID=$(kubectl get pod "$CONTROLLER_POD" -n agent-sandbox-system \
+      -o jsonpath='{.status.containerStatuses[0].imageID}' 2>/dev/null || echo "")
+    CAND=$(echo "$CONTROLLER_IMAGE_ID" | sed -E 's/^.*@//')
+    if echo "$CAND" | grep -Eq '^sha256:[0-9a-f]{64}$'; then
+      BENCH_CONTROLLER_DIGEST="$CAND"; break
+    fi
+  fi
+  echo "==> controller digest not yet resolved (attempt $attempt/12, pod=${CONTROLLER_POD:-<none>}) — retrying in 5s"
+  sleep 5
+done
+export BENCH_CONTROLLER_DIGEST
+echo "==> controller_digest=${BENCH_CONTROLLER_DIGEST:-<empty>} (pod=${CONTROLLER_POD:-<none>})"
 
 # hb#5396: deploy the upstream TTFE-true mutating webhook (asbx#761) so
 # SandboxClaim CREATE is stamped with agents.x-k8s.io/webhook-first-observed-at,
