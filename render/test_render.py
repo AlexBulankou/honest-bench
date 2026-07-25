@@ -1155,6 +1155,57 @@ def test_starstar_footnote_triggered_by_acq_uncorroborated_basis():
     assert "**Published-with-caveat cells (`***U` / `***Z` / `***K` / `***R`)**" in out
 
 
+def test_matrix_include_legend_false_emits_compact_pointer_only():
+    # HB1 (alex 2026-07-25): the home-page matrix (include_legend=False) drops the full glossary
+    # and the published-with-caveat block, emitting only a compact "Reading the cells" pointer +
+    # a link back to the DETAILS legend section. Triggered on a caveat scenario to prove the
+    # heavy block is suppressed even when a cell earned a `***`.
+    scen = _full_gvisor_scenarios()
+    scen[2] = {
+        "name": "suspend_resume", "outcome": "pending",
+        "pending_reason": "upstream-blocked",
+        "resume_probe_ceiling_ms": 34604.4, "n": 1376,
+    }
+    out = render.render_matrix(_matrix_results(scen), include_legend=False)
+    assert "**Reading the cells**" in out
+    assert "DETAILS.md#how-to-read-the-core-metrics-cells" in out
+    # the full glossary bullet + the caveat block do NOT appear on the home page
+    assert "**How to read the cells**" not in out
+    assert "Published-with-caveat cells" not in out
+
+
+def test_matrix_include_legend_false_adds_no_spurious_starstar():
+    # byte-faithful caveat-gate property: `"***" in render_matrix(include_legend=False)` must equal
+    # the DEFAULT path's matrix_has_starstar snapshot, so build_details' recompute never
+    # false-positives. On a CLEAN scenario (no data cell earns `***`), the compact-legend tail
+    # must add no `***` of its own.
+    clean = _matrix_results(_full_gvisor_scenarios())
+    out_clean = render.render_matrix(clean, include_legend=False)
+    assert "***" not in out_clean
+    # and the DEFAULT path agrees (no caveat block on the clean scenario)
+    assert "Published-with-caveat cells" not in render.render_matrix(clean)
+
+
+def test_core_metrics_legend_caveat_gated_matches_matrix():
+    # render_core_metrics_legend carries the relocated glossary; its caveat block renders iff the
+    # DEFAULT-legend matrix would have shown `***` — byte-faithful to the matrix_has_starstar gate.
+    clean = _matrix_results(_full_gvisor_scenarios())
+    legend_clean = render.render_core_metrics_legend(clean)
+    assert legend_clean.startswith("## How to read the Core Metrics cells")
+    assert render._LOW_N_MARK in legend_clean  # glossary always present
+    assert "Published-with-caveat cells" not in legend_clean  # no `***` cell → no caveat block
+
+    scen = _full_gvisor_scenarios()
+    scen[2] = {
+        "name": "suspend_resume", "outcome": "pending",
+        "pending_reason": "upstream-blocked",
+        "resume_probe_ceiling_ms": 34604.4, "n": 1376,
+    }
+    legend_caveat = render.render_core_metrics_legend(_matrix_results(scen))
+    assert "**Published-with-caveat cells (`***U` / `***Z` / `***K` / `***R`)**" in legend_caveat
+    assert "**`***R` — Resume probe ceiling**" in legend_caveat
+
+
 def test_matrix_literal_basis_note_with_coarse_p95_caption():
     # hb#174 sign-off (c): a literal-controller triple whose credited rungs' MIN warm-exec
     # sample count is 20 <= n < 100 renders the basis disclosure line PLUS the coarse-p95

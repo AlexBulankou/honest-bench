@@ -961,7 +961,224 @@ def _resolve_cluster_basis(sources):
     return bases
 
 
-def render_matrix(results, kata_results=None):
+def _core_metrics_glossary_bullets():
+    """The 'How to read the cells' glossary bullets — the full cell-decoding key.
+
+    Shared single source: render_matrix(include_legend=True) inlines these (unit-test parity),
+    and render_core_metrics_legend() emits them under an H2 in DETAILS (the home page carries
+    only a compact pointer). Returns a list of one bullet per element (byte-identical to the
+    prior inline appends when extended in order)."""
+    return [
+        "- **TTFE** — Time-To-First-Instruction: wall-clock from asking for a sandbox until your "
+        "agent's first instruction has run and returned a result — not merely pod-Ready.",
+        "- **p50 / p95** — median / worst-in-20; plan UX around p95. Read TTFE *down* a column, "
+        "not across rows — activation-mode rows differ in sample size by orders of magnitude "
+        "(each cell shows its own `(count=N)`), so only rows with similar N are comparable.",
+        "- **Warm-pool hit vs. Unique-image cold (RL reality)** — a warm-pool hit is served from "
+        "a pre-started idle pool (startup already paid); the unique-image-cold row is a fresh "
+        "sandbox on a never-pulled image — image pull + cold start on the critical path, the "
+        "worst case a reinforcement-learning training loop actually hits.",
+        "- **Throughput `x /node · y /cluster`** — per-node is the engineering rate (comparable "
+        "across runtimes); per-cluster is a MEASURED per-activation-mode rate at the node count "
+        "named in the bold caption above the table — the per-cluster fire is separate from the "
+        "per-node fire, so the build line's `node_count` (the per-node fire's shape) does not "
+        "apply to it — never a per-node × N extrapolation.",
+        "- **Why the per-node rate can repeat across the `<5s` and `<1s` columns** — the two "
+        "throughput columns are SLO-gated: a per-node figure fills a column when the row's TTFE "
+        "p95 clears THAT column's bar. When p95 clears BOTH bars (p95 < 1s ⇒ p95 < 5s too), the "
+        "same per-node rate legitimately satisfies both, so it renders identically in both "
+        "columns — not a copy-paste. The two per-CLUSTER halves can still differ (or carry "
+        "different caveats) because each bar's cluster figure is credited under its own basis "
+        "— and may even coincide numerically while resting on DIFFERENT bases (e.g. a literal-"
+        "TTFE floor at the <5s bar and an acquire-side floor at the <1s bar landing on the same "
+        "number), distinguished by the per-cell caveat tag (`***U`/`***Z`/`***K` — see below), "
+        "not by the digits.",
+        "- **`≥y /cluster` (certification floor)** — a per-cluster figure prefixed `≥` is a LOWER "
+        "BOUND on the true sustainable rate, not the rate itself. Two floor constructions carry "
+        "it, and the `≥` arises for DIFFERENT reasons: **(a) a literal-TTFE-upper-bound basis** — "
+        "a TTFE ceiling `t` yields a rate floor `≥1/t` by construction (the exec-probe warm p95 is "
+        "an UPPER bound on TTFE, so the derived rate is a lower bound regardless of the trust gate; "
+        "this basis is not trust-gate-capped once the controller cross-check corroborates it). "
+        "**(b) the uncorroborated acquire-side basis (`***U`)** — the highest rung whose acquire "
+        "p95 cleared the bar, with the controller cross-check dropped; `≥` because upstream #940 "
+        "double-records warm-path Ready transitions, disqualifying the higher rungs, so the ladder "
+        "never saturated and a higher real rate exists but is presently uncorroborated. These are "
+        "NOT the same graduation story. The (b) trust-gate cap is what agent-sandbox#1114 (merged "
+        "2026-07-22, the controller double-count fix) clears — but re-measuring against a "
+        "#1114-bearing controller only restores controller corroboration, moving the cell onto the "
+        "(a) construction, which STILL renders `≥`. A floor graduates to a *bare* measured rate "
+        "ONLY under the true-TTFE (webhook-corroborated) basis — a graduated real number rather "
+        "than a bound — not merely from a gate fix plus a re-fire. A `≥` figure below the cluster "
+        "sizing target still carries ⚠️ (the floor itself is under target); an uncorroborated "
+        "floor also carries `***U` (see the caveat block below).",
+        "- **honest `0`** — the measurement ran and could not hold the bar: the measured TTFE p95 misses "
+        "that cell's SLO, so the SLO-compliant throughput is a real `0` (we print it rather than "
+        "round up) — not \"zero activity\". A derived `0` inherits the sample basis of the p95 it "
+        f"reads, so a single-sample p95 yields a single-sample `0` carrying {_LOW_N_MARK}.",
+        "- **measured `0` (floor-zero)** — the second zero provenance, distinct from the "
+        "derived `0` above: here the SLO-rate fire itself RAN and emitted a stamped zero — at "
+        "the lowest offered rate fired, the majority of samples missed the bar by a "
+        "pre-declared margin even after granting every unevaluable sample a pass, so no "
+        "compliant operating point exists at or above the floor. When this basis is in play "
+        "the italic basis line above the table names it; a derived `0` instead reads off a "
+        "measured TTFE p95 with no throughput fire behind it.",
+        "- **A sub-bar TTFE p95 next to a `0` in that column's throughput** (e.g. the "
+        "unique-image-cold row's 3.x s p95 under the <5s bar, yet <5s throughput `0`) — not a "
+        "contradiction: the TTFE p95 is the acquire-side exec-probe (clean here), but the "
+        "throughput gate is the CONTROLLER cold-start floor, a SEPARATE and higher measurement "
+        "that exceeds both bars at every rate — so no compliant operating point exists and the "
+        "rate is a measured `0` (tagged `***Z`; see the cold-start floor zero note in the caveat "
+        "block below).",
+        f"- **{_LOW_N_MARK}** — measured over fewer than N={TTFE_COMPARABILITY_MIN_N} samples: "
+        "read it as a single observation, not a distribution; do not rank it against a high-N row.",
+        "- **⚠️** — a miss flag: on Execution Success it marks <100% (and prints the "
+        "succeeded/total fraction); on a per-cluster throughput figure it marks a rate below the "
+        "cluster sizing target.",
+        "- **`pending`** — awaits its TTFE-instrumented run (a genuinely not-yet-run cell).",
+        "- **`pending (upstream-blocked)`** — the run DID land, but an upstream controller gap "
+        "(the resume path's Suspended condition never clears) holds the SLO-compliant figure; it "
+        "graduates to a real number the moment the upstream fix lands, not merely when a run is "
+        "scheduled. When the probe recorded a wall-clock ceiling (the time spent waiting out the "
+        "never-clearing condition), that ceiling now PRINTS as `≥N.Ns***R` — a floor the resume "
+        "never beat, not a resume time; see the `***R` block below. A cell with no recorded "
+        "ceiling stays `pending (upstream-blocked)`. "
+        "Tracked upstream: " + upstream_prose_refs("upstream-blocked") + ".",
+        "- **`pending (cluster-fire)`** — the per-node figure is measured, but the per-cluster "
+        "half awaits a schema-validated per-mode cluster-throughput fire (distinct from the "
+        "whole-cluster Saturation ceiling in DETAILS, which measures the aggregate ceiling at "
+        "overload, not these SLO-gated per-mode cells).",
+        "- **`pending (trust-gate)`** — the per-cluster SLO-rate fire RAN, but derivation was "
+        "refused by the acquire/controller agreement gate (rel-diff tolerance 0.10) at every "
+        "measured rung: the upstream controller startup-latency histogram double-records Ready "
+        "transitions on stale-informer replays, inflating the controller leg ~1.7–2× on "
+        "warm-pool-fulfilled paths (cold control legs PASS the same gate on both runtimes). "
+        "Publishing honest-empty beats publishing a rate the gate can't trust. "
+        "Tracked upstream: " + upstream_prose_refs("trust-gate") + ".",
+        "- **`pending (no-compliant-rung)`** — the per-cluster SLO-rate fire RAN with the trust "
+        "gate PASSING, but every measured rung's p95 (on the literal-TTFE upper-bound basis) "
+        "sits over this cell's SLO bar — an SLO-gated rate can't be published as `0` from a "
+        "finite ladder unless a pre-declared floor condition holds, and the true-TTFE basis "
+        "that could tighten the bound has no production writer upstream yet. "
+        "Tracked upstream: " + upstream_prose_refs("no-compliant-rung") + ".",
+        "- **`N/A`** — `N/A` by construction: Resume-from-suspend × Kata + microVM can never be "
+        "measured — CRIU checkpoint/restore does not transfer to the Kata VM isolation model — "
+        "distinct from `pending`, which awaits a run.",
+        "- **Why a `pending` is not just printed as `0`** — a blunter display rule would print "
+        "`0` for any cell that cannot show compliance; each pending flavor above documents why "
+        "that would over-claim here: an upper-bound latency basis cannot prove a true miss "
+        "(`no-compliant-rung`), a failed agreement gate cannot certify a rate in either "
+        "direction (`trust-gate`), and a floor rung whose samples are majority-unevaluable "
+        "cannot establish the negative claim (the floor-zero predicate's evaluability cap). "
+        "Each such cell graduates — to a measured rate or a floor-zero `0` — the moment its "
+        "condition clears.",
+    ]
+
+
+def _core_metrics_caveat_lines():
+    """The consolidated `***` caveat block (header + intro + the four class bullets), returned
+    INCLUDING its trailing blank line. Emitted only when the matrix actually earned a `***`
+    caveat — see the matrix_has_starstar snapshot in render_matrix / the recompute in
+    render_core_metrics_legend."""
+    return [
+        "**Published-with-caveat cells (`***U` / `***Z` / `***K` / `***R`)**",
+        "",
+        "A cell tagged `***<letter>` prints the best figure we measured, not an "
+        "honest-empty `pending`: the measurement exists but carries a bound or a "
+        "single-source caveat, spelled out below. Each letter names a distinct "
+        "measurement basis, so a cell's tag alone tells you which caveat below applies "
+        "— no need to cross-reference by row/column position. The number is real — read "
+        "it with its caveat. Each class graduates to a clean figure when its upstream "
+        "fix lands.",
+        "",
+        "- **`***U` — Uncorroborated acquire-side rate** (warm-pool-hit SLO-rate cells) "
+        "— the published rate is fulfilled (claim→bound)/s at the highest rung whose "
+        "acquisition p95 cleared the bar, with the independent controller-completion "
+        "cross-check DROPPED. It is SINGLE-SOURCE, so it can read HIGHER than a "
+        "cross-corroborated cell (the two-trust-tier split) — and it is the highest "
+        "OFFERED rung, NOT a saturation ceiling: the ladder was not driven to saturation, "
+        "so the true sustainable rate is at least this and likely higher. Controller "
+        "corroboration is unavailable because the upstream controller startup-latency "
+        "histogram double-records Ready transitions on stale-informer replays, inflating "
+        "the controller leg ~1.7–2× on warm-pool-fulfilled paths (cold control legs PASS "
+        "the same gate). "
+        "Tracked upstream: " + upstream_prose_refs("trust-gate") + ".",
+        "- **`***Z` — Cold-start floor zero** (unique-image-cold SLO-rate cells) — a "
+        "MEASURED zero, not an absence: the controller cold-start floor (~14.7s p50) "
+        "exceeds BOTH throughput bars at every offered rate (rate-independent), so no "
+        "compliant operating point exists. The zero is the sandbox cold-start floor, not "
+        "an acquire-path miss — the acquire-side latency is clean sub-second (~5/s) at "
+        "every rung. Corroborated by a controller-MEASURED (trusted) rung whose cold p50 "
+        "is also over both bars, so it is never asserted from the controller-untrusted "
+        "floor rung alone. "
+        "Tracked upstream: " + upstream_prose_refs("no-compliant-rung") + ".",
+        "- **`***K` — Unresolved bounds** (`unk.***K`, Kata + microVM unique-image-cold "
+        "5s cell) — a measurement was taken, but the true TTFE p95 is bounded in "
+        "[~2.5s, ~8.4s] at 0.05–0.07/s: the controller-cold proxy (lower bound) does not "
+        "breach the 5s bar and the literal exec-probe (upper bound) does not clear it, so "
+        "no claim is supportable either direction. The exec-probe upper bound includes "
+        "Kata exec websocket setup overhead; the 5s bar sits INSIDE the bracket — no "
+        "supportable claim either way. "
+        "Tracked upstream: " + upstream_prose_refs("no-compliant-rung") + ".",
+        "- **`***R` — Resume probe ceiling** (`≥N.Ns***R`, the two TTFE cells of the "
+        "Resume-from-suspend × gVisor row — not yet manifested: the row currently reads "
+        "`pending (upstream-blocked)`, and this basis applies from the first probe run "
+        "that records a wall-clock ceiling) — the resume never completed (the upstream "
+        "Suspended condition never clears), so the probe recorded only the wall-clock "
+        "ceiling it spent waiting. That ceiling PRINTS as a floor (`≥N.Ns`) in the TTFE "
+        "columns — the resume takes AT LEAST this long — not a resume time; do not rank "
+        "it against a real completion distribution. The two throughput columns read "
+        "`0***R (upstream-blocked)` and execution success reads `0/N completed***R`: "
+        "zero of N probe attempts completed, so the true rate is zero (a duration is not "
+        "a rate). "
+        "Tracked upstream: " + upstream_prose_refs("upstream-blocked") + ", ETA: once "
+        "that PR merges and a fresh resume probe run lands (see "
+        "[WORK_IN_PROGRESS.md#upstream-blocked](WORK_IN_PROGRESS.md#upstream-blocked)).",
+        "",
+    ]
+
+
+def _core_metrics_compact_legend_lines():
+    """Home-page compact cell key: a short scannable decode line plus a pointer to the full
+    glossary in DETAILS. MUST stay `***`-free — render_core_metrics_legend() gates its caveat
+    block on `'***' in render_matrix(..., include_legend=False)`, so any `***` here would
+    falsely force the caveat block on for clean scenarios."""
+    return [
+        "**Reading the cells** — TTFE is Time-To-First-Instruction (wall-clock until your "
+        "agent's first instruction returns, not merely pod-Ready). Read TTFE p50/p95 *down* a "
+        "column, not across rows — activation-mode rows differ in sample size by orders of "
+        "magnitude (each cell shows its own `(count=N)`). `†` marks a sub-N sample (a single "
+        "observation, not a distribution); `⚠️` is a miss flag (sub-100% Execution Success, or "
+        "a per-cluster rate below the sizing target); `pending` (and its `(upstream-blocked)` / "
+        "`(cluster-fire)` / `(trust-gate)` / `(no-compliant-rung)` flavors) means the cell has "
+        "no publishable figure yet.",
+        "",
+        "Full cell-decoding key — TTFE basis, honest vs. measured zeros, the dual per-node · "
+        "per-cluster throughput pair, the certification-floor `≥` figures, every `pending` "
+        "flavor, and the published-with-caveat tag classes — is in "
+        "[DETAILS.md](DETAILS.md#how-to-read-the-core-metrics-cells).",
+        "",
+    ]
+
+
+def render_core_metrics_legend(results, kata_results=None):
+    """The full Core-Metrics cell-decoding key, for DETAILS.md (relocated off the home page,
+    hb home-page slim). Emits the same glossary + `***` caveat block render_matrix carries
+    when include_legend=True, under an H2 whose anchor the home-page compact key points at.
+    The caveat block gates on whether the matrix earned a `***` — recomputed here faithfully
+    from the include_legend=False render (which carries the same pre-snapshot matrix cells +
+    basis lines, and no `***` in the compact legend/Max-Density/kata/banner tail)."""
+    include_caveats = "***" in render_matrix(
+        results, kata_results=kata_results, include_legend=False
+    )
+    out = ["## How to read the Core Metrics cells", ""]
+    out.extend(_core_metrics_glossary_bullets())
+    out.append("")
+    if include_caveats:
+        out.extend(_core_metrics_caveat_lines())
+    return "\n".join(out).rstrip()
+
+
+def render_matrix(results, kata_results=None, include_legend=True):
     """Render the doc's 7-column Core Metrics Table (primary results + optional kata results).
 
     A single run measures ONE runtime (provenance.runtime, default gvisor); that runtime's rows
@@ -1353,147 +1570,17 @@ def render_matrix(results, kata_results=None):
     # flavors, N/A-by-construction) is one scannable line, plus a plain-English gloss for the
     # warm-pool-hit vs unique-image-cold rows. The DYNAMIC Kata-provenance line stays a separate
     # italic footnote below — it carries closed-schema run provenance the glossary cannot.
-    lines.append("**How to read the cells**")
-    lines.append("")
-    lines.append(
-        "- **TTFE** — Time-To-First-Instruction: wall-clock from asking for a sandbox until your "
-        "agent's first instruction has run and returned a result — not merely pod-Ready."
-    )
-    lines.append(
-        "- **p50 / p95** — median / worst-in-20; plan UX around p95. Read TTFE *down* a column, "
-        "not across rows — activation-mode rows differ in sample size by orders of magnitude "
-        "(each cell shows its own `(count=N)`), so only rows with similar N are comparable."
-    )
-    lines.append(
-        "- **Warm-pool hit vs. Unique-image cold (RL reality)** — a warm-pool hit is served from "
-        "a pre-started idle pool (startup already paid); the unique-image-cold row is a fresh "
-        "sandbox on a never-pulled image — image pull + cold start on the critical path, the "
-        "worst case a reinforcement-learning training loop actually hits."
-    )
-    lines.append(
-        "- **Throughput `x /node · y /cluster`** — per-node is the engineering rate (comparable "
-        "across runtimes); per-cluster is a MEASURED per-activation-mode rate at the node count "
-        "named in the bold caption above the table — the per-cluster fire is separate from the "
-        "per-node fire, so the build line's `node_count` (the per-node fire's shape) does not "
-        "apply to it — never a per-node × N extrapolation."
-    )
-    lines.append(
-        "- **Why the per-node rate can repeat across the `<5s` and `<1s` columns** — the two "
-        "throughput columns are SLO-gated: a per-node figure fills a column when the row's TTFE "
-        "p95 clears THAT column's bar. When p95 clears BOTH bars (p95 < 1s ⇒ p95 < 5s too), the "
-        "same per-node rate legitimately satisfies both, so it renders identically in both "
-        "columns — not a copy-paste. The two per-CLUSTER halves can still differ (or carry "
-        "different caveats) because each bar's cluster figure is credited under its own basis "
-        "— and may even coincide numerically while resting on DIFFERENT bases (e.g. a literal-"
-        "TTFE floor at the <5s bar and an acquire-side floor at the <1s bar landing on the same "
-        "number), distinguished by the per-cell caveat tag (`***U`/`***Z`/`***K` — see below), "
-        "not by the digits."
-    )
-    lines.append(
-        "- **`≥y /cluster` (certification floor)** — a per-cluster figure prefixed `≥` is a LOWER "
-        "BOUND on the true sustainable rate, not the rate itself. Two floor constructions carry "
-        "it, and the `≥` arises for DIFFERENT reasons: **(a) a literal-TTFE-upper-bound basis** — "
-        "a TTFE ceiling `t` yields a rate floor `≥1/t` by construction (the exec-probe warm p95 is "
-        "an UPPER bound on TTFE, so the derived rate is a lower bound regardless of the trust gate; "
-        "this basis is not trust-gate-capped once the controller cross-check corroborates it). "
-        "**(b) the uncorroborated acquire-side basis (`***U`)** — the highest rung whose acquire "
-        "p95 cleared the bar, with the controller cross-check dropped; `≥` because upstream #940 "
-        "double-records warm-path Ready transitions, disqualifying the higher rungs, so the ladder "
-        "never saturated and a higher real rate exists but is presently uncorroborated. These are "
-        "NOT the same graduation story. The (b) trust-gate cap is what agent-sandbox#1114 (merged "
-        "2026-07-22, the controller double-count fix) clears — but re-measuring against a "
-        "#1114-bearing controller only restores controller corroboration, moving the cell onto the "
-        "(a) construction, which STILL renders `≥`. A floor graduates to a *bare* measured rate "
-        "ONLY under the true-TTFE (webhook-corroborated) basis — a graduated real number rather "
-        "than a bound — not merely from a gate fix plus a re-fire. A `≥` figure below the cluster "
-        "sizing target still carries ⚠️ (the floor itself is under target); an uncorroborated "
-        "floor also carries `***U` (see the caveat block below)."
-    )
-    lines.append(
-        "- **honest `0`** — the measurement ran and could not hold the bar: the measured TTFE p95 misses "
-        "that cell's SLO, so the SLO-compliant throughput is a real `0` (we print it rather than "
-        "round up) — not \"zero activity\". A derived `0` inherits the sample basis of the p95 it "
-        f"reads, so a single-sample p95 yields a single-sample `0` carrying {_LOW_N_MARK}."
-    )
-    lines.append(
-        "- **measured `0` (floor-zero)** — the second zero provenance, distinct from the "
-        "derived `0` above: here the SLO-rate fire itself RAN and emitted a stamped zero — at "
-        "the lowest offered rate fired, the majority of samples missed the bar by a "
-        "pre-declared margin even after granting every unevaluable sample a pass, so no "
-        "compliant operating point exists at or above the floor. When this basis is in play "
-        "the italic basis line above the table names it; a derived `0` instead reads off a "
-        "measured TTFE p95 with no throughput fire behind it."
-    )
-    lines.append(
-        "- **A sub-bar TTFE p95 next to a `0` in that column's throughput** (e.g. the "
-        "unique-image-cold row's 3.x s p95 under the <5s bar, yet <5s throughput `0`) — not a "
-        "contradiction: the TTFE p95 is the acquire-side exec-probe (clean here), but the "
-        "throughput gate is the CONTROLLER cold-start floor, a SEPARATE and higher measurement "
-        "that exceeds both bars at every rate — so no compliant operating point exists and the "
-        "rate is a measured `0` (tagged `***Z`; see the cold-start floor zero note in the caveat "
-        "block below)."
-    )
-    lines.append(
-        f"- **{_LOW_N_MARK}** — measured over fewer than N={TTFE_COMPARABILITY_MIN_N} samples: "
-        "read it as a single observation, not a distribution; do not rank it against a high-N row."
-    )
-    lines.append(
-        "- **⚠️** — a miss flag: on Execution Success it marks <100% (and prints the "
-        "succeeded/total fraction); on a per-cluster throughput figure it marks a rate below the "
-        "cluster sizing target."
-    )
-    lines.append(
-        "- **`pending`** — awaits its TTFE-instrumented run (a genuinely not-yet-run cell)."
-    )
-    lines.append(
-        "- **`pending (upstream-blocked)`** — the run DID land, but an upstream controller gap "
-        "(the resume path's Suspended condition never clears) holds the SLO-compliant figure; it "
-        "graduates to a real number the moment the upstream fix lands, not merely when a run is "
-        "scheduled. When the probe recorded a wall-clock ceiling (the time spent waiting out the "
-        "never-clearing condition), that ceiling now PRINTS as `≥N.Ns***R` — a floor the resume "
-        "never beat, not a resume time; see the `***R` block below. A cell with no recorded "
-        "ceiling stays `pending (upstream-blocked)`. "
-        "Tracked upstream: " + upstream_prose_refs("upstream-blocked") + "."
-    )
-    lines.append(
-        "- **`pending (cluster-fire)`** — the per-node figure is measured, but the per-cluster "
-        "half awaits a schema-validated per-mode cluster-throughput fire (distinct from the "
-        "whole-cluster Saturation ceiling in DETAILS, which measures the aggregate ceiling at "
-        "overload, not these SLO-gated per-mode cells)."
-    )
-    lines.append(
-        "- **`pending (trust-gate)`** — the per-cluster SLO-rate fire RAN, but derivation was "
-        "refused by the acquire/controller agreement gate (rel-diff tolerance 0.10) at every "
-        "measured rung: the upstream controller startup-latency histogram double-records Ready "
-        "transitions on stale-informer replays, inflating the controller leg ~1.7–2× on "
-        "warm-pool-fulfilled paths (cold control legs PASS the same gate on both runtimes). "
-        "Publishing honest-empty beats publishing a rate the gate can't trust. "
-        "Tracked upstream: " + upstream_prose_refs("trust-gate") + "."
-    )
-    lines.append(
-        "- **`pending (no-compliant-rung)`** — the per-cluster SLO-rate fire RAN with the trust "
-        "gate PASSING, but every measured rung's p95 (on the literal-TTFE upper-bound basis) "
-        "sits over this cell's SLO bar — an SLO-gated rate can't be published as `0` from a "
-        "finite ladder unless a pre-declared floor condition holds, and the true-TTFE basis "
-        "that could tighten the bound has no production writer upstream yet. "
-        "Tracked upstream: " + upstream_prose_refs("no-compliant-rung") + "."
-    )
-    lines.append(
-        "- **`N/A`** — `N/A` by construction: Resume-from-suspend × Kata + microVM can never be "
-        "measured — CRIU checkpoint/restore does not transfer to the Kata VM isolation model — "
-        "distinct from `pending`, which awaits a run."
-    )
-    lines.append(
-        "- **Why a `pending` is not just printed as `0`** — a blunter display rule would print "
-        "`0` for any cell that cannot show compliance; each pending flavor above documents why "
-        "that would over-claim here: an upper-bound latency basis cannot prove a true miss "
-        "(`no-compliant-rung`), a failed agreement gate cannot certify a rate in either "
-        "direction (`trust-gate`), and a floor rung whose samples are majority-unevaluable "
-        "cannot establish the negative claim (the floor-zero predicate's evaluability cap). "
-        "Each such cell graduates — to a measured rate or a floor-zero `0` — the moment its "
-        "condition clears."
-    )
-    lines.append("")
+    # Home page (include_legend=False) collapses to a compact `***`-free key + a pointer to the
+    # full glossary in DETAILS (render_core_metrics_legend); the full glossary+caveat block is
+    # inlined only when include_legend=True, which preserves byte-identity for the direct
+    # render_matrix() unit tests.
+    if include_legend:
+        lines.append("**How to read the cells**")
+        lines.append("")
+        lines.extend(_core_metrics_glossary_bullets())
+        lines.append("")
+    else:
+        lines.extend(_core_metrics_compact_legend_lines())
 
     # hb#230 (alex doctrine flip, 2026-07-08): the ONE consolidated *** caveat block. Every
     # `***`-tagged cell above publishes the best number we measured rather than an honest-empty
@@ -1501,71 +1588,8 @@ def render_matrix(results, kata_results=None):
     # here with its measured basis + the upstream fix that graduates it to a clean number, and
     # its upstream link lives ONLY here (the cells carry the bare `***`, no inline ref). Gated
     # on the matrix-only snapshot so the block never renders when no cell earned a caveat.
-    if matrix_has_starstar:
-        lines.append("**Published-with-caveat cells (`***U` / `***Z` / `***K` / `***R`)**")
-        lines.append("")
-        lines.append(
-            "A cell tagged `***<letter>` prints the best figure we measured, not an "
-            "honest-empty `pending`: the measurement exists but carries a bound or a "
-            "single-source caveat, spelled out below. Each letter names a distinct "
-            "measurement basis, so a cell's tag alone tells you which caveat below applies "
-            "— no need to cross-reference by row/column position. The number is real — read "
-            "it with its caveat. Each class graduates to a clean figure when its upstream "
-            "fix lands."
-        )
-        lines.append("")
-        lines.append(
-            "- **`***U` — Uncorroborated acquire-side rate** (warm-pool-hit SLO-rate cells) "
-            "— the published rate is fulfilled (claim→bound)/s at the highest rung whose "
-            "acquisition p95 cleared the bar, with the independent controller-completion "
-            "cross-check DROPPED. It is SINGLE-SOURCE, so it can read HIGHER than a "
-            "cross-corroborated cell (the two-trust-tier split) — and it is the highest "
-            "OFFERED rung, NOT a saturation ceiling: the ladder was not driven to saturation, "
-            "so the true sustainable rate is at least this and likely higher. Controller "
-            "corroboration is unavailable because the upstream controller startup-latency "
-            "histogram double-records Ready transitions on stale-informer replays, inflating "
-            "the controller leg ~1.7–2× on warm-pool-fulfilled paths (cold control legs PASS "
-            "the same gate). "
-            "Tracked upstream: " + upstream_prose_refs("trust-gate") + "."
-        )
-        lines.append(
-            "- **`***Z` — Cold-start floor zero** (unique-image-cold SLO-rate cells) — a "
-            "MEASURED zero, not an absence: the controller cold-start floor (~14.7s p50) "
-            "exceeds BOTH throughput bars at every offered rate (rate-independent), so no "
-            "compliant operating point exists. The zero is the sandbox cold-start floor, not "
-            "an acquire-path miss — the acquire-side latency is clean sub-second (~5/s) at "
-            "every rung. Corroborated by a controller-MEASURED (trusted) rung whose cold p50 "
-            "is also over both bars, so it is never asserted from the controller-untrusted "
-            "floor rung alone. "
-            "Tracked upstream: " + upstream_prose_refs("no-compliant-rung") + "."
-        )
-        lines.append(
-            "- **`***K` — Unresolved bounds** (`unk.***K`, Kata + microVM unique-image-cold "
-            "5s cell) — a measurement was taken, but the true TTFE p95 is bounded in "
-            "[~2.5s, ~8.4s] at 0.05–0.07/s: the controller-cold proxy (lower bound) does not "
-            "breach the 5s bar and the literal exec-probe (upper bound) does not clear it, so "
-            "no claim is supportable either direction. The exec-probe upper bound includes "
-            "Kata exec websocket setup overhead; the 5s bar sits INSIDE the bracket — no "
-            "supportable claim either way. "
-            "Tracked upstream: " + upstream_prose_refs("no-compliant-rung") + "."
-        )
-        lines.append(
-            "- **`***R` — Resume probe ceiling** (`≥N.Ns***R`, the two TTFE cells of the "
-            "Resume-from-suspend × gVisor row — not yet manifested: the row currently reads "
-            "`pending (upstream-blocked)`, and this basis applies from the first probe run "
-            "that records a wall-clock ceiling) — the resume never completed (the upstream "
-            "Suspended condition never clears), so the probe recorded only the wall-clock "
-            "ceiling it spent waiting. That ceiling PRINTS as a floor (`≥N.Ns`) in the TTFE "
-            "columns — the resume takes AT LEAST this long — not a resume time; do not rank "
-            "it against a real completion distribution. The two throughput columns read "
-            "`0***R (upstream-blocked)` and execution success reads `0/N completed***R`: "
-            "zero of N probe attempts completed, so the true rate is zero (a duration is not "
-            "a rate). "
-            "Tracked upstream: " + upstream_prose_refs("upstream-blocked") + ", ETA: once "
-            "that PR merges and a fresh resume probe run lands (see "
-            "[WORK_IN_PROGRESS.md#upstream-blocked](WORK_IN_PROGRESS.md#upstream-blocked))."
-        )
-        lines.append("")
+    if include_legend and matrix_has_starstar:
+        lines.extend(_core_metrics_caveat_lines())
 
     # The Kata rows fill from a SEPARATE run (the sandbox-kata product) on the kata node pool —
     # a different cluster substrate + machine shape than the build banner below — so disclose

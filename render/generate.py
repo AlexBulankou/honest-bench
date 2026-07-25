@@ -41,6 +41,7 @@ def _load_render():
     spec.loader.exec_module(mod)
     return (
         mod.render_matrix,
+        mod.render_core_metrics_legend,
         mod.render_north_star_caption,
         mod.render_operating_envelope,
         mod.render_what_this_means,
@@ -68,7 +69,8 @@ def _load_render():
     )
 
 
-(render_matrix, render_north_star_caption, render_operating_envelope, render_what_this_means,
+(render_matrix, render_core_metrics_legend,
+ render_north_star_caption, render_operating_envelope, render_what_this_means,
  render_burst_corroboration, render_warm_bind_decomposition, render_cold_bind_decomposition,
  render_warm_vs_cold, render_scale_proof, render_cluster_scale, render_stepup,
  render_cost_methodology, render_kata_activation, render_concurrent_burst,
@@ -233,7 +235,10 @@ def build_readme(root=None):
         with open(path) as fh:
             results = json.load(fh)
         kr = kata_results if product == "sandbox" else None
-        sections.append(render_matrix(results, kata_results=kr).rstrip())
+        # hb home-page slim: the home page carries the matrix + a compact `***`-free cell key
+        # (include_legend=False); the full glossary + `***` caveat block relocates to DETAILS
+        # (render_core_metrics_legend), keeping the home page to key measurements only.
+        sections.append(render_matrix(results, kata_results=kr, include_legend=False).rstrip())
         # hb#227 (GOAL-2.1, DROP-2): the former "How close to the North Star?" + "Stretch bar"
         # scorecards fold to two one-line measured-verdict captions placed directly UNDER the
         # Core Metrics matrix (render_north_star_caption). Same _north_star_rows source +
@@ -329,6 +334,13 @@ def build_details(root=None):
         # Max-Density relocated here from the headline matrix (hb#134). kata_results fills
         # the kata-microvm row when its separate run is present, mirroring build_readme.
         kr = kata_results if product == "sandbox" else None
+        # HB1 (alex 2026-07-25): the full cell-decoding glossary + published-with-caveat
+        # block moved off the headline matrix to here; the README matrix carries only a
+        # compact "Reading the cells" pointer back to this section. Byte-faithful gating:
+        # the caveat block renders iff the DEFAULT-legend matrix would have shown ***.
+        legend = render_core_metrics_legend(results, kata_results=kr)
+        if legend.strip():
+            sections.append(legend.rstrip())
         density = render_density_detail(results, kata_results=kr)
         if density.strip():
             sections.append(density.rstrip())
