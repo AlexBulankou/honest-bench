@@ -3165,6 +3165,52 @@ def test_stepup_cost_basis_footnote_absent_when_no_cost():
     assert "operator-supplied node-hour rate" not in out
 
 
+def _su_costed():
+    su = _su()
+    for pt, c in zip(su["pareto_points"], (0.42, 0.44, 0.51, 0.9, 1.5)):
+        pt["cost_usd_per_1k_ready"] = c
+    return su
+
+
+def test_cost_methodology_inert_when_no_stepup():
+    # No stepup object at all ⇒ the DETAILS cost-methodology deep-dive is INERT (byte-absent).
+    assert render.render_cost_methodology(_matrix_results(_full_gvisor_scenarios())) == ""
+
+
+def test_cost_methodology_inert_when_stepup_has_no_cost():
+    # A step-up table with a Pareto but NO cost column ⇒ no methodology for a number not on the
+    # page (same absent spine as the cost column itself). The default _su() carries no cost.
+    out = render.render_cost_methodology(_matrix_results(_full_gvisor_scenarios(), stepup=_su()))
+    assert out == ""
+
+
+def test_cost_methodology_rendered_when_cost_present():
+    # A costed Pareto point turns the deep-dive on: the closed formula, both cluster-level terms,
+    # the honesty spine, and BOTH basis meanings must all appear so the reader can reproduce a cell.
+    out = render.render_cost_methodology(
+        _matrix_results(_full_gvisor_scenarios(), stepup=_su_costed()))
+    assert "## Cost per 1k Ready" in out
+    assert "cost_usd_per_1k_ready = (node_count × $/node-hour) ÷ (ready_per_s × 3600) × 1000" in out
+    assert "cluster cost rate" in out
+    assert "cluster throughput" in out
+    assert "operator_rate" in out
+    assert "list_price" in out
+    assert "UPPER bound" in out
+    # honesty spine: an unresolvable rate leaves the cell absent, never fabricated to 0
+    assert "never a fabricated" in out
+
+
+def test_cost_methodology_independent_of_basis_field():
+    # The methodology renders off the cost COLUMN's presence, not the cost_basis flag — so a costed
+    # run with no basis stamped still documents the formula (the basis field only tunes the footnote
+    # under the headline table, a separate axis from the deep-dive explainer).
+    su = _su_costed()
+    su.pop("cost_basis", None)
+    out = render.render_cost_methodology(
+        _matrix_results(_full_gvisor_scenarios(), stepup=su))
+    assert "## Cost per 1k Ready" in out
+
+
 # --- knee-bracket: two-axis (acquisition-compliant + TTFE-collapsed) render ---------------
 def _knee(**over):
     # The #4560 knee-bracket shape: NO true-TTFE pareto_points / saturation_point (both null in

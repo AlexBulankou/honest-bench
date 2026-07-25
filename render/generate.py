@@ -51,6 +51,7 @@ def _load_render():
         mod.render_scale_proof,
         mod.render_cluster_scale,
         mod.render_stepup,
+        mod.render_cost_methodology,
         mod.render_kata_activation,
         mod.render_concurrent_burst,
         mod.render_warm_pool_acquisition,
@@ -70,7 +71,8 @@ def _load_render():
 (render_matrix, render_north_star_caption, render_operating_envelope, render_what_this_means,
  render_burst_corroboration, render_warm_bind_decomposition, render_cold_bind_decomposition,
  render_warm_vs_cold, render_scale_proof, render_cluster_scale, render_stepup,
- render_kata_activation, render_concurrent_burst, render_warm_pool_acquisition,
+ render_cost_methodology, render_kata_activation, render_concurrent_burst,
+ render_warm_pool_acquisition,
  render_at_scale_contention, render_cluster_saturation, render_provisioning_rate_sweep,
  render_session_turnover, render_suspend_latency, render_density_detail, render_vcpu_footprint,
  render_storage_config, render_recipe, render_trend) = _load_render()
@@ -345,6 +347,13 @@ def build_details(root=None):
         rate_sweep = render_provisioning_rate_sweep(results)
         if rate_sweep.strip():
             sections.append(rate_sweep.rstrip())
+        # Cost-axis methodology: the headline step-up table carries a Cost ($/1k ready) column, but
+        # the closed formula + honesty spine + the operator_rate-vs-list_price basis have no home on
+        # the scannable front page. Deep-dive here. INERT unless the run carries a costed Pareto
+        # point (no methodology for a number that isn't on the page).
+        cost_meth = render_cost_methodology(results)
+        if cost_meth.strip():
+            sections.append(cost_meth.rstrip())
         # #3868: warm-pool session-turnover refill latency — the RECLAIM side of the agentic
         # lifecycle (the matrix + warm_pool_acquisition measure the claim side). INERT-first:
         # renders nothing until a session_turnover fire emits a measured refill median. DETAILS-only

@@ -4500,6 +4500,73 @@ def render_stepup(results):
     return "\n".join(lines)
 
 
+def render_cost_methodology(results):
+    """Render the DETAILS deep-dive that documents HOW the step-up Cost ($/1k ready) column is
+    computed, or "" when INERT.
+
+    The headline step-up Pareto table carries a `Cost ($/1k ready)` column (render_stepup), but a
+    published number is only trustworthy if the reader can see the working: the closed formula, the
+    two cluster-level terms it divides, the honesty spine (absent — never a fabricated 0 — when no
+    node-hour rate resolves), and what the two rate bases mean. That methodology has no home on the
+    scannable headline page, so it lives here. INERT unless the run actually carries a costed
+    Pareto point — a run with a step-up table but no cost column renders nothing (no methodology for
+    a number that isn't on the page), same absent-spine posture as the cost column itself.
+    """
+    su = _clean_stepup(results)
+    if su is None:
+        return ""
+    pts = su.get("pareto_points") or []
+    if not any("cost_usd_per_1k_ready" in p for p in pts):
+        return ""
+    lines = ["## Cost per 1k Ready — how the $/1k-ready column is computed", ""]
+    lines.append(
+        "The step-up Pareto table above carries a **Cost ($/1k ready)** column. It is not a billing "
+        "export — it is a single closed formula over two cluster-level terms, so the reader can "
+        "reproduce every cell by hand:"
+    )
+    lines.append("")
+    lines.append("```")
+    lines.append("cost_usd_per_1k_ready = (node_count × $/node-hour) ÷ (ready_per_s × 3600) × 1000")
+    lines.append("```")
+    lines.append("")
+    lines.append(
+        "The numerator `node_count × $/node-hour` is the **cluster cost rate** (dollars per hour to "
+        "run the whole pool). The denominator `ready_per_s × 3600` is the **cluster throughput** "
+        "(sandboxes brought to Ready per hour) at that offered rate. Their ratio is dollars per "
+        "ready-sandbox; the `× 1000` restates it per **1,000** ready so the headline cells stay "
+        "readable. Both terms are already on the page — `ready_per_s` is the same column's Ready/s "
+        "value — so the cost cell is internally consistent with the throughput it sits beside, not "
+        "a number from a separate accounting path."
+    )
+    lines.append("")
+    lines.append(
+        "**Honesty spine.** The rate that feeds `$/node-hour` resolves in one of two ways, and if "
+        "neither yields a positive rate the cost cell is **absent** (an em-dash / dropped field), "
+        "never a fabricated `0` or a guessed figure:"
+    )
+    lines.append("")
+    lines.append(
+        "- **operator_rate** — an explicit operator-supplied node-hour rate was passed. This is the "
+        "operator's **real committed rate** and always wins over the list-price table (a bad "
+        "explicit rate fails closed to absent rather than silently falling through to list price)."
+    )
+    lines.append(
+        "- **list_price** — no explicit rate, so the machine type (e.g. `e2-standard-16`, "
+        "`n2-standard-16`) is looked up in a coarse **public GCP on-demand list-price** table. This "
+        "is an **UPPER bound**: real billing is materially lower under committed-use, spot, and "
+        "sustained-use discounts. Pass an explicit rate for the operator's true cost."
+    )
+    lines.append("")
+    lines.append(
+        "The active basis is disclosed as a footnote directly under the Pareto table (`Cost basis: "
+        "…`). An unknown machine type with no explicit rate resolves to no rate — so the cost cell, "
+        "and its basis footnote, are simply absent for that run rather than reporting a cost the "
+        "harness cannot stand behind."
+    )
+    lines.append("")
+    return "\n".join(lines)
+
+
 # --- #4021: Reproducibility Recipe (static, product-agnostic) ------------------------------
 # The preamble promises "reproducible from the recipe at the bottom"; this is that section.
 # It is STATIC architecture-shape prose — no measured numbers, so it carries zero PII risk and
