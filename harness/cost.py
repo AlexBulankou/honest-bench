@@ -52,13 +52,21 @@ from typing import Optional
 # Public GCP Compute Engine on-demand LIST prices, us-central1, USD/node-hour.
 # COARSE REFERENCE DEFAULTS ONLY -- committed-use, spot, and sustained-use
 # discounts make real billing materially lower. The accurate path is to pass an
-# explicit usd_per_node_hour; this table is a labeled fallback for the common a4
+# explicit usd_per_node_hour; this table is a labeled fallback for the common
 # cluster shapes so a sweep that did not record its billing rate still renders a
 # ballpark cost rather than blank. Source: public cloud.google.com VM pricing
-# list, captured 2026-06. Keep this a coarse reference, not a precision claim.
+# list, captured 2026-06 (n2-standard-16 added 2026-07, same source). Keep this a
+# coarse reference, not a precision claim.
+#
+# n2-standard-16 is the shape the throughput-saturation sweeps currently run on
+# (the scenario runner re-pooled to it), so without this entry a sweep that omits
+# its explicit billing rate would fall through to None and render the cost axis
+# permanently pending for its own live cluster shape -- the exact blank-cell case
+# this fallback table exists to avoid.
 _LIST_PRICE_USD_PER_NODE_HOUR = {
     "e2-standard-16": 0.5363,
     "e2-standard-8": 0.2682,
+    "n2-standard-16": 0.7769,
     "n2d-standard-8": 0.3252,
     "n2d-standard-4": 0.1626,
 }
