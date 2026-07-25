@@ -578,12 +578,55 @@ def _measure_claim_latencies(
     return bound_at, pending, sandbox_names, ttfe_results
 
 
+def _snapshot_prewarmed_sandboxes(custom) -> set[str] | None:
+    """Snapshot the set of Sandbox names that EXIST before the claim burst.
+
+    These are the pool's genuinely pre-warmed sandboxes (hb#450). A claim that
+    binds to a sandbox in this set adopted a pre-warmed pod = genuine warm hit; a
+    claim that binds to a sandbox ABSENT from this set was served by a replacement
+    the controller created DURING the burst (a depletion-cold blend) and must be
+    excluded from the warm tier so warm p95/TTFE measures what the pool actually
+    pre-warmed. A name-set snapshot is used rather than a creationTimestamp
+    comparison on purpose — Kubernetes `metadata.creationTimestamp` has 1-second
+    resolution, so a replacement created in the same wall-second as burst-start
+    could alias as pre-warmed; sandbox NAMES are unique and never reused, so the
+    snapshot is an exact discriminator with no boundary ambiguity.
+
+    Called immediately before the firing loop, so it captures exactly the warmed
+    set the burst will consume (`_wait_for_pool_warm` has already blocked until
+    readyReplicas == target, so the pool is at full pre-warm here).
+
+    Returns the name set, or None on any read failure — the caller then falls
+    back to rank-only classification (loud-logged). The warm/cold inversion
+    tripwire (`_warm_cold_inversion_caveat`) still guards the published trust
+    surface in the fallback case, so a contaminated run never publishes silently.
+    """
+    group, version, plural = _SBX_GVR
+    try:
+        resp = custom.list_namespaced_custom_object(
+            group=group, version=version, namespace=_NAMESPACE, plural=plural,
+        )
+    except Exception as e:  # noqa: BLE001 — provenance gating is best-effort
+        log.warning(
+            "hb#450 provenance: pre-burst Sandbox list failed (%s); warm-tier "
+            "classification falls back to rank-only", e,
+        )
+        return None
+    names = {
+        (item.get("metadata") or {}).get("name")
+        for item in (resp or {}).get("items", [])
+    }
+    names.discard(None)
+    return names
+
+
 def _classify_latencies(
     latencies: dict[str, float | None],
     *,
     pool_replicas: int,
     abs_ceiling_s: float,
     separation_ratio: float,
+    warm_eligible: set[str] | None = None,
 ) -> tuple[bool, dict]:
     """Separation-based warm-tier gate.
 
@@ -595,6 +638,27 @@ def _classify_latencies(
     under-delivery: if the pool serves fewer than `pool_replicas` warm slots, the
     `pool_replicas`-th fastest claim is itself a cold-path bind, so warm_max ~=
     next_fastest -> ratio ~= 1.0 -> FAIL.
+
+    ## Provenance gating (hb#450)
+
+    When `warm_eligible` is supplied, the warm tier may ONLY be drawn from claims
+    in that set — the claims that adopted a genuinely PRE-WARMED Sandbox (one that
+    existed before the claim burst started). The origin bug: the upstream
+    warm-pool reconciler gates refill on a COUNT of extant sandboxes, not on
+    readyReplicas, so under a claim burst it stalls replenishment and
+    readyReplicas collapses mid-burst (hb#379). A depletion-cold blend — a claim
+    served by a replacement Sandbox CREATED DURING the burst — then binds on the
+    cold path but can rank fast enough to land in the top `pool_replicas`,
+    contaminating warm p95/TTFE with cold latencies (the 1.42s-vs-10.81s
+    phantom-regression coin-flip). Excluding those blends from the warm candidate
+    pool makes warm p95/TTFE describe what the pool ACTUALLY pre-warmed, not a
+    warm+cold blend. Fewer than `pool_replicas` genuine pre-warmed hits ->
+    under-delivery FAIL (honest: the pool did not deliver a full warm tier). The
+    excluded blends still form the cold tier the separation gate measures against.
+
+    `warm_eligible is None` (the default) preserves the rank-only behavior for the
+    cold-baseline path (`pool_replicas <= 0`) and the unit tests, and is also the
+    graceful fallback when the pre-burst Sandbox snapshot could not be read.
 
     Returns (passed, breakdown) carrying the summary stats for the excerpt and
     longitudinal record.
@@ -610,36 +674,68 @@ def _classify_latencies(
     completed = [v for v, _ in completed_pairs]
     timeouts = sorted(k for k, v in latencies.items() if v is None)
 
-    remainder = completed[pool_replicas:]
-    cold_path_min = remainder[0] if remainder else None
-    cold_path_max = remainder[-1] if remainder else None
+    # Warm-tier candidate pool. Default (warm_eligible None): rank-only — every
+    # completed claim is a candidate. Provenance-gated (hb#450): only claims that
+    # adopted a pre-warmed Sandbox are candidates, so a depletion-cold blend can
+    # never enter the warm tier even if it bound fast.
+    if warm_eligible is None:
+        warm_candidate_pairs = completed_pairs
+        warm_eligible_count = None
+    else:
+        warm_candidate_pairs = [
+            (v, k) for v, k in completed_pairs if k in warm_eligible
+        ]
+        warm_eligible_count = len(warm_candidate_pairs)
 
     breakdown = {
         "warm_max_s": None,
         "warm_names": [],
-        "next_fastest_s": cold_path_min,
+        "next_fastest_s": None,
         "separation_observed": None,
-        "cold_path_min_s": cold_path_min,
-        "cold_path_max_s": cold_path_max,
+        "cold_path_min_s": None,
+        "cold_path_max_s": None,
         "absolute_ok": False,
         "separation_ok": False,
         "timeouts": timeouts,
         "completed_count": len(completed),
+        "warm_eligible_count": warm_eligible_count,
         "all_latencies_s": completed,
     }
 
-    # Need a full warm cluster to even evaluate the gate; fewer completed claims
-    # than the pool size means the pool under-delivered (or claims timed out).
-    if len(completed) < pool_replicas:
+    # Need a full warm cluster to even evaluate the gate. Rank-only: fewer
+    # completed claims than the pool size (under-delivery or timeouts).
+    # Provenance-gated: fewer GENUINE pre-warmed hits than the pool size — a
+    # depletion collapse can leave <pool_replicas pre-warmed adoptions even when
+    # all claims eventually bind (cold).
+    if len(warm_candidate_pairs) < pool_replicas:
         return False, breakdown
 
-    warm_max = completed[pool_replicas - 1]
+    warm_pairs = warm_candidate_pairs[:pool_replicas]
+    # Index the boundary element directly (NOT warm_pairs[-1]) so the
+    # cold-baseline mode (pool_replicas == 0) preserves its historical semantics:
+    # warm_candidate_pairs[-1] is the slowest completed claim, giving warm_max
+    # under the absolute ceiling -> the neutral cold PASS record. warm_pairs would
+    # be the empty slice [:0] there and crash on [-1]. For pool_replicas > 0 this
+    # is exactly warm_pairs[-1][0] (the warm-tier boundary).
+    warm_max = warm_candidate_pairs[pool_replicas - 1][0]
+    # The gate's warm tier = the pool_replicas fastest-binding candidate claims.
+    # Publish the member NAMES so the emit path scopes the TTFE histogram to
+    # EXACTLY this set (never a re-derived sort). Same ordering as warm_max, so
+    # warm_max == latencies[warm_names[-1]] by construction.
+    warm_names = [k for _, k in warm_pairs]
+    warm_set = set(warm_names)
     breakdown["warm_max_s"] = warm_max
-    # The gate's warm tier = the pool_replicas fastest-binding claims. Publish the
-    # member NAMES so the emit path scopes the TTFE histogram to EXACTLY this set
-    # (never a re-derived sort). Same ordering as warm_max, so warm_max ==
-    # latencies[warm_names[-1]] by construction.
-    breakdown["warm_names"] = [k for _, k in completed_pairs[:pool_replicas]]
+    breakdown["warm_names"] = warm_names
+
+    # Cold tier (separation denominator) = every completed claim NOT in the warm
+    # set, fastest first. Rank-only this is completed[pool_replicas:] exactly;
+    # under provenance gating it also folds in the excluded cold blends.
+    remainder = [v for v, k in completed_pairs if k not in warm_set]
+    cold_path_min = remainder[0] if remainder else None
+    cold_path_max = remainder[-1] if remainder else None
+    breakdown["next_fastest_s"] = cold_path_min
+    breakdown["cold_path_min_s"] = cold_path_min
+    breakdown["cold_path_max_s"] = cold_path_max
 
     absolute_ok = warm_max < abs_ceiling_s
     if remainder and warm_max > 0:
@@ -854,15 +950,31 @@ def _under_delivery_outcome(
     if pool_replicas <= 0 or breakdown["warm_max_s"] is not None:
         return None
     completed_n = breakdown["completed_count"]
-    return (
-        "FAIL",
-        f"WarmPool under-delivered warm slots: only {completed_n}/{pool_replicas} "
-        f"claims bound into the warm tier (claims fired={claim_count}). No full "
-        f"warm cluster to measure TTFE against — controller-side warm-pool "
-        f"candidate. All latencies (s, sorted): [{all_lat_str}]. "
-        f"Timeouts: {breakdown['timeouts']!r}.",
-        {},
-    )
+    eligible_n = breakdown.get("warm_eligible_count")
+    if eligible_n is not None and eligible_n < pool_replicas:
+        # Provenance-gated shortfall (hb#450): claims bound, but fewer than
+        # pool_replicas adopted a GENUINELY pre-warmed Sandbox — the rest were
+        # depletion-cold blends served by replacements created during the burst.
+        # Name the genuine-hit count so the FAIL row isn't misread as a bind
+        # failure (completed_n may be >= pool_replicas here).
+        excerpt = (
+            f"WarmPool under-delivered warm slots: only {eligible_n}/{pool_replicas} "
+            f"bound claims adopted a pre-warmed sandbox (genuine warm hits); "
+            f"{completed_n} claims bound in total (claims fired={claim_count}), the "
+            f"rest cold blends from replacements created mid-burst. No full warm "
+            f"cluster to measure TTFE against — controller-side warm-pool candidate. "
+            f"All latencies (s, sorted): [{all_lat_str}]. "
+            f"Timeouts: {breakdown['timeouts']!r}."
+        )
+    else:
+        excerpt = (
+            f"WarmPool under-delivered warm slots: only {completed_n}/{pool_replicas} "
+            f"claims bound into the warm tier (claims fired={claim_count}). No full "
+            f"warm cluster to measure TTFE against — controller-side warm-pool "
+            f"candidate. All latencies (s, sorted): [{all_lat_str}]. "
+            f"Timeouts: {breakdown['timeouts']!r}."
+        )
+    return ("FAIL", excerpt, {})
 
 
 def _cleanup(
@@ -1044,6 +1156,16 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
             _POOL_REPLICAS, _CLAIM_COUNT,
         )
 
+        # hb#450 provenance snapshot: capture the pre-warmed Sandbox name set
+        # IMMEDIATELY before the burst. A claim adopting one of these is a genuine
+        # warm hit; a claim adopting a sandbox absent from this set (a depletion
+        # replacement created during the burst) is a cold blend, excluded from the
+        # warm tier at classification. Only meaningful with a warm pool; the
+        # cold-baseline mode (_POOL_REPLICAS <= 0) has no warm tier to gate.
+        prewarmed_sandboxes = (
+            _snapshot_prewarmed_sandboxes(custom) if _POOL_REPLICAS > 0 else None
+        )
+
         # Fire all claims as fast as a serial loop allows. Record t0 IMMEDIATELY
         # after each create() returns — the baseline is user-perceived
         # create-call-return, not loop-start.
@@ -1102,10 +1224,28 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
                 "RuntimeClass %r", verified, len(bound_sandbox_names), _RUNTIME_CLASS,
             )
 
+        # hb#450: translate the pre-warmed Sandbox snapshot into the per-claim
+        # warm-eligible set (claims that adopted a pre-warmed sandbox). None (no
+        # snapshot / cold-baseline mode) leaves classification rank-only.
+        warm_eligible: set[str] | None = None
+        if prewarmed_sandboxes is not None:
+            warm_eligible = {
+                claim for claim, sbx in sandbox_names.items()
+                if sbx in prewarmed_sandboxes
+            }
+            log.info(
+                "hb#450 provenance: %d/%d bound claims adopted a pre-warmed "
+                "sandbox (genuine warm hits); %d cold blends excluded from the "
+                "warm tier",
+                len(warm_eligible), len(sandbox_names),
+                len(sandbox_names) - len(warm_eligible),
+            )
+
         passed, breakdown = _classify_latencies(
             latencies, pool_replicas=_POOL_REPLICAS,
             abs_ceiling_s=_ABS_FAST_CEILING_S,
             separation_ratio=_SEPARATION_RATIO,
+            warm_eligible=warm_eligible,
         )
 
         all_lat_str = ", ".join(f"{x:.3f}" for x in breakdown["all_latencies_s"])
