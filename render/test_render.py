@@ -2996,6 +2996,34 @@ def test_stepup_unknown_verdict_inert():
     assert "Curve verdict" not in out
 
 
+def test_stepup_measured_verdict_without_number_degrades_to_pending():
+    # Falsifiability guard (hb#416/#417 lineage): verdict, the three band-rates, AND pareto_points
+    # are all INDEPENDENTLY optional in the schema, so a producer CAN emit a measured verdict
+    # (here "saturated") with neither a characteristic band-rate NOR a Pareto table behind it.
+    # Rendering the assertive "🛑 saturated (at least one step crossed the collapse band)" claim
+    # with nothing to substantiate it is a render-side bare verdict on a trust surface — degrade
+    # to the honest no-measured-steps "pending" label. saturation_point keeps the block live.
+    su = _su(verdict="saturated")
+    del su["pareto_points"]
+    for k in ("max_flat_rate", "north_star_breach_rate", "saturation_rate"):
+        del su[k]
+    out = render.render_stepup(_matrix_results(_full_gvisor_scenarios(), stepup=su))
+    assert "Curve verdict" in out
+    assert "🛑 saturated" not in out
+    assert "pending (no step produced a measured TTFE" in out
+
+
+def test_stepup_measured_verdict_with_pareto_table_still_asserts():
+    # Counter-case (no over-suppression): the Pareto table alone substantiates the verdict, so a
+    # measured verdict WITH a table but no band-rate summary keeps its assertive label. The guard
+    # degrades ONLY the truly-unsubstantiated case (no band-rate AND no table).
+    su = _su(verdict="saturated")
+    for k in ("max_flat_rate", "north_star_breach_rate", "saturation_rate"):
+        del su[k]
+    out = render.render_stepup(_matrix_results(_full_gvisor_scenarios(), stepup=su))
+    assert "🛑 saturated" in out
+
+
 def test_stepup_unknown_field_dropped():
     # Closed-schema: an undeclared key is dropped on read and never reaches the page.
     su = _su()

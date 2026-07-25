@@ -4261,9 +4261,6 @@ def render_stepup(results):
 
     pts = su.get("pareto_points")
     # Schema verdict + characteristic band-rates (stricter 500ms/2000ms framing) — additive.
-    if "verdict" in su:
-        lines.append(f"Curve verdict (0.5s stretch-bar p95<500ms / collapse 2000ms bands): {_STEPUP_VERDICT_LABELS[su['verdict']]}.")
-        lines.append("")
     band_bits = []
     if "max_flat_rate" in su:
         band_bits.append(f"highest rate under the 0.5s stretch bar: **{_fmt_num(su['max_flat_rate'])}/s**")
@@ -4271,6 +4268,20 @@ def render_stepup(results):
         band_bits.append(f"first rate to breach 500ms: {_fmt_num(su['north_star_breach_rate'])}/s")
     if "saturation_rate" in su:
         band_bits.append(f"first rate to cross 2000ms: {_fmt_num(su['saturation_rate'])}/s")
+    # Falsifiability guard (hb#416/#417 lineage): each MEASURED verdict label asserts a
+    # band-crossing claim ("no measured step breached the 0.5s stretch bar" / "at least one step
+    # crossed the collapse band"). verdict, the three band-rates, AND pareto_points are all
+    # INDEPENDENTLY optional in the schema, so a producer emitting a measured verdict with neither
+    # a characteristic band-rate NOR a Pareto table would otherwise publish that assertion on a
+    # trust surface with nothing behind it — a render-side bare verdict. In that state no true-TTFE
+    # step was actually substantiated, so degrade to the honest no-measured-steps "pending" label
+    # rather than trust the classifier's band-coupling invariant at the render boundary.
+    if "verdict" in su:
+        v = su["verdict"]
+        if v in ("flat-through-sweep", "degrading", "saturated") and not band_bits and not pts:
+            v = "no-measured-steps"
+        lines.append(f"Curve verdict (0.5s stretch-bar p95<500ms / collapse 2000ms bands): {_STEPUP_VERDICT_LABELS[v]}.")
+        lines.append("")
     if band_bits:
         lines.append("Characteristic rates — " + "; ".join(band_bits) + ".")
         lines.append("")
