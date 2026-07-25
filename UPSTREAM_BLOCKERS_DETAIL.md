@@ -1336,14 +1336,14 @@ ERROR while resuming golden actor atespace=ate-golden
 
 ### §U8 — External-volume golden-actor bring-up times out (silent `WaitGoldenActor` timeout on the #405 per-actor external-volume flow)
 
-**Internal tracking a#5612 · evidence-only per NO-BOT (alex, 2026-07-07) — new failure class, onset `aa1d14a7`; controller stall reason not yet captured. Filing, if any, is a human action, never agent-initiated**
+**Internal tracking a#5612 · evidence-only per NO-BOT (alex, 2026-07-07) — new failure class, onset `aa1d14a7`; controller log CAPTURED 2026-07-25 → root-caused to a composite of #4189 (fscheckpoint exit-128) + §U7 (no-free-workers), NOT a novel external-volume mechanism. Filing, if any, is a human action, never agent-initiated**
 
 **What's blocked**
 
 - The a4 demo e2e suite is RED at upstream HEAD `aa1d14a7` (2026-07-25 06:17Z fire) on a **net-new** test, `TestExternalVolumeLifecycle/onCommit:Data,_onPause:Data`. This is **distinct from** the now-cleared §U2/#295/#3842 DurableDir DATA-snapshot class (that suite ran 6 consecutive clean PASS 07-24 06:17Z→21:17Z with `TestDurableDirLifecycle` green — see the §U7 UPDATE 07-25 note and the §U2 STATUS banner).
 - No demo-suite green can return while this holds, so the substrate health report's upgrade-loop section stays RED and any metric gated on a green demo suite cannot graduate.
 
-**Mechanism (from the 06:17Z demo pod log, `substrate-demo-cluster`)**
+**Demo-test symptom (from the 06:17Z demo pod log, `substrate-demo-cluster`)**
 
 - The base `counter` ActorTemplate reaches Ready fine (`demo_test.go:612` — golden snapshot minted OK).
 - The `counter-ext-vol` ActorTemplate (created via `createActorTemplateWithExternalVolume`, `SnapshotScopeData` for **both** onCommit and onPause) **times out silently in `WaitGoldenActor` after 90s with `err=nil`** (`demo_test.go:621`, `last phase: WaitGoldenActor`) — a silent timeout, NOT a hard error. This is the load-bearing distinction from §U2, whose signature was an explicit hard error (`no durable-dir volumes found for DATA snapshot`).
@@ -1355,6 +1355,22 @@ demo_test.go:621: Timed out waiting for ActorTemplate "counter-ext-vol" to be Re
 --- FAIL: TestExternalVolumeLifecycle (0.00s)
 --- FAIL: TestExternalVolumeLifecycle/onCommit:Data,_onPause:Data (90.14s)
 ```
+
+**Controller-level root-cause (from the `ate-controller` reconcile log, same 06:17Z fire, test namespace `dvfq-908`)**
+
+The demo-test silent timeout is a **symptom**; the controller log shows the golden bring-up of `counter-ext-vol` blocked by **two already-tracked blockers**, so §U8 is a **composite trigger, not a novel external-volume mechanism**:
+
+1. **Resume phase → §U7 / a#5452 (`no free workers available`), 8×, 06:45:30→06:45:32Z** — `while resuming golden actor: rpc error: code = FailedPrecondition desc = no free workers available` (the same intermittent worker-scarcity race documented at §U7).
+2. **Suspend / golden-take phase → #4189 (`runsc fscheckpoint` exit 128), 14×, 06:45:52→06:46:33Z** — `while suspending golden actor: rpc error: code = Internal desc = while fscheckpointing durable-dir "/home/counter": while running \`runsc fscheckpoint\`: exit status 128`. Retried with backoff (`:52,:53,:54,:57`, `06:46:02,:12,:33`) and **never went terminal** — exactly the "retried forever → should be terminal" pathology #4189 flagged. The golden actor never reaches Ready, so the 90s `WaitGoldenActor` budget expires as the silent timeout above.
+
+**Why `counter-ext-vol` fails but base `counter` passes** — same fire, per-template error tally:
+
+| Template | no-free-workers (resume) | `fscheckpoint` exit-128 (suspend) | Outcome |
+|---|---|---|---|
+| `counter` (base) | 34× | **0×** | golden Ready 06:44:33Z → **PASS** |
+| `counter-ext-vol` | 8× | **14×** | never Ready → **90s timeout → FAIL** |
+
+Both share the `/home/counter` durable-dir (`counter-ext-vol` copies base counter's `Volumes` per `demo_test.go:556`, plus the external volume). The **discriminator is the fscheckpoint exit-128** (#4189): base counter's suspend/fscheckpoint succeeded; `counter-ext-vol`'s did not. The external volume tips the checkpoint surface into the exit-128 failure — plausibly #4189's "checkpoint against an exited container" race (the external-volume actor's exit/checkpoint timing differs); pinning the exact runsc-side reason needs an ateom-gvisor-level capture.
 
 **Upstream attribution**
 
@@ -1373,14 +1389,16 @@ demo_test.go:621: Timed out waiting for ActorTemplate "counter-ext-vol" to be Re
 |---|---|---|
 | Test | `TestDurableDirLifecycle` | `TestExternalVolumeLifecycle` |
 | Actor | demo `counter` (zero durable-dir volumes) | `counter-ext-vol` (external volume) |
-| Signature | hard error `no durable-dir volumes found for DATA snapshot` (`cmd/ateom-gvisor/main.go:289`) | silent `WaitGoldenActor` timeout, `err=nil` |
-| Status | a4 e2e no longer triggers (#5448); converter bug latent | fails at HEAD `aa1d14a7` |
+| Demo-test signature | hard error `no durable-dir volumes found for DATA snapshot` (`cmd/ateom-gvisor/main.go:289`) | silent `WaitGoldenActor` timeout, `err=nil` |
+| Controller-level cause | DATA-scope converter hard-error (single, deterministic) | composite: #4189 `fscheckpoint` exit-128 (primary) + §U7 no-free-workers (contributing) |
+| Status | a4 e2e no longer triggers (#5448); converter bug latent | fails at HEAD `aa1d14a7`; root-caused to #4189 + §U7 |
 
 - `TestPlatformMetricsEmitted` (metrics suite, ~0.79s fast-fail) is a **separate intermittent** failure, not part of this class.
 
-**Recommended direction (for whoever picks up the diagnosis)**
+**Recommended direction (for whoever picks up the fix)**
 
-- The controller-side reason the `counter-ext-vol` golden DATA-snapshot take stalls is **not yet captured** beyond the silent `WaitGoldenActor` timeout in the demo pod log (unlike §U2's explicit hard error). Next step = reproduce the external-volume golden-take path and capture the controller / ateom-gvisor log for the `counter-ext-vol` actor to find where the DATA-scope snapshot stalls on the external-volume flow.
+- Root-cause is captured (see above): the actionable upstream lever is **#4189's fix** — make the `runsc fscheckpoint` exit-128 checkpoint **terminal** (re-place the actor) instead of retrying forever, so `counter-ext-vol` can recover within the 90s `WaitGoldenActor` budget. §U7's worker-pool cold-start race is the secondary contributor (a lucky-scheduling window, as 07-24 was, passes clean).
+- Remaining unknown = the **exact runsc-side reason** the external volume tips `/home/counter`'s fscheckpoint into exit-128 while base counter's succeeds. Next step to pin that = an ateom-gvisor-level capture (`runsc fscheckpoint` stderr / the checkpoint-target container state) for `counter-ext-vol` during the suspend/golden-take, to confirm the "checkpoint against an exited container" hypothesis.
 
 **Page-side notes (not part of any paste body)**
 
