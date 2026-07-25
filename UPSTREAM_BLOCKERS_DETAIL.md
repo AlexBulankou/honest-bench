@@ -557,12 +557,32 @@ The pool hits `readyReplicas=30` at t=9.2s (satisfying `_wait_for_pool_warm`'s g
 
 Per the fleet's current no-new-upstream-filings posture, this finding is **not** filed against `kubernetes-sigs/agent-sandbox` and no comment is posted anywhere upstream. [hb#379](https://github.com/AlexBulankou/honest-bench/issues/379) is the durable tracker (open) and this section is the evidence appendix — raise upstream only if/when a human decides to, or if the no-filings posture is lifted. No patch is staged: the fix is a controller-behavior change (gate the create branch on `readyReplicas`, not `currentReplicas`, or a deliberate over-provision-during-burst strategy), not something a benchmark-side patch can supply.
 
-**Fix directions (for the record, priority order; only #1 is benchmark-actionable today)**
+**Fix directions (for the record, priority order; of the root-cause directions below only #1 is benchmark-actionable today — but see the separate measurement-honesty fix in §S6.1, which is benchmark-side and shipped)**
 
 1. **Config-only partial mitigant** — size `pool_replicas >= claim_count + drain-headroom`. Confirmed by the pool=38 fire above that this does **not** fix binding latency once claims are in flight; it only reduces the count of claims that are *unambiguously* forced-cold. Not a fix, a partial mitigant.
 2. **Readiness-gated refill (upstream controller change)** — gate the create branch on `readyReplicas < desiredReplicas` instead of `currentReplicas < desiredReplicas`, so the pool deliberately over-creates during a burst and recovers faster. Addresses the root cause directly; not ours to make.
 3. **Faster snapshot-restore readiness throughput** — raises the ceiling that bounds both (1) and (2); infra/upstream, not scenario-tunable.
 4. `as#1270`-style APF insulation overlay is a real upstream feature but calibrated for ~300-claim apiserver contention; at this 40-claim scale it's orthogonal to the bottleneck (and may worsen the trough, since it deliberately places refill in a lower-priority class than claim-adoption) — worth a separate experiment, not a fix for this finding.
+
+<a id="s6-1-warmpool-provenance-gating"></a>
+
+#### §S6.1 — Derived measurement artifact: warm-tier contamination + its benchmark-side fix ([hb#450](https://github.com/AlexBulankou/honest-bench/issues/450), PR #451)
+
+The count-gated refill above (hb#379) is an **upstream** defect the benchmark cannot fix. But it induces a **second, benchmark-side** defect in how `warmpool_cold_start` *measures* the warm tier — and that one **is** benchmark-fixable, independently of whether hb#379 is ever fixed upstream. This subsection records it as a distinct, benchmark-actionable item so the fix is documented, not just built.
+
+**The artifact.** The scenario fires 40 claims against a 30-replica pool and originally defined the "warm" tier purely by **rank** — the fastest `pool_replicas` (30) of the 40 completed claims. Under the hb#379 collapse, ≥10 of the 40 claims structurally cannot bind an already-Ready pod (the pool sits count-full / readiness-starved), so those claims bind to sandboxes born *mid-burst* and provision cold. Rank-selection then blends the fastest of those cold binds into the "warm" population whenever a genuine warm bind happens to be slow. The consequences observed on live fires:
+
+- **Warm p95 becomes a coin-flip.** Two canonical fires of the same design read `warm p95 = 1.42s` and `warm p95 = 10.81s` — not a regression between builds, but two draws from the same over-subscribed, cold-contaminated distribution (which 30 of the 40 claims the rank-window happens to catch is claim-arrival-vs-replenish timing luck).
+- **Warm-slower-than-cold inversions.** When the cold blend lands in the warm tier and a genuinely-cold claim lands in the cold tier, `warm_max` can exceed `cold_min` — the `_warm_cold_inversion_caveat` / `_warmpool_separation_caveat` guards (PRs #380/#404/#409) already fire LOUD on this, so a contaminated run never publishes silently, but the *metric itself* was untrustworthy.
+
+**The fix (PR #451, benchmark-side, provenance gating).** Snapshot the set of Sandbox CR **names** that exist immediately before the claim burst (captured right after `_wait_for_pool_warm`). A claim that binds to a name in that pre-burst set genuinely adopted a pre-warmed sandbox → warm-eligible; a claim that binds to a name *absent* from the set (a replacement born mid-burst) is a cold blend → excluded from the warm candidate pool and folded into the cold tier. Name-set (not `creationTimestamp`) is the discriminator because k8s `creationTimestamp` is 1-second resolution — a replacement created in the burst's opening wall-second could alias as pre-warmed — whereas Sandbox names are unique and never reused, making the pre/post partition exact.
+
+**What this changes and what it does not.**
+
+- It does **not** fix hb#379: the controller still under-delivers ready pods during the burst, so fewer than `pool_replicas` claims get a genuine warm bind. What changes is that the metric now **fails honestly** — when only `eligible_n < pool_replicas` claims adopted a pre-warmed sandbox, the scenario reports an *under-delivery* outcome ("only {eligible_n}/{pool_replicas} bound claims adopted a pre-warmed sandbox") instead of manufacturing a warm p95 from a cold-blended sample. The signal goes from a coin-flip to a stable, truthful FAIL.
+- **Backward-compatible.** Provenance gating is opt-in via a `warm_eligible` set; when it is `None` (the cold-baseline path where `pool_replicas <= 0`, unit tests, or a best-effort snapshot read that failed) the classifier preserves the original rank-only behavior exactly, including the historical cold-baseline negative-index semantics.
+
+**Status:** shipped benchmark-side in PR #451 (against `AlexBulankou/honest-bench`, a4s2 review requested); no upstream filing and no controller change — the NO-BOT posture and hb#379's evidence-only status are unaffected. hb#450 is the durable tracker for this measurement artifact; this subsection is its evidence appendix.
 
 ---
 
