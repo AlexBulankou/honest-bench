@@ -416,6 +416,14 @@ SLO_BASIS_VALUES = frozenset(
     )
 )
 
+# Step-up item-4 cost_basis — closed vocabulary for WHICH price source resolved the sweep's
+# node-hour rate. Independent mirror of the harness enum (cost.COST_BASIS_ENUM); drift is
+# caught by the cross-contract test, not by an import. operator_rate = the operator's real
+# committed rate (explicit usd_per_node_hour); list_price = the coarse public GCP on-demand
+# LIST price fallback, an UPPER bound (real billing is materially lower under CUD/spot/SUD),
+# so render must caveat a list_price cost as such.
+COST_BASIS_VALUES = frozenset(("operator_rate", "list_price"))
+
 # Matrix metric keys (per-scenario sla_metrics) -> closed-schema predicate. exec_success_n
 # is OPTIONAL (the numerator for the doc's "(1277/1376)" fraction); absent ⇒ render the bare
 # percentage. All are non-negative numerics; exec_success_rate is a 0..1 fraction.
@@ -894,6 +902,10 @@ STEPUP_PARETO_FIELDS = {
     "wpr": lambda v: isinstance(v, (int, float)) and not isinstance(v, bool) and 0.0 <= v <= 1.0,
     "node_count": lambda v: isinstance(v, int) and not isinstance(v, bool) and 0 < v < 10000,
     "machine_type": lambda v: isinstance(v, str) and bool(_MACHINE_TYPE.match(v)),
+    # cost_basis: WHICH price source resolved the sweep's node-hour rate (operator_rate vs the
+    # coarse list_price UPPER bound) — SWEEP-LEVEL, so render can caveat a list_price cost. Enum-
+    # gated against COST_BASIS_VALUES; a value outside the set is dropped (honest pending).
+    "cost_basis": lambda v: v in COST_BASIS_VALUES,
     # warmpool_size: warm(>0)/cold(0) provenance discriminator for the sweep (hb#4364). Unlike
     # node_count the floor is 0 (explicit cold provenance is a real stamped value, not absence).
     "warmpool_size": lambda v: isinstance(v, int) and not isinstance(v, bool) and 0 <= v < 10000,

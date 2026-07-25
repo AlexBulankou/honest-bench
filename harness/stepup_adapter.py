@@ -149,6 +149,11 @@ def enrich_pareto_cost(flat, *, usd_per_node_hour=None):
     `node_count` — leaves the key ABSENT (honest ``pending``), never a fabricated 0 or a
     guessed cost. Mutates and returns `flat` in place; a non-list `pareto_points` (the
     nothing-measured path) is a no-op.
+
+    When at least one cost is stamped, a sweep-level `cost_basis` field is also written
+    (`operator_rate` vs the coarse `list_price` fallback — see cost.COST_BASIS_ENUM) so render
+    can disclose whether a published cost is the operator's real rate or a list-price UPPER
+    bound. No cost stamped => no `cost_basis` (same absent-is-pending spine as the cost).
     """
     points = flat.get("pareto_points")
     if not isinstance(points, list):
@@ -157,6 +162,7 @@ def enrich_pareto_cost(flat, *, usd_per_node_hour=None):
     node_count = flat.get("node_count")
     machine_type = flat.get("machine_type")
 
+    any_stamped = False
     for pt in points:
         if not isinstance(pt, dict):
             continue
@@ -168,5 +174,19 @@ def enrich_pareto_cost(flat, *, usd_per_node_hour=None):
         )
         if c is not None:
             pt["cost_usd_per_1k_ready"] = c
+            any_stamped = True
+
+    # Sweep-level BASIS DISCLOSURE: when at least one cost was stamped, record WHICH price
+    # source produced the node-hour rate (operator's real committed rate vs the coarse public
+    # list-price fallback) so render can caveat a list-price cost as the UPPER-BOUND estimate it
+    # is rather than publish a bare number. One sweep resolves one rate for every point, so the
+    # basis is a single sweep-level field, not per-point. Only stamped alongside a real cost —
+    # no cost stamped => no basis key (honest ``pending``, same spine as the cost itself).
+    if any_stamped:
+        basis = _cost.resolve_cost_basis(
+            usd_per_node_hour=usd_per_node_hour, machine_type=machine_type
+        )
+        if basis is not None:
+            flat["cost_basis"] = basis
 
     return flat

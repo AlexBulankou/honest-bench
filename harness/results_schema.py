@@ -148,6 +148,17 @@ SLO_BASIS_ENUM = (
     "unresolved_bounds_bar_bracketed",
 )
 
+# Step-up item-4 COST-basis stamp — the emitter's INDEPENDENT copy of harness/cost.py's
+# COST_BASIS_ENUM (same deliberate no-shared-import posture as SLO_BASIS_ENUM above; a drift
+# is caught by the cross-contract test, not papered over by a shared import). `cost_basis`
+# names WHICH price source resolved the node-hour rate a sweep's costs were computed from, so
+# render can disclose whether a published `cost_usd_per_1k_ready` is the operator's real
+# committed rate or the coarse public list-price UPPER bound (see cost.resolve_cost_basis).
+# SWEEP-LEVEL (one sweep resolves one rate for every Pareto point), so it is a single
+# top-level scalar, NOT a per-point field. A value outside this set is a real producer bug
+# (dropped on read, honest pending) — never a silent leak.
+COST_BASIS_ENUM = ("operator_rate", "list_price")
+
 # #3954 sibling warm-vs-cold — the emitter's INDEPENDENT copies of render's WARM_VS_COLD_FIELDS
 # closed vocabularies (semantic = the two measured TTFx modes; runtime_class = the keys of render's
 # RUNTIME_LABELS). The classifier (warm_vs_cold.classify_warm_vs_cold) only PARITY-checks
@@ -835,6 +846,14 @@ def _coerce_stepup(raw):
     mt = raw.get("machine_type")
     if isinstance(mt, str) and _MACHINE_TYPE_RE.match(mt):
         out["machine_type"] = mt
+    # cost_basis: WHICH price source resolved the node-hour rate the sweep's costs were
+    # computed from (operator_rate vs the coarse list_price UPPER bound). SWEEP-LEVEL scalar,
+    # enum-gated against COST_BASIS_ENUM — a value outside the set is a producer bug and is
+    # DROPPED (honest pending), never leaked. Absent/None/invalid -> omitted; render then
+    # publishes the cost with no basis caveat only when no basis was stamped (== no cost).
+    cb = raw.get("cost_basis")
+    if isinstance(cb, str) and cb in COST_BASIS_ENUM:
+        out["cost_basis"] = cb
     # warmpool_size: the warm(>0)/cold(0) provenance discriminator for the sweep (hb#4364).
     # Carried as a public-safe pos-int-OR-ZERO — unlike node_count, 0 is a LEGITIMATE stamped
     # value (explicit cold provenance, mirroring the kata_cold sweep's warmpool_size=0), so the

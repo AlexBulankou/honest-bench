@@ -445,6 +445,51 @@ def test_enrich_then_schema_round_trips_cost():
                "cost survives the closed-schema round trip as a positive number")
 
 
+# --------------------------------------------- cost BASIS disclosure (sweep-level)
+
+def test_enrich_stamps_list_price_basis():
+    # No explicit rate but a known machine_type -> the list-price fallback was used, so the
+    # sweep-level cost_basis is stamped list_price alongside the per-point costs.
+    flat = a.enrich_pareto_cost(a.stepup_nested_to_flat(_nested()))
+    _check(flat.get("cost_basis") == "list_price",
+           "list-price fallback path must stamp cost_basis=list_price")
+
+
+def test_enrich_stamps_operator_rate_basis():
+    # An explicit rate -> operator_rate, regardless of machine_type presence.
+    flat = a.enrich_pareto_cost(a.stepup_nested_to_flat(_nested()), usd_per_node_hour=0.30)
+    _check(flat.get("cost_basis") == "operator_rate",
+           "explicit rate path must stamp cost_basis=operator_rate")
+
+
+def test_enrich_no_cost_no_basis():
+    # No cost stamped (unknown machine_type, no explicit rate) -> no cost_basis either, the
+    # same absent-is-pending spine as the cost itself. A basis with no cost would let render
+    # caveat a cost that doesn't exist.
+    rec = _nested()
+    rec["params"]["machine_type"] = "totally-unknown-x99"
+    flat = a.enrich_pareto_cost(a.stepup_nested_to_flat(rec))
+    _check("cost_basis" not in flat, "no cost stamped -> no cost_basis (honest pending)")
+
+
+def test_enrich_basis_absent_when_pareto_empty():
+    # The nothing-measured path (non-list pareto_points) is a no-op; no cost, no basis.
+    _check("cost_basis" not in a.enrich_pareto_cost({"pareto_points": None}),
+           "non-list pareto_points -> no cost_basis stamped")
+
+
+def test_enrich_then_schema_round_trips_basis():
+    # End-to-end: the sweep-level cost_basis survives the closed-schema round trip so render
+    # can disclose it. list_price via the fallback here.
+    out = rs._coerce_stepup(a.enrich_pareto_cost(a.stepup_nested_to_flat(_nested())))
+    _check(out is not None and out.get("cost_basis") == "list_price",
+           "cost_basis survives the closed-schema round trip")
+    out2 = rs._coerce_stepup(
+        a.enrich_pareto_cost(a.stepup_nested_to_flat(_nested()), usd_per_node_hour=0.30))
+    _check(out2 is not None and out2.get("cost_basis") == "operator_rate",
+           "operator_rate cost_basis survives the round trip")
+
+
 def _run_all():
     tests = [v for k, v in sorted(globals().items())
              if k.startswith("test_") and callable(v)]
