@@ -200,9 +200,9 @@ def memory_overshoot_command(overshoot_mib: int) -> list[str]:
     """
     n = int(overshoot_mib)
     py = (
-        f"n={n}*1024*1024;"
-        "buf=bytearray(n);"
-        "[buf.__setitem__(i,1) for i in range(0,n,4096)];"
+        f"n={n}*1024*1024\n"
+        "buf=bytearray(n)\n"
+        "for i in range(0,n,4096): buf[i]=1\n"
         f"print('{_ALLOCATED_SENTINEL}')"
     )
     return ["python3", "-c", py]
@@ -356,6 +356,11 @@ def _wait_for_terminal(core, *, sandbox_uid: str) -> tuple[object, object]:
     the backing Pod by owner uid, then polls its containerStatuses for a terminated
     state. Raises (crash-fail) if the Pod is never located or never terminates
     within the window — an infra failure, distinct from a real breach result.
+
+    Timeout bound is ~240-270s, not a literal 240s: the outer deadline is only
+    re-checked between _find_backing_pod calls, and a single such call can burn
+    its own _POD_DISCOVERY_TIMEOUT_S (~30s) before returning None. This only
+    affects the pod-never-located crash-fail path, never a PASS/FAIL verdict.
     """
     deadline = time.monotonic() + _TERMINAL_TIMEOUT_S
     last_pod = None
