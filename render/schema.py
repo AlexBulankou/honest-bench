@@ -60,20 +60,25 @@ WARM_SCALING_TERMS = {"bind-concurrency"}
 BADGE_SCOPES = {"control-plane", "enforced"}
 
 # badge_construction (#3950) is a per-SCENARIO closed enum, ORTHOGONAL to badge_scope, that
-# names WHICH NetworkPolicy mechanism a security-isolation cell actually measured — so an
-# `enforced` scope can never be read as a guarantee it does not make. "standard-np" = a
-# standard networking.k8s.io/v1 NetworkPolicy the harness built with explicit label
-# propagation (the podSelector actually binds the tenant pods, so a data-plane breach is
-# observable); "managed-np" = the managed gke-sandbox NetworkPolicy, whose podSelector may
-# select zero pods (an inert breach — a PASS against it asserts admission, not data-plane
-# blocking). It renders as a SECOND suffix term on the PASS cell ONLY when badge_scope is
-# also present (e.g. "PASS (enforced, standard-np)"); it qualifies the enforcement claim and
-# is meaningless alone, so construction-without-scope renders nothing. Absent ⇒ no second
-# term (graceful degradation); out-of-enum ⇒ dropped at render (the emitter fail-closes
-# first). This is the #3950-mandatory disclosure: a charter-#5 flip of the two NP cells from
-# control-plane → enforced MUST carry the construction so the public badge discloses the
+# names WHICH enforcement mechanism a security-isolation/enforcement cell actually measured —
+# so an `enforced` scope can never be read as a guarantee it does not make. Two families:
+#   NetworkPolicy (#3950 cross-tenant cells): "standard-np" = a standard networking.k8s.io/v1
+#   NetworkPolicy the harness built with explicit label propagation (the podSelector actually
+#   binds the tenant pods, so a data-plane breach is observable); "managed-np" = the managed
+#   gke-sandbox NetworkPolicy, whose podSelector may select zero pods (an inert breach — a PASS
+#   against it asserts admission, not data-plane blocking).
+#   Resource-limit (#5634 resource_limit_enforcement cell): "footprint-overshoot" = a
+#   controlled memory overshoot (allocate A >> declared limit L, A << node_mem) whose cgroup
+#   OOM-kill is the enforced signal — discloses the enforced badge came from a footprint
+#   confinement probe, not a network mechanism.
+# It renders as a SECOND suffix term on the PASS cell ONLY when badge_scope is also present
+# (e.g. "PASS (enforced, standard-np)" / "PASS (enforced, footprint-overshoot)"); it qualifies
+# the enforcement claim and is meaningless alone, so construction-without-scope renders nothing.
+# Absent ⇒ no second term (graceful degradation); out-of-enum ⇒ dropped at render (the emitter
+# fail-closes first). This is the #3950-mandatory disclosure: a charter-#5 flip of the NP cells
+# from control-plane → enforced MUST carry the construction so the public badge discloses the
 # standard-NP-with-label-propagation mechanism and never conflates it with managed-gke-sandbox NP.
-BADGE_CONSTRUCTIONS = {"standard-np", "managed-np"}
+BADGE_CONSTRUCTIONS = {"standard-np", "managed-np", "footprint-overshoot"}
 
 # storage_class (#4164) is the storage backend of a sandbox's storage-bearing measurement
 # path — the axis behind the "Which storage class should you pick?" customer-guidance section.
@@ -137,6 +142,13 @@ PENDING_REASONS = {
     # (committed-artifact reclassification path, PR-documented + peer-reviewed); no
     # harness emit path.
     "no-compliant-rung",
+    # resource_limit_enforcement (#5634): the armed controlled-overshoot probe ran but the
+    # container reached a terminal state that is neither a clean cgroup OOM-kill (enforced)
+    # nor a clean over-limit survival (breach) — an unclassifiable exit. The armed cell
+    # degrades here rather than fabricate an enforcement badge or a false breach. Emitted by
+    # the harness (PENDING_REASON_ENUM in harness/results_schema.py); the cross-contract
+    # subset test in harness/test_scenario_portability.py guards this set ⊇ the harness enum.
+    "overshoot-inconclusive",
 }
 
 # provenance: only these keys render, each validated by the predicate below.

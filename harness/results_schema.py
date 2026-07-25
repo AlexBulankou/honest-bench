@@ -46,6 +46,12 @@ PENDING_REASON_ENUM = (
     # render/schema.py PENDING_REASONS (cross-contract subset test in
     # test_scenario_portability.py).
     "cluster-fire",
+    # resource_limit_enforcement (#5634): the controlled-overshoot probe WAS armed
+    # and ran, but the container reached a terminal state that is neither a clean
+    # cgroup OOM-kill (enforced) nor a clean over-limit survival (breach) — e.g. a
+    # non-OOM crash / unexpected exit. Honest-empty: the armed cell degrades here
+    # rather than fabricate an enforcement badge or a false breach.
+    "overshoot-inconclusive",
 )
 # Cold-start image-cache posture (#3885). A CLOSED enum, not free text, so the
 # render page can honestly label which cold start the published cold_start_ms
@@ -89,16 +95,23 @@ WARM_SCALING_TERM_ENUM = ("bind-concurrency",)
 BADGE_SCOPE_ENUM = ("control-plane", "enforced")
 
 # badge_construction (#3950) — an ORTHOGONAL per-SCENARIO closed enum disclosing WHICH
-# NetworkPolicy mechanism a security-isolation PASS measured: "standard-np" = a standard
-# networking.k8s.io/v1 NetworkPolicy built with explicit label propagation, whose podSelector
-# binds the tenant pods so a data-plane breach is OBSERVABLE; "managed-np" = a managed
-# gke-sandbox NP whose podSelector may select zero pods, so a breach is inert (#2082). It
-# renders as a SECOND suffix term on the PASS cell, ONLY alongside a badge_scope — `PASS
-# (enforced, standard-np)` — so a future enforced-flip cannot read as a managed-NP guarantee.
-# Optional per-scenario — dropped when absent, fail-closed when present (a non-enum value is a
-# misconfiguration, not a leak, mirroring badge_scope). Mirrors render/schema.py's
-# BADGE_CONSTRUCTIONS; a drift is caught by the cross-contract test, not a shared import.
-BADGE_CONSTRUCTION_ENUM = ("standard-np", "managed-np")
+# enforcement mechanism a security-isolation/enforcement PASS measured, so an `enforced`
+# scope can never be read as a guarantee it does not make. Two mechanism families:
+#   NetworkPolicy (the #3950 cross-tenant cells): "standard-np" = a standard
+#   networking.k8s.io/v1 NetworkPolicy built with explicit label propagation, whose
+#   podSelector binds the tenant pods so a data-plane breach is OBSERVABLE; "managed-np" = a
+#   managed gke-sandbox NP whose podSelector may select zero pods, so a breach is inert (#2082).
+#   Resource-limit (the #5634 resource_limit_enforcement cell): "footprint-overshoot" = a
+#   controlled memory overshoot (allocate A >> declared limit L, A << node_mem) whose cgroup
+#   OOM-kill is the enforced signal — discloses that the enforced badge came from a footprint
+#   confinement probe, not a network mechanism.
+# It renders as a SECOND suffix term on the PASS cell, ONLY alongside a badge_scope — `PASS
+# (enforced, standard-np)` / `PASS (enforced, footprint-overshoot)` — so a future enforced-flip
+# cannot read as the wrong guarantee. Optional per-scenario — dropped when absent, fail-closed
+# when present (a non-enum value is a misconfiguration, not a leak, mirroring badge_scope).
+# Mirrors render/schema.py's BADGE_CONSTRUCTIONS; a drift is caught by the cross-contract test,
+# not a shared import.
+BADGE_CONSTRUCTION_ENUM = ("standard-np", "managed-np", "footprint-overshoot")
 
 # Step-up saturation verdicts — the emitter's INDEPENDENT copy of render's
 # STEPUP_VERDICTS (the two modules deliberately keep separate vocabularies; a drift is
