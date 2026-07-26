@@ -25,6 +25,14 @@
 # `gcloud auth` identity lacks that permission but user ADC has it (the
 # AGENTS.md "capability self-check" case), route through it explicitly:
 #   export CLOUDSDK_AUTH_ACCESS_TOKEN=$(gcloud auth application-default print-access-token)
+#
+# `build` and `filename` are a mutually-exclusive config-source oneof on the
+# trigger resource — a trigger that drifted to filename-based config (e.g. via
+# `gcloud beta builds triggers import` with a sourceToBuild+filename shape, #5682)
+# must have `filename` REMOVED, not just `build` added, or the PATCH leaves a
+# hybrid resource. Confirmed live 2026-07-26 reverting hb-refresh-gke-sandbox.
+# `sourceToBuild` (checkout source, independent of the build-config oneof) is
+# left untouched either way.
 set -euo pipefail
 
 : "${PROJECT:?set PROJECT to the target GCP project id}"
@@ -56,6 +64,7 @@ with open(full_path) as f:
 with open(config_path) as f:
     build = yaml.safe_load(f)
 full["build"] = build
+full.pop("filename", None)
 with open(out_path, "w") as f:
     json.dump(full, f)
 PY
@@ -71,4 +80,9 @@ if [ "$patch_status" != "200" ]; then
   exit 1
 fi
 
-echo "==> rebake OK: $TRIGGER now matches $CONFIG"
+if python3 -c "import json,sys; sys.exit(0 if 'filename' in json.load(open('$tmp_resp')) else 1)"; then
+  echo "ERROR: rebake left a hybrid resource — 'filename' still present in the PATCH response" >&2
+  exit 1
+fi
+
+echo "==> rebake OK: $TRIGGER now matches $CONFIG (filename cleared, no hybrid state)"
