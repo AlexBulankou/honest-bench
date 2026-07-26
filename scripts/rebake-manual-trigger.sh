@@ -56,6 +56,13 @@ with open(full_path) as f:
 with open(config_path) as f:
     build = yaml.safe_load(f)
 full["build"] = build
+# A trigger that has drifted to repo-sourced config carries `filename` and NO
+# `build`; an inline trigger carries `build` and NO `filename`. The two are
+# mutually exclusive — leaving `filename` set alongside the spliced `build`
+# produces a hybrid the API won't treat as inline. Dropping it is a no-op on an
+# already-inline trigger, so it's safe unconditionally and makes rebake double as
+# the drift-revert path.
+full.pop("filename", None)
 with open(out_path, "w") as f:
     json.dump(full, f)
 PY
