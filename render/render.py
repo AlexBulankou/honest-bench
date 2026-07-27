@@ -3926,15 +3926,26 @@ def render_at_scale_contention(results, detail=False, page_heading=None):
     # hb#134 (nit): the Concurrent Burst table lives on the headline README, so "above" is
     # correct on the page path but dangles in the DETAILS detail-path (nothing is above it there).
     burst_locator = "on the headline page" if detail else "above"
-    caption = (
-        f"The Concurrent Burst legs {burst_locator} are **1:1** — N ready sandboxes hit with N claims. This "
-        "is the deliberate **retraction**: the operating point where the pool is "
-        "**over-subscribed** (more concurrent claims than ready pool members), and warm activation "
-        f"**stops being sub-second**. Measured on **{label}**: a pool of **{_fmt_num(pool)}** ready "
-        f"sandboxes hit with **{_fmt_num(claims)}** simultaneous claims (**{ratio} contention**). "
-        "Every claim still binds, but the over-subscription serializes the bind path — so the "
-        "\"warm hit is <1s\" claim from the Core Metrics matrix does **not** hold here."
-    )
+    if detail:
+        # Deep-dive appendix keeps the full mechanism explanation (over-subscription serialization).
+        caption = (
+            f"The Concurrent Burst legs {burst_locator} are **1:1** — N ready sandboxes hit with N claims. This "
+            "is the deliberate **retraction**: the operating point where the pool is "
+            "**over-subscribed** (more concurrent claims than ready pool members), and warm activation "
+            f"**stops being sub-second**. Measured on **{label}**: a pool of **{_fmt_num(pool)}** ready "
+            f"sandboxes hit with **{_fmt_num(claims)}** simultaneous claims (**{ratio} contention**). "
+            "Every claim still binds, but the over-subscription serializes the bind path — so the "
+            "\"warm hit is <1s\" claim from the Core Metrics matrix does **not** hold here."
+        )
+    else:
+        # hb#488: the headline page keeps the numbers + the honest "does not hold here" retraction;
+        # the over-subscription-serializes-the-bind-path mechanism moves to DETAILS (detail path).
+        caption = (
+            f"The deliberate **retraction** — an **over-subscribed** pool (**{_fmt_num(pool)}** ready "
+            f"sandboxes hit with **{_fmt_num(claims)}** simultaneous claims, **{ratio} contention**) on "
+            f"**{label}**. Warm activation stops being sub-second: the \"warm hit is <1s\" claim from "
+            "the Core Metrics matrix does **not** hold here."
+        )
     shape = []
     if asc.get("node_count") is not None:
         shape.append(f"node_count={asc['node_count']}")
@@ -4054,15 +4065,26 @@ def render_cluster_saturation(results, heading="### Saturation — the whole-clu
     if detail:
         heading = "## Cluster Saturation — the whole-cluster warm-hand-out ceiling"
     lines = [heading, ""]
-    caption = (
-        "The Concurrent Burst legs above are small 1:1 warm bursts. This is the **saturation** "
-        f"ceiling: a **1:1 all-warm** fire — a pool of **{_fmt_num(pool)}** ready sandboxes hit "
-        f"with **{_fmt_num(claims)}** simultaneous claims (**not** over-subscribed), spread across "
-        f"**{_fmt_num(nodes)}** nodes on **{label}**. Every claim has a ready warm pool member, yet "
-        "at this scale the bind path itself saturates — so the whole-cluster warm hand-out rate "
-        "collapses far below the per-node engineering rate, and the \"warm hit is <1s\" claim from "
-        "the Core Metrics matrix does **not** hold here."
-    )
+    if detail:
+        # Deep-dive appendix keeps the full mechanism explanation (why the bind path saturates).
+        caption = (
+            "The Concurrent Burst legs above are small 1:1 warm bursts. This is the **saturation** "
+            f"ceiling: a **1:1 all-warm** fire — a pool of **{_fmt_num(pool)}** ready sandboxes hit "
+            f"with **{_fmt_num(claims)}** simultaneous claims (**not** over-subscribed), spread across "
+            f"**{_fmt_num(nodes)}** nodes on **{label}**. Every claim has a ready warm pool member, yet "
+            "at this scale the bind path itself saturates — so the whole-cluster warm hand-out rate "
+            "collapses far below the per-node engineering rate, and the \"warm hit is <1s\" claim from "
+            "the Core Metrics matrix does **not** hold here."
+        )
+    else:
+        # hb#488: the headline page keeps the numbers + the honest "does not hold here" retraction;
+        # the bind-path-saturation mechanism explanation moves to DETAILS (detail path above).
+        caption = (
+            f"**Saturation** ceiling — a **1:1 all-warm** fire (**{_fmt_num(pool)}** ready sandboxes, "
+            f"**{_fmt_num(claims)}** simultaneous claims, **not** over-subscribed) across "
+            f"**{_fmt_num(nodes)}** nodes on **{label}**. At this scale the \"warm hit is <1s\" claim "
+            "from the Core Metrics matrix does **not** hold here."
+        )
     if cs.get("machine_type"):
         caption += f" Cluster shape: `{cs['machine_type']}`."
     lines.append(caption)
