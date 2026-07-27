@@ -4460,16 +4460,28 @@ def test_what_this_means_public_safe_no_internal_names():
     assert "project" not in out
 
 
-def test_what_this_means_in_full_readme_between_matrix_and_scale():
-    # #134 fold: the Warm-vs-Cold punchline was dropped from the page (redundant with the
-    # what-this-means speedup bullet; the full table stays in DETAILS), so "What this means for you"
-    # now sits between the core-metrics matrix and the cluster-scale block.
-    from generate import build_readme
+def test_what_this_means_relocated_to_details_readme_keeps_pointer():
+    # hb#488 numbers-first slice-1 (alex 2026-07-26): the plain-English "What this means for you"
+    # interpretation prose moved OFF the headline README into the DETAILS deep-dive appendix; the
+    # README keeps only a one-line pointer to the DETAILS anchor. So: the README no longer carries
+    # the section heading, it carries the pointer; DETAILS carries the section.
+    from generate import build_readme, build_details
     readme = build_readme()
-    wtm_at = readme.find("## What this means for you")
+    details = build_details()
+    # README: section heading gone, pointer present + points at the DETAILS anchor.
+    assert "## What this means for you" not in readme
+    assert "What do these numbers mean for you?" in readme
+    assert "DETAILS.md#what-this-means-for-you" in readme
+    # The pointer sits between the core-metrics matrix and the cluster-scale block (where the
+    # section used to render), so the headline reading order is unchanged for the reader.
+    ptr_at = readme.index("What do these numbers mean for you?")
+    assert readme.index("## Agent Sandbox — Core Metrics") < ptr_at
+    assert ptr_at < readme.index("## Does it hold at cluster scale?")
+    # DETAILS: the section now renders here, LAST in the per-product block (after the working
+    # tables), so its "the tables above are the raw measurements" self-reference stays accurate.
+    wtm_at = details.find("## What this means for you")
     assert wtm_at != -1
-    assert readme.index("## Agent Sandbox — Core Metrics") < wtm_at
-    assert wtm_at < readme.index("## Does it hold at cluster scale?")
+    assert details.index("## Burst Create — TTFE Corroboration") < wtm_at
 
 
 def test_recipe_renders_h2_and_is_static():
@@ -4678,7 +4690,8 @@ def test_north_star_caption_unknown_product_renders_nothing():
 def test_north_star_caption_in_full_readme_under_core_matrix():
     # hb#227 DROP-2: the "How close to the North Star?" + "Stretch bar" H3 scorecards are GONE;
     # the measured verdicts fold to two one-line captions placed directly UNDER the Core Metrics
-    # matrix, BEFORE the "What this means for you" interpretation block.
+    # matrix. hb#488 slice-1: the interpretation block itself moved to DETAILS, so the README chain
+    # now runs matrix → North-Star/Stretch captions → the what-it-means POINTER → operating envelope.
     from generate import build_readme
     readme = build_readme()
     assert "### How close to the North Star?" not in readme
@@ -4686,10 +4699,10 @@ def test_north_star_caption_in_full_readme_under_core_matrix():
     ns_at = readme.find("**North Star** — warm-pool-hit TTFE p95 <")
     assert ns_at != -1
     matrix_at = readme.index("## Agent Sandbox — Core Metrics")
-    means_at = readme.index("## What this means for you")
+    ptr_at = readme.index("What do these numbers mean for you?")
     envelope_at = readme.index("### What wait should I budget?")
-    # matrix → North-Star/Stretch captions → what-it-means → operating envelope
-    assert matrix_at < ns_at < means_at < envelope_at
+    # matrix → North-Star/Stretch captions → what-it-means pointer → operating envelope
+    assert matrix_at < ns_at < ptr_at < envelope_at
 
 
 # --- hb#5414: refresh-delta / verdict-flip tripwire on the North Star caption ---

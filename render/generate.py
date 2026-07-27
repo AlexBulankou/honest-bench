@@ -181,9 +181,21 @@ _DETAILS_PREAMBLE = """\
 # Honest benchmarks — deep-dive appendix
 
 The corroboration and decomposition tables behind the headline page
-([README.md](README.md)). Same rule: **every number is machine-rendered from a real
-harness run — nothing here is typed by hand.** Start with the headline page; come here
-when you want to see the working.
+([README.md](README.md)) — plus the plain-English **What this means for you** guidance
+on picking a runtime and sizing a warm pool. Same rule: **every number is machine-rendered
+from a real harness run — nothing here is typed by hand.** Start with the headline page;
+come here when you want the guidance or to see the working.
+"""
+
+# hb#488 numbers-first slice-1: the one-line pointer left on the headline page where the
+# "What this means for you" interpretation block used to render inline (now relocated to the
+# deep-dive appendix via build_details). Static prose — no measured number — so it lives as a
+# constant, same as _PREAMBLE / _DETAILS_PREAMBLE. The anchor is GitHub's auto-slug of the
+# "## What this means for you" heading emitted by render_what_this_means.
+_WHAT_THIS_MEANS_POINTER = """\
+**What do these numbers mean for you?** Plain-English guidance — picking a runtime, sizing a
+warm pool, what wait to budget, and why a `pending` cell is unmeasured-not-bad — is in the
+deep-dive appendix, [DETAILS.md](DETAILS.md#what-this-means-for-you).
 """
 
 
@@ -249,11 +261,13 @@ def build_readme(root=None):
         north_star = render_north_star_caption(results, kata_results=kr)
         if north_star.strip():
             sections.append(north_star.rstrip())
-        # hb#134 H2-fold: the reader-facing interpretation is ONE top-level block. The
-        # plain-English "What this means for you" synthesis leads, then the operating-envelope
-        # scorecard folds UNDER it as a `###` sub-block — "what wait should I budget?". This
-        # keeps the page skimming as: matrix → north-star captions → what-it-means → does-it-scale.
-        sections.append(render_what_this_means(results, kata_results=kr).rstrip())
+        # hb#488 numbers-first slice-1 (alex 2026-07-26): the plain-English "What this means
+        # for you" interpretation prose — reader guidance, not a source-of-truth number — moves
+        # off the headline page into the deep-dive appendix (build_details), leaving only a
+        # one-line pointer here. The headline page keeps its measured numbers (matrix, north-star
+        # captions, operating envelope, scale) + short explanations; the interpretive essay is a
+        # click away. Same relocation precedent as render_core_metrics_legend / density → DETAILS.
+        sections.append(_WHAT_THIS_MEANS_POINTER.rstrip())
         sections.append(render_operating_envelope(
             results, heading="### What wait should I budget?").rstrip())
         # hb#134: Scale-Proof + Concurrent-Burst + Saturation + at-scale Contention merge into ONE
@@ -321,6 +335,7 @@ def build_details(root=None):
             continue
         with open(path) as fh:
             results = json.load(fh)
+        kr = kata_results if product == "sandbox" else None
         for renderer in (
             render_burst_corroboration,
             render_warm_bind_decomposition,
@@ -332,9 +347,8 @@ def build_details(root=None):
             block = renderer(results)
             if block.strip():
                 sections.append(block.rstrip())
-        # Max-Density relocated here from the headline matrix (hb#134). kata_results fills
-        # the kata-microvm row when its separate run is present, mirroring build_readme.
-        kr = kata_results if product == "sandbox" else None
+        # Max-Density relocated here from the headline matrix (hb#134); it and the blocks
+        # below reuse the `kr` set at the top of the loop (kata_results for sandbox only).
         # HB1 (alex 2026-07-25): the full cell-decoding glossary + published-with-caveat
         # block moved off the headline matrix to here; the README matrix carries only a
         # compact "Reading the cells" pointer back to this section. Byte-faithful gating:
@@ -391,6 +405,13 @@ def build_details(root=None):
         suspend = render_suspend_latency(results)
         if suspend.strip():
             sections.append(suspend.rstrip())
+        # hb#488 numbers-first slice-1 (alex 2026-07-26): the plain-English "What this means for
+        # you" interpretation prose relocates off the headline page to here (README carries only
+        # _WHAT_THIS_MEANS_POINTER). Placed LAST in the per-product loop so the section's own
+        # "the tables above" / "matrix rows above" self-references stay accurate — all the working
+        # tables render above it — with zero change to render_what_this_means' prose. The README
+        # pointer targets its #what-this-means-for-you anchor, so a reader jumps straight here.
+        sections.append(render_what_this_means(results, kata_results=kr).rstrip())
     return "\n\n".join(sections) + "\n"
 
 
