@@ -1,9 +1,10 @@
 # Honest benchmarks — deep-dive appendix
 
 The corroboration and decomposition tables behind the headline page
-([README.md](README.md)). Same rule: **every number is machine-rendered from a real
-harness run — nothing here is typed by hand.** Start with the headline page; come here
-when you want to see the working.
+([README.md](README.md)) — plus the plain-English **What this means for you** guidance
+on picking a runtime and sizing a warm pool. Same rule: **every number is machine-rendered
+from a real harness run — nothing here is typed by hand.** Start with the headline page;
+come here when you want the guidance or to see the working.
 
 ## Burst Create — TTFE Corroboration
 
@@ -189,3 +190,15 @@ _Capability note: this is an **administrative** (operator- or user-driven) suspe
 | Median (p50) | 2.2847s |
 
 _Suspend latency is measured per-cycle as the wall-clock from the `operatingMode=Suspended` patch return to the terminal Suspended state; the median is the 50th percentile of the measured suspend distribution._
+
+## What this means for you
+
+The tables above are the raw measurements. If you build *on* sandboxes but do not run the cluster yourself, here is what they mean in practice:
+
+- **Keep a warm pool sized to demand and a new sandbox is ready quickly** — a claim against a ready pool skips the fresh-node startup path. The exact wait to budget is in the operating envelope below once that measurement lands.
+- **A warm-pool hit is about 2× faster than starting cold (gVisor).** If start-up latency matters to you, the warm pool is the single biggest lever — size it for your steady demand and most claims never pay the cold path. (This ratio is the dedicated warm-vs-cold leg — a separate point-in-time measurement from the Core Metrics matrix rows above, so do not reproduce it by dividing the matrix cells.)
+- **Big simultaneous bursts still work — 300 sandboxes asked for at once settled in ~6.9s.** But that is the pool-overflow regime: the wait climbs toward the cold-start number as claims outrun ready slots, so plan the pool around your steady rate, not your worst spike.
+- **Rule of thumb for pool size:** start near your typical concurrent demand (≈0.75× of it) and tune from there. This is a planning heuristic, not one of the measured numbers above.
+- **Both runtimes are measured — choose by isolation need.** In the measurements above, warm-pool latency is comparable between them; gVisor delivers the higher per-node throughput, while Kata + microVM puts each sandbox in its own VM for hardware-grade isolation. If unsure, start with gVisor and move only the workloads that need a VM boundary to Kata.
+- **Do not design around suspend/resume yet.** gVisor resume is blocked upstream, and Kata resume is `N/A` by construction (checkpoint-restore does not transfer to the VM model) — treat it as unavailable until the gVisor cells show real numbers.
+- **A cell marked `pending` is unmeasured, not bad.** It means that measurement has not run yet (or is blocked upstream) — never that the platform failed it.
