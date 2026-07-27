@@ -4524,11 +4524,17 @@ def test_recipe_public_safe_generic_tokens_only():
     # and its only internal-name leak vector is a hardcoded source literal. That surface is
     # guarded tree-wide by the Cloud Build specific-name-scan (real names live only in Secret
     # Manager, never in this PUBLIC repo) plus the structural check-public-safety.sh scanner
-    # (go/ links, internal host shapes, project-id patterns, ...); this test therefore holds
-    # NO real-name literal and only asserts the generic/vendor-public tokens are PRESENT.
+    # (go/ links, internal host shapes, project-id patterns, ...). hb#488 numbers-first slice-2
+    # relocated the cluster-shape enumeration (e2-standard-16 / gvisor / RuntimeClass /
+    # DaemonSet) off the headline recipe into recipe/REPRODUCE.md, so the front-page block now
+    # carries only the vendor-public "GKE" token plus the sub-page pointer — the shape detail is
+    # a click away. Assert the surviving public token is present AND the relocated shape tokens
+    # are NOT re-inlined here (numbers-first: detail lives on the sub-page, not the front page).
     out = render.render_recipe()
-    for tok in ("e2-standard-16", "gvisor", "RuntimeClass", "GKE", "DaemonSet"):
-        assert tok in out
+    assert "GKE" in out
+    assert "recipe/REPRODUCE.md" in out
+    for relocated in ("e2-standard-16", "RuntimeClass", "DaemonSet"):
+        assert relocated not in out
 
 
 def test_recipe_in_full_readme_after_data_sections():
