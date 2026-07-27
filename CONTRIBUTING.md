@@ -63,8 +63,8 @@ python3 -m harness.test_metrics          # pure TTFE metrics-derivation core
 
 To reproduce a full run, follow the recipe in the README: install the controller
 from upstream `main` with `recipe/install-controller-from-main.sh`, then run the
-harness against your cluster. On a vanilla `kind` cluster, scenarios that require
-a sandboxed runtime render `pending` rather than a false failure.
+harness against your GKE cluster. On a cluster without a sandbox runtime, scenarios
+that require one render `pending` rather than a false failure.
 
 ## Adding a scenario
 

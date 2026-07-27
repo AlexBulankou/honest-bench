@@ -831,9 +831,9 @@ demo's core `ListActors` went **0-pass / all-fail, deterministically**.
 
 **Why it matters**
 
-- On **ephemeral CI** (kind) every persisted row is written by the *same* build that
-  reads it, so the row schema and the decoder schema never diverge — strict decoding
-  never trips, CI is green.
+- On an **ephemeral CI** cluster every persisted row is written by the *same* build
+  that reads it, so the row schema and the decoder schema never diverge — strict
+  decoding never trips, CI is green.
 - On a **long-lived** cluster, rows persist across binary upgrades, so the first deploy
   that lands a field rename makes every pre-existing row undecodable. `ListActors` stays
   bricked until those rows are rewritten or the store is wiped — i.e. effectively a

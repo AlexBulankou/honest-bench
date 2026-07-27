@@ -16,10 +16,11 @@ Two runtimes, two isolation trade-offs:
 
 Every number below is **machine-rendered from a real harness run and reproducible** — no cell is
 typed by hand, and each is a **floor, not a ceiling** (what a *vanilla* OSS build delivers today;
-a bigger pool or denser nodes should beat it). Reproduce the whole page in four commands:
+a bigger pool or denser nodes should beat it). Reproduce the whole page from a GKE cluster in
+three commands (cluster setup — a gVisor/Kata node pool — is in
+[`recipe/REPRODUCE.md`](recipe/REPRODUCE.md)):
 
 ```bash
-kind create cluster                                # 0. portable path — a free local cluster
 bash recipe/install-controller-from-main.sh        # 1. the OSS controller, built from upstream main
 python3 -m harness.run                             # 2. run the suite -> sandbox/results/latest.json
 python3 -m render.generate && git diff README.md   # 3. re-render this page + diff the result
