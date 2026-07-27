@@ -5,15 +5,15 @@ below, run against the **same upstream controller** the table measures — no
 private fork, no internal image, no hand-entered figures. If you follow this
 recipe and get a different number, that is a bug worth an issue.
 
-The default path is a local `kind` cluster: free, and reproducible on a
-GitHub-hosted runner. A `kind` cluster has no gVisor runtime, so isolation
-scenarios that need one report `pending (requires-gvisor-runtime)` — that is the
-honest result on this substrate, and the build banner labels every number
-`cluster_substrate=kind`. To reproduce the `gke` / `gke-sandbox` rows, point your
-`kubectl` context at such a cluster **and** set `BENCH_CLUSTER_SUBSTRATE` to match
-before step 2 — the harness does not auto-detect the substrate from the cluster
-yet, so that env var is what selects which cells run and stamps the build banner
-(see the headline-cell section below for the full `gke-sandbox` invocation).
+The recommended path is a GKE cluster with a gVisor (or Kata) node pool — the
+isolation rows this page exists to show only produce real numbers on a sandbox
+runtime. Point your `kubectl` context at such a cluster **and** set
+`BENCH_CLUSTER_SUBSTRATE` to match (`gke-sandbox` for gVisor, `gke-kata` for Kata,
+`gke` for a plain node pool) before step 2 — the harness does not auto-detect the
+substrate from the cluster yet, so that env var is what selects which cells run and
+stamps the build banner (see the headline-cell section below for the full
+`gke-sandbox` invocation). On a cluster without a sandbox runtime, isolation
+scenarios report `pending (requires-gvisor-runtime)` rather than a false FAIL.
 
 ## Prerequisites
 
@@ -22,8 +22,9 @@ yet, so that env var is what selects which cells run and stamps the build banner
   so install the one runtime dep first: `pip install -r harness/requirements.txt`
   (declared minimal — `kubernetes` and nothing else; the `harness.run` loop and
   the pure `results_schema`/`scenario_map` seam are themselves stdlib-only).
-- `kubectl`, and a cluster your context points at. For the portable path:
-  [`kind`](https://kind.sigs.k8s.io/) + a container runtime (Docker/Podman).
+- `kubectl`, and a GKE cluster your context points at. For the isolation rows, the
+  cluster needs a gVisor (`--enable-sandbox=type=gvisor`) or Kata node pool — see
+  the headline-cell section below.
 
 ## Steps
 
@@ -33,8 +34,8 @@ yet, so that env var is what selects which cells run and stamps the build banner
 # Skip this and `python3 -m harness.run` crashes with ModuleNotFoundError.
 pip install -r harness/requirements.txt
 
-# 0. (portable path) create a local cluster
-kind create cluster
+# 0. point kubectl at a GKE cluster with a gVisor/Kata node pool, and set
+#    BENCH_CLUSTER_SUBSTRATE to match (see the headline-cell section below).
 
 # 1. install the OSS controller, built from upstream main, onto your context.
 #    (this bare invocation APPLIES to the cluster; pass --dry-run to fetch +
@@ -79,8 +80,8 @@ time. It publishes two numbers:
 - **`density_per_vcpu`** — that count divided by the cluster's total capacity vCPU,
   so the magnitude is comparable across runner hardware.
 
-It runs on any substrate (`requires_substrate=None`), so the portable `kind` path
-above measures it for real. Tunables (all env, all optional):
+It runs on any substrate (`requires_substrate=None`), so even a plain `gke` node
+pool measures it for real. Tunables (all env, all optional):
 
 ```bash
 BURST_CREATE_POOL_REPLICAS=10      # warm slots == claims fired (raise on a big cluster)
@@ -105,9 +106,9 @@ BENCH_CLUSTER_SUBSTRATE=gke-sandbox BURST_CREATE_RUNTIME_CLASS=gvisor \
 **not** auto-detect the substrate from your cluster yet (that is a planned
 integration seam); today the build banner's `cluster_substrate` is exactly what
 you set in this env var. So if you point `kubectl` at a gke-sandbox cluster but
-leave `BENCH_CLUSTER_SUBSTRATE` unset, it defaults to `kind` and a real gVisor
-run is published mislabelled `cluster_substrate=kind` — under-claiming, but still
-a wrong banner.
+leave `BENCH_CLUSTER_SUBSTRATE` unset, it falls back to a local-cluster default and
+a real gVisor run is published mislabelled — under-claiming, but still a wrong
+banner.
 
 Setting `BENCH_CLUSTER_SUBSTRATE=gke-sandbox` also arms a consistency guard: the
 burst-create cell refuses to publish a `gke-sandbox`-labelled result unless
@@ -118,7 +119,7 @@ fell back to runc is caught rather than shipped as a gVisor headline.
 
 With both set, every pod in the pool is pinned to that RuntimeClass, the read-back
 confirms it, and the build banner's `cluster_substrate=gke-sandbox` records the
-substrate — so a `kind` (runc) number is never mistaken for a `gke-sandbox` one,
+substrate — so a plain runc number is never mistaken for a `gke-sandbox` one,
 and a `gke-sandbox` number is provably gVisor, not just labelled.
 
 ## The scale headline: concurrent-N warm vs cold TTFE
@@ -444,7 +445,7 @@ headline without a local cluster and read the build log to see every command:
 
 - **gke-sandbox (gVisor) path** — [`cloudbuild-refresh-gke-sandbox.yaml`](../cloudbuild-refresh-gke-sandbox.yaml).
   Provisions a **fresh, ephemeral** GKE node pool with `--sandbox type=gvisor`,
-  installs the same upstream-main controller as the portable path, fires the
+  installs the same upstream-main controller as the steps above, fires the
   burst-create headline under `runtimeClassName=gvisor` (the read-back guard
   above confirms every backing pod landed on gVisor), renders, runs the
   public-safety fail-closed check, opens a PR with the result, and tears the
@@ -462,12 +463,6 @@ headline without a local cluster and read the build log to see every command:
   ```bash
   gcloud builds triggers run hb-refresh-gke-kata --project=<PROJECT>
   ```
-
-The **portable kind path** (steps 1-3 above) needs no CI at all — it runs on any
-laptop with Docker and no cloud account. Its former CI-refresh workflow was **not
-migrated by design**: a kind run only downgrades the live gVisor headline to a
-`pending`/kind number, and kind-in-Cloud-Build (docker-in-docker) is fragile — so
-the portable suite is a local-only reproduce path now.
 
 **Manual is the spend-arm.** Each GKE refresh binds to a trigger with **no
 branch/PR/schedule wiring**, so a real GKE cluster is never spun unattended: it
@@ -494,8 +489,8 @@ step 0 with an empty log.
 
 - **Measured cells** are real latencies / outcomes from your run.
 - **`pending (<reason>)`** means the scenario could not be measured on your
-  substrate (e.g. `requires-gvisor-runtime` on `kind`) or is gated on a tracked
-  upstream gap (`upstream-blocked`). It is never a silent pass.
+  substrate (e.g. `requires-gvisor-runtime` on a non-sandbox cluster) or is gated
+  on a tracked upstream gap (`upstream-blocked`). It is never a silent pass.
 - **Goal columns render `(non-public)`** by construction — the internal targets
   file does not ship in this repo, so the renderer has nothing to fill them with.
 - A malformed or unexpected field in `results/latest.json` is **dropped** by the

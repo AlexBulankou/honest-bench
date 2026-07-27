@@ -1,8 +1,8 @@
 # Portable benchmark harness
 
 A stranger can `git clone` this repo and reproduce every cell of a product's
-benchmark table on a vanilla cluster — a local `kind` cluster, or their own GKE /
-GKE-Sandbox. The table is **honest by construction**: every number is
+benchmark table on their own GKE / GKE-Sandbox cluster. The table is **honest by
+construction**: every number is
 machine-rendered from `<product>/results/latest.json`, which this harness writes.
 There are no hand-typed numbers.
 
@@ -13,8 +13,7 @@ overwriting a hand-seeded results file.
 ## Run it
 
 ```bash
-# 1. bring up any cluster (kind is the zero-cost default)
-kind create cluster
+# 1. bring up a GKE cluster with a gVisor/Kata node pool (see the recipe/ at repo root)
 # 2. install the OSS controller from upstream main (see the recipe/ at repo root)
 # 3. run the suite (writes sandbox/results/latest.json)
 python3 -m harness.run                 # default product: sandbox
@@ -22,8 +21,9 @@ python3 -m harness.run --product substrate
 ```
 
 The harness reads whatever `KUBECONFIG` points at — it never pins a cluster name.
-Set `BENCH_CLUSTER_SUBSTRATE` to `kind` (default), `gke`, or `gke-sandbox` so the
-results banner records the substrate a number was measured on.
+Set `BENCH_CLUSTER_SUBSTRATE` to `gke` or `gke-sandbox` (`gke-kata` for Kata) so the
+results banner records the substrate a number was measured on. Set it explicitly: an
+unset value falls back to a local-cluster label and would mislabel a GKE run.
 
 ## Design: subtraction, not rewrite
 
@@ -60,15 +60,13 @@ string cannot reach the public table:
 This is the primary public-safety guard; the repo-level `check-public-safety.sh`
 scanner is the backstop.
 
-## Two portability caveats (non-uniform across products)
+## Isolation requires a sandbox-enabled GKE node pool
 
-1. **gVisor does not run on vanilla kind.** Isolation cells need `runsc` on the
-   node, which kind lacks, so on a `kind` run they render
-   `pending (requires-gvisor-runtime)` instead of a false FAIL. Full isolation
-   badges require the `gke-sandbox` substrate.
-2. **kind perf ≠ GKE perf.** kind is single-node; its cold-start / restore numbers
-   are not GKE numbers. `results/latest.json` carries `cluster_substrate` and the
-   render banner stamps it, so a kind number is never mis-read as a GKE result.
+Isolation cells (the gVisor/Kata TTFE rows) need `runsc`/Kata on the node, so they
+only produce real numbers on a `gke-sandbox` (or `gke-kata`) node pool. On a cluster
+without the sandbox runtime they render `pending (requires-gvisor-runtime)` instead of
+a false FAIL. `results/latest.json` carries `cluster_substrate` and the render banner
+stamps it, so every number is attributed to the substrate it was measured on.
 
 ## Files
 
