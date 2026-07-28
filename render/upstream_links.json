@@ -1,7 +1,7 @@
 {
   "_meta": {
     "seeded_from": "UPSTREAM_BLOCKERS.md (active-asks-only rewrite)",
-    "last_verified": "2026-07-27",
+    "last_verified": "2026-07-28",
     "freshness": "Rides every UPSTREAM_BLOCKERS.md refresh PR; link states hand-verified against the public GitHub API at each refresh."
   },
   "classes": {
@@ -80,9 +80,9 @@
           "repo": "kubernetes-sigs/agent-sandbox",
           "number": 1087,
           "kind": "pr",
-          "role": "fix-in-flight",
-          "status": "in-review",
-          "note": "Targeted stale-informer-replay fix (live-read claim + CompareAndDelete). Still open, not owner-approved. Distinct from the merged #1114."
+          "role": "fix-merged",
+          "status": "merged",
+          "note": "Targeted stale-informer-replay fix (live-read claim + CompareAndDelete). MERGED 2026-07-27 (merge_commit 2e127564). Distinct from the merged #1114. First measurement against a #1087-bearing build (2026-07-28 gVisor warm ladder) shows the histogram-vs-acq controller cross-check PASSES (ratios 1.000 / 0.9375, within 0.10 tol)."
         },
         {
           "repo": "kubernetes-sigs/agent-sandbox",
@@ -90,7 +90,7 @@
           "kind": "pr",
           "role": "fix-partial-merged",
           "status": "merged",
-          "note": "Persisted-annotation guard; closes the suspend/resume re-record leg. The internal falsification target is empirically cleared. Residual targeted replay-leg fix is #1087 (still open)."
+          "note": "Persisted-annotation guard; closes the suspend/resume re-record leg. The internal falsification target is empirically cleared. Targeted replay-leg fix #1087 now also merged (2026-07-27)."
         }
       ]
     },

@@ -4,7 +4,7 @@ Active upstream blockers that need action now, ordered **substrate-first** (subs
 
 **Engagement model:** upstream approvers are engaged directly through existing maintainer relationships. We do not open new issues/PRs in the upstream repos; reference patches are staged and offered only if a maintainer asks. Engineering depth for every item: [**UPSTREAM_BLOCKERS_DETAIL.md**](UPSTREAM_BLOCKERS_DETAIL.md). Machine-readable link states: [`render/upstream_links.json`](render/upstream_links.json) — updated in the same commit as any state change here, and re-swept against the public GitHub API on each refresh.
 
-_Link states last verified live against the public GitHub API: **2026-07-27**._
+_Link states last verified live against the public GitHub API: **2026-07-28**._
 
 ## Substrate (primary product — GA-critical)
 
@@ -20,8 +20,9 @@ Sandbox moves to maintenance; the default customer recommendation shifts to subs
 | # | What it blocks | Where | Act now |
 |---|---|---|---|
 | X1 | **Resume reliability can't be validated** — a resumed sandbox reports `Suspended` forever. | [asbx#873](https://github.com/kubernetes-sigs/agent-sandbox/issues/873) → fix [asbx#1150](https://github.com/kubernetes-sigs/agent-sandbox/pull/1150) (in review) | **Track #1150 to approval.** It implements the persistent `Suspended` condition; reviewer requested, not yet approved. |
-| X2 | **Startup-latency histogram overcounts under burst** — undermines throughput cross-checks built on it. | [asbx#940](https://github.com/kubernetes-sigs/agent-sandbox/issues/940) → fix [asbx#1087](https://github.com/kubernetes-sigs/agent-sandbox/pull/1087) (in review) | **Track #1087 to approval** (low priority). The suspend/resume re-record leg already merged (#1114); #1087 is the more targeted stale-informer-replay fix, still open and not owner-approved. |
 | X3 | **5–7% of snapshot restores are blank-but-Ready** — readiness does not gate on "restore verified". | [asbx#952](https://github.com/kubernetes-sigs/agent-sandbox/issues/952) | Watch only — data point already shared upstream; no pending action until a maintainer responds. |
+
+_(X2 — startup-latency histogram overcount — resolved upstream 2026-07-27 and moved to [Recently landed](#recently-landed-archive); both legs now merged, cross-check empirically confirmed PASS.)_
 
 ## Platform (GKE / gVisor — for alex, no OSS approver)
 
@@ -37,6 +38,6 @@ Resolved upstream; kept as a breadcrumb, dropped on the next refresh.
 
 - **True-TTFE measurement basis** — webhook-inject-timestamp example merged ([asbx#761](https://github.com/kubernetes-sigs/agent-sandbox/pull/761), closes [asbx#751](https://github.com/kubernetes-sigs/agent-sandbox/issues/751)); adopted on the Kata cold measurement path.
 - **Warm-pool claim requeue** — bounded requeue merged ([asbx#1108](https://github.com/kubernetes-sigs/agent-sandbox/pull/1108)), removing the exponential-backoff tail-latency inflation.
-- **Histogram suspend/resume re-record leg** — persisted-annotation guard merged ([asbx#1114](https://github.com/kubernetes-sigs/agent-sandbox/pull/1114)); the internal falsification target is empirically cleared (the residual replay-leg fix is #1087, still tracked as X2).
+- **Histogram startup-latency overcount (both legs)** — the suspend/resume re-record leg (persisted-annotation guard, [asbx#1114](https://github.com/kubernetes-sigs/agent-sandbox/pull/1114), merged 2026-07-22) AND the targeted stale-informer-replay leg (live-read claim + `CompareAndDelete`, [asbx#1087](https://github.com/kubernetes-sigs/agent-sandbox/pull/1087), merged 2026-07-27, merge_commit `2e127564`) are now both merged. First measurement against a #1087-bearing build (2026-07-28 gVisor warm ladder) confirms the histogram-vs-acq controller cross-check PASSES (ratios 1.000 / 0.9375, within 0.10 tol) — this retires the former X2 blocker. Note: the warm-pool SLO-rate cells already graduated to the corroborated literal-TTFE ≥-floor basis on 2026-07-24 via #1114; #1087's merge closes the last upstream residual, it does not further graduate the cell (a bare non-`≥` rate still requires the true-TTFE webhook basis).
 - **Substrate actor terminal-crash + worker-release** — [substrate#353](https://github.com/agent-substrate/substrate/pull/353) (terminal `CRASHED` classification) and [substrate#475](https://github.com/agent-substrate/substrate/pull/475) (auto worker-release on crash) merged; the residual exit-128 classification gap is tracked as S2.
 - **Substrate golden-actor bring-up (`WaitGoldenActor` wedge)** — structurally unreachable at the current build after the `SNAPSHOT_TYPE_UNSPECIFIED` enum removal ([substrate#370](https://github.com/agent-substrate/substrate/pull/370)) and synchronous in-txn snapshot-info write ([substrate#227](https://github.com/agent-substrate/substrate/pull/227)).
