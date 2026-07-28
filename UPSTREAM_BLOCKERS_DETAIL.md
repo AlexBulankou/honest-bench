@@ -1293,7 +1293,7 @@ if resp.GetActor().GetLatestSnapshotInfo().GetExternal() == nil {
 
 **Internal tracking a#5452 · evidence-only per NO-BOT (alex, 2026-07-07) — root-cause bisect: (b) ruled out, (a2) cold-start readiness race confirmed, (a1) ruled out for fast-recovery; upstream onset commit still to bisect. Filing, if any, is a human action, never agent-initiated**
 
-> **UPDATE 2026-07-25 — no-free-workers is NO LONGER the current cause of the demo suite RED, but the blocker stands (intermittent).** The suite ran **6 consecutive clean PASS 07-24 06:17Z→21:17Z** (shas `76bac5d0`×5, `2c327172`) — a full day with zero no-free-workers occurrences — then went RED again 07-25 06:17Z (sha `aa1d14a7`) from a **different** cause: the #405 external-volume `TestExternalVolumeLifecycle` timeout ([§U8](#u8-external-volume-golden-timeout) / a#5612). This confirms the (a2) cold-start-readiness-race diagnosis: the shortage is a **timing race**, so it fires only when N×5-pod concurrent startup pushes pod-readiness past the 90s `WaitGoldenActor` budget — a lucky-scheduling window (as 07-24 was) passes clean. The "continuously RED since 06-27" framing in the bullets below is therefore superseded: it held while §U2 masked the true cause, but the 07-24 green streak proves this symptom is intermittent, not continuous. Blocker retained as an intermittent worker-scarcity race; a#5452 stays OPEN.
+> **UPDATE 2026-07-25 — no-free-workers is NO LONGER the current cause of the demo suite RED, but the blocker stands (intermittent).** The suite ran **6 consecutive clean PASS 07-24 06:17Z→21:17Z** (shas `76bac5d0`×5, `2c327172`) — a full day with zero no-free-workers occurrences — then went RED again 07-25 06:17Z (sha `aa1d14a7`) from a **different** cause: the #405 external-volume `TestExternalVolumeLifecycle` timeout ([§U8](#u8-external-volume-golden-timeout) / a#5612). This confirms the (a2) cold-start-readiness-race diagnosis: the shortage is a **timing race**, so it fires only when N×5-pod concurrent startup pushes pod-readiness past the 90s `WaitGoldenActor` budget — a lucky-scheduling window (as 07-24 was) passes clean. The "continuously RED since 06-27" framing in the bullets below is therefore superseded: it held while §U2 masked the true cause, but the 07-24 green streak proves this symptom is intermittent, not continuous. Blocker retained in this section as a documented intermittent worker-scarcity race; a#5452 itself was CLOSED 2026-07-23 as not-reproducing (4 consecutive clean fires; recurrence covered by the standing #2553 e2e accrual + health-report upgrade-loop section — reopen-if-returns).
 
 **What's blocked**
 
@@ -1340,7 +1340,7 @@ ERROR while resuming golden actor atespace=ate-golden
 
 **Page-side notes (not part of any paste body)**
 
-- Evidence-only per **NO-BOT (alex, 2026-07-07)**: no upstream issue filed or planned by agents. a#5452 (OPEN) carries the live evidence trail (mechanism + (b)-ruled-out + (a2)-cold-start-race-confirmed / (a1)-ruled-out verdict by a4s1 2026-07-23; upstream onset commit still to bisect within the 06-27→07-23 masked window).
+- Evidence-only per **NO-BOT (alex, 2026-07-07)**: no upstream issue filed or planned by agents. a#5452 (CLOSED 2026-07-23 as not-reproducing; recurrence covered by the standing #2553 accrual, reopen-if-returns) carries the evidence trail (mechanism + (b)-ruled-out + (a2)-cold-start-race-confirmed / (a1)-ruled-out verdict by a4s1 2026-07-23; upstream onset commit still to bisect within the 06-27→07-23 masked window).
 - Line pins: `demo_test.go:517-529/541-548` + `actor.go:31` + `workflow.go:124-127` + `workflow_resume.go:119-140/213/263-292` + `actortemplate_controller.go` `PhaseResumeGoldenActor` are at upstream tip `961883a` (2026-07-23 source read of the `substrate-src` checkout at that sha); re-verify at tip at filing time.
 
 <a id="u8-external-volume-golden-timeout"></a>
@@ -1521,7 +1521,7 @@ Both are the **same checkpoint↔spec asymmetry CLASS** (a durable-dir mount dec
 
 **Page-side notes (not part of any paste body)**
 
-- Evidence-only per **NO-BOT (alex, 2026-07-07)**: no upstream issue filed or planned by agents. a#5624 (OPEN) carries the live evidence trail. Any actual upstream fix/filing stays alex-identity.
+- Evidence-only per **NO-BOT (alex, 2026-07-07)**: no upstream issue filed or planned by agents. a#5624 (CLOSED 2026-07-26 — RESOLVED, see the ✓ banner in the header above) carries the evidence trail. Any actual upstream fix/filing stays alex-identity.
 - Line pins: `metrics_test.go:62` (`CreateActor` fast-fail on `AlreadyExists`), `:72` (`ResumeActor` restore-128 on clean atespace) at upstream HEAD `aa1d14a7` (2026-07-25); mechanism pins `cmd/atelet/main.go:727-734` + `cmd/atelet/oci.go:302-318` shared with §U4/§U8; re-verify at tip at diagnosis time.
 - Authoritative cross-ref: a-repo SoT `kb/substrate/health/e2e-known-failures.json`, `TestPlatformMetricsEmitted` entry (carries the two-layer red + the decisive restore-side runsc reason).
 
