@@ -1865,13 +1865,27 @@ def _north_star_delta_caveat(results, kata_results=None):
 # Static and permanent: this is a fact about the page's history, not a live signal that clears on
 # its own — unlike the two caveats above, there is nothing to re-check on a future run.
 _REGIME_BOUNDARY_NOTE = (
-    "> ℹ️ **Regime note:** every automated refresh since **2026-07-20** measures a brand-new, "
+    "> ℹ️ **Regime note:** every CI-measured refresh since **2026-07-20** measures a brand-new, "
     "single-node ephemeral CI cluster with an empty containerd cache per run — a deliberately "
     "cold pull (see \"Reproduce it\" below). Numbers published **before 2026-07-20** (e.g. the "
     "2026-07-04 baseline) were instead measured on a long-lived, pre-warmed internal cluster, not "
     "by this repo's own CI. If you're comparing today's cold-start figures against an older "
     "citation of this page and see a large jump, that's this regime switch — not a code or "
-    "controller regression."
+    "controller regression. (\"CI-measured\" means *machine-measured on a cold ephemeral "
+    "cluster*, **not** *scheduled* — see the refresh cadence below.)"
+)
+
+# hb#511: refresh cadence is on-demand, not a recurring cron. Declaring a freshness horizon
+# keeps "is this stale?" decidable without standing up recurring billed infra.
+_REFRESH_CADENCE_NOTE = (
+    "> ℹ️ **Refresh cadence (on-demand, not scheduled):** refreshes are **manually invoked / "
+    "on-demand** — a hand-run CI fire (`gcloud builds triggers run` / the reproduce script "
+    "below), never a recurring cron. To keep \"is this stale?\" a decidable question without "
+    "standing up recurring billed infra, a refresh is **due** when either (a) a **regime "
+    "boundary** occurs — cluster recreate, node-image float, or controller-build digest change "
+    "(all caught by the sandbox accrual detectors) — or (b) a **30-day floor** elapses since the "
+    "last fire (the `_generated-at:_` stamp under the Core Metrics table). Between those, the "
+    "published numbers are current, not stale."
 )
 
 
@@ -2187,6 +2201,7 @@ def render_north_star_caption(results, kata_results=None):
     if delta_caveat:
         out += "\n\n" + delta_caveat
     out += "\n\n" + _REGIME_BOUNDARY_NOTE
+    out += "\n\n" + _REFRESH_CADENCE_NOTE
     return out
 
 
