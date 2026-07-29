@@ -182,5 +182,6 @@ names the scaling term directly.
 **Honesty:** a row marked `pending` is not-yet-measured — never a provisional number dressed as a
 result. The **sub-1s @ 300/s warm headline is not yet published**; today's honest figures are the
 measured cells above (Core Metrics + **Concurrent Burst**) plus the **Warm-Pool Acquisition**
-decomposition in [DETAILS.md](DETAILS.md). TRUE-TTFE (webhook-stamped first-instruction) stays
-`pending` until the upstream stamper lands.
+decomposition in [DETAILS.md](DETAILS.md). TRUE-TTFE (webhook-stamped first-instruction) is now
+the live measurement basis for the warm-pool figures above ([asbx#761](https://github.com/kubernetes-sigs/agent-sandbox/pull/761)
+merged) — cells publish on `thpt_slo_basis: "true_ttfe"`, not a proxy.
