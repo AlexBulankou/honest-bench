@@ -1035,13 +1035,12 @@ def _core_metrics_glossary_bullets():
         "succeeded/total fraction); on a per-cluster throughput figure it marks a rate below the "
         "cluster sizing target.",
         "- **`pending`** — awaits its TTFE-instrumented run (a genuinely not-yet-run cell).",
-        "- **`pending (upstream-blocked)`** — the run DID land, but an upstream controller gap "
-        "(the resume path's Suspended condition never clears) holds the SLO-compliant figure; it "
-        "graduates to a real number the moment the upstream fix lands, not merely when a run is "
-        "scheduled. When the probe recorded a wall-clock ceiling (the time spent waiting out the "
-        "never-clearing condition), that ceiling now PRINTS as `≥N.Ns***R` — a floor the resume "
-        "never beat, not a resume time; see the `***R` block below. A cell with no recorded "
-        "ceiling stays `pending (upstream-blocked)`. "
+        "- **`pending (upstream-blocked)`** — **RESOLVED, no live cell.** This flavor formerly "
+        "gated the gVisor resume cell: the run landed, but an upstream controller gap (the resume "
+        "path's Suspended condition never cleared on resume) held the SLO-compliant figure. That "
+        "fix has since merged upstream and a fresh resume probe landed, so the gVisor resume row "
+        "now carries measured numbers and no live cell renders this flavor — the entry is retained "
+        "as a decoding-key archive. "
         "Tracked upstream: " + upstream_prose_refs("upstream-blocked") + ".",
         "- **`pending (cluster-fire)`** — the per-node figure is measured, but the per-cluster "
         "half awaits a schema-validated per-mode cluster-throughput fire (distinct from the "
@@ -1119,19 +1118,14 @@ def _core_metrics_caveat_lines():
         "Kata exec websocket setup overhead; the 5s bar sits INSIDE the bracket — no "
         "supportable claim either way. "
         "Tracked upstream: " + upstream_prose_refs("no-compliant-rung") + ".",
-        "- **`***R` — Resume probe ceiling** (`≥N.Ns***R`, the two TTFE cells of the "
-        "Resume-from-suspend × gVisor row — not yet manifested: the row currently reads "
-        "`pending (upstream-blocked)`, and this basis applies from the first probe run "
-        "that records a wall-clock ceiling) — the resume never completed (the upstream "
-        "Suspended condition never clears), so the probe recorded only the wall-clock "
-        "ceiling it spent waiting. That ceiling PRINTS as a floor (`≥N.Ns`) in the TTFE "
-        "columns — the resume takes AT LEAST this long — not a resume time; do not rank "
-        "it against a real completion distribution. The two throughput columns read "
-        "`0***R (upstream-blocked)` and execution success reads `0/N completed***R`: "
-        "zero of N probe attempts completed, so the true rate is zero (a duration is not "
-        "a rate). "
-        "Tracked upstream: " + upstream_prose_refs("upstream-blocked") + ", ETA: once "
-        "that PR merges and a fresh resume probe run lands (see "
+        "- **`***R` — Resume probe ceiling** (formerly the two TTFE cells of the "
+        "Resume-from-suspend × gVisor row) — **RESOLVED, no live cell.** This basis "
+        "formerly applied while the resume never completed (the upstream Suspended "
+        "condition never cleared on resume), so the probe recorded only the wall-clock "
+        "ceiling it spent waiting and that ceiling printed as a floor (`≥N.Ns`). That "
+        "upstream fix has since merged and a fresh resume probe landed, so the resume row "
+        "graduated to a measured completion distribution — no cell renders `***R`. "
+        "Tracked upstream: " + upstream_prose_refs("upstream-blocked") + " (see "
         "[WORK_IN_PROGRESS.md#upstream-blocked](WORK_IN_PROGRESS.md#upstream-blocked)).",
         "",
     ]
@@ -2484,9 +2478,10 @@ def render_what_this_means(results, kata_results=None):
     )
     lines.append(_runtime_choice_clause(results, kata_results))
     lines.append(
-        "- **Do not design around suspend/resume yet.** gVisor resume is blocked upstream, and "
-        "Kata resume is `N/A` by construction (checkpoint-restore does not transfer to the VM "
-        "model) — treat it as unavailable until the gVisor cells show real numbers."
+        "- **gVisor suspend/resume is measured — Kata resume is not.** The gVisor resume cells now "
+        "carry real numbers (the upstream resume-graduation fix merged and a fresh probe landed). "
+        "Kata resume stays `N/A` by construction (checkpoint-restore does not transfer to the VM "
+        "model) — treat Kata resume as unavailable."
     )
     lines.append(
         "- **A cell marked `pending` is unmeasured, not bad.** It means that measurement has not "

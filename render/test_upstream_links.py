@@ -119,7 +119,7 @@ def test_cell_refs_upstream_blocked_exact():
     # space, arrow-joined, fix ref labeled with its live status.
     assert upstream_cell_refs("upstream-blocked") == (
         " [#873](https://github.com/kubernetes-sigs/agent-sandbox/issues/873)"
-        "→[#1150 in review](https://github.com/kubernetes-sigs/agent-sandbox/pull/1150)"
+        "→[#1150 merged](https://github.com/kubernetes-sigs/agent-sandbox/pull/1150)"
     )
 
 
@@ -137,9 +137,9 @@ def test_cell_refs_unmapped_and_none_are_empty():
 def test_prose_refs_upstream_blocked_exact():
     assert upstream_prose_refs("upstream-blocked") == (
         "[agent-sandbox#873](https://github.com/kubernetes-sigs/agent-sandbox/issues/873)"
-        " (issue, open)"
+        " (issue, closed)"
         " → fix [agent-sandbox#1150](https://github.com/kubernetes-sigs/agent-sandbox/pull/1150)"
-        " (PR, in review)"
+        " (PR, merged)"
     )
 
 

@@ -1,7 +1,7 @@
 {
   "_meta": {
     "seeded_from": "UPSTREAM_BLOCKERS.md (active-asks-only rewrite)",
-    "last_verified": "2026-07-28",
+    "last_verified": "2026-07-30",
     "freshness": "Rides every UPSTREAM_BLOCKERS.md refresh PR; link states hand-verified against the public GitHub API at each refresh."
   },
   "classes": {
@@ -47,22 +47,23 @@
       ]
     },
     "upstream-blocked": {
-      "renders_at": "gVisor x Resume matrix row (pending cells), matrix legend, WORK_IN_PROGRESS.md#upstream-blocked; blocker page X1",
+      "renders_at": "legend/archive-only (RESOLVED upstream; the gVisor x Resume matrix row graduated to measured numbers once the fix landed, so no matrix cell currently renders this class); blocker archive X1",
       "refs": [
         {
           "repo": "kubernetes-sigs/agent-sandbox",
           "number": 873,
           "kind": "issue",
           "role": "blocks",
-          "status": "open"
+          "status": "closed",
+          "note": "Suspended-condition-never-clears-on-resume issue; auto-closed 2026-07-29 (state_reason=completed) at the same instant #1150 merged. X1 resolved upstream."
         },
         {
           "repo": "kubernetes-sigs/agent-sandbox",
           "number": 1150,
           "kind": "pr",
           "role": "fix-in-flight",
-          "status": "in-review",
-          "note": "Implements the persistent Suspended condition; reviewer requested, not yet approved."
+          "status": "merged",
+          "note": "Implements the persistent Suspended condition (computeSuspendedCondition now always returns non-nil, so Suspended clears on resume by construction). MERGED 2026-07-29 (merge_commit b9d2a107). First measurement against a #1150-bearing build (2026-07-30 gVisor resume probe, N=30) shows the resume cell graduates: Suspended clears on resume, exec-success 100%, TTFE p50 4.28s / p95 4.37s."
         }
       ]
     },
