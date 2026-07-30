@@ -180,32 +180,34 @@ WIP_CATALOG = {
         ),
     },
     "upstream-blocked": {
-        "title": "Resume-from-suspend is blocked upstream (`upstream-blocked`)",
+        "title": "Resume-from-suspend graduated — upstream fix landed (`upstream-blocked`, RESOLVED)",
         "what": (
             "TTFE and throughput for the **resume-from-suspend** activation mode — restore a "
             "previously-suspended sandbox and run the first instruction."
         ),
         "why": (
-            "**Gated (upstream).** The run itself lands, but an upstream controller gap holds "
-            "graduation: on gVisor the suspended condition never clears. This is a known upstream "
-            "gap, NOT an unrun or failed cell. (The Kata + microVM resume cell is a separate story "
-            "— `na-by-construction`, because this CRIU-based metric does not transfer to the Kata "
-            "VM isolation model.)"
+            "**Resolved upstream — archive entry, no live cell.** This class formerly gated the "
+            "gVisor resume cell: the run landed, but an upstream controller gap (the suspended "
+            "condition never cleared on resume) held graduation. That fix has since merged "
+            "upstream, and the gVisor resume cell has graduated to measured numbers, so no matrix "
+            "cell currently renders this class — the entry is retained as a schema/catalog archive. "
+            "(The Kata + microVM resume cell is a separate story — `na-by-construction`, because "
+            "this CRIU-based metric does not transfer to the Kata VM isolation model.)"
         ),
         "in_flight": (
-            "Yes — tracked upstream in the agent-sandbox controller: "
+            "Resolved — the upstream agent-sandbox controller fix has merged: "
             + upstream_prose_refs("upstream-blocked")
-            + ". No honest-bench-side measurement can graduate it until the upstream fix lands."
+            + ". A fresh resume probe against a build carrying the fix confirmed the suspended "
+            "condition clears on resume, and the gVisor resume matrix row now carries real "
+            "numbers."
         ),
         "eta": (
-            "Gated on the upstream agent-sandbox resume-graduation fix — "
-            "[agent-sandbox#1150](https://github.com/kubernetes-sigs/agent-sandbox/pull/1150) "
-            "is OPEN, in review (last activity 2026-07-22; not yet merged as of 2026-07-24). "
-            "No honest-bench-side date — the cell graduates to a real number the moment that "
-            "PR merges and a fresh resume probe run lands, not when a run is scheduled."
+            "Graduated — the upstream resume-graduation fix merged and a fresh resume probe run "
+            "landed, so the gVisor resume cell has flipped from pending to a measured number. No "
+            "outstanding date."
         ),
         "trace": (
-            "Upstream agent-sandbox controller (resume graduation): "
+            "Upstream agent-sandbox controller (resume graduation, resolved): "
             + upstream_prose_refs("upstream-blocked")
             + "."
         ),

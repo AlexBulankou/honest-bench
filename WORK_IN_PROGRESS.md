@@ -58,13 +58,13 @@ _Anchors and the entry set are generated from the closed pending-reason enum —
 
 <a id="upstream-blocked"></a>
 
-## Resume-from-suspend is blocked upstream (`upstream-blocked`)
+## Resume-from-suspend graduated — upstream fix landed (`upstream-blocked`, RESOLVED)
 
 - **What:** TTFE and throughput for the **resume-from-suspend** activation mode — restore a previously-suspended sandbox and run the first instruction.
-- **Why absent:** **Gated (upstream).** The run itself lands, but an upstream controller gap holds graduation: on gVisor the suspended condition never clears. This is a known upstream gap, NOT an unrun or failed cell. (The Kata + microVM resume cell is a separate story — `na-by-construction`, because this CRIU-based metric does not transfer to the Kata VM isolation model.)
-- **In flight:** Yes — tracked upstream in the agent-sandbox controller: [agent-sandbox#873](https://github.com/kubernetes-sigs/agent-sandbox/issues/873) (issue, open) → fix [agent-sandbox#1150](https://github.com/kubernetes-sigs/agent-sandbox/pull/1150) (PR, in review). No honest-bench-side measurement can graduate it until the upstream fix lands.
-- **ETA:** Gated on the upstream agent-sandbox resume-graduation fix — [agent-sandbox#1150](https://github.com/kubernetes-sigs/agent-sandbox/pull/1150) is OPEN, in review (last activity 2026-07-22; not yet merged as of 2026-07-24). No honest-bench-side date — the cell graduates to a real number the moment that PR merges and a fresh resume probe run lands, not when a run is scheduled.
-- **Trace:** Upstream agent-sandbox controller (resume graduation): [agent-sandbox#873](https://github.com/kubernetes-sigs/agent-sandbox/issues/873) (issue, open) → fix [agent-sandbox#1150](https://github.com/kubernetes-sigs/agent-sandbox/pull/1150) (PR, in review).
+- **Why absent:** **Resolved upstream — archive entry, no live cell.** This class formerly gated the gVisor resume cell: the run landed, but an upstream controller gap (the suspended condition never cleared on resume) held graduation. That fix has since merged upstream, and the gVisor resume cell has graduated to measured numbers, so no matrix cell currently renders this class — the entry is retained as a schema/catalog archive. (The Kata + microVM resume cell is a separate story — `na-by-construction`, because this CRIU-based metric does not transfer to the Kata VM isolation model.)
+- **In flight:** Resolved — the upstream agent-sandbox controller fix has merged: [agent-sandbox#873](https://github.com/kubernetes-sigs/agent-sandbox/issues/873) (issue, closed) → fix [agent-sandbox#1150](https://github.com/kubernetes-sigs/agent-sandbox/pull/1150) (PR, merged). A fresh resume probe against a build carrying the fix confirmed the suspended condition clears on resume, and the gVisor resume matrix row now carries real numbers.
+- **ETA:** Graduated — the upstream resume-graduation fix merged and a fresh resume probe run landed, so the gVisor resume cell has flipped from pending to a measured number. No outstanding date.
+- **Trace:** Upstream agent-sandbox controller (resume graduation, resolved): [agent-sandbox#873](https://github.com/kubernetes-sigs/agent-sandbox/issues/873) (issue, closed) → fix [agent-sandbox#1150](https://github.com/kubernetes-sigs/agent-sandbox/pull/1150) (PR, merged).
 
 <a id="requires-gvisor-runtime"></a>
 

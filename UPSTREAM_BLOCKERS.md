@@ -4,7 +4,7 @@ Active upstream blockers that need action now, ordered **substrate-first** (subs
 
 **Engagement model:** upstream approvers are engaged directly through existing maintainer relationships. We do not open new issues/PRs in the upstream repos; reference patches are staged and offered only if a maintainer asks. Engineering depth for every item: [**UPSTREAM_BLOCKERS_DETAIL.md**](UPSTREAM_BLOCKERS_DETAIL.md). Machine-readable link states: [`render/upstream_links.json`](render/upstream_links.json) — updated in the same commit as any state change here, and re-swept against the public GitHub API on each refresh.
 
-_Link states last verified live against the public GitHub API: **2026-07-28**._
+_Link states last verified live against the public GitHub API: **2026-07-30**._
 
 ## Substrate (primary product — GA-critical)
 
@@ -19,9 +19,9 @@ Sandbox moves to maintenance; the default customer recommendation shifts to subs
 
 | # | What it blocks | Where | Act now |
 |---|---|---|---|
-| X1 | **Resume reliability can't be validated** — a resumed sandbox reports `Suspended` forever. | [asbx#873](https://github.com/kubernetes-sigs/agent-sandbox/issues/873) → fix [asbx#1150](https://github.com/kubernetes-sigs/agent-sandbox/pull/1150) (in review) | **Track #1150 to approval.** It implements the persistent `Suspended` condition; reviewer requested, not yet approved. |
 | X3 | **5–7% of snapshot restores are blank-but-Ready** — readiness does not gate on "restore verified". | [asbx#952](https://github.com/kubernetes-sigs/agent-sandbox/issues/952) | Watch only — data point already shared upstream; no pending action until a maintainer responds. |
 
+_(X1 — resume reliability / `Suspended`-never-clears — resolved upstream 2026-07-29 and moved to [Recently landed](#recently-landed-archive); fix merged, gVisor resume row graduated to measured numbers.)_
 _(X2 — startup-latency histogram overcount — resolved upstream 2026-07-27 and moved to [Recently landed](#recently-landed-archive); both legs now merged, cross-check empirically confirmed PASS.)_
 
 ## Platform (GKE / gVisor — for alex, no OSS approver)
@@ -36,6 +36,7 @@ Not an OSS repo, so there is no PR to track — evidence is parked for alex to h
 
 Resolved upstream; kept as a breadcrumb, dropped on the next refresh.
 
+- **Resume `Suspended`-never-clears** — persistent `Suspended` condition merged ([asbx#1150](https://github.com/kubernetes-sigs/agent-sandbox/pull/1150), merge_commit `b9d2a107`, closes [asbx#873](https://github.com/kubernetes-sigs/agent-sandbox/issues/873)); `computeSuspendedCondition` now always recomputes, so resume clears `Suspended` by construction. First measurement against a #1150-bearing build (2026-07-30 gVisor resume probe, N=30) graduates the gVisor × Resume-from-suspend row: Suspended clears on resume, exec-success 100%, TTFE p50 4.28s / p95 4.37s.
 - **True-TTFE measurement basis** — webhook-inject-timestamp example merged ([asbx#761](https://github.com/kubernetes-sigs/agent-sandbox/pull/761), closes [asbx#751](https://github.com/kubernetes-sigs/agent-sandbox/issues/751)); adopted on the Kata cold measurement path.
 - **Warm-pool claim requeue** — bounded requeue merged ([asbx#1108](https://github.com/kubernetes-sigs/agent-sandbox/pull/1108)), removing the exponential-backoff tail-latency inflation.
 - **Histogram startup-latency overcount (both legs)** — the suspend/resume re-record leg (persisted-annotation guard, [asbx#1114](https://github.com/kubernetes-sigs/agent-sandbox/pull/1114), merged 2026-07-22) AND the targeted stale-informer-replay leg (live-read claim + `CompareAndDelete`, [asbx#1087](https://github.com/kubernetes-sigs/agent-sandbox/pull/1087), merged 2026-07-27, merge_commit `2e127564`) are now both merged. First measurement against a #1087-bearing build (2026-07-28 gVisor warm ladder) confirms the histogram-vs-acq controller cross-check PASSES (ratios 1.000 / 0.9375, within 0.10 tol) — this retires the former X2 blocker. Note: the warm-pool SLO-rate cells already graduated to the corroborated literal-TTFE ≥-floor basis on 2026-07-24 via #1114; #1087's merge closes the last upstream residual, it does not further graduate the cell (a bare non-`≥` rate still requires the true-TTFE webhook basis).

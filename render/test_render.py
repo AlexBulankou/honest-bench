@@ -1607,13 +1607,14 @@ def test_matrix_free_text_pending_reason_dropped_renders_bare_pending():
 
 
 def test_matrix_upstream_blocked_footnote_distinguishes_from_bare_pending():
-    # The footnote must teach the reader the difference: a bare `pending` awaits a run; a
-    # `pending (upstream-blocked)` cell's run landed but is held by an upstream controller gap
-    # and graduates on the fix, not on scheduling. Static honesty scaffolding, always rendered.
+    # The footnote retains the `pending (upstream-blocked)` decoding-key entry as an archive:
+    # the flavor formerly gated the gVisor resume cell (run landed, held by an upstream
+    # controller gap), but the upstream fix has since merged and the row graduated, so no live
+    # cell renders it. Static honesty scaffolding, always rendered.
     out = render.render_matrix(_matrix_results(_full_gvisor_scenarios()))
     assert "pending (upstream-blocked)" in out
-    assert "run DID land" in out
-    assert "the moment the upstream fix lands" in out
+    assert "RESOLVED, no live cell" in out
+    assert "the run landed" in out
 
 
 def test_matrix_unknown_metric_key_dropped():
@@ -4307,7 +4308,7 @@ def test_what_this_means_always_renders_skeleton_all_clauses_degrade():
     # measured Kata leg to compare against).
     assert "gVisor is measured here; Kata + microVM adds hardware-grade VM isolation" in out
     assert "Both runtimes are measured — choose by isolation need." not in out
-    assert "Do not design around suspend/resume yet." in out
+    assert "gVisor suspend/resume is measured — Kata resume is not." in out
     assert "is unmeasured, not bad." in out
 
 

@@ -247,15 +247,15 @@
       }
     },
     {
-      "n": 1,
+      "n": 30,
       "name": "suspend_resume",
-      "outcome": "pending",
-      "pending_reason": "upstream-blocked",
+      "outcome": "PASS",
       "sla_metrics": {
         "exec_success_rate": 1.0,
-        "suspend_latency_ms": 2284.7,
-        "ttfe_p50_ms": 35497.0,
-        "ttfe_p95_ms": 35497.0
+        "suspend_latency_ms": 2079.9,
+        "suspend_p90_ms": 4106.3,
+        "ttfe_p50_ms": 4276.9,
+        "ttfe_p95_ms": 4369.7
       }
     },
     {
