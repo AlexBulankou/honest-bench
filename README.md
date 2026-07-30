@@ -61,6 +61,8 @@ Density is per-**runtime** — constant across a runtime's activation-mode rows 
 
 **Reading the cells** — TTFE is Time-To-First-Instruction (wall-clock until your agent's first instruction returns, not merely pod-Ready). Read TTFE p50/p95 *down* a column, not across rows — activation-mode rows differ in sample size by orders of magnitude (each cell shows its own `(count=N)`). `†` marks a sub-N sample (a single observation, not a distribution); `⚠️` is a miss flag (sub-100% Execution Success, or a per-cluster rate below the sizing target); `pending` (and its `(upstream-blocked)` / `(cluster-fire)` / `(trust-gate)` / `(no-compliant-rung)` flavors) means the cell has no publishable figure yet.
 
+A throughput cell showing a plain, untagged `0` is a DERIVED zero: implied by that row's own TTFE p95 exceeding that column's bar, with no throughput fire behind it — distinct from a caveat-tagged floor-zero cell (see the published-with-caveat tag classes below), which is a MEASURED zero from an actual throughput fire. A derived `0` can flip to a real rate on a latency improvement alone; a measured floor-zero needs the cold-start floor itself to move.
+
 Full cell-decoding key — TTFE basis, honest vs. measured zeros, the dual per-node · per-cluster throughput pair, the certification-floor `≥` figures, every `pending` flavor, and the published-with-caveat tag classes — is in [DETAILS.md](DETAILS.md#how-to-read-the-core-metrics-cells).
 
 _Kata + microVM rows are measured in a separate run on the kata node pool: cluster_substrate=gke-kata · node_count=1 · generated-at=2026-07-24T21:02:55Z._

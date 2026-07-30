@@ -1146,6 +1146,17 @@ def _core_metrics_compact_legend_lines():
         "`(cluster-fire)` / `(trust-gate)` / `(no-compliant-rung)` flavors) means the cell has "
         "no publishable figure yet.",
         "",
+        # hb#518: a plain, untagged `0` and a caveat-tagged floor-zero cell share one glyph but
+        # rest on different evidential bases — spell out the distinction right at the table
+        # rather than leaving it to reverse-engineered footnotes. MUST stay asterisk-free (see
+        # the docstring above) — no literal tag characters, just the concept.
+        "A throughput cell showing a plain, untagged `0` is a DERIVED zero: implied by that "
+        "row's own TTFE p95 exceeding that column's bar, with no throughput fire behind it — "
+        "distinct from a caveat-tagged floor-zero cell (see the published-with-caveat tag "
+        "classes below), which is a MEASURED zero from an actual throughput fire. A derived "
+        "`0` can flip to a real rate on a latency improvement alone; a measured floor-zero "
+        "needs the cold-start floor itself to move.",
+        "",
         "Full cell-decoding key — TTFE basis, honest vs. measured zeros, the dual per-node · "
         "per-cluster throughput pair, the certification-floor `≥` figures, every `pending` "
         "flavor, and the published-with-caveat tag classes — is in "
