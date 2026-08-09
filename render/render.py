@@ -691,6 +691,75 @@ def _matrix_scenarios(scenarios):
     return out
 
 
+# hb#550: the two literal FAIL-disclosure idioms live independently in render_matrix
+# (row_mode_label's "⚠️ FAIL" tag) and render_what_this_means ("did NOT clear its SLA"
+# prose) — no shared substring exists across all three FAIL-disclosure call sites, so
+# check_render_downgrade scans for either marker rather than assuming one canonical string.
+_FAIL_DISCLOSURE_MARKERS = ("⚠️ FAIL", "did NOT clear its SLA")
+
+
+def check_render_downgrade(scenarios, rendered_text):
+    """Detect a render-time trust downgrade the AGENTS.md fail-closed doctrine forbids (hb#550).
+
+    Two loss-directional legs, scoped to ACTIVATION_MODE_ROWS names only — the only
+    scenarios that populate the Core Metrics matrix (and thus the only ones for which
+    `_matrix_scenarios`'s MATRIX_METRIC_FIELDS allow-list emptying is unambiguously a
+    regression rather than expected behavior; a non-activation scenario like
+    `burst_create` legitimately carries metric keys outside MATRIX_METRIC_FIELDS and
+    would false-positive if checked the same way):
+
+    1. FAIL disclosure loss — a measured FAIL scenario with a real TTFE figure
+       (mirrors render_matrix's own hb#4420 scope-gate: `ttfe_p95_ms` or `ttfe_p50_ms`
+       present) whose disclosure marker is nowhere in the rendered text;
+    2. silent pending-render — a measured, non-`pending`-outcome scenario whose
+       `_matrix_scenarios`-cleaned metrics come back entirely empty, which would render
+       every cell for that row as bare `pending`, indistinguishable from never-measured.
+
+    `scenarios` is the raw `results["scenarios"]` list (one product/runtime's worth);
+    `rendered_text` is the full rendered page text to scan for FAIL-disclosure prose.
+
+    Returns human-readable finding strings; empty means clean. The caller decides the
+    posture (generate.main() fails closed unless BENCH_ALLOW_RENDER_DOWNGRADE is set).
+    """
+    findings = []
+    if not isinstance(scenarios, list):
+        return findings
+    text = rendered_text if isinstance(rendered_text, str) else ""
+    activation_names = {name for name, _label in ACTIVATION_MODE_ROWS}
+    mapped = _matrix_scenarios(scenarios)
+    for s in scenarios:
+        if not isinstance(s, dict):
+            continue
+        name = s.get("name")
+        if not isinstance(name, str) or name not in activation_names:
+            continue
+        outcome = s.get("outcome")
+        raw_metrics = s.get("sla_metrics")
+        has_measured = isinstance(raw_metrics, dict) and len(raw_metrics) > 0
+        if not has_measured or outcome == "pending":
+            continue
+
+        entry = mapped.get(name)
+        entry_metrics = entry.get("metrics") if isinstance(entry, dict) else None
+        if not entry_metrics:
+            findings.append(
+                f"{name}: outcome={outcome!r} carries measured sla_metrics but "
+                f"_matrix_scenarios cleared them entirely — every cell for this row "
+                f"would render as bare `pending`"
+            )
+            continue
+
+        if outcome == "FAIL" and (
+            "ttfe_p95_ms" in entry_metrics or "ttfe_p50_ms" in entry_metrics
+        ):
+            if not any(marker in text for marker in _FAIL_DISCLOSURE_MARKERS):
+                findings.append(
+                    f"{name}: measured FAIL with a real TTFE metric but no FAIL "
+                    f"disclosure marker found anywhere in the rendered text"
+                )
+    return findings
+
+
 def _runtime_density(scen_by_name):
     """Per-runtime Max-Density /vCPU: first of DENSITY_SOURCE_SCENARIOS carrying it, else any
     activation-mode scenario that emitted its own density_per_vcpu. None ⇒ render pending."""
