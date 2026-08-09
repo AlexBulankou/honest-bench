@@ -5417,7 +5417,7 @@ def test_warmpool_separation_caveat_fires_when_ratio_below_gate():
     assert "Warm/cold separation below gate:" in out
     assert "gVisor" in out
     assert "1.02x" in out
-    assert "slowest warm 8.4533s vs fastest cold 8.5919s" in out
+    assert "slowest warm bind 8.4533s vs fastest cold bind 8.5919s" in out
     # cause-agnostic: no mechanism is asserted as fact
     assert "cause is not asserted" in out
 
