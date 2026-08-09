@@ -635,6 +635,16 @@ def test_trend_missing_field_dropped():
     assert out.count("`sha256:") == 1
 
 
+def test_trend_legacy_row_missing_outcome_backfilled_not_dropped():
+    # #548: a pre-#547 row never carried `outcome` at all — it must be back-filled to PASS and
+    # rendered, not silently dropped by the closed-schema loop the way a genuinely-invalid row is.
+    legacy = _hrow()
+    del legacy["outcome"]
+    out = render.render_trend([legacy])
+    assert out.count("`sha256:") == 1
+    assert "| PASS |" in out
+
+
 def test_trend_unknown_field_not_rendered():
     # An extra key beyond the closed schema does not reach the page (closed-schema project).
     out = render.render_trend([_hrow(internal_note="SYNTHETIC-HISTORY-LEAK")])
@@ -4180,9 +4190,10 @@ def test_operating_envelope_wait_format_is_coarse_not_exact():
     assert "~2.9s" in out and "2.93965s" not in out
 
 
-def test_operating_envelope_row1_pends_when_scenario_not_pass():
-    # A non-PASS warm matrix scenario has no publishable warm figure ⇒ row 1 pends; the other
-    # three rows (independent sources) still render.
+def test_operating_envelope_row1_fail_still_renders_measured_wait():
+    # #548: a FAIL warm matrix scenario still carries a real ttfe_p50_ms measurement
+    # (_matrix_scenarios suppresses metrics only for `pending`, not FAIL) — row 1 must render
+    # that real number with a loud ⚠️ FAIL tag + disclosure, never soften it into `pending`.
     scen = _full_gvisor_scenarios()
     for s in scen:
         if s["name"] == "warmpool_cold_start":
@@ -4191,8 +4202,26 @@ def test_operating_envelope_row1_pends_when_scenario_not_pass():
         _matrix_results(scen, at_scale_contention=_asc(),
                         concurrent_burst=_cb(), warm_pool_acquisition=_wpa()))
     out = _unlink(out)
-    assert "| Steady trickle — warm pool keeps up with demand | pending | full start → first result |" in out
+    assert ("| Steady trickle — warm pool keeps up with demand ⚠️ FAIL | ~0.6s | "
+            "full start → first result |") in out
     assert "| Bursty — pool oversubscribed 2:1 (60 claims / 30 ready) | ~1.7s | full start → first result |" in out
+    assert "⚠️ **Scenario FAIL:**" in out
+    assert "Steady trickle — warm pool keeps up with demand" in out.split("⚠️ **Scenario FAIL:**")[1]
+
+
+def test_operating_envelope_row1_pends_when_scenario_pending():
+    # A genuinely `pending` warm matrix scenario has its metrics suppressed by
+    # _matrix_scenarios ⇒ row 1 pends; distinct from the FAIL case above, which still measures.
+    scen = _full_gvisor_scenarios()
+    for s in scen:
+        if s["name"] == "warmpool_cold_start":
+            s["outcome"] = "pending"
+    out = render.render_operating_envelope(
+        _matrix_results(scen, at_scale_contention=_asc(),
+                        concurrent_burst=_cb(), warm_pool_acquisition=_wpa()))
+    out = _unlink(out)
+    assert "| Steady trickle — warm pool keeps up with demand | pending | full start → first result |" in out
+    assert "⚠️ **Scenario FAIL:**" not in out
 
 
 def test_operating_envelope_row1_pend_inherits_pending_reason():
@@ -4440,6 +4469,22 @@ def test_what_this_means_warm_clause_degrades_when_scenario_not_pass():
     # The other two clauses still render their measured numbers.
     assert "about 10× faster" in out
     assert "settled in ~6.9s" in out
+
+
+def test_what_this_means_warm_clause_fail_discloses_measured_wait():
+    # #548: a FAIL warmpool_cold_start still carries a real ttfe_p50_ms measurement (only
+    # `pending` suppresses metrics) — clause 1 must disclose the real number loudly, not render
+    # the affirmative "fast enough" clause and not degrade to the pending-style clause either.
+    scen = _full_gvisor_scenarios()
+    for s in scen:
+        if s["name"] == "warmpool_cold_start":
+            s["outcome"] = "FAIL"
+    out = render.render_what_this_means(
+        _matrix_results(scen, warm_vs_cold=_wc(), concurrent_burst=_cb()))
+    assert "⚠️ Measured, but the warm pool did NOT clear its SLA this run" in out
+    assert "took ~0.6s" in out
+    assert "Keep a warm pool sized to demand and a new sandbox is ready in" not in out
+    assert "a new sandbox is ready quickly" not in out
 
 
 def test_what_this_means_speedup_clause_degrades_and_no_runtime_leak():

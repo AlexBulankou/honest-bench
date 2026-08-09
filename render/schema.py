@@ -351,6 +351,26 @@ HISTORY_FIELDS = {
     "outcome": lambda v: v in ("PASS", "FAIL"),
 }
 
+
+def backfill_legacy_history_row(row):
+    """Back-fill `outcome` on a pre-#547 history row instead of silently dropping it (#548).
+
+    `outcome` became a required HISTORY_FIELDS key in #547. Any row written before that PR
+    predates the gate fix in accrue_history._burst_count_row / render._latest_measured_count,
+    which ONLY ever produced a row when the measured count came from a PASS-outcome
+    burst_create cell — the pre-#547 code unconditionally discarded FAIL-outcome counts before
+    a candidate row could even be built. So an absent `outcome` is not a guess, it is a
+    provably-true fact about how the row was produced: back-fill it to "PASS" so a pre-#547
+    checkout's legacy rows survive the closed-schema loader (and upsert()'s rewrite-from-
+    survivors) instead of being silently and permanently erased. A row that DOES carry a
+    (possibly invalid) `outcome` value is left untouched — validation still drops an invalid
+    one; this only ever fills a genuinely ABSENT key.
+    """
+    if not isinstance(row, dict) or "outcome" in row:
+        return row
+    return {**row, "outcome": "PASS"}
+
+
 # --- Goal 2.1: Core Benchmark Matrix (alex "Agent Sandbox Core Metrics Table") -----------
 # The customer page is reframed from a per-scenario scorecard to the doc's exact 9-column
 # matrix: rows are (runtime × activation-mode), columns are the throughput/TTFE/density/

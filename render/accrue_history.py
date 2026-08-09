@@ -48,7 +48,7 @@ import sys
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _HERE)
 
-from schema import HISTORY_FIELDS  # noqa: E402
+from schema import HISTORY_FIELDS, backfill_legacy_history_row  # noqa: E402
 
 
 def _repo_root():
@@ -84,8 +84,9 @@ def _burst_count_row(results):
 def _candidate_row(results):
     """Return the pre-validation candidate row, or None if no burst_create COUNT was measured.
 
-    None here is CASE 1 — a legitimate honest-skip: the run carries no PASS burst_create cell
-    with the COUNT metric, so there is genuinely nothing to chart. This is distinct from
+    None here is CASE 1 — a legitimate honest-skip: the run carries no burst_create cell with a
+    measured COUNT metric (PASS or FAIL — #546), so there is genuinely nothing to chart. This is
+    distinct from
     CASE 2 (a COUNT *was* measured but a provenance field cannot anchor it to a build), which
     is a validated-None from `_validate_row` below — the caller must tell the two apart so it
     can report an accurate reason instead of a false "no COUNT" skip.
@@ -146,7 +147,13 @@ def extract_row(results):
 
 
 def load_history(path):
-    """Read history.jsonl into a list of validated rows (malformed lines dropped)."""
+    """Read history.jsonl into a list of validated rows (malformed lines dropped).
+
+    A row missing only `outcome` (pre-#547 legacy row) is back-filled to PASS first (#548) so
+    it survives instead of being silently dropped — critical here because `upsert()` rewrites
+    the file from exactly the rows this function returns, so a silent drop here is a permanent
+    erasure of that row on the very next accrual.
+    """
     rows = []
     if not os.path.exists(path):
         return rows
@@ -159,6 +166,7 @@ def load_history(path):
                 obj = json.loads(line)
             except json.JSONDecodeError:
                 continue
+            obj = backfill_legacy_history_row(obj)
             clean = {}
             ok_all = True
             for key, ok in HISTORY_FIELDS.items():
