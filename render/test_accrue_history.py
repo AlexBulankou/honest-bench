@@ -16,6 +16,9 @@ import accrue_history
 
 def _latest(count=9, density=0.45, n=10, digest="sha256:" + "a" * 64,
             generated_at="2026-06-28T14:42:40Z", outcome="PASS"):
+    # count=None mirrors a genuine all-cold burst: the scenario itself emits an EMPTY
+    # sla_metrics (no fabricated number), independent of outcome — the true CASE-1 honest-skip.
+    metrics = {} if count is None else {"sandboxes_ready_under_1s": count, "density_per_vcpu": density}
     return {
         "product": "sandbox",
         "generated_at": generated_at,
@@ -30,7 +33,7 @@ def _latest(count=9, density=0.45, n=10, digest="sha256:" + "a" * 64,
                 "name": "burst_create",
                 "outcome": outcome,
                 "n": n,
-                "sla_metrics": {"sandboxes_ready_under_1s": count, "density_per_vcpu": density},
+                "sla_metrics": metrics,
             }
         ],
     }
@@ -44,10 +47,19 @@ def test_extract_row_happy_path():
     assert row["controller_digest"] == "sha256:" + "a" * 64
 
 
-def test_extract_row_honest_skip_when_not_pass():
-    # A FAIL burst_create carries no measurable COUNT — no row (you cannot chart a COUNT
-    # that was not measured).
-    assert accrue_history.extract_row(_latest(outcome="FAIL")) is None
+def test_extract_row_honest_skip_when_all_cold():
+    # A genuine all-cold burst (count==0, sla_metrics=={}) carries no measurable COUNT — no
+    # row (you cannot chart a COUNT that was not measured). This is NOT an outcome check.
+    assert accrue_history.extract_row(_latest(count=None)) is None
+
+
+def test_extract_row_charts_fail_outcome_with_measured_count():
+    # #546: a FAIL burst_create that DID measure a count (some-but-not-enough delivery) is
+    # measurable and MUST chart — outcome alone is not a skip condition.
+    row = accrue_history.extract_row(_latest(outcome="FAIL", count=2))
+    assert row is not None
+    assert row["sandboxes_ready_under_1s"] == 2
+    assert row["outcome"] == "FAIL"
 
 
 def test_extract_row_skip_when_no_burst_create():
@@ -62,8 +74,8 @@ def test_extract_row_skip_on_bad_required_field():
 
 
 def test_candidate_row_none_when_no_count():
-    # CASE 1: a non-PASS burst_create carries no measurable COUNT ⇒ no candidate at all.
-    assert accrue_history._candidate_row(_latest(outcome="FAIL")) is None
+    # CASE 1: an all-cold burst_create carries no measurable COUNT ⇒ no candidate at all.
+    assert accrue_history._candidate_row(_latest(count=None)) is None
 
 
 def test_candidate_row_present_even_when_provenance_bad():
@@ -144,7 +156,7 @@ def test_main_honest_skip_exit_zero_no_write(capsys=None):
         latest = os.path.join(d, "latest.json")
         history = os.path.join(d, "history.jsonl")
         with open(latest, "w") as fh:
-            json.dump(_latest(outcome="FAIL"), fh)
+            json.dump(_latest(count=None), fh)
         rc = accrue_history.main(["sandbox", "--latest", latest, "--history", history])
         assert rc == 0
         assert not os.path.exists(history)  # honest-skip: no file written
