@@ -66,6 +66,7 @@ def _load_render():
         mod.render_storage_config,
         mod.render_recipe,
         mod.render_trend,
+        mod.check_render_downgrade,
     )
 
 
@@ -77,7 +78,11 @@ def _load_render():
  render_warm_pool_acquisition,
  render_at_scale_contention, render_cluster_saturation, render_provisioning_rate_sweep,
  render_session_turnover, render_suspend_latency, render_density_detail, render_vcpu_footprint,
- render_storage_config, render_recipe, render_trend) = _load_render()
+ render_storage_config, render_recipe, render_trend, check_render_downgrade) = _load_render()
+
+
+def _env_flag(name):
+    return os.environ.get(name, "").strip().lower() in ("1", "true", "yes", "on")
 
 # Build-over-build throughput history (#3918/hb#439), relative to the repo root. The page
 # renders only the per-product latest.json snapshot, so it can show today's COUNT but not the
@@ -415,14 +420,57 @@ def build_details(root=None):
     return "\n\n".join(sections) + "\n"
 
 
+def _render_downgrades(root, combined_text):
+    """hb#550: run check_render_downgrade against every source this generate pass rendered
+    (sandbox latest.json + the optional sandbox-kata companion), scoped per-source since
+    each results file is one runtime's worth of scenarios. Returns finding strings; empty
+    means clean."""
+    findings = []
+    for _product, rel in _PRODUCTS:
+        path = os.path.join(root, rel)
+        if not os.path.exists(path):
+            continue
+        with open(path) as fh:
+            results = json.load(fh)
+        findings.extend(check_render_downgrade(results.get("scenarios"), combined_text))
+    kata_path = os.path.join(root, _KATA_RESULTS_REL)
+    if os.path.exists(kata_path):
+        with open(kata_path) as fh:
+            kata_results = json.load(fh)
+        findings.extend(check_render_downgrade(kata_results.get("scenarios"), combined_text))
+    return findings
+
+
 def main(argv=None):
     root = _repo_root()
     readme = build_readme(root)
+    details = build_details(root)
+    # hb#550 / AGENTS.md "guard-then-fill": compute the fail-closed render-trust-downgrade
+    # check against the IN-MEMORY rendered text BEFORE any file write, mirroring
+    # check_cell_downgrade's posture in harness/run.py. A refusal here writes nothing at
+    # all (not a partial README-written-DETAILS-refused straddle).
+    downgrades = _render_downgrades(root, readme + "\n" + details)
+    if downgrades:
+        for line in downgrades:
+            sys.stderr.write(f"generate: render-downgrade: {line}\n")
+        if _env_flag("BENCH_ALLOW_RENDER_DOWNGRADE"):
+            sys.stderr.write(
+                f"generate: BENCH_ALLOW_RENDER_DOWNGRADE set — publishing "
+                f"{len(downgrades)} downgraded render(s) anyway (deliberate downgrade)\n"
+            )
+        else:
+            sys.stderr.write(
+                f"generate: refusing to write output: {len(downgrades)} render(s) would "
+                f"silently downgrade a trust surface (missing FAIL disclosure, or a "
+                f"measured scenario rendering as bare `pending`). Re-fire carrying the "
+                f"envs the affected scenario(s) were measured with, or set "
+                f"BENCH_ALLOW_RENDER_DOWNGRADE=1 to downgrade deliberately.\n"
+            )
+            return 1
     out = os.path.join(root, "README.md")
     with open(out, "w") as fh:
         fh.write(readme)
     sys.stderr.write(f"generate: wrote {out} ({len(readme)} bytes)\n")
-    details = build_details(root)
     details_out = os.path.join(root, "DETAILS.md")
     with open(details_out, "w") as fh:
         fh.write(details)
