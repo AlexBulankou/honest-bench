@@ -43,6 +43,22 @@
           "role": "fix-in-flight",
           "status": "merged",
           "note": "Auto worker-release on terminal crash; the manual worker-recycle is no longer needed once an actor reaches CRASHED."
+        },
+        {
+          "repo": "agent-substrate/substrate",
+          "number": 683,
+          "kind": "pr",
+          "role": "fix-partial-merged",
+          "status": "merged",
+          "note": "Phase-1 of #451: onResume fromData Golden, MICRO-VM only (CEL-gated to sandboxClass: microvm). Merged 2026-08-01. Does NOT touch the gVisor path #5612 runs on, so it does not land the restore-side MF-owner residual; the gVisor leg is #790 below."
+        },
+        {
+          "repo": "agent-substrate/substrate",
+          "number": 790,
+          "kind": "pr",
+          "role": "fix-in-flight",
+          "status": "open",
+          "note": "Phase-2 of #451: gVisor resume Data snapshots on the golden snapshot -- this is the leg that lands the S2/§U8 restore-side MF-owner residual for the gVisor demo path. Opened 2026-08-07; +252/-125 across 12 files incl. cmd/ateom-gvisor/{main,runsc}.go and pkg/api/v1alpha1/actortemplate_types.go. State: OPEN + DRAFT + CONFLICTING (mergeStateStatus=DIRTY), no activity since 2026-08-07 -- filed but not mergeable-as-is, so the blocker holds and no matrix cell graduates. Mirrors the #356 draft/conflicting fix-in-flight pattern."
         }
       ]
     },
