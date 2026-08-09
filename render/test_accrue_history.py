@@ -151,6 +151,44 @@ def test_load_history_drops_malformed_lines():
         assert rows[0]["controller_digest"] == good["controller_digest"]
 
 
+def test_load_history_backfills_legacy_row_missing_outcome():
+    # #548: a pre-#547 row never carried `outcome` at all. It must be back-filled to PASS and
+    # SURVIVE the closed-schema loader, not be silently dropped.
+    with tempfile.TemporaryDirectory() as d:
+        h = os.path.join(d, "history.jsonl")
+        legacy = accrue_history.extract_row(_latest())
+        del legacy["outcome"]
+        with open(h, "w") as fh:
+            fh.write(json.dumps(legacy) + "\n")
+        rows = accrue_history.load_history(h)
+        assert len(rows) == 1
+        assert rows[0]["outcome"] == "PASS"
+        assert rows[0]["controller_digest"] == legacy["controller_digest"]
+
+
+def test_upsert_does_not_erase_legacy_row_missing_outcome():
+    # #548 CRITICAL: upsert() rewrites history.jsonl from exactly what load_history() returns.
+    # A legacy row that load_history failed to back-fill would be silently and PERMANENTLY
+    # erased from disk on the very next accrual against an un-migrated checkout.
+    with tempfile.TemporaryDirectory() as d:
+        h = os.path.join(d, "history.jsonl")
+        legacy = accrue_history.extract_row(_latest(digest="sha256:" + "a" * 64,
+                                                      generated_at="2026-06-01T00:00:00Z"))
+        del legacy["outcome"]
+        with open(h, "w") as fh:
+            fh.write(json.dumps(legacy) + "\n")
+        # accrue a NEW, unrelated build — this triggers upsert()'s rewrite-from-survivors
+        new_row = accrue_history.extract_row(
+            _latest(digest="sha256:" + "b" * 64, generated_at="2026-06-28T10:00:00Z"))
+        accrue_history.upsert(new_row, h)
+        rows = _read(h)
+        assert len(rows) == 2
+        digests = {r["controller_digest"] for r in rows}
+        assert digests == {"sha256:" + "a" * 64, "sha256:" + "b" * 64}
+        legacy_row = next(r for r in rows if r["controller_digest"] == "sha256:" + "a" * 64)
+        assert legacy_row["outcome"] == "PASS"
+
+
 def test_main_honest_skip_exit_zero_no_write(capsys=None):
     with tempfile.TemporaryDirectory() as d:
         latest = os.path.join(d, "latest.json")

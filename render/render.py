@@ -17,6 +17,7 @@ import sys
 from schema import (
     ACTIVATION_MODE_ROWS,
     AT_SCALE_CONTENTION_FIELDS,
+    backfill_legacy_history_row,
     BADGE_CONSTRUCTIONS,
     BADGE_SCOPES,
     BURST_CORROBORATION_FIELDS,
@@ -309,7 +310,9 @@ def _clean_history(rows):
 
     Same discipline as the per-product render: a row renders ONLY HISTORY_FIELDS keys, each
     passing its predicate; a row missing a field or failing a predicate is dropped entirely
-    (a malformed history file degrades to fewer trend rows, never to a leak).
+    (a malformed history file degrades to fewer trend rows, never to a leak). A row whose only
+    "failure" is a missing `outcome` (pre-#547 legacy row) is back-filled first (#548) so it
+    survives instead of being silently and permanently dropped.
     """
     clean = []
     if not isinstance(rows, list):
@@ -317,6 +320,7 @@ def _clean_history(rows):
     for r in rows:
         if not isinstance(r, dict):
             continue
+        r = backfill_legacy_history_row(r)
         ok_all = True
         out = {}
         for key, ok in HISTORY_FIELDS.items():
@@ -2279,11 +2283,19 @@ def render_operating_envelope(results, heading=None):
     wpa = _clean_warm_pool_acquisition(results)
 
     rows = []
+    fail_notes = []
 
     # Row 1 — steady trickle, warm pool keeps up (full TTFE, from the matrix warm scenario).
+    # #548: gate on the metric being PRESENT, not on outcome=="PASS" — _matrix_scenarios
+    # suppresses metrics only for a `pending` outcome, so a FAIL cell still carries a real
+    # measurement here. Keep the real number and tag the row loudly (mirrors the core matrix's
+    # own #4420 FAIL idiom) instead of discarding it into a bare `pending`.
     sc = scen.get("warmpool_cold_start")
     label1 = "Steady trickle — warm pool keeps up with demand"
-    if sc and sc.get("outcome") == "PASS" and "ttfe_p50_ms" in sc["metrics"]:
+    if sc and "ttfe_p50_ms" in sc["metrics"]:
+        if sc.get("outcome") == "FAIL":
+            fail_notes.append(label1)
+            label1 = f"{label1} ⚠️ FAIL"
         rows.append((label1, _fmt_wait(sc["metrics"]["ttfe_p50_ms"]), _ENVELOPE_FULL_TTFE))
     else:
         # hb#134 (nit): a row-1 pend inherits the matrix scenario's pending_reason so a
@@ -2352,6 +2364,17 @@ def render_operating_envelope(results, heading=None):
     for label, wait, scope in rows:
         lines.append(f"| {label} | {link_pending(wait)} | {scope} |")
     lines.append("")
+    # #548: mirrors the core matrix's own #4420 FAIL disclosure — a FAIL row above carries a
+    # real measurement, disclosed loudly here rather than softened or dropped.
+    if fail_notes:
+        who = "; ".join(f"**{note}**" for note in fail_notes)
+        lines.append(
+            f"_⚠️ **Scenario FAIL:** {who} — the row above carries a real measurement whose "
+            "own scenario outcome is **FAIL** (SLA not met), not a passing warm hit. The wait "
+            "is honest data, disclosed as a miss rather than dropped or hidden as `pending`; a "
+            "later refresh whose scenario returns to PASS clears this._"
+        )
+        lines.append("")
     return "\n".join(lines)
 
 
@@ -2444,18 +2467,32 @@ def render_what_this_means(results, kata_results=None):
     lines.append("")
 
     # Clause 1 — the everyday wait when the warm pool keeps up (matrix warm scenario p50/p95).
+    # #548: gate on the metric being PRESENT, not on outcome=="PASS" (mirrors Row 1's fix in
+    # render_operating_envelope above) — a FAIL cell still carries a real p50/p95 measurement.
     sc = scen.get("warmpool_cold_start")
-    if sc and sc.get("outcome") == "PASS" and "ttfe_p50_ms" in sc["metrics"]:
+    if sc and "ttfe_p50_ms" in sc["metrics"]:
         p50 = _fmt_wait(sc["metrics"]["ttfe_p50_ms"])
         tail = (
             f" ({_fmt_wait(sc['metrics']['ttfe_p95_ms'])} at the p95)"
             if "ttfe_p95_ms" in sc["metrics"] else ""
         )
-        lines.append(
-            f"- **Keep a warm pool sized to demand and a new sandbox is ready in {p50}"
-            f"{tail}.** That is fast enough to put a fresh sandbox directly in a user-facing "
-            "request path — no need to hide it behind a spinner or pre-allocate one per session."
-        )
+        if sc.get("outcome") == "FAIL":
+            # Honest disclosure, not the affirmative "fast enough" clause and not the
+            # "measurement lands" pending clause below — the number is real, but this run's
+            # own scenario outcome is FAIL (SLA not met), so it must not read as a clean pass.
+            lines.append(
+                f"- **⚠️ Measured, but the warm pool did NOT clear its SLA this run: a new "
+                f"sandbox took {p50}{tail}.** That figure is real — not fabricated or "
+                "estimated — but this scenario's own outcome is FAIL, so treat it as a "
+                "measured miss to budget against rather than a clean steady-state number; a "
+                "later refresh whose scenario returns to PASS clears this caveat."
+            )
+        else:
+            lines.append(
+                f"- **Keep a warm pool sized to demand and a new sandbox is ready in {p50}"
+                f"{tail}.** That is fast enough to put a fresh sandbox directly in a user-facing "
+                "request path — no need to hide it behind a spinner or pre-allocate one per session."
+            )
     else:
         lines.append(
             "- **Keep a warm pool sized to demand and a new sandbox is ready quickly** — a claim "
