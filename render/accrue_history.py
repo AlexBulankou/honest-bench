@@ -15,8 +15,13 @@ Contract (mirrors the fleet's other accrual stores):
     (latest measurement of a build wins) rather than appending a duplicate, so the file is
     exactly one row per distinct build, ordered by generated_at.
   - Honest-skip vs loud-fail (two distinct None-cases — do not conflate):
-      CASE 1 (benign) — a latest.json whose burst_create cell is not a PASS carrying the COUNT
-        metric produces NO row (you cannot chart a COUNT that was not measured). Exit 0, no write.
+      CASE 1 (benign) — a latest.json whose burst_create cell carries no sla_metrics (the
+        scenario itself emits {} only for a genuine all-cold burst, count==0) produces NO row —
+        you cannot chart a COUNT that was not measured. Exit 0, no write. Note this is NOT an
+        outcome check: the scenario's own contract (harness/scenarios/burst_create.py) surfaces
+        the COUNT on BOTH PASS and FAIL — a pool that delivers some-but-not-enough sub-1s slots
+        still publishes the real count it achieved (#546), so a FAIL cell with sla_metrics IS
+        measurable and DOES chart.
       CASE 2 (defect) — a COUNT *was* measured but a provenance field cannot anchor it to a
         build (e.g. controller_digest empty because BENCH_CONTROLLER_DIGEST capture flaked).
         Skipping this silently freezes the throughput trend while the fire reports success, so
@@ -51,21 +56,28 @@ def _repo_root():
 
 
 def _burst_count_row(results):
-    """Return (count, density, n) from a PASS burst_create cell, or None if not measurable."""
+    """Return (count, density, n, outcome) from a MEASURED burst_create cell, or None.
+
+    "Measurable" means sla_metrics is a non-empty dict — NOT outcome == "PASS". The scenario's
+    own contract (harness/scenarios/burst_create.py) emits sla_metrics whenever count_under > 0,
+    regardless of PASS/FAIL ("surfaced on PASS and FAIL so a pool that delivers
+    some-but-not-enough sub-1s slots still publishes the real count it achieved"); only a
+    genuine all-cold burst (count == 0) emits {}. Gating on outcome instead of on sla_metrics
+    was #546: it silently discarded real FAIL-outcome counts, freezing the trend.
+    """
     if not isinstance(results, dict):
         return None
     for s in results.get("scenarios", []) or []:
         if not isinstance(s, dict) or s.get("name") != "burst_create":
             continue
-        if s.get("outcome") != "PASS":
-            return None
         m = s.get("sla_metrics")
-        if not isinstance(m, dict):
+        if not isinstance(m, dict) or not m:
             return None
         count = m.get("sandboxes_ready_under_1s")
         density = m.get("density_per_vcpu")
         n = s.get("n")
-        return count, density, n
+        outcome = s.get("outcome")
+        return count, density, n, outcome
     return None
 
 
@@ -81,7 +93,7 @@ def _candidate_row(results):
     measured = _burst_count_row(results)
     if measured is None:
         return None
-    count, density, n = measured
+    count, density, n, outcome = measured
     prov = results.get("provenance") if isinstance(results, dict) else None
     prov = prov if isinstance(prov, dict) else {}
     return {
@@ -93,6 +105,7 @@ def _candidate_row(results):
         "sandboxes_ready_under_1s": count,
         "density_per_vcpu": density,
         "n": n,
+        "outcome": outcome,
     }
 
 
@@ -200,8 +213,10 @@ def main(argv=None):
 
     candidate = _candidate_row(results)
     if candidate is None:
-        # CASE 1: genuinely no measurable COUNT (burst_create absent or not PASS). A COUNT that
-        # was never measured cannot be charted — benign honest-skip, exit 0.
+        # CASE 1: genuinely no measurable COUNT (burst_create absent, or its burst was
+        # all-cold — count==0, sla_metrics=={}). A COUNT that was never measured cannot be
+        # charted — benign honest-skip, exit 0. NOT an outcome check: a FAIL cell that DID
+        # measure a count (sla_metrics non-empty) is measurable and does not hit this branch.
         sys.stderr.write("accrue_history: latest.json has no measurable burst_create COUNT — skip\n")
         return 0
 
@@ -225,7 +240,8 @@ def main(argv=None):
     rows = upsert(row, history)
     sys.stderr.write(
         f"accrue_history: upserted build {row['controller_digest'][:19]} "
-        f"(count={row['sandboxes_ready_under_1s']:g}) — {len(rows)} builds in {history}\n"
+        f"(count={row['sandboxes_ready_under_1s']:g}, outcome={row['outcome']}) "
+        f"— {len(rows)} builds in {history}\n"
     )
     return 0
 

@@ -343,6 +343,12 @@ HISTORY_FIELDS = {
     and not isinstance(v, bool)
     and v >= 0,
     "n": lambda v: isinstance(v, int) and not isinstance(v, bool) and v >= 0,
+    # #546: the scenario surfaces the headline COUNT on BOTH PASS and FAIL (a pool that
+    # delivers some-but-not-enough sub-1s slots still publishes the real count it achieved —
+    # only a genuine all-cold burst emits no count at all). The trend charts that FAIL count
+    # too, or a real regression silently freezes the table instead of showing up in it. This
+    # field records which verdict the charted count carries so the render can disclose it.
+    "outcome": lambda v: v in ("PASS", "FAIL"),
 }
 
 # --- Goal 2.1: Core Benchmark Matrix (alex "Agent Sandbox Core Metrics Table") -----------

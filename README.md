@@ -156,9 +156,14 @@ The headline COUNT — sandboxes ready in <1s in a single 1.0s burst against one
 pool — tracked across distinct controller builds (oldest first). **Δ** is the change in
 COUNT vs the prior build; the first build is the baseline. Drive this COUNT up.
 
-| Build (controller digest) | Date | Sandboxes ready <1s | Δ | Density /vCPU | n |
-|---|---|---|---|---|---|
-| `sha256:6edaf7b6b22d…` | 2026-06-28 | 9 | — | 0.45 | 10 |
+| Build (controller digest) | Date | Sandboxes ready <1s | Δ | Density /vCPU | n | Outcome |
+|---|---|---|---|---|---|---|
+| `sha256:6edaf7b6b22d…` | 2026-06-28 | 9 | — | 0.45 | 10 | PASS |
+| `sha256:4e36a61c6bdc…` | 2026-07-25 | 2 | -7 † | 0.0416667 | 10 | FAIL |
+
+_† Δ spans a build whose burst sampled fewer than N=30 claims — too few to rank build-over-build; the swing may be sampling noise, not a real move._
+
+_A FAIL Outcome means that build's burst did not clear the delivery-ratio SLA — the COUNT is still the real, measured number, not fabricated or estimated._
 
 ## Which storage class should you pick?
 

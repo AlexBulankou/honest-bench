@@ -481,6 +481,7 @@ def _hrow(**over):
         "sandboxes_ready_under_1s": 9,
         "density_per_vcpu": 0.45,
         "n": 10,
+        "outcome": "PASS",
     }
     row.update(over)
     return row
@@ -499,7 +500,21 @@ def test_trend_single_build_is_baseline_no_delta():
     assert "`sha256:6edaf7b6b22d…`" in out
     assert "2026-06-28" in out
     # baseline row: COUNT present, delta is the em-dash placeholder (no prior build)
-    assert "| 9 | — | 0.45 | 10 |" in out
+    assert "| 9 | — | 0.45 | 10 | PASS |" in out
+
+
+def test_trend_fail_outcome_row_charts_with_disclosure():
+    # #546: a FAIL-outcome build that DID measure a count must chart (not silently freeze the
+    # table), and the Outcome column + footnote disclose that it did not clear the SLA bar.
+    rows = [
+        _hrow(controller_digest="sha256:" + "a" * 64, generated_at="2026-06-28T10:00:00Z",
+              sandboxes_ready_under_1s=9, n=40, outcome="PASS"),
+        _hrow(controller_digest="sha256:" + "b" * 64, generated_at="2026-07-25T10:00:00Z",
+              sandboxes_ready_under_1s=2, density_per_vcpu=0.0417, n=40, outcome="FAIL"),
+    ]
+    out = render.render_trend(rows)
+    assert "| 2 | -7 | 0.0417 | 40 | FAIL |" in out
+    assert "did not clear the delivery-ratio SLA" in out
 
 
 def test_trend_two_builds_show_signed_delta():
@@ -680,15 +695,25 @@ def test_trend_no_caveat_when_latest_anchored_to_newest_build():
 
 
 def test_trend_no_caveat_when_latest_has_no_measurable_count():
-    # CASE-1 benign: the latest fire carried no PASS burst_create COUNT (nothing to reconcile
-    # against the trend), so the guard stays silent even though latest_results is present.
+    # CASE-1 benign: the latest fire carried no measurable burst_create COUNT at all (nothing to
+    # reconcile against the trend), so the guard stays silent even though latest_results is
+    # present. NOT an outcome check — #546: a FAIL fire that DID measure a count is handled by
+    # test_trend_divergence_caveat_fires_on_fail_outcome_with_measured_count below, not here.
     for latest in (
-        _latest(outcome="FAIL"),
         _latest(with_metric=False),
         {"scenarios": [], "provenance": {}, "generated_at": "2026-07-25T03:05:17Z"},
     ):
         out = render.render_trend([_hrow()], latest_results=latest)
         assert "⚠️" not in out
+
+
+def test_trend_divergence_caveat_fires_on_fail_outcome_with_measured_count():
+    # #546: a FAIL-outcome fire is still measurable (sla_metrics non-empty) — the divergence
+    # guard must reconcile it against the trend exactly like a PASS fire, not silently pass it
+    # through as if the outcome alone made it un-measurable.
+    out = render.render_trend([_hrow()], latest_results=_latest(count=2, digest="", outcome="FAIL"))
+    assert "⚠️" in out
+    assert "measured a headline COUNT of 2" in out
 
 
 def test_trend_none_latest_is_byte_identical_to_pre_guard():

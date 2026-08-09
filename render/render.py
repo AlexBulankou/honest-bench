@@ -341,10 +341,12 @@ def _latest_measured_count(latest_results):
     """Return (count, digest_or_empty, date) for the latest fire's burst_create COUNT, or None.
 
     Mirrors render.accrue_history._burst_count_row: the trend's headline COUNT is
-    `sla_metrics.sandboxes_ready_under_1s` on a PASS burst_create cell. `digest_or_empty` is the
-    provenance controller_digest AS PUBLISHED — the emitter drops the key when empty, so an
-    un-anchorable fire yields "" here; `date` is generated_at[:10]. None when the latest fire
-    carried no measurable COUNT (CASE-1 benign — nothing to reconcile against the trend).
+    `sla_metrics.sandboxes_ready_under_1s` on ANY burst_create cell that measured one — NOT
+    gated on outcome == "PASS" (#546). The scenario's own contract surfaces the COUNT on both
+    PASS and FAIL; only a genuine all-cold burst (count==0) emits an empty sla_metrics, which
+    is the true CASE-1 benign "nothing to reconcile" case. `digest_or_empty` is the provenance
+    controller_digest AS PUBLISHED — the emitter drops the key when empty, so an un-anchorable
+    fire yields "" here; `date` is generated_at[:10].
     """
     if not isinstance(latest_results, dict):
         return None
@@ -352,10 +354,8 @@ def _latest_measured_count(latest_results):
     for s in latest_results.get("scenarios", []) or []:
         if not isinstance(s, dict) or s.get("name") != "burst_create":
             continue
-        if s.get("outcome") != "PASS":
-            return None
         m = s.get("sla_metrics")
-        if not isinstance(m, dict):
+        if not isinstance(m, dict) or not m:
             return None
         c = m.get("sandboxes_ready_under_1s")
         if isinstance(c, bool) or not isinstance(c, (int, float)):
@@ -381,6 +381,12 @@ def render_trend(history_rows, latest_results=None):
     asks for, which a single latest.json snapshot cannot show. First build is the baseline
     (delta "—"); every later build shows the signed change in COUNT vs the build before it.
 
+    Every row also carries its **Outcome** (PASS/FAIL, #546): the COUNT is charted whenever it
+    was measured, regardless of whether the burst cleared the delivery-ratio SLA, so a FAIL row
+    is a real, honest count — but without an explicit outcome cell a FAIL build reads as if it
+    had cleared the SLA bar just because it appears in the table. The column makes that legible
+    without hiding the count itself.
+
     `latest_results` (the newest sandbox latest.json) is the trend-vs-latest divergence guard:
     the table is sourced from history.jsonl alone, so a fresh fire that MEASURED the headline
     COUNT but could not anchor to a build (empty controller_digest, dropped by the emitter) or
@@ -403,12 +409,13 @@ def render_trend(history_rows, latest_results=None):
         "COUNT vs the prior build; the first build is the baseline. Drive this COUNT up.",
         "",
     ]
-    header = ["Build (controller digest)", "Date", "Sandboxes ready <1s", "Δ", "Density /vCPU", "n"]
+    header = ["Build (controller digest)", "Date", "Sandboxes ready <1s", "Δ", "Density /vCPU", "n", "Outcome"]
     lines.append("| " + " | ".join(header) + " |")
     lines.append("|" + "|".join(["---"] * len(header)) + "|")
     prev = None
     prev_n = None
     any_low_n_delta = False
+    any_fail = False
     for r in rows:
         count = r["sandboxes_ready_under_1s"]
         n = r["n"]
@@ -429,6 +436,9 @@ def render_trend(history_rows, latest_results=None):
                 any_low_n_delta = True
         prev = count
         prev_n = n
+        outcome = r["outcome"]
+        if outcome == "FAIL":
+            any_fail = True
         cells = [
             f"`{r['controller_digest'][:19]}…`",
             r["generated_at"][:10],
@@ -436,6 +446,7 @@ def render_trend(history_rows, latest_results=None):
             delta,
             f"{r['density_per_vcpu']:g}",
             f"{r['n']:g}",
+            outcome,
         ]
         lines.append("| " + " | ".join(cells) + " |")
     lines.append("")
@@ -444,6 +455,12 @@ def render_trend(history_rows, latest_results=None):
             f"_{_LOW_N_MARK} Δ spans a build whose burst sampled fewer than "
             f"N={TTFE_COMPARABILITY_MIN_N} claims — too few to rank build-over-build; the swing "
             f"may be sampling noise, not a real move._"
+        )
+        lines.append("")
+    if any_fail:
+        lines.append(
+            "_A FAIL Outcome means that build's burst did not clear the delivery-ratio SLA — "
+            "the COUNT is still the real, measured number, not fabricated or estimated._"
         )
         lines.append("")
     # Trend-vs-latest divergence guard (see docstring): when the newest fire measured the
