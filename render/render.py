@@ -2214,7 +2214,17 @@ def _warmpool_separation_caveat(results, kata_results=None):
     def _bounds(warm_max, cold_min):
         if warm_max is None or cold_min is None:
             return ""
-        return f" (slowest warm {_fmt_secs(warm_max)} vs fastest cold {_fmt_secs(cold_min)})"
+        # hb#537: warmpool_gate_warm_max_ms/cold_min_ms are BIND latencies
+        # (create->bound, harness/scenarios/warmpool_cold_start.py's `latencies`
+        # dict feeding _classify_latencies) -- a strictly smaller quantity than
+        # the TTFE (bind+exec) figures published elsewhere on the page. Left
+        # unlabeled, "slowest warm {bind}" reads as directly comparable to
+        # "warm TTFE p95" and a bind-max below the TTFE p95 looks impossible; it
+        # is not, once both legs are named for what they measure.
+        return (
+            f" (slowest warm bind {_fmt_secs(warm_max)} vs "
+            f"fastest cold bind {_fmt_secs(cold_min)})"
+        )
 
     who = "; ".join(
         f"**{lbl}** (warm count={wn}): {ratio:.3g}x{_bounds(wmax, cmin)}"
