@@ -213,6 +213,7 @@
         "exec_success_rate": 1.0,
         "thpt_cluster_node_count": 4.0,
         "thpt_slo_basis": "true_ttfe",
+        "thpt_slo_measured_at": "2026-07-25T03:05:17Z",
         "thpt_under_1s_per_cluster": 7.727,
         "thpt_under_1s_per_node": 0.0,
         "thpt_under_5s_per_cluster": 7.727,

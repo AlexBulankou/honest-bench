@@ -1398,6 +1398,13 @@ def render_matrix(results, kata_results=None, include_legend=True):
     # caption's own FAIL caveat closes.
     fail_cells = []
 
+    # hb#554: collect (runtime, activation-mode, date) for any row whose per-cluster SLO
+    # triple carries a `thpt_slo_measured_at` stamp — the disclosure that lets a reader
+    # tell a carried (point-in-time, do-not-auto-decay) cluster figure from today's fresh
+    # per-node fire, mirroring render_cluster_saturation's own `_Measured {date} — ...
+    # (point-in-time)._` caption for the analogous top-level block.
+    stale_triple_cells = []
+
     for rt in MATRIX_RUNTIMES:
         rt_label = RUNTIME_LABELS[rt]
         rt_scen = sources.get(rt)
@@ -1606,6 +1613,9 @@ def render_matrix(results, kata_results=None, include_legend=True):
             row_mode_label = f"{mode_label} ⚠️ FAIL" if sc_fail else mode_label
             if sc_fail:
                 fail_cells.append((rt_label, mode_label))
+            stale_ma = m.get("thpt_slo_measured_at")
+            if isinstance(stale_ma, str) and stale_ma:
+                stale_triple_cells.append((rt_label, mode_label, stale_ma[:10]))
             lines.append(
                 "| "
                 + " | ".join([rt_label, row_mode_label] + data_cells)
@@ -1623,6 +1633,25 @@ def render_matrix(results, kata_results=None, include_legend=True):
             "own scenario outcome is **FAIL** (SLA not met), not a passing warm hit. The "
             "numbers are honest data, disclosed as a miss rather than dropped or greened; a "
             "later refresh whose scenario returns to PASS clears this._"
+        )
+        lines.append("")
+
+    # hb#554: emit the point-in-time disclosure for any row whose per-cluster SLO triple
+    # is CARRIED from a manual sweep fire (harness/run.py's carry_prior_cluster_triples)
+    # rather than freshly measured this run — mirrors the #4420 FAIL disclosure above and
+    # render_cluster_saturation's own `_Measured {date} — ... (point-in-time)._` caption.
+    # Without this, a frozen cluster figure reads as fresh forever across every daily
+    # single-node refresh, exactly the silent-trust-downgrade class #4420 forbids.
+    if stale_triple_cells:
+        who = "; ".join(
+            f"**{rt}** {mode} ({date})" for rt, mode, date in stale_triple_cells
+        )
+        lines.append(
+            f"_📅 **Cluster figure point-in-time:** {who} — the `/cluster` half above is "
+            "carried from that date's manual step-up sweep, not this run's daily refresh "
+            "(the per-cluster SLO triple is sweep-only; see hb#132/hb#554); the `/node` "
+            "half and other columns ARE fresh. A new sweep fire replaces the date and the "
+            "figure together._"
         )
         lines.append("")
 

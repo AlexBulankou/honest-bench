@@ -129,9 +129,11 @@ STEPUP_VERDICT_ENUM = (
 # SLO_BASIS_ENUM (same deliberate no-shared-import posture as STEPUP_VERDICT_ENUM;
 # a drift is caught by the cross-contract test). `thpt_slo_basis` names which measured
 # basis produced a derived per-cluster SLO triple, so render can caption a literal-TTFE
-# upper-bound cell distinctly from a true-TTFE one. It is the ONLY non-numeric value
-# allowed through _coerce_sla_metrics, via an explicit enum-gated carve-out — a value
-# outside this set is a real bug (fail-closed raise), never a silent drop or a leak.
+# upper-bound cell distinctly from a true-TTFE one. It is one of two non-numeric values
+# allowed through _coerce_sla_metrics (the other being the `thpt_slo_measured_at`
+# point-in-time string, hb#554 — a fail-open, non-enum carve-out, unlike this one): a
+# `thpt_slo_basis` value outside this set is a real bug (fail-closed raise), never a
+# silent drop or a leak.
 SLO_BASIS_ENUM = (
     "true_ttfe",
     "literal_ttfe_upper_bound+controller_completed",
@@ -324,6 +326,19 @@ def _coerce_sla_metrics(raw) -> dict:
                     f"sla_metrics.{k} {v!r} not in {SLO_BASIS_ENUM}"
                 )
             out[k] = v
+            continue
+        # thpt_slo_measured_at (hb#554): the ISO-8601 instant the sweep that produced
+        # the per-cluster SLO triple actually ran. Mirrors the `measured_at` carve-out
+        # used by every other point-in-time block (scale_proof, warm_vs_cold, cluster
+        # saturation, ...) so a carried (stale) triple stays honestly dated against the
+        # daily-refreshed top-level generated_at — carry_prior_cluster_triples was the
+        # sole such mechanism lacking this disclosure. Optional, non-enum, fail-open:
+        # a present-but-invalid value is silently dropped (not a raise), matching the
+        # sibling `measured_at` fields, since this is disclosure metadata, not a
+        # correctness-affecting closed value.
+        if k == "thpt_slo_measured_at":
+            if isinstance(v, str) and v:
+                out[k] = v
             continue
         # bool is a subclass of int — exclude it; an sla metric is a measurement.
         if isinstance(v, bool) or not isinstance(v, Real):
