@@ -503,6 +503,16 @@ def test_trend_single_build_is_baseline_no_delta():
     assert "| 9 | — | 0.45 | 10 | PASS |" in out
 
 
+def test_trend_density_column_disambiguated_from_max_density_table():
+    # #556: the build-over-build "Density /vCPU" column shares a bare unit label with the
+    # unrelated Max Density (peak-across-scenarios) table elsewhere on the page — a ~140x
+    # magnitude gap with no on-page distinction. The header carries a "(this build)"
+    # qualifier and a footnote calls out the two are different measurements.
+    out = render.render_trend([_hrow()])
+    assert "Density /vCPU (this build)" in out
+    assert "different, typically much smaller measurement than the Max Density table" in out
+
+
 def test_trend_fail_outcome_row_charts_with_disclosure():
     # #546: a FAIL-outcome build that DID measure a count must chart (not silently freeze the
     # table), and the Outcome column + footnote disclose that it did not clear the SLA bar.

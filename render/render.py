@@ -413,7 +413,15 @@ def render_trend(history_rows, latest_results=None):
         "COUNT vs the prior build; the first build is the baseline. Drive this COUNT up.",
         "",
     ]
-    header = ["Build (controller digest)", "Date", "Sandboxes ready <1s", "Δ", "Density /vCPU", "n", "Outcome"]
+    header = [
+        "Build (controller digest)",
+        "Date",
+        "Sandboxes ready <1s",
+        "Δ",
+        "Density /vCPU (this build)",
+        "n",
+        "Outcome",
+    ]
     lines.append("| " + " | ".join(header) + " |")
     lines.append("|" + "|".join(["---"] * len(header)) + "|")
     prev = None
@@ -467,6 +475,12 @@ def render_trend(history_rows, latest_results=None):
             "the COUNT is still the real, measured number, not fabricated or estimated._"
         )
         lines.append("")
+    lines.append(
+        "_Density /vCPU (this build) is this single burst's own per-vCPU figure — a different, "
+        "typically much smaller measurement than the Max Density table below (peak across "
+        "scenarios), not a build-over-build regression._"
+    )
+    lines.append("")
     # Trend-vs-latest divergence guard (see docstring): when the newest fire measured the
     # headline COUNT but its build is not the newest row above, the trend has silently frozen —
     # say so on the page instead of rendering the last row as if it were current.
