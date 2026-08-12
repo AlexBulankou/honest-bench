@@ -1351,7 +1351,9 @@ def render_matrix(results, kata_results=None, include_legend=True):
         lines.append(
             "**Throughput is dual — `per-node · per-cluster`.** Per-cluster figures here are a "
             f"MEASURED cluster rate at {cluster_x} nodes; see the legend below for how to read "
-            "the pair."
+            "the pair. (This is a different `node_count` than the one printed in each build's "
+            "provenance banner below the table — that one describes the per-node fire's shape, "
+            "not this per-cluster measurement.)"
         )
     elif len(distinct_xs) > 1:
         per_rt = "; ".join(
