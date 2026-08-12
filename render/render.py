@@ -1348,7 +1348,9 @@ def render_matrix(results, kata_results=None, include_legend=True):
         lines.append(
             "**Throughput is dual — `per-node · per-cluster`.** Per-cluster figures are measured "
             f"per runtime at DIFFERENT node counts — {per_rt} — so they are NOT comparable across "
-            "runtimes here (different X); see the legend below."
+            "runtimes here (different X); see the legend below. (This is a different `node_count` "
+            "than the one printed in each build's provenance banner below the table — that one "
+            "describes the per-node fire's shape, not this per-cluster measurement.)"
         )
     else:
         lines.append(
