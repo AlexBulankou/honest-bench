@@ -50,7 +50,7 @@ blocker — diagnosis plus file-ready patches and comments — is hand-maintaine
 
 _⚠️ **Scenario FAIL:** **gVisor** Warm-pool hit (Base image) — the row above carries a real measurement whose own scenario outcome is **FAIL** (SLA not met), not a passing warm hit. The numbers are honest data, disclosed as a miss rather than dropped or greened; a later refresh whose scenario returns to PASS clears this._
 
-_📅 **Cluster figure point-in-time:** **gVisor** Warm-pool hit (Base image) (2026-07-25) — the `/cluster` half above is carried from that date's manual step-up sweep, not this run's daily refresh (the per-cluster SLO triple is sweep-only; see hb#132/hb#554); the `/node` half and other columns ARE fresh. A new sweep fire replaces the date and the figure together._
+_📅 **Cluster figure point-in-time:** **gVisor** Warm-pool hit (Base image) (2026-07-25); **gVisor** Unique-image cold (RL reality) (2026-07-06) — the `/cluster` half above is carried from that date's manual step-up sweep, not this run's daily refresh (the per-cluster SLO triple is sweep-only; see hb#132/hb#554); the `/node` half and other columns ARE fresh. A new sweep fire replaces the date and the figure together._
 
 ### Max Density (sandboxes per vCPU)
 

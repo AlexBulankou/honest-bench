@@ -239,6 +239,7 @@
         "thpt_cluster_node_count": 9.0,
         "thpt_slo_basis": "controller_cold_floor_zero_corroborated",
         "thpt_slo_floor_zero": 1.0,
+        "thpt_slo_measured_at": "2026-07-06T03:19:18Z",
         "thpt_under_1s_per_cluster": 0.0,
         "thpt_under_1s_per_node": 0.0,
         "thpt_under_5s_per_cluster": 0.0,
