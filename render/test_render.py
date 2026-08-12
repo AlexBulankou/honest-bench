@@ -1488,6 +1488,10 @@ def test_matrix_mixed_x_caption_names_each_runtime():
     assert "cluster rate at 20 nodes" not in out
     # both cluster halves still render their real figures (above target, no ⚠️)
     assert "350 /cluster" in out and "310 /cluster" in out
+    # #556 nit-a: this caption's node_count is a different concept than the build-provenance
+    # banner's node_count (per-cluster-fire vs per-node-fire) — disclose it inline, not just
+    # in the DETAILS.md glossary one click away.
+    assert "a different `node_count` than the one printed in each build's provenance banner" in out
 
 
 def test_matrix_same_x_two_runtimes_single_caption():
