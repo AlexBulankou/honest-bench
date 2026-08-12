@@ -169,7 +169,7 @@ _† Δ spans a build whose burst sampled fewer than N=30 claims — too few to 
 
 _A FAIL Outcome means that build's burst did not clear the delivery-ratio SLA — the COUNT is still the real, measured number, not fabricated or estimated._
 
-_Density /vCPU (this build) is this single burst's own per-vCPU figure — a different, typically much smaller measurement than the Max Density table below (peak across scenarios), not a build-over-build regression._
+_Density /vCPU (this build) is this single burst's own per-vCPU figure — a different, typically much smaller measurement than the Max Density table above (peak across scenarios), not a build-over-build regression._
 
 ## Which storage class should you pick?
 

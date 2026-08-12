@@ -510,7 +510,9 @@ def test_trend_density_column_disambiguated_from_max_density_table():
     # qualifier and a footnote calls out the two are different measurements.
     out = render.render_trend([_hrow()])
     assert "Density /vCPU (this build)" in out
-    assert "different, typically much smaller measurement than the Max Density table" in out
+    # locks the direction word too — the Max Density table renders ABOVE this trend
+    # table in README.md; a prior draft said "below" and misdirected the reader.
+    assert "different, typically much smaller measurement than the Max Density table above" in out
 
 
 def test_trend_fail_outcome_row_charts_with_disclosure():

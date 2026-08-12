@@ -477,7 +477,7 @@ def render_trend(history_rows, latest_results=None):
         lines.append("")
     lines.append(
         "_Density /vCPU (this build) is this single burst's own per-vCPU figure — a different, "
-        "typically much smaller measurement than the Max Density table below (peak across "
+        "typically much smaller measurement than the Max Density table above (peak across "
         "scenarios), not a build-over-build regression._"
     )
     lines.append("")
