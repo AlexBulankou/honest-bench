@@ -1515,6 +1515,10 @@ def test_matrix_same_x_two_runtimes_single_caption():
     )
     assert "cluster rate at 40 nodes" in out
     assert "DIFFERENT node counts" not in out
+    # #556 nit-a follow-up: the same-X caption carries the identical node_count conflation
+    # as the mixed-X caption (a4s1 PR #559 review finding) — it gets the identical inline
+    # disclosure, not just the DETAILS.md glossary backstop.
+    assert "a different `node_count` than the one printed in each build's provenance banner" in out
 
 
 def test_matrix_exec_success_n_emitted_preferred_over_derived():
