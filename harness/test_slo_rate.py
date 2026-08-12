@@ -173,6 +173,51 @@ class TestSloSlaMetricsFromStepup:
         assert "thpt_slo_basis" in out
         assert _coerce_sla_metrics(out) == out
 
+    def test_measured_at_propagated_from_flat_record(self):
+        # hb#554: stepup_adapter.stepup_nested_to_flat already preserves the sweep
+        # record's own measured_at onto the flat dict; slo_sla_metrics_from_stepup
+        # must carry it through to the derived triple so a later carry-forward
+        # (carry_prior_cluster_triples) can disclose the figure's real age.
+        out = slo_sla_metrics_from_stepup(
+            {"pareto_points": SWEEP, "node_count": 40,
+             "true_ttfe_webhook_stamped_claims": 1,
+             "measured_at": "2026-07-25T00:00:00Z"}
+        )
+        assert out["thpt_slo_measured_at"] == "2026-07-25T00:00:00Z"
+
+    def test_measured_at_absent_when_not_on_flat_record(self):
+        # Older/synthetic records without a measured_at stamp derive a triple with no
+        # such key — never fabricated.
+        out = slo_sla_metrics_from_stepup(
+            {"pareto_points": SWEEP, "node_count": 40,
+             "true_ttfe_webhook_stamped_claims": 1}
+        )
+        assert "thpt_slo_measured_at" not in out
+
+    def test_measured_at_dropped_when_derivation_is_empty(self):
+        # No compliant rung -> the whole triple is {} -- measured_at must not leak
+        # through on its own when nothing else derived.
+        pts = [_rung(100, 41.0, 12610.3)]
+        out = slo_sla_metrics_from_stepup(
+            {"pareto_points": pts, "node_count": 40,
+             "measured_at": "2026-07-25T00:00:00Z"}
+        )
+        assert out == {}
+
+    def test_measured_at_survives_scenario_sla_coercion(self):
+        # hb#554: the new thpt_slo_measured_at carve-out in _coerce_sla_metrics must
+        # let a non-empty string through unchanged, alongside the existing
+        # thpt_slo_basis enum carve-out.
+        from harness.results_schema import _coerce_sla_metrics
+
+        out = slo_sla_metrics_from_stepup(
+            {"pareto_points": SWEEP, "node_count": 40,
+             "true_ttfe_webhook_stamped_claims": 1,
+             "measured_at": "2026-07-25T00:00:00Z"}
+        )
+        assert out["thpt_slo_measured_at"] == "2026-07-25T00:00:00Z"
+        assert _coerce_sla_metrics(out) == out
+
 
 def _lit_rung(offered, warm_p95, ctrl=None, acq=None, n=24):
     # n defaults above LITERAL_N_EXEC_OK_FLOOR so pre-floor tests stay valid;

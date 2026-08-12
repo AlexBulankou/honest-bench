@@ -534,6 +534,13 @@ MATRIX_METRIC_FIELDS = {
     and 0.0 <= v <= 1.0,
     "exec_success_n": lambda v: isinstance(v, int) and not isinstance(v, bool) and v >= 0,
     "density_per_vcpu": _nonneg,
+    # hb#554: the ISO-8601 instant the sweep that produced the per-cluster SLO triple
+    # actually ran — render's mirror of results_schema.py's own thpt_slo_measured_at
+    # carve-out (independent copies, same non-enum fail-open posture: a non-empty string
+    # passes, anything else is silently dropped — disclosure metadata, not a correctness
+    # gate). Lets render_matrix caption a carried (point-in-time) cluster triple as such
+    # instead of letting it read as fresh forever across every daily per-node refresh.
+    "thpt_slo_measured_at": lambda v: isinstance(v, str) and bool(v),
 }
 
 # --- #3954: Burst-create TTFE corroboration block ----------------------------------------

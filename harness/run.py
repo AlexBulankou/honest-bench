@@ -1020,6 +1020,18 @@ def carry_prior_cluster_triples(raw: list, prior_scenarios) -> None:
     silent-decay bug this function exists to prevent (a cell-downgrade fire on
     a fully-clean measurement run, traced to this allowlist predating both the
     hb#174 per-bar split and the hb#230 floor-zero/per-node keys).
+    hb#554: `thpt_slo_measured_at` — the ISO-8601 instant the sweep that produced
+    the triple actually ran (slo_rate.slo_sla_metrics_from_stepup propagates it
+    from the sweep record) — rides as a passenger the same way, so a carried
+    (stale) triple stays honestly dated against the daily-refreshed top-level
+    generated_at. This was the ONE do-not-auto-decay carry mechanism in this
+    file lacking the `measured_at` point-in-time disclosure pattern used by
+    every sibling carry_prior_* (scale_proof, stepup, warm_vs_cold, kata
+    activation, concurrent burst, warm-pool acquisition, at-scale contention,
+    cluster saturation, provisioning rate sweep) — a frozen figure could
+    silently ride a carry, refresh after refresh, with no reader-visible
+    signal that it was no longer current.
+
     All of the above are passengers, not members: the fresh-wins check and the
     eligibility guard key on the triple keys only, so a prior cell carrying a
     stamp but no rate (a producer inconsistency) still carries nothing.
@@ -1065,6 +1077,7 @@ def carry_prior_cluster_triples(raw: list, prior_scenarios) -> None:
             "thpt_slo_floor_zero",
             "thpt_under_5s_per_node",
             "thpt_under_1s_per_node",
+            "thpt_slo_measured_at",
         ):
             # Fresh wins per-key, not just per-cell: thpt_under_5s_per_node /
             # thpt_under_1s_per_node are NOT atomic with the cluster triple in

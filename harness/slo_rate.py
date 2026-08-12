@@ -605,6 +605,11 @@ def slo_sla_metrics_from_stepup(flat) -> dict:
         warm-exec sample count — always >= LITERAL_N_EXEC_OK_FLOOR by construction
         (sub-floor rungs are ineligible, fail-closed); render captions coarse p95 when
         20 <= n < 100. Never present on a true-TTFE triple.
+      - `thpt_slo_measured_at` (hb#554): the ISO-8601 instant the underlying sweep
+        ran, propagated straight from `flat["measured_at"]` (which
+        `stepup_adapter.stepup_nested_to_flat` already preserves off the nested sweep
+        record). Present whenever the flat record carries one and >= 1 bar landed;
+        absent otherwise — never fabricated.
 
     Basis selection (hb#174, amended by the sign-off) — ONE basis per triple:
 
@@ -672,4 +677,14 @@ def slo_sla_metrics_from_stepup(flat) -> dict:
         return {}
     out["thpt_cluster_node_count"] = int(node_count)
     out["thpt_slo_basis"] = basis
+    # thpt_slo_measured_at (hb#554): propagate the sweep's own point-in-time instant
+    # (already preserved onto `flat` by stepup_adapter.stepup_nested_to_flat) so a
+    # carried-forward triple (harness/run.py's carry_prior_cluster_triples — the sole
+    # do-not-auto-decay carry mechanism previously lacking this disclosure) stays
+    # honestly dated against the daily-refreshed top-level generated_at, instead of
+    # silently reading as fresh forever. Optional — absent on records predating this
+    # propagation.
+    measured_at = flat.get("measured_at")
+    if isinstance(measured_at, str) and measured_at:
+        out["thpt_slo_measured_at"] = measured_at
     return out

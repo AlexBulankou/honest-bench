@@ -1306,6 +1306,44 @@ def test_matrix_true_ttfe_basis_renders_no_note_line():
     assert "per-cluster rates:" not in out
 
 
+def test_matrix_discloses_carried_cluster_triple_measured_at():
+    # hb#554: a row whose per-cluster SLO triple carries a thpt_slo_measured_at stamp
+    # (a manual-sweep carry, not this run's daily refresh) gets a point-in-time
+    # disclosure footnote naming the row, mode, and date -- mirrors the #4420 FAIL
+    # disclosure and render_cluster_saturation's own point-in-time caption.
+    scen = _full_gvisor_scenarios()
+    scen[0]["sla_metrics"].update(
+        {
+            "thpt_under_5s_per_cluster": 7.727,
+            "thpt_under_1s_per_cluster": 7.727,
+            "thpt_cluster_node_count": 2,
+            "thpt_slo_basis": "true_ttfe",
+            "thpt_slo_measured_at": "2026-07-25T00:00:00Z",
+        }
+    )
+    out = render.render_matrix(_matrix_results(scen))
+    assert "**Cluster figure point-in-time:**" in out
+    assert "Warm-pool hit" in out.split("**Cluster figure point-in-time:**")[1].split("\n")[0]
+    assert "2026-07-25" in out.split("**Cluster figure point-in-time:**")[1].split("\n")[0]
+    assert "carried from that date's manual step-up sweep" in out
+
+
+def test_matrix_no_point_in_time_caveat_when_measured_at_absent():
+    # the same true_ttfe triple with no thpt_slo_measured_at stamp (this run's own
+    # fresh sweep, or an older record predating the propagation) renders no footnote.
+    scen = _full_gvisor_scenarios()
+    scen[0]["sla_metrics"].update(
+        {
+            "thpt_under_5s_per_cluster": 350,
+            "thpt_under_1s_per_cluster": 320,
+            "thpt_cluster_node_count": 40,
+            "thpt_slo_basis": "true_ttfe",
+        }
+    )
+    out = render.render_matrix(_matrix_results(scen))
+    assert "Cluster figure point-in-time" not in out
+
+
 def test_matrix_invalid_n_exec_ok_dropped_no_coarse_caption():
     # a bool / sub-1 / non-int thpt_slo_n_exec_ok fails its schema predicate and drops out of
     # the cleaned metrics — the triple + basis note survive, the coarse caption never renders

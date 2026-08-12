@@ -437,6 +437,40 @@ def test_fresh_per_node_companion_wins_over_carried_stale_value():
            f"cluster triple + basis stamps must still carry, got {m!r}")
 
 
+def test_measured_at_rides_carry_as_passenger():
+    # hb#554: thpt_slo_measured_at is a passenger like the basis/n_exec_ok
+    # stamps above -- a carried triple must bring its point-in-time disclosure
+    # along, so a reader can tell the /cluster figure is a sweep-only carry
+    # and not this run's daily refresh.
+    prior_m = {"thpt_under_5s_per_cluster": 7.727, "thpt_under_1s_per_cluster": 7.727,
+               "thpt_cluster_node_count": 2,
+               "thpt_slo_basis": "true_ttfe",
+               "thpt_slo_measured_at": "2026-07-25T00:00:00Z"}
+    raw = [_cell(name="warmpool_cold_start")]
+    run.carry_prior_cluster_triples(
+        raw, [_prior(name="warmpool_cold_start", sla_metrics=dict(prior_m))])
+    _check(raw[0]["sla_metrics"] == prior_m,
+           f"measured_at stamp carried with the triple, got {raw[0]['sla_metrics']!r}")
+
+
+def test_fresh_measured_at_wins_over_carried_stale_value():
+    # Mirror of test_fresh_per_node_companion_wins_over_carried_stale_value:
+    # a cell that already has its own fresh thpt_slo_measured_at (this run's
+    # own sweep) must never have it clobbered by a prior fire's stale stamp.
+    prior_m = {"thpt_under_5s_per_cluster": 7.727, "thpt_under_1s_per_cluster": 7.727,
+               "thpt_cluster_node_count": 2,
+               "thpt_slo_measured_at": "2026-07-25T00:00:00Z"}
+    raw = [_cell(name="warmpool_cold_start",
+                 sla_metrics={"thpt_slo_measured_at": "2026-08-11T00:00:00Z"})]
+    run.carry_prior_cluster_triples(
+        raw, [_prior(name="warmpool_cold_start", sla_metrics=dict(prior_m))])
+    m = raw[0]["sla_metrics"]
+    _check(m["thpt_slo_measured_at"] == "2026-08-11T00:00:00Z",
+           f"fresh measured_at must survive the carry untouched, got {m!r}")
+    _check(m.get("thpt_cluster_node_count") == 2,
+           f"cluster triple must still carry, got {m!r}")
+
+
 def test_stamps_without_rate_carry_nothing():
     # Stamps are passengers, not triple keys: a prior with only basis + n (no
     # rate, no node_count) has nothing to carry — the stamps must not leak.
