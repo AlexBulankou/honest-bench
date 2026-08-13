@@ -1,7 +1,7 @@
 {
   "_meta": {
     "seeded_from": "UPSTREAM_BLOCKERS.md (active-asks-only rewrite)",
-    "last_verified": "2026-08-12",
+    "last_verified": "2026-08-13",
     "freshness": "Rides every UPSTREAM_BLOCKERS.md refresh PR; link states hand-verified against the public GitHub API at each refresh."
   },
   "classes": {
@@ -59,6 +59,30 @@
           "role": "fix-in-flight",
           "status": "open",
           "note": "Phase-2 of #451: gVisor resume Data snapshots on the golden snapshot -- this is the leg that lands the S2/§U8 restore-side MF-owner residual for the gVisor demo path. Opened 2026-08-07; +252/-125 across 12 files incl. cmd/ateom-gvisor/{main,runsc}.go and pkg/api/v1alpha1/actortemplate_types.go. State: OPEN + DRAFT + CONFLICTING (mergeStateStatus=DIRTY), no activity since 2026-08-07 -- filed but not mergeable-as-is, so the blocker holds and no matrix cell graduates. Mirrors the #356 draft/conflicting fix-in-flight pattern."
+        },
+        {
+          "repo": "agent-substrate/substrate",
+          "number": 791,
+          "kind": "issue",
+          "role": "blocks",
+          "status": "open",
+          "note": "Umbrella tracking issue for the suspend-lifecycle 5-PR plan. All five planned pieces are now merged: #810/#812/#813 (2026-08-08) plus #816 (2026-08-11, which combined the final atelet-upload-RPC + enable-from-PAUSED legs into one PR). Stays OPEN on one deferred follow-up, #817, so plan-completion does not by itself clear the S2 restore-side blocker."
+        },
+        {
+          "repo": "agent-substrate/substrate",
+          "number": 816,
+          "kind": "pr",
+          "role": "fix-in-flight",
+          "status": "merged",
+          "note": "Final piece of the #791 5-PR plan: combined PR4 (atelet UploadPausedCheckpoint RPC) + PR5 (enable-suspend-from-PAUSED) into one PR. Merged 2026-08-11. Completes the suspend-emit path but not the restore round-trip -- the gVisor Full-capture->Data-commit conversion is deferred to #817 below, blocked on #790."
+        },
+        {
+          "repo": "agent-substrate/substrate",
+          "number": 817,
+          "kind": "issue",
+          "role": "blocks",
+          "status": "open",
+          "note": "Deferred follow-up off the #791 plan: suspend-from-PAUSED gVisor Full-capture->Data-commit conversion, blocked on #790. This is the remaining gate keeping #791 open and routes to the same gVisor phase-2 leg (#790) as this class's restore-side residual. OPEN."
         }
       ]
     },
