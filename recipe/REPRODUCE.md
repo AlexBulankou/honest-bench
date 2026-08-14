@@ -413,6 +413,9 @@ reproducing it. Concretely:
   a graduated warm row from n=30 back to n=5 and re-introduces the † marker.
 - The cold cell's `n` is `NATIVE_DIGEST_COLD_SAMPLES` (default 1) — same failure
   shape.
+- The `suspend_resume` cell's `n` is `SUSPEND_RESUME_CYCLE_COUNT` (default 1) —
+  same failure shape (hb#592: a refresh omitting it reds on `check_n_regression`
+  because the committed cell is n=30, graduated in #517).
 - Without `BENCH_TTFE_EXEC=1` the TTFE columns are not armed at all.
 
 The graduation shape published on the page is **pool=30 / claims=40** (a 1.33:1
@@ -430,6 +433,7 @@ WARMPOOL_COLD_START_CLAIM_COUNT=40 \
 WARMPOOL_COLD_START_WARMUP_TIMEOUT_S=600 \
 WARMPOOL_COLD_START_BIND_TIMEOUT_S=600 \
 SUSPEND_RESUME_RUNTIME_CLASS=gvisor \
+SUSPEND_RESUME_CYCLE_COUNT=30 \
 NATIVE_DIGEST_COLD_RUNTIME_CLASS=gvisor \
 NATIVE_DIGEST_COLD_SAMPLES=30 \
 BENCH_TTFE_EXEC=1 \

@@ -144,6 +144,11 @@ steps:
       - "WARMPOOL_COLD_START_WARMUP_TIMEOUT_S=600"
       - "WARMPOOL_COLD_START_BIND_TIMEOUT_S=600"
       - "SUSPEND_RESUME_RUNTIME_CLASS=gvisor"
+      # suspend_resume graduated to n=30 (#517) but its sample knob was missed
+      # here — a refresh without it fires the scenario at its default n=1
+      # (SUSPEND_RESUME_CYCLE_COUNT, harness/scenarios/suspend_resume.py) and the
+      # all-or-nothing latest.json write reds on check_n_regression (hb#592).
+      - "SUSPEND_RESUME_CYCLE_COUNT=30"
       - "NATIVE_DIGEST_COLD_RUNTIME_CLASS=gvisor"
       - "NATIVE_DIGEST_COLD_SAMPLES=30"
       - "BENCH_TTFE_EXEC=1"
