@@ -116,6 +116,39 @@ def test_provenance_allow_list():
     _check("kubeconfig_path" not in p and "dsn" not in p, "internal prov keys dropped")
 
 
+def test_fork_provenance_survives_build_results():
+    # #6682 regression: build_provenance() stamps fork_sha/fork_base_upstream_sha/
+    # fork_fix_count into its local dict, and render/schema.py's PROVENANCE_FIELDS
+    # allow-lists all three for rendering — but a prior version of THIS module's own
+    # PROVENANCE_FIELDS tuple (the allow-list _coerce_provenance actually filters
+    # against) never gained matching entries, so build_results() silently dropped all
+    # three before they ever reached render. build_provenance()-level unit tests
+    # (test_fork_provenance_stamp.py) never caught this because they only assert on
+    # build_provenance()'s own return value, never on the round trip through
+    # build_results(). This test closes that gap.
+    r = rs.build_results(
+        [],
+        _prov(fork_sha="4c71c2cf9fa7c1039357d52701f80faa14971e81",
+              fork_base_upstream_sha="0be472b745dabc8015c38bf00ce21c9a565537c0",
+              fork_fix_count=1),
+        GEN_AT,
+    )
+    p = r["provenance"]
+    _check(p.get("fork_sha") == "4c71c2cf9fa7c1039357d52701f80faa14971e81", f"fork_sha dropped: {p}")
+    _check(p.get("fork_base_upstream_sha") == "0be472b745dabc8015c38bf00ce21c9a565537c0",
+           f"fork_base_upstream_sha dropped: {p}")
+    _check(p.get("fork_fix_count") == 1 and not isinstance(p.get("fork_fix_count"), bool),
+           f"fork_fix_count dropped or wrong type: {p}")
+
+
+def test_fork_fix_count_bool_and_noninty_rejected():
+    # Mirrors node_count's isinstance(bool)-before-isinstance(int) guard shape.
+    r = rs.build_results([], _prov(fork_fix_count=True), GEN_AT)
+    _check("fork_fix_count" not in r["provenance"], "bool fork_fix_count must be dropped, not kept as 1")
+    r2 = rs.build_results([], _prov(fork_fix_count="2"), GEN_AT)
+    _check("fork_fix_count" not in r2["provenance"], "string fork_fix_count must be dropped, not coerced")
+
+
 def test_cluster_substrate_mandatory_and_closed():
     try:
         rs.build_results([], _prov(cluster_substrate=None), GEN_AT)
