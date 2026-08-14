@@ -182,7 +182,59 @@ export BENCH_RUNSC_VERSION=$(kubectl debug "node/$gvisor_node" \
   2>/dev/null | head -1 | awk '{print $NF}' || echo "")
 echo "==> node_image=$BENCH_NODE_IMAGE runsc_version=$BENCH_RUNSC_VERSION"
 
-echo "==> installing OSS controller from upstream main"
+# --- controller install: prebuilt-upstream (default) or fork-source (opt-in) ---
+# epic #6669 WS4. Default path (HB_FORK_BUILD unset/empty) is byte-for-byte the
+# prior behavior — the standing daily hb-refresh-gke-sandbox fire is unchanged,
+# so this block is INERT when the flag is absent. The operator opts into a
+# fork-validation fire by setting HB_FORK_BUILD=1 (plus the HB_FORK_* inputs
+# below) in the manual trigger's step env; then install-controller-from-main.sh
+# ko-builds the controller from the fork instead of pulling upstream's prebuilt
+# image, and the fork provenance is stamped so the renderer composes
+# `source=fork@<sha> (+N fixes over upstream@<base>)` (harness build_provenance
+# → render._fork_provenance_str).
+#
+# Fail-closed (trust surface, #4420): a REQUESTED fork build with any required
+# input missing ABORTS the step rather than silently installing the upstream
+# prebuilt — a fork fire that quietly measured upstream would still stamp a fork
+# provenance that doesn't match what actually ran, which is exactly the silent
+# information-downgrade the trust-surface idiom forbids. Better a loud abort.
+if [ "${HB_FORK_BUILD:-}" = "1" ]; then
+  echo "==> [fork-build] HB_FORK_BUILD=1 — building controller from fork source (epic #6669 WS4)"
+  # KO_DOCKER_REPO is derived from the build's $PROJECT_ID at the step-config
+  # level (CB substitutions can't be dereferenced in this extracted script — see
+  # the header note) and passed in as HB_FORK_KO_DOCKER_REPO, so no literal
+  # project name lands in this public-repo file.
+  : "${HB_FORK_UPSTREAM_REPO:?HB_FORK_BUILD=1 requires HB_FORK_UPSTREAM_REPO (fork owner/repo, e.g. <fork-owner>/agent-sandbox)}"
+  : "${HB_FORK_UPSTREAM_REF:?HB_FORK_BUILD=1 requires HB_FORK_UPSTREAM_REF (the fork integration branch/tag/sha)}"
+  : "${HB_FORK_KO_DOCKER_REPO:?HB_FORK_BUILD=1 requires HB_FORK_KO_DOCKER_REPO (project AR push target; set via \$PROJECT_ID in the step env)}"
+  : "${HB_FORK_SHA:?HB_FORK_BUILD=1 requires HB_FORK_SHA (fork HEAD sha, for provenance)}"
+  : "${HB_FORK_BASE_UPSTREAM_SHA:?HB_FORK_BUILD=1 requires HB_FORK_BASE_UPSTREAM_SHA (upstream base sha the fork rebases on, for provenance)}"
+  : "${HB_FORK_FIX_COUNT:?HB_FORK_BUILD=1 requires HB_FORK_FIX_COUNT (# staged fixes over the base, for provenance)}"
+
+  # install-controller-from-main.sh reads these as env overrides (BUILD_MODE=source).
+  export BUILD_MODE=source
+  export UPSTREAM_REPO="$HB_FORK_UPSTREAM_REPO"
+  export UPSTREAM_REF="$HB_FORK_UPSTREAM_REF"
+  export KO_DOCKER_REPO="$HB_FORK_KO_DOCKER_REPO"
+
+  # harness.run build_provenance() reads these (omit-when-absent); on the default
+  # path they stay unset, so the public page renders no source= leg (INERT).
+  export BENCH_UPSTREAM_REF="$HB_FORK_UPSTREAM_REF"
+  export BENCH_FORK_SHA="$HB_FORK_SHA"
+  export BENCH_FORK_BASE_UPSTREAM_SHA="$HB_FORK_BASE_UPSTREAM_SHA"
+  export BENCH_FORK_FIX_COUNT="$HB_FORK_FIX_COUNT"
+
+  # ko is required for BUILD_MODE=source and is not in the CB builder base image;
+  # the installer dies if it's absent, so install it here before calling.
+  if ! command -v ko >/dev/null 2>&1; then
+    echo "==> [fork-build] installing ko (BUILD_MODE=source requires it)"
+    go install github.com/google/ko@latest
+    export PATH="$PATH:$(go env GOPATH)/bin"
+  fi
+  echo "==> [fork-build] repo=$UPSTREAM_REPO ref=$UPSTREAM_REF ko_repo=$KO_DOCKER_REPO fork_sha=$HB_FORK_SHA base=$HB_FORK_BASE_UPSTREAM_SHA fixes=$HB_FORK_FIX_COUNT"
+else
+  echo "==> installing OSS controller from upstream main"
+fi
 bash recipe/install-controller-from-main.sh
 
 # controller_digest provenance (hb#439, mirrors the node-image/runsc pattern
