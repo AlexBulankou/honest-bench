@@ -2,7 +2,7 @@
 
 Active upstream blockers that need action now, ordered **substrate-first** (substrate is the primary product: private GA in September, public GA in October; the sandbox runtime moves to maintenance mode). Completed and superseded items live in **[Recently landed](#recently-landed-archive)** and are dropped on the next refresh — this page stays work-to-do-only by standing discipline.
 
-**Engagement model:** upstream approvers are engaged directly through existing maintainer relationships. We do not open new issues/PRs in the upstream repos; reference patches are staged and offered only if a maintainer asks. Engineering depth for every item: [**UPSTREAM_BLOCKERS_DETAIL.md**](UPSTREAM_BLOCKERS_DETAIL.md). Machine-readable link states: [`render/upstream_links.json`](render/upstream_links.json) — updated in the same commit as any state change here, and re-swept against the public GitHub API on each refresh.
+**Engagement model:** upstream approvers are engaged directly through existing maintainer relationships. We do not open new issues/PRs in the upstream repos; reference patches are staged and offered only if a maintainer asks. Fixes are staged and validated on integration forks and proven from fork builds before they are relied on — per-blocker strategy in [**Fork-fix conversion status**](#fork-fix-conversion-status). Engineering depth for every item: [**UPSTREAM_BLOCKERS_DETAIL.md**](UPSTREAM_BLOCKERS_DETAIL.md). Machine-readable link states: [`render/upstream_links.json`](render/upstream_links.json) — updated in the same commit as any state change here, and re-swept against the public GitHub API on each refresh.
 
 _Link states last verified live against the public GitHub API: **2026-08-13**._
 
@@ -32,6 +32,18 @@ Not an OSS repo, so there is no PR to track — evidence is parked for alex to h
 | # | What it blocks | One-line diagnosis |
 |---|---|---|
 | G1 | The untrusted-code-execution sandbox scenario — 100% `TIMED_OUT` since 2026-06-29 (0 PASS). | A `RuntimeClass: gvisor` sandbox's PID 1 exits on its own with a clean `exitCode: 0` after a few seconds instead of the commanded duration — no OOM, no kubelet kill. Root-caused to the gVisor/runsc runtime layer, pool-wide, reproduces across node-image builds. |
+
+## Fork-fix conversion status
+
+Each active blocker's **fork-fix strategy** — how the fix is driven through the integration fork and validated from a fork build, rather than waiting passively on upstream. A green bench fire built from the fork is the validation gate; fork patches are offered upstream only if a maintainer asks (see engagement model above).
+
+| # | Fork-fix approach | State |
+|---|---|---|
+| S1 | **Adopt-on-rebase** — carry the durable record-encoding fix on the fork once its upstream conflicts resolve; validate `ListActors` survives a proto rename from the fork build. | Waiting on the upstream PR rebase — not fork-addressable until it is conflict-free. |
+| S2 | **Adopt-on-land** — the residual is a gVisor sentry consistency check, a runtime-layer change with no fork-addressable wrapper lever (wrapper exhausted: 0/3 share tokens + overlay legs). Adopt the upstream gVisor leg on the fork when it lands. | No fork fix stageable; watching the named upstream leg (draft, unmoved). |
+| S3 | **Fork-fixable (scoped)** — re-base the demo e2e golden fixture on a post-migration snapshot on the fork; validate the resume path from the fork build's e2e phase. The one blocker the fork closes without an upstream change. | Fork-addressable — fixture re-base staged for the fork build. |
+| X3 | **Sandbox fork build** — build the sandbox controller from the fork and gate readiness on "restore verified", catching the blank-but-Ready class at the fork build. | Fork build path in progress. |
+| G1 | **No fork** — the GKE/gVisor runtime is not an OSS repo, so there is no fork to fix into. Evidence is parked for a Google engineering contact — deliberately outside the fork-fix model, not an unfilled gap. | Out of scope by construction. |
 
 ## Recently landed (archive)
 
