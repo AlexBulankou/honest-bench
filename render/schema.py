@@ -260,9 +260,24 @@ PROVENANCE_FIELDS = {
     # (omit-when-absent, like node_image). Records WHICH ref was measured so a reader / the
     # hb-upstream-freshness detector can compare it to the current upstream head; the
     # render-time STALE banner is the wall-clock-age self-declaration, this is the against-what
-    # pin. The richer WS4(c) fork-build provenance string ("fork@<sha> (+N over upstream@<sha>)",
-    # which carries spaces/parens) is a SEPARATE field to be defined by WS4 — not this one.
+    # pin. The richer WS4(c) fork-build provenance string ("fork@<sha> (+N fixes over
+    # upstream@<sha>)") is composed at render time from the three component fields below — it is
+    # NOT a single free-text field, so no space/paren-carrying string ever has to survive the
+    # closed schema; each component is independently validated (git-sha / git-sha / small int)
+    # and the renderer assembles the display string, the same "renderer composes from validated
+    # parts" idiom used for the machine-class caveat and the badge_scope suffix.
     "upstream_ref": lambda v: isinstance(v, str) and bool(_UPSTREAM_REF.match(v)),
+    # Fork-build provenance components (WS4(c), epic #6669). Stamped by build_provenance from
+    # BENCH_FORK_SHA / BENCH_FORK_BASE_UPSTREAM_SHA / BENCH_FORK_FIX_COUNT (omit-when-absent, same
+    # passthrough posture as upstream_ref). Present ONLY on a fork-build fire — a normal upstream
+    # fire omits all three, so the render leg is INERT-when-absent and the public page is
+    # byte-unchanged until a fork build actually stamps them. `fork_sha` = the fork HEAD these
+    # numbers were built from; `fork_base_upstream_sha` = the upstream commit the fork branched
+    # from; `fork_fix_count` = N staged fork commits over that base (a small positive count, bool
+    # excluded because bool is an int subclass — a fix-count is never a flag).
+    "fork_sha": lambda v: isinstance(v, str) and bool(_GITSHA.match(v)),
+    "fork_base_upstream_sha": lambda v: isinstance(v, str) and bool(_GITSHA.match(v)),
+    "fork_fix_count": lambda v: isinstance(v, int) and not isinstance(v, bool) and 0 < v < 1000,
 }
 
 # scenario internal-name -> public display label. A scenario whose name is not in this
