@@ -22,7 +22,7 @@
           "kind": "pr",
           "role": "fix-in-flight",
           "status": "open",
-          "note": "Replace ateredis with atepg: removes ateredis.go wholesale (status=removed, -1587) and strips the redis backend from cmd/ateapi/main.go (-126), retiring the strict-protojson decode path that bricks ListActors on rename. OPEN, MERGEABLE, mergeStateStatus=CLEAN, +268/-92485 across 312 files, author supreme-gg-gg, created 2026-08-13, updated 2026-08-14. Follow-up to the merged #640. Once merged, the vulnerable redis path no longer exists and #356 is moot."
+          "note": "Replace ateredis with atepg: removes ateredis.go wholesale (status=removed, -1587) and strips the redis backend from cmd/ateapi/main.go (-126), retiring the strict-protojson decode path that bricks ListActors on rename. OPEN, CONFLICTING, mergeStateStatus=DIRTY (drifted CLEAN->DIRTY 2026-08-14, needs a rebase before it can merge), +268/-92485 across 312 files, author supreme-gg-gg, created 2026-08-13, updated 2026-08-14. Follow-up to the merged #640. Once merged, the vulnerable redis path no longer exists and #356 is moot."
         },
         {
           "repo": "agent-substrate/substrate",
