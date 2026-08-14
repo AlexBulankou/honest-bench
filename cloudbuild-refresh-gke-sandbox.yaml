@@ -82,6 +82,26 @@ substitutions:
   # diagnostics in the build log are the point of the sweep, not the published cell).
   _WARMPOOL_POOL_REPLICAS: "30"
   _WARMPOOL_CLAIM_COUNT: "40"
+  # epic #6669 WS4: opt-in fork-source controller build. Default empty ⇒ the
+  # measure step's fork block (scripts/cb-measure-gke-sandbox.sh) is INERT and
+  # the standing daily fire installs the upstream prebuilt controller exactly as
+  # before (this file is byte-identical in behavior when _HB_FORK_BUILD is empty).
+  # Set _HB_FORK_BUILD=1 plus the five provenance inputs at fire time to build the
+  # controller from a fork branch via ko and stamp
+  # `fork@<sha> (+N fixes over upstream@<base>)` into results provenance:
+  #   gcloud builds triggers run hb-refresh-gke-sandbox --project=<PROJECT> \
+  #     --substitutions=_HB_FORK_BUILD=1,_HB_FORK_UPSTREAM_REPO=<owner/repo>,_HB_FORK_UPSTREAM_REF=<branch>,_HB_FORK_SHA=<sha>,_HB_FORK_BASE_UPSTREAM_SHA=<base-sha>,_HB_FORK_FIX_COUNT=<N>
+  # Source-mode ko PUSHES the built image to the KO_DOCKER_REPO wired in the
+  # measure step's env below, so the trigger SA needs roles/artifactregistry.writer
+  # on that repo (prebuilt mode only pulls). Fail-closed: a requested fork build
+  # with any required input missing aborts the measure step rather than silently
+  # falling back to the upstream prebuilt (trust surface).
+  _HB_FORK_BUILD: ""
+  _HB_FORK_UPSTREAM_REPO: ""
+  _HB_FORK_UPSTREAM_REF: ""
+  _HB_FORK_SHA: ""
+  _HB_FORK_BASE_UPSTREAM_SHA: ""
+  _HB_FORK_FIX_COUNT: ""
 
 steps:
   # PRE-FIRE FUNCTIONAL PROBE: a policy READ (`gcloud projects get-iam-policy`)
@@ -185,6 +205,20 @@ steps:
       # way, and the script reuses it rather than adding a third copy).
       - "HB_REGION=${_REGION}"
       - "HB_KEEP_CLUSTER_ON_FAILURE=${_KEEP_CLUSTER_ON_FAILURE}"
+      # epic #6669 WS4 fork-build inputs (see the substitutions block above). All
+      # empty by default ⇒ the fork block in cb-measure-gke-sandbox.sh is skipped
+      # and this env is inert. HB_FORK_KO_DOCKER_REPO is the ko push target;
+      # $PROJECT_ID is a CB built-in resolved at build time, so no concrete project
+      # id ships in this public file (same technique the availableSecrets block
+      # below already uses). It reuses the _REGION substitution above so the push
+      # target can never drift from the cluster region.
+      - "HB_FORK_BUILD=${_HB_FORK_BUILD}"
+      - "HB_FORK_UPSTREAM_REPO=${_HB_FORK_UPSTREAM_REPO}"
+      - "HB_FORK_UPSTREAM_REF=${_HB_FORK_UPSTREAM_REF}"
+      - "HB_FORK_KO_DOCKER_REPO=${_REGION}-docker.pkg.dev/${PROJECT_ID}/honest-bench"
+      - "HB_FORK_SHA=${_HB_FORK_SHA}"
+      - "HB_FORK_BASE_UPSTREAM_SHA=${_HB_FORK_BASE_UPSTREAM_SHA}"
+      - "HB_FORK_FIX_COUNT=${_HB_FORK_FIX_COUNT}"
     args:
       - scripts/cb-measure-gke-sandbox.sh
 
