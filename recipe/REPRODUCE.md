@@ -66,6 +66,23 @@ UPSTREAM_REF=<git-sha-from-banner> IMAGE_TAG=<vYYYYMMDD-...-main-from-banner> \
   bash recipe/install-controller-from-main.sh
 ```
 
+## Validating a staged fork fix (fork-build path)
+
+If you're testing a fix that has no upstream-published image yet — staged on a fork
+branch — `BUILD_MODE=source` ko-builds the controller from that fork tree instead of
+pulling a prebuilt image, and pushes to a registry you own:
+
+```bash
+UPSTREAM_REPO=<fork-owner>/agent-sandbox UPSTREAM_REF=<fork-branch> \
+  BUILD_MODE=source KO_DOCKER_REPO=us-central1-docker.pkg.dev/<project>/<repo> \
+  bash recipe/install-controller-from-main.sh
+```
+
+Requires the `ko` binary (https://ko.build) on `PATH` and push access to
+`KO_DOCKER_REPO`. There is no `--dry-run` for this mode — a `ko build` always builds
+and pushes; use the default `BUILD_MODE=prebuilt --dry-run` to preview manifest
+substitution only.
+
 ## The headline cell: burst-create throughput
 
 `burst_create` answers the headline question — **how many sandboxes go Ready in
