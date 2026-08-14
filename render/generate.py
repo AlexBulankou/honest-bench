@@ -65,6 +65,7 @@ def _load_render():
         mod.render_session_turnover,
         mod.render_suspend_latency,
         mod.render_density_detail,
+        mod.render_density_bars,
         mod.render_vcpu_footprint,
         mod.render_storage_config,
         mod.render_measurement_path_diagram,
@@ -85,7 +86,8 @@ def _load_render():
  render_cost_methodology, render_kata_activation, render_concurrent_burst,
  render_warm_pool_acquisition,
  render_at_scale_contention, render_cluster_saturation, render_provisioning_rate_sweep,
- render_session_turnover, render_suspend_latency, render_density_detail, render_vcpu_footprint,
+ render_session_turnover, render_suspend_latency, render_density_detail, render_density_bars,
+ render_vcpu_footprint,
  render_storage_config, render_measurement_path_diagram, render_recipe, render_trend,
  check_render_downgrade,
  render_stale_banner, resolve_default_as_of) = _load_render()
@@ -405,6 +407,12 @@ def build_details(root=None):
         density = render_density_detail(results, kata_results=kr)
         if density.strip():
             sections.append(density.rstrip())
+        # WS2 (epic #6669): visual companion to the density table above — same source, same
+        # kata_results, INERT under the identical conditions. Placed immediately after the table
+        # it visualizes so a reader sees the numbers and the bar chart together.
+        density_bars = render_density_bars(results, kata_results=kr)
+        if density_bars.strip():
+            sections.append(density_bars.rstrip())
         # #3868: per-sandbox declared footprint — the reproducibility qualifier for Max Density
         # (gVisor's tiny request vs Kata's guest-sane microVM floor differ ~50x, so densities are
         # only comparable with the footprint stated). Placed next to density; same kata_results
