@@ -212,10 +212,18 @@ steps:
       # id ships in this public file (same technique the availableSecrets block
       # below already uses). It reuses the _REGION substitution above so the push
       # target can never drift from the cluster region.
+      # The target MUST be a full 4-component AR image ref
+      # (HOST/PROJECT/REPOSITORY/IMAGE) because install-controller-from-main.sh
+      # runs `ko build --bare`, which publishes to *exactly* KO_DOCKER_REPO with no
+      # appended suffix. A 3-component `.../honest-bench` (repo only, no image name)
+      # makes AR reject the push with `NAME_INVALID: Missing image name` — that was
+      # the 3rd WS4 red (go+ko installed, controller compiled, then the publish
+      # failed). `agent-sandbox-controller` is the image name under the honest-bench
+      # AR repo (matches the built binary; same repo the webhook image lives under).
       - "HB_FORK_BUILD=${_HB_FORK_BUILD}"
       - "HB_FORK_UPSTREAM_REPO=${_HB_FORK_UPSTREAM_REPO}"
       - "HB_FORK_UPSTREAM_REF=${_HB_FORK_UPSTREAM_REF}"
-      - "HB_FORK_KO_DOCKER_REPO=${_REGION}-docker.pkg.dev/${PROJECT_ID}/honest-bench"
+      - "HB_FORK_KO_DOCKER_REPO=${_REGION}-docker.pkg.dev/${PROJECT_ID}/honest-bench/agent-sandbox-controller"
       - "HB_FORK_SHA=${_HB_FORK_SHA}"
       - "HB_FORK_BASE_UPSTREAM_SHA=${_HB_FORK_BASE_UPSTREAM_SHA}"
       - "HB_FORK_FIX_COUNT=${_HB_FORK_FIX_COUNT}"
