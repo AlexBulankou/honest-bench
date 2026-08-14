@@ -93,64 +93,72 @@ WIP_CATALOG = {
         ),
     },
     "trust-gate": {
-        "title": "SLO-rate fire ran; derivation refused by the trust gate (`trust-gate`)",
+        "title": "Warm-pool SLO-rate cluster cells graduated — upstream fix landed (`trust-gate`, RESOLVED)",
         "what": (
             "A warm-pool per-**cluster** SLO-rate cell whose measurement fire DID run, but "
-            "whose per-mode derivation was refused: the controller-side rate leg disagreed "
-            "with the acquisition-side leg beyond the pre-declared tolerance (rel-diff "
-            "> 0.10) at every measured rung, on both runtimes."
+            "whose per-mode derivation was formerly refused: the controller-side rate leg "
+            "disagreed with the acquisition-side leg beyond the pre-declared tolerance "
+            "(rel-diff > 0.10) at every measured rung, on both runtimes."
         ),
         "why": (
-            "**Gated (upstream, trust).** The two independent rate legs must agree before a "
-            "number publishes; on the warm-pool path they do not — the controller startup-latency "
-            "histogram double-records Ready transitions on stale-informer replays, inflating the "
-            "controller leg ~1.7–2×. Cold-path control legs PASS the same gate on both runtimes, "
-            "pinning the defect to the warm-pool path. The cell is honest-empty rather than "
-            "publish a number whose cross-check fails."
+            "**Resolved upstream — archive entry, no live cell.** This class formerly gated "
+            "warm-pool per-cluster SLO-rate cells: the controller startup-latency histogram "
+            "double-recorded Ready transitions on stale-informer replays, inflating the "
+            "controller leg ~1.7–2× and failing the acquire/controller agreement gate. Both "
+            "upstream legs (the suspend/resume re-record guard and the targeted stale-informer-"
+            "replay fix) have since merged, and the histogram-vs-acquire cross-check now PASSES "
+            "against a post-fix build (ratios 1.000 / 0.9375, within the 0.10 tolerance) — so no "
+            "matrix cell currently renders this class, and the entry is retained as a "
+            "schema/catalog archive. The warm-pool cells graduate to a `≥`-floor figure on the "
+            "literal-TTFE basis, not a bare measured rate — that further graduation needs the "
+            "separate true-TTFE (webhook) basis, tracked under `no-compliant-rung`."
         ),
         "in_flight": (
-            "Yes — tracked upstream in the agent-sandbox controller: "
+            "Resolved — both upstream controller legs have merged: "
             + upstream_prose_refs("trust-gate")
-            + ". Internal tracking a#4364 (gate exposure) / a#4277 (no tuning to avoid "
-            "honest-empty)."
+            + ". A fresh fire against a post-fix build confirmed the agreement-gate cross-check "
+            "passes, so the warm-pool cells are no longer trust-gate-capped."
         ),
         "eta": (
-            "Gated on the upstream histogram record-once fix. The cell graduates the moment a "
-            "post-fix fire passes the agreement gate — no honest-bench-side date."
+            "Graduated — both upstream legs merged and a post-fix fire confirmed the agreement "
+            "gate passes. No outstanding date."
         ),
         "trace": (
-            "Upstream agent-sandbox controller (histogram double-record): "
+            "Upstream agent-sandbox controller (histogram double-record, resolved): "
             + upstream_prose_refs("trust-gate")
-            + ". Internal tracking a#4364."
+            + ". Internal tracking a#4364 (gate exposure, closed out)."
         ),
     },
     "no-compliant-rung": {
-        "title": "SLO-rate fire ran; no rung met the bar (`no-compliant-rung`)",
+        "title": "Cold-start per-cluster SLO-rate cells graduated — upstream fix landed (`no-compliant-rung`, RESOLVED)",
         "what": (
             "A cold-start per-**cluster** SLO-rate cell whose measurement fire DID run with the "
-            "trust gate PASSING, but where every measured rung's p95 sits over the cell's SLO "
-            "bar on the only available (literal upper-bound) basis."
+            "trust gate PASSING, but where every measured rung's p95 formerly sat over the "
+            "cell's SLO bar on the only available (literal upper-bound) basis."
         ),
         "why": (
-            "**not-yet-graduated (basis-gated).** An SLO-gated rate cannot be published as 0 "
-            "from a finite ladder — a lower untested rate could still comply — so \"no compliant "
-            "rung ⇒ pend, never 0\". The literal TTFE basis is an UPPER bound (it includes probe "
-            "scheduling overhead); the tighter true-TTFE basis has no production writer upstream, "
-            "so the cell may yet fill once that lands."
+            "**Resolved upstream — archive entry, no live cell.** This class formerly gated "
+            "cold-start per-cluster SLO-rate cells on the sizing side (an SLO-gated rate cannot "
+            "be published as 0 from a finite ladder without a pre-declared floor condition, and "
+            "the tighter true-TTFE basis had no production writer upstream). The true-TTFE "
+            "webhook-inject-timestamp example has since merged upstream and was adopted on the "
+            "Kata cold measurement path, and both formerly-gated cold cells have graduated "
+            "independently — so no matrix cell currently renders this class, and the entry is "
+            "retained as a schema/catalog archive."
         ),
         "in_flight": (
-            "Yes — the true-TTFE annotation writer is tracked upstream: "
+            "Resolved — the true-TTFE webhook example has merged upstream: "
             + upstream_prose_refs("no-compliant-rung")
-            + ". Internal tracking a#3975 (basis fallback)."
+            + ". Both formerly-gated cold cells have graduated independently."
         ),
         "eta": (
-            "Gated on the upstream true-TTFE writer, or a future fire whose literal-basis p95 "
-            "clears the bar at some measured rate."
+            "Graduated — the upstream true-TTFE writer merged and the affected cold cells filled "
+            "independently. No outstanding date."
         ),
         "trace": (
-            "Upstream agent-sandbox (end-to-end TTFE measurability): "
+            "Upstream agent-sandbox (end-to-end TTFE measurability, resolved): "
             + upstream_prose_refs("no-compliant-rung")
-            + ". Internal tracking a#3975 / a#4364."
+            + ". Internal tracking a#3975 (basis fallback, closed out)."
         ),
     },
     "overshoot-inconclusive": {
