@@ -43,6 +43,8 @@ def _load_render():
         mod.render_matrix,
         mod.render_core_metrics_legend,
         mod.render_north_star_caption,
+        mod.render_known_anomalies_table,
+        mod.render_known_anomalies_detail,
         mod.render_operating_envelope,
         mod.render_what_this_means,
         mod.render_burst_corroboration,
@@ -73,7 +75,8 @@ def _load_render():
 
 
 (render_matrix, render_core_metrics_legend,
- render_north_star_caption, render_operating_envelope, render_what_this_means,
+ render_north_star_caption, render_known_anomalies_table, render_known_anomalies_detail,
+ render_operating_envelope, render_what_this_means,
  render_burst_corroboration, render_warm_bind_decomposition, render_cold_bind_decomposition,
  render_warm_vs_cold, render_scale_proof, render_cluster_scale, render_stepup,
  render_cost_methodology, render_kata_activation, render_concurrent_burst,
@@ -274,6 +277,13 @@ def build_readme(root=None):
         north_star = render_north_star_caption(results, kata_results=kr)
         if north_star.strip():
             sections.append(north_star.rstrip())
+        # WS1 (epic #6669): the 6 standalone anomaly banners (Scenario FAIL, warm-slower-than-
+        # cold, warm/cold separation below gate, regime note, refresh cadence, concurrent-burst
+        # regime) that used to render inline here now collapse into one compact "is anything
+        # currently wrong?" table with live ⚠️/✅ markers linking to DETAILS.md for the prose.
+        known_anomalies = render_known_anomalies_table(results, kata_results=kr)
+        if known_anomalies.strip():
+            sections.append(known_anomalies.rstrip())
         # hb#488 numbers-first slice-1 (alex 2026-07-26): the plain-English "What this means
         # for you" interpretation prose — reader guidance, not a source-of-truth number — moves
         # off the headline page into the deep-dive appendix (build_details), leaving only a
@@ -355,6 +365,13 @@ def build_details(root=None):
         with open(path) as fh:
             results = json.load(fh)
         kr = kata_results if product == "sandbox" else None
+        # WS1 (epic #6669): DETAILS-side counterpart to the README "Known anomalies" table —
+        # placed first in the per-product detail sequence so the anchors it emits
+        # (#scenario-fail, #warm-slower-than-cold, etc.) are near the top of the page the
+        # README's table links into.
+        known_anomalies_detail = render_known_anomalies_detail(results, kata_results=kr)
+        if known_anomalies_detail.strip():
+            sections.append(known_anomalies_detail.rstrip())
         for renderer in (
             render_burst_corroboration,
             render_warm_bind_decomposition,

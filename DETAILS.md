@@ -6,6 +6,32 @@ on picking a runtime and sizing a warm pool. Same rule: **every number is machin
 from a real harness run — nothing here is typed by hand.** Start with the headline page;
 come here when you want the guidance or to see the working.
 
+## Known anomalies
+
+### Scenario FAIL
+
+> ⚠️ **Scenario FAIL:** the warm-pool-hit scenario's own outcome is **FAIL** for **gVisor** — the p95 above is a real measurement that MISSED its SLA, not a passing warm hit. It is still graded against the bar and carried forward as the refresh baseline honestly (an SLA-failing number is disclosed, never softened into a green cell); a later refresh whose scenario returns to PASS clears this.
+
+### Warm-slower-than-cold
+
+> ⚠️ **Warm-slower-than-cold:** the warm-pool-hit path is SLOWER than the unique-image cold-start path for **gVisor** (warm count=30, cold count=30): bind warm 4.9998s > cold 3.9012s, TTFE warm 5.6992s > cold 4.5013s — a backwards result (warm is meant to be the fast path). Both rows clear the N=30 comparability floor, so this is not a small-sample inversion. The per-leg breakdown localizes it: the **bind** leg (pod-bind latency) is where warm-pool under-delivery shows up — a real warm hit binds an already-running pod ~instantly, so an inverted bind p95 means the warm population is blended with genuinely-cold claims; the **TTFE** leg is total latency (bind + exec), so a TTFE-only inversion with a clean bind leg points instead at the exec phase, not the pool. The cause is not asserted here (candidates: the warm fire not gating on pool-Ready before probing, a silent image-pull on the warm hit, or a real tail regression); a later refresh whose warm legs return below cold clears this.
+
+### Warm-cold separation below gate
+
+> ⚠️ **Warm/cold separation below gate:** the warm-pool separation ratio (fastest cold start ÷ slowest warm-pool hit) is below the 1.8x gate for **gVisor** (warm count=30): 0.512x (slowest warm bind 5.30727s vs fastest cold bind 2.71678s); **Kata + microVM** (warm count=30): 1.02x (slowest warm bind 2.20717s vs fastest cold bind 2.25611s) — at ~1x the warm and cold populations overlap, so the published warm tier is not demonstrably faster than a unique-image cold start. The warm row clears the N=30 floor, so this is not a small-sample artifact. The cause is not asserted here (the pool may be under-delivering ready replicas, blending genuinely-cold claims into the warm tier); a later refresh whose ratio returns to the gate clears this.
+
+### Regime note
+
+> ℹ️ **Regime note:** every CI-measured refresh since **2026-07-20** measures a brand-new, single-node ephemeral CI cluster with an empty containerd cache per run — a deliberately cold pull (see "Reproduce it" below). Numbers published **before 2026-07-20** (e.g. the 2026-07-04 baseline) were instead measured on a long-lived, pre-warmed internal cluster, not by this repo's own CI. If you're comparing today's cold-start figures against an older citation of this page and see a large jump, that's this regime switch — not a code or controller regression. ("CI-measured" means *machine-measured on a cold ephemeral cluster*, **not** *scheduled* — see the refresh cadence below.)
+
+### Refresh cadence
+
+> ℹ️ **Refresh cadence (on-demand, not scheduled):** refreshes are **manually invoked / on-demand** — a hand-run CI fire (`gcloud builds triggers run` / the reproduce script below), never a recurring cron. To keep "is this stale?" a decidable question without standing up recurring billed infra, a refresh is **due** when either (a) a **regime boundary** occurs — cluster recreate, node-image float, or controller-build digest change (all caught by the sandbox accrual detectors) — or (b) a **30-day floor** elapses since the last fire (the `_generated-at:_` stamp under the Core Metrics table). Between those, the published numbers are current, not stale.
+
+### Concurrent-burst measurement regime
+
+Per-fire measurement-regime disclosures for the concurrent-burst sweep render inline in [README.md](README.md#does-it-hold-at-cluster-scale) next to each burst — the disclosure can repeat once per date/regime group, so it is not summarized here.
+
 ## Burst Create — TTFE Corroboration
 
 The headline burst count is **pod-Ready** — but a pod can report Ready before it can run your code. TTFE is the stronger claim: the sandbox *executed its first instruction and returned a result*. This block corroborates the two; the **gap** is sandboxes that reported Ready but had not yet run code.

@@ -5317,8 +5317,9 @@ def test_provenance_node_image_fields_survive_clean_provenance():
 # ---------------------------------------------------------------------------
 
 def test_north_star_caption_discloses_scenario_fail():
-    # a kata warm-pool run marked FAIL surfaces the loud scenario-FAIL caveat block AND
-    # tags the inline entry — the p95 (over the bar) is disclosed as an SLA miss, not softened.
+    # a kata warm-pool run marked FAIL tags the inline entry (unchanged) — the p95 (over the
+    # bar) is disclosed as an SLA miss, not softened. The loud caveat prose itself moved to the
+    # "Known anomalies" table/detail (epic #6669 WS1) — covered by the tests below.
     kata_scen = [{
         "name": "warmpool_cold_start", "outcome": "FAIL", "n": 30,
         "sla_metrics": {"ttfe_p50_ms": 2400, "ttfe_p95_ms": 3079},
@@ -5330,19 +5331,13 @@ def test_north_star_caption_discloses_scenario_fail():
             provenance={"runtime": "kata-microvm"},
         ),
     )
-    assert "**Scenario FAIL:**" in out
-    assert "own outcome is **FAIL**" in out
     assert "**scenario FAIL**" in out  # inline entry tag
-    # gVisor row passed, so it must NOT be named in the FAIL caveat
-    fail_line = [l for l in out.splitlines() if "Scenario FAIL:" in l][0]
-    assert "Kata + microVM" in fail_line
-    assert "gVisor" not in fail_line
 
 
 def test_north_star_caption_fail_overrides_green_verdict():
     # the silent-downgrade case #4420 targets: a FAIL run whose p95 CLEARS the bar would
     # otherwise render a green ✅. The scenario-FAIL tag must ride the entry so it can't read
-    # as a clean pass; the caveat block must still fire.
+    # as a clean pass — the caveat prose itself lives in the Known anomalies table/detail now.
     kata_scen = [{
         "name": "warmpool_cold_start", "outcome": "FAIL", "n": 30,
         "sla_metrics": {"ttfe_p50_ms": 400, "ttfe_p95_ms": 500},  # under the 1s bar
@@ -5358,7 +5353,6 @@ def test_north_star_caption_fail_overrides_green_verdict():
     assert kata_entry, out
     assert "✅ met" in kata_entry[0]  # bar grade is genuinely a pass
     assert "**scenario FAIL**" in kata_entry[0]  # ...but the FAIL is NOT silent
-    assert "**Scenario FAIL:**" in out
 
 
 def test_north_star_caption_no_fail_caveat_when_all_pass():
@@ -5367,6 +5361,83 @@ def test_north_star_caption_no_fail_caveat_when_all_pass():
     )
     assert "Scenario FAIL" not in out
     assert "scenario FAIL" not in out
+
+
+# ---------------------------------------------------------------------------
+# WS1 (epic #6669): the Scenario FAIL / warm-slower-than-cold / warm-cold-separation
+# caveat prose relocated from render_north_star_caption's own output into the compact
+# "Known anomalies" table (README) + its DETAILS.md counterpart. These tests replace the
+# three above's former direct-output assertions against the now-moved prose blocks.
+# ---------------------------------------------------------------------------
+
+def test_known_anomalies_table_flags_active_scenario_fail():
+    kata_scen = [{
+        "name": "warmpool_cold_start", "outcome": "FAIL", "n": 30,
+        "sla_metrics": {"ttfe_p50_ms": 2400, "ttfe_p95_ms": 3079},
+    }]
+    out = render.render_known_anomalies_table(
+        _matrix_results(_full_gvisor_scenarios(), provenance={"runtime": "gvisor"}),
+        kata_results=_kata_results(
+            scenarios=kata_scen,
+            provenance={"runtime": "kata-microvm"},
+        ),
+    )
+    fail_line = [l for l in out.splitlines() if l.startswith("| Scenario FAIL")][0]
+    assert "⚠️ ACTIVE" in fail_line
+    assert "DETAILS.md#scenario-fail" in fail_line
+
+
+def test_known_anomalies_table_clear_when_all_pass():
+    out = render.render_known_anomalies_table(
+        _matrix_results(_full_gvisor_scenarios(), provenance={"runtime": "gvisor"})
+    )
+    fail_line = [l for l in out.splitlines() if l.startswith("| Scenario FAIL")][0]
+    assert "✅ clear" in fail_line
+    assert "DETAILS.md#scenario-fail" in fail_line
+
+
+def test_known_anomalies_detail_discloses_scenario_fail():
+    kata_scen = [{
+        "name": "warmpool_cold_start", "outcome": "FAIL", "n": 30,
+        "sla_metrics": {"ttfe_p50_ms": 2400, "ttfe_p95_ms": 3079},
+    }]
+    out = render.render_known_anomalies_detail(
+        _matrix_results(_full_gvisor_scenarios(), provenance={"runtime": "gvisor"}),
+        kata_results=_kata_results(
+            scenarios=kata_scen,
+            provenance={"runtime": "kata-microvm"},
+        ),
+    )
+    assert "### Scenario FAIL" in out
+    assert "**Scenario FAIL:**" in out
+    assert "own outcome is **FAIL**" in out
+    fail_line = [l for l in out.splitlines() if "Scenario FAIL:" in l][0]
+    assert "Kata + microVM" in fail_line
+    assert "gVisor" not in fail_line
+
+
+def test_known_anomalies_detail_fail_overrides_green_verdict():
+    kata_scen = [{
+        "name": "warmpool_cold_start", "outcome": "FAIL", "n": 30,
+        "sla_metrics": {"ttfe_p50_ms": 400, "ttfe_p95_ms": 500},  # under the 1s bar
+    }]
+    out = render.render_known_anomalies_detail(
+        _matrix_results(_full_gvisor_scenarios(), provenance={"runtime": "gvisor"}),
+        kata_results=_kata_results(
+            scenarios=kata_scen,
+            provenance={"runtime": "kata-microvm"},
+        ),
+    )
+    assert "**Scenario FAIL:**" in out
+
+
+def test_known_anomalies_detail_clear_sentence_when_all_pass():
+    out = render.render_known_anomalies_detail(
+        _matrix_results(_full_gvisor_scenarios(), provenance={"runtime": "gvisor"})
+    )
+    assert "### Scenario FAIL" in out
+    assert "Clear as of the latest measured refresh" in out
+    assert "**Scenario FAIL:**" not in out
 
 
 def test_matrix_discloses_scenario_fail():
@@ -5488,20 +5559,26 @@ def test_warm_cold_inversion_caveat_flags_kata_independently():
     assert "gVisor" not in out
 
 
-def test_warm_cold_inversion_caveat_wired_into_caption():
-    # end-to-end: the caption assembles the inversion caveat when the live data is inverted.
-    out = render.render_north_star_caption(
-        _matrix_results(
-            _inversion_scenarios(4089, 3715, warm_n=200, cold_n=200),
-            provenance={"runtime": "gvisor"},
-        )
+def test_warm_cold_inversion_caveat_wired_into_known_anomalies():
+    # end-to-end: the Known anomalies table/detail (epic #6669 WS1; formerly the caption
+    # itself) assemble the inversion caveat when the live data is inverted.
+    results = _matrix_results(
+        _inversion_scenarios(4089, 3715, warm_n=200, cold_n=200),
+        provenance={"runtime": "gvisor"},
     )
-    assert "Warm-slower-than-cold:" in out
-    # and stays absent on a clean run
-    clean = render.render_north_star_caption(
-        _matrix_results(_full_gvisor_scenarios(), provenance={"runtime": "gvisor"})
-    )
-    assert "Warm-slower-than-cold" not in clean
+    table = render.render_known_anomalies_table(results)
+    inv_line = [l for l in table.splitlines() if l.startswith("| Warm-slower-than-cold")][0]
+    assert "⚠️ ACTIVE" in inv_line
+    detail = render.render_known_anomalies_detail(results)
+    assert "Warm-slower-than-cold:" in detail
+    # and stays absent/clear on a clean run
+    clean_results = _matrix_results(_full_gvisor_scenarios(), provenance={"runtime": "gvisor"})
+    clean_table = render.render_known_anomalies_table(clean_results)
+    clean_line = [l for l in clean_table.splitlines()
+                  if l.startswith("| Warm-slower-than-cold")][0]
+    assert "✅ clear" in clean_line
+    clean_detail = render.render_known_anomalies_detail(clean_results)
+    assert "Warm-slower-than-cold:" not in clean_detail
 
 
 def test_warm_cold_inversion_caveat_fires_on_bind_leg_only():
@@ -5720,21 +5797,28 @@ def test_warmpool_separation_caveat_flags_kata_independently():
     assert "gVisor" not in out
 
 
-def test_warmpool_separation_caveat_wired_into_caption():
-    # end-to-end: the caption assembles the separation caveat when the live
-    # ratio is below the gate, and stays absent on a clean run.
-    out = render.render_north_star_caption(
-        _matrix_results(
-            _separation_scenarios(1.0164, warm_n=200,
-                                  warm_max=8453.296826, cold_min=8591.903258),
-            provenance={"runtime": "gvisor"},
-        )
+def test_warmpool_separation_caveat_wired_into_known_anomalies():
+    # end-to-end: the Known anomalies table/detail (epic #6669 WS1; formerly the caption
+    # itself) assemble the separation caveat when the live ratio is below the gate, and
+    # stay clear/absent on a clean run.
+    results = _matrix_results(
+        _separation_scenarios(1.0164, warm_n=200,
+                              warm_max=8453.296826, cold_min=8591.903258),
+        provenance={"runtime": "gvisor"},
     )
-    assert "Warm/cold separation below gate:" in out
-    clean = render.render_north_star_caption(
-        _matrix_results(_full_gvisor_scenarios(), provenance={"runtime": "gvisor"})
-    )
-    assert "Warm/cold separation below gate" not in clean
+    table = render.render_known_anomalies_table(results)
+    sep_line = [l for l in table.splitlines()
+                if l.startswith("| Warm-cold separation below gate")][0]
+    assert "⚠️ ACTIVE" in sep_line
+    detail = render.render_known_anomalies_detail(results)
+    assert "Warm/cold separation below gate:" in detail
+    clean_results = _matrix_results(_full_gvisor_scenarios(), provenance={"runtime": "gvisor"})
+    clean_table = render.render_known_anomalies_table(clean_results)
+    clean_line = [l for l in clean_table.splitlines()
+                  if l.startswith("| Warm-cold separation below gate")][0]
+    assert "✅ clear" in clean_line
+    clean_detail = render.render_known_anomalies_detail(clean_results)
+    assert "Warm/cold separation below gate:" not in clean_detail
 
 
 # ---------------------------------------------------------------------------
