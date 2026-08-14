@@ -1,7 +1,7 @@
 {
   "_meta": {
     "seeded_from": "UPSTREAM_BLOCKERS.md (active-asks-only rewrite)",
-    "last_verified": "2026-08-13",
+    "last_verified": "2026-08-14",
     "freshness": "Rides every UPSTREAM_BLOCKERS.md refresh PR; link states hand-verified against the public GitHub API at each refresh."
   },
   "classes": {
@@ -10,11 +10,27 @@
       "refs": [
         {
           "repo": "agent-substrate/substrate",
+          "number": 640,
+          "kind": "pr",
+          "role": "fix-partial-merged",
+          "status": "merged",
+          "note": "Durable fix, landed via backend migration: adds the postgres/atepg persistence backend, which stores every persisted record (actors/workers/templates/versions/snapshots/tags) as BINARY protobuf via proto.Unmarshal -- keyed on field NUMBER, so a proto field rename is transparent and ListActors cannot brick. Same loss-free approach #356 pursued for ateredis, but merged. MERGED 2026-08-12. Verified in code: atepg ListActors reads binary protobuf (listActorsScoped/listActorsGlobal); the sole protojson.Unmarshal in atepg is the transient worker-event notification envelope, not a persisted store row. Upstream main still defaults --store-backend=redis, so redis deployments stay vulnerable until #940 lands or the deployment opts into --store-backend=postgres."
+        },
+        {
+          "repo": "agent-substrate/substrate",
+          "number": 940,
+          "kind": "pr",
+          "role": "fix-in-flight",
+          "status": "open",
+          "note": "Replace ateredis with atepg: removes ateredis.go wholesale (status=removed, -1587) and strips the redis backend from cmd/ateapi/main.go (-126), retiring the strict-protojson decode path that bricks ListActors on rename. OPEN, MERGEABLE, mergeStateStatus=CLEAN, +268/-92485 across 312 files, author supreme-gg-gg, created 2026-08-13, updated 2026-08-14. Follow-up to the merged #640. Once merged, the vulnerable redis path no longer exists and #356 is moot."
+        },
+        {
+          "repo": "agent-substrate/substrate",
           "number": 356,
           "kind": "pr",
           "role": "fix-in-flight",
           "status": "open",
-          "note": "Structural fix: binary-protobuf record encoding, so a proto field rename can no longer brick ListActors on a long-lived cluster. Open since 2026-07-02; a maintainer commented 2026-07-24 asking the author to resolve conflicts (GitHub reports mergeable_state=dirty) -- live engagement, not abandoned, but not mergeable as-is. GA blocker."
+          "note": "ateredis-specific durable fix: binary-protobuf record encoding on the redis backend. Open since 2026-07-02; maintainer asked the author to resolve conflicts 2026-07-24 (mergeable_state=dirty), unmoved since 2026-07-27. Superseded if #940 lands (which deletes ateredis.go entirely). A surgical DiscardUnknown decode-tolerance lever was staged + fork-validated as a redis-side bridge (build/vet/tests/gofmt clean + a falsifiable regression test) but NOT carried on the fork -- it patches the exact file #940 deletes, so it is churn on a doomed file."
         }
       ]
     },
