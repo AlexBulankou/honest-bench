@@ -1150,18 +1150,22 @@ def _core_metrics_glossary_bullets():
         "half awaits a schema-validated per-mode cluster-throughput fire (distinct from the "
         "whole-cluster Saturation ceiling in DETAILS, which measures the aggregate ceiling at "
         "overload, not these SLO-gated per-mode cells).",
-        "- **`pending (trust-gate)`** — the per-cluster SLO-rate fire RAN, but derivation was "
-        "refused by the acquire/controller agreement gate (rel-diff tolerance 0.10) at every "
-        "measured rung: the upstream controller startup-latency histogram double-records Ready "
-        "transitions on stale-informer replays, inflating the controller leg ~1.7–2× on "
-        "warm-pool-fulfilled paths (cold control legs PASS the same gate on both runtimes). "
-        "Publishing honest-empty beats publishing a rate the gate can't trust. "
+        "- **`pending (trust-gate)`** — **RESOLVED, no live cell.** This flavor formerly "
+        "gated warm-pool per-cluster SLO-rate cells: derivation was refused by the "
+        "acquire/controller agreement gate (rel-diff tolerance 0.10) because the upstream "
+        "controller startup-latency histogram double-recorded Ready transitions on "
+        "stale-informer replays, inflating the controller leg ~1.7–2× on warm-pool-fulfilled "
+        "paths. Both upstream legs have since merged and a post-fix fire confirmed the "
+        "agreement gate now passes, so no live cell renders this flavor — the entry is "
+        "retained as a decoding-key archive. "
         "Tracked upstream: " + upstream_prose_refs("trust-gate") + ".",
-        "- **`pending (no-compliant-rung)`** — the per-cluster SLO-rate fire RAN with the trust "
-        "gate PASSING, but every measured rung's p95 (on the literal-TTFE upper-bound basis) "
-        "sits over this cell's SLO bar — an SLO-gated rate can't be published as `0` from a "
-        "finite ladder unless a pre-declared floor condition holds, and the true-TTFE basis "
-        "that could tighten the bound has no production writer upstream yet. "
+        "- **`pending (no-compliant-rung)`** — **RESOLVED, no live cell.** This flavor "
+        "formerly gated cold-start per-cluster SLO-rate cells: the trust gate PASSED, but "
+        "every measured rung's p95 (on the literal-TTFE upper-bound basis) sat over the "
+        "cell's SLO bar, and the tighter true-TTFE basis that could shrink the bound had no "
+        "production writer upstream. That writer has since merged and both formerly-gated "
+        "cold cells graduated independently, so no live cell renders this flavor — the entry "
+        "is retained as a decoding-key archive. "
         "Tracked upstream: " + upstream_prose_refs("no-compliant-rung") + ".",
         "- **`N/A`** — `N/A` by construction: Resume-from-suspend × Kata + microVM can never be "
         "measured — CRIU checkpoint/restore does not transfer to the Kata VM isolation model — "
@@ -1193,17 +1197,15 @@ def _core_metrics_caveat_lines():
         "it with its caveat. Each class graduates to a clean figure when its upstream "
         "fix lands.",
         "",
-        "- **`***U` — Uncorroborated acquire-side rate** (warm-pool-hit SLO-rate cells) "
-        "— the published rate is fulfilled (claim→bound)/s at the highest rung whose "
-        "acquisition p95 cleared the bar, with the independent controller-completion "
-        "cross-check DROPPED. It is SINGLE-SOURCE, so it can read HIGHER than a "
-        "cross-corroborated cell (the two-trust-tier split) — and it is the highest "
-        "OFFERED rung, NOT a saturation ceiling: the ladder was not driven to saturation, "
-        "so the true sustainable rate is at least this and likely higher. Controller "
-        "corroboration is unavailable because the upstream controller startup-latency "
-        "histogram double-records Ready transitions on stale-informer replays, inflating "
-        "the controller leg ~1.7–2× on warm-pool-fulfilled paths (cold control legs PASS "
-        "the same gate). "
+        "- **`***U` — Uncorroborated acquire-side rate** (formerly applied to warm-pool-hit "
+        "SLO-rate cells) — **RESOLVED, no live cell.** This basis formerly applied while "
+        "controller corroboration was unavailable: the upstream controller startup-latency "
+        "histogram double-recorded Ready transitions on stale-informer replays, inflating "
+        "the controller leg ~1.7–2× on warm-pool-fulfilled paths, so a published rate could "
+        "only cite the single-source acquire-side leg. Both upstream legs have since merged "
+        "and a post-fix fire confirmed the histogram-vs-acquire cross-check now PASSES, so "
+        "the warm-pool cells are no longer single-source-capped and no live cell renders "
+        "`***U` — the entry is retained as a decoding-key archive. "
         "Tracked upstream: " + upstream_prose_refs("trust-gate") + ".",
         "- **`***Z` — Cold-start floor zero** (unique-image-cold SLO-rate cells) — a "
         "MEASURED zero, not an absence: the controller cold-start floor (~14.7s p50) "
@@ -1246,9 +1248,9 @@ def _core_metrics_compact_legend_lines():
         "column, not across rows — activation-mode rows differ in sample size by orders of "
         "magnitude (each cell shows its own `(count=N)`). `†` marks a sub-N sample (a single "
         "observation, not a distribution); `⚠️` is a miss flag (sub-100% Execution Success, or "
-        "a per-cluster rate below the sizing target); `pending` (and its `(upstream-blocked)` / "
-        "`(cluster-fire)` / `(trust-gate)` / `(no-compliant-rung)` flavors) means the cell has "
-        "no publishable figure yet.",
+        "a per-cluster rate below the sizing target); `pending` (currently only its "
+        "`(cluster-fire)` flavor is live — see the full decoding key below for retired flavors) "
+        "means the cell has no publishable figure yet.",
         "",
         # hb#518: a plain, untagged `0` and a caveat-tagged floor-zero cell share one glyph but
         # rest on different evidential bases — spell out the distinction right at the table
