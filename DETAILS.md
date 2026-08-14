@@ -18,7 +18,7 @@ _Clear as of the latest measured refresh — no warm-slower-than-cold inversion 
 
 ### Warm-cold separation below gate
 
-> ⚠️ **Warm/cold separation below gate:** the warm-pool separation ratio (fastest cold start ÷ slowest warm-pool hit) is below the 1.8x gate for **Kata + microVM** (warm count=30): 0.661x (slowest warm bind 1.97997s vs fastest cold bind 1.30837s) — at ~1x the warm and cold populations overlap, so the published warm tier is not demonstrably faster than a unique-image cold start. The warm row clears the N=30 floor, so this is not a small-sample artifact. The cause is not asserted here (the pool may be under-delivering ready replicas, blending genuinely-cold claims into the warm tier); a later refresh whose ratio returns to the gate clears this.
+> ⚠️ **Warm/cold separation below gate:** the warm-pool separation ratio (fastest cold start ÷ slowest warm-pool hit) is below the 1.8x gate for **Kata + microVM** (warm count=30): 0.661x (slowest warm bind 1.97997s vs fastest cold bind 1.30837s) — at ~1x the warm and cold populations overlap, so the published warm tier is not demonstrably faster than a unique-image cold start. The warm row clears the N=30 floor, so this is not a small-sample artifact. The cause is a supply-constrained pool draining under load, not cold-claim contamination (hb#450's provenance gate already excludes blends from the counted warm hits): **Kata + microVM** min readyReplicas=0 during the burst — remaining warm-tier binds queue behind the drain rather than being served pre-warmed. A later refresh whose ratio returns to the gate clears this.
 
 ### Regime note
 

@@ -5972,11 +5972,13 @@ def test_warm_cold_inversion_caveat_bind_absent_falls_back_to_ttfe():
 # ---------------------------------------------------------------------------
 
 def _separation_scenarios(ratio, warm_n=30, warm_max=None, cold_min=None,
-                          outcome="PASS"):
+                          outcome="PASS", min_ready=None):
     # gVisor scenario list carrying the three warmpool_gate_* keys in the RAW
     # warmpool_cold_start sla_metrics. warm_max/cold_min are optional so the
     # bounds-omitted-gracefully path can be exercised. ratio=None omits the key
-    # entirely (the absent-metric no-false-fire case).
+    # entirely (the absent-metric no-false-fire case). min_ready is optional so
+    # the hb#588 drain-mechanism disclosure path can be exercised independently
+    # of the bounds clause.
     warm_m = {"ttfe_p50_ms": 400, "ttfe_p95_ms": 8500}
     if ratio is not None:
         warm_m["warmpool_gate_separation_ratio"] = ratio
@@ -5984,6 +5986,8 @@ def _separation_scenarios(ratio, warm_n=30, warm_max=None, cold_min=None,
         warm_m["warmpool_gate_warm_max_ms"] = warm_max
     if cold_min is not None:
         warm_m["warmpool_gate_cold_min_ms"] = cold_min
+    if min_ready is not None:
+        warm_m["warmpool_gate_min_ready_during_burst"] = min_ready
     return [
         {
             "name": "warmpool_cold_start", "outcome": outcome, "n": warm_n,
@@ -6008,6 +6012,42 @@ def test_warmpool_separation_caveat_fires_when_ratio_below_gate():
     assert "slowest warm bind 8.4533s vs fastest cold bind 8.5919s" in out
     # cause-agnostic: no mechanism is asserted as fact
     assert "cause is not asserted" in out
+
+
+def test_warmpool_separation_caveat_names_drain_mechanism_when_min_ready_present():
+    # hb#588: when warmpool_gate_min_ready_during_burst is emitted (hb#379), name the
+    # confirmed drain mechanism and explicitly rule out cold-claim contamination — do
+    # NOT fall back to the pre-hb#450 "blending" guess.
+    out = render._warmpool_separation_caveat(
+        _matrix_results(
+            _separation_scenarios(0.6608058, warm_n=30,
+                                  warm_max=1979.968, cold_min=1308.374,
+                                  min_ready=0.0),
+            provenance={"runtime": "gvisor"},
+        )
+    )
+    assert "Warm/cold separation below gate:" in out
+    assert "min readyReplicas=0" in out
+    assert "supply-constrained pool draining under load" in out
+    assert "hb#450's provenance gate already excludes blends" in out
+    assert "blending genuinely-cold claims" not in out
+    assert "cause is not asserted" not in out
+
+
+def test_warmpool_separation_caveat_falls_back_when_min_ready_absent():
+    # older cells that predate the hb#379 min_ready emit still render, but the
+    # cause clause must no longer name the refuted "blending genuinely-cold
+    # claims" hypothesis — hb#450's provenance gate rules it out unconditionally.
+    out = render._warmpool_separation_caveat(
+        _matrix_results(
+            _separation_scenarios(1.0164, warm_n=200,
+                                  warm_max=8453.296826, cold_min=8591.903258),
+            provenance={"runtime": "gvisor"},
+        )
+    )
+    assert "cause is not asserted" in out
+    assert "blending genuinely-cold claims" not in out
+    assert "hb#450's provenance gate already excludes blends" in out
 
 
 def test_warmpool_separation_caveat_clean_when_ratio_at_or_above_gate():

@@ -2584,7 +2584,8 @@ def _warmpool_separation_caveat(results, kata_results=None):
             continue
         warm_max = _raw_sla_p95(raw, "warmpool_cold_start", "warmpool_gate_warm_max_ms")
         cold_min = _raw_sla_p95(raw, "warmpool_cold_start", "warmpool_gate_cold_min_ms")
-        failing.append((RUNTIME_LABELS[rt], warm_n, ratio, warm_max, cold_min))
+        min_ready = _raw_sla_p95(raw, "warmpool_cold_start", "warmpool_gate_min_ready_during_burst")
+        failing.append((RUNTIME_LABELS[rt], warm_n, ratio, warm_max, cold_min, min_ready))
     if not failing:
         return ""
 
@@ -2605,17 +2606,43 @@ def _warmpool_separation_caveat(results, kata_results=None):
 
     who = "; ".join(
         f"**{lbl}** (warm count={wn}): {ratio:.3g}x{_bounds(wmax, cmin)}"
-        for lbl, wn, ratio, wmax, cmin in failing
+        for lbl, wn, ratio, wmax, cmin, _min_ready in failing
     )
+    # hb#588: warmpool_gate_min_ready_during_burst (hb#379) directly evidences the drain
+    # mechanism when present -- readyReplicas dropping below the configured pool target
+    # during the claim burst means remaining warm-tier binds queue behind an
+    # under-supplied pool. This supersedes the pre-hb#450 "blending genuinely-cold claims
+    # into the warm tier" guess: hb#450's provenance gate already excludes blends from the
+    # warm_n counted here, so contamination is not an available explanation for any row
+    # this caveat fires on. Older cells that predate the min_ready emit fall back to a
+    # cause description that no longer names the refuted blend hypothesis.
+    drained = [
+        (lbl, min_ready) for lbl, _wn, _ratio, _wmax, _cmin, min_ready in failing
+        if isinstance(min_ready, (int, float))
+    ]
+    if drained:
+        evidence = "; ".join(f"**{lbl}** min readyReplicas={mr:g} during the burst" for lbl, mr in drained)
+        cause = (
+            "The cause is a supply-constrained pool draining under load, not cold-claim "
+            f"contamination (hb#450's provenance gate already excludes blends from the counted "
+            f"warm hits): {evidence} — remaining warm-tier binds queue behind the drain rather "
+            "than being served pre-warmed."
+        )
+    else:
+        cause = (
+            "The cause is not asserted here (the pool may be under-delivering ready replicas "
+            "relative to its configured target during the burst; this is not cold-claim "
+            "contamination, since hb#450's provenance gate already excludes blends from the "
+            "counted warm hits)."
+        )
     return (
         "> ⚠️ **Warm/cold separation below gate:** the warm-pool separation ratio "
         "(fastest cold start ÷ slowest warm-pool hit) is below the "
         f"{WARMPOOL_SEPARATION_MIN_RATIO:g}x gate for {who} — at ~1x the warm and cold "
         "populations overlap, so the published warm tier is not demonstrably faster than a "
         f"unique-image cold start. The warm row clears the N={TTFE_COMPARABILITY_MIN_N} floor, so "
-        "this is not a small-sample artifact. The cause is not asserted here (the pool may be "
-        "under-delivering ready replicas, blending genuinely-cold claims into the warm tier); a "
-        "later refresh whose ratio returns to the gate clears this."
+        f"this is not a small-sample artifact. {cause} A later refresh whose ratio returns to "
+        "the gate clears this."
     )
 
 
