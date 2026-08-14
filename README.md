@@ -43,8 +43,8 @@ blocker — diagnosis plus file-ready patches and comments — is hand-maintaine
 | gVisor | Warm-pool hit (Base image) | 24.067 /node · [pending (cluster-fire)](WORK_IN_PROGRESS.md#cluster-fire) | 11.231 /node · [pending (cluster-fire)](WORK_IN_PROGRESS.md#cluster-fire) | 1.0603s (count=30) | 1.3574s (count=30) | 100% |
 | gVisor | Unique-image cold (RL reality) | [pending](WORK_IN_PROGRESS.md#not-yet-measured) | 0 /node · 0 /cluster | 3.9747s (count=30) | 4.1537s (count=30) | 100% |
 | gVisor | Resume-from-suspend | [pending](WORK_IN_PROGRESS.md#not-yet-measured) | 0 /node · 0 /cluster | 4.2808s (count=30) | 4.391s (count=30) | 100% |
-| Kata + microVM | Warm-pool hit (Base image) | 9.132 /node · 0.835 /cluster ⚠️ | 0 /node · [pending (cluster-fire)](WORK_IN_PROGRESS.md#cluster-fire) | 1.7883s (count=30) | 2.445s (count=30) | 100% |
-| Kata + microVM | Unique-image cold (RL reality) | unk.***K | 0 /node · 0 /cluster | 3.2562s (count=30) | 3.4949s (count=30) | 100% |
+| Kata + microVM | Warm-pool hit (Base image) | 14.994 /node · 0.75 /cluster ⚠️ | 1 /node · [pending (cluster-fire)](WORK_IN_PROGRESS.md#cluster-fire) | 1.6668s (count=30) | 2.2426s (count=30) | 100% |
+| Kata + microVM | Unique-image cold (RL reality) | unk.***K | 0 /node · 0 /cluster | 3.1176s (count=30) | 3.3883s (count=30) | 100% |
 | Kata + microVM | Resume-from-suspend | [N/A](WORK_IN_PROGRESS.md#na-by-construction) | [N/A](WORK_IN_PROGRESS.md#na-by-construction) | [N/A](WORK_IN_PROGRESS.md#na-by-construction) | [N/A](WORK_IN_PROGRESS.md#na-by-construction) | [N/A](WORK_IN_PROGRESS.md#na-by-construction) |
 
 ### Max Density (sandboxes per vCPU)
@@ -69,14 +69,14 @@ Density is per-**runtime** — constant across a runtime's activation-mode rows 
 
 Full cell-decoding key — TTFE basis, honest vs. measured zeros, the dual per-node · per-cluster throughput pair, the certification-floor `≥` figures, every `pending` flavor, and the published-with-caveat tag classes — is in [DETAILS.md](DETAILS.md#how-to-read-the-core-metrics-cells).
 
-_Kata + microVM rows are measured in a separate run on the kata node pool: cluster_substrate=gke-kata · node_count=1 · generated-at=2026-07-24T21:02:55Z._
+_Kata + microVM rows are measured in a separate run on the kata node pool: cluster_substrate=gke-kata · node_count=1 · generated-at=2026-08-14T08:02:07Z._
 
 _build: cluster_substrate=gke-sandbox · run_id=bf9e6a031fed4488a43eef4967de3f4b · node_count=1 · source=fork@4c71c2cf9fa7c1039357d52701f80faa14971e81 (+1 fixes over upstream@0be472b745dabc8015c38bf00ce21c9a565537c0)_
 _generated-at: 2026-08-14T04:39:44Z_
 
-_**North Star** — warm-pool-hit TTFE p95 < 1s (the spec doc bar): gVisor 1.3574s (count=30) ❌ not met (0.3574s above the bar); Kata + microVM 2.445s (count=30) ❌ not met (1.445s above the bar). An honest ❌ prints the measured gap to the bar (tagged `within sampling noise` when the miss sits inside the sample spread — it stays a ❌, the tag never flips a miss to a pass); `pending` = unmeasured (never a guess); † marks a p95 over fewer than N=30 samples._
+_**North Star** — warm-pool-hit TTFE p95 < 1s (the spec doc bar): gVisor 1.3574s (count=30) ❌ not met (0.3574s above the bar); Kata + microVM 2.2426s (count=30) ❌ not met (1.2426s above the bar). An honest ❌ prints the measured gap to the bar (tagged `within sampling noise` when the miss sits inside the sample spread — it stays a ❌, the tag never flips a miss to a pass); `pending` = unmeasured (never a guess); † marks a p95 over fewer than N=30 samples._
 
-_**Stretch bar** — warm-pool-hit TTFE p95 < 0.5s (an aspiration above the North Star, not the North Star itself; the step-up curve grades sustained creation-rate against it — see [DETAILS.md](DETAILS.md)): gVisor 1.3574s (count=30) ❌ not met (0.8574s above the bar); Kata + microVM 2.445s (count=30) ❌ not met (1.945s above the bar)._
+_**Stretch bar** — warm-pool-hit TTFE p95 < 0.5s (an aspiration above the North Star, not the North Star itself; the step-up curve grades sustained creation-rate against it — see [DETAILS.md](DETAILS.md)): gVisor 1.3574s (count=30) ❌ not met (0.8574s above the bar); Kata + microVM 2.2426s (count=30) ❌ not met (1.7426s above the bar)._
 
 > ⚠️ **Machine class unknown:** this sandbox-family run did not stamp `machine_type`, so a rig change relative to the previously published run cannot be ruled out. Treat any delta as possibly machine-class-confounded until a matched-rig run is published.
 
