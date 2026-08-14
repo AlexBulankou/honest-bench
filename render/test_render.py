@@ -4814,6 +4814,44 @@ def test_recipe_public_safe_generic_tokens_only():
         assert relocated not in out
 
 
+def test_measurement_path_diagram_renders_h2_and_is_static():
+    # epic #6669 WS2: render_measurement_path_diagram is product-agnostic static prose (no
+    # results arg, same posture as render_recipe) and always renders.
+    out = render.render_measurement_path_diagram()
+    assert out.startswith("## How is TTFE measured?")
+    assert render.render_measurement_path_diagram() == out  # deterministic / no hidden state
+
+
+def test_measurement_path_diagram_is_a_real_mermaid_flowchart():
+    # WS2 DoD: a machine-rendered VISUAL, not more prose. Assert the fenced mermaid block exists
+    # and every pipeline stage the epic body named (claim -> bind -> exec-probe -> webhook TTFE
+    # stamp -> closed-schema render) appears as a node.
+    out = render.render_measurement_path_diagram()
+    assert "```mermaid" in out
+    assert "flowchart" in out
+    assert out.count("```") == 2  # exactly one opened+closed fence, no dangling block
+    for node in ("Claim", "Bind", "Exec-probe", "Webhook TTFE stamp", "Closed-schema render"):
+        assert node in out
+
+
+def test_measurement_path_diagram_cross_links_ttfe_corroboration():
+    # The diagram explains WHY TTFE is the webhook stamp, not pod-Ready — cross-link to the
+    # existing corroboration table (DETAILS.md) rather than re-deriving the honesty argument here.
+    out = render.render_measurement_path_diagram()
+    assert "DETAILS.md" in out
+    assert "pod-Ready" in out
+
+
+def test_measurement_path_diagram_public_safe_generic_tokens_only():
+    # PII fence: deterministic, product-agnostic STATIC prose (no results/provenance arg — see
+    # test_measurement_path_diagram_renders_h2_and_is_static), so its only internal-name leak
+    # vector is a hardcoded source literal; guarded tree-wide by check-public-safety.sh. Assert
+    # no accidental internal-only token slipped into the flowchart node labels.
+    out = render.render_measurement_path_diagram()
+    for internal in ("gke-", "alexbu-", "sandbox-scenarios-cluster", "substrate-demo-cluster"):
+        assert internal not in out
+
+
 def test_recipe_in_full_readme_after_data_sections():
     # Note-1 placement: the recipe renders ONCE, after the data sections (it forward-refs "above").
     from generate import build_readme

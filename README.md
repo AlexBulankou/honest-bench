@@ -195,6 +195,23 @@ _Measured 2026-07-07 — storage-config axis (point-in-time); each class carried
 
 † Payload p50 is not measured the same way across classes, so the column is not a like-for-like byte comparison. Ephemeral and persistent-disk write a fixed pattern to a mount and count the **allocated writable-fs blocks** (`du`). The snapshot class instead counts the **checkpoint-artifact object bytes**: a snapshot captures process memory, not the writable-fs layer, so its identical W lives in an incompressible in-memory buffer (a zero-filled buffer would be dropped by the checkpointer's zero-page optimization and never appear in the artifact), and the artifact bytes include checkpoint overhead beyond W. Same controlled W per class; different bytes counted.
 
+## How is TTFE measured?
+
+```mermaid
+flowchart LR
+    A["Claim<br/>(request a sandbox)"] --> B["Bind<br/>(pool assigns + provisions)"]
+    B --> C["Exec-probe<br/>(websocket + first-instruction round-trip)"]
+    C --> D["Webhook TTFE stamp<br/>(executor reports the true first-instruction timestamp)"]
+    D --> E["Closed-schema render<br/>(results/latest.json &rarr; this page)"]
+```
+
+TTFE (Time To First Execution) is the **webhook-stamped** timestamp in step D — not pod-Ready,
+which only proves the sandbox exists, not that it ran your code (see **Burst Create — TTFE
+Corroboration** in [DETAILS.md](DETAILS.md) for the two claims side by side). Step E is the same
+closed-schema render every table on this page goes through: a result only reaches `results/latest.json`
+by clearing schema validation, so nothing between the probe and the page can silently drop or
+reshape a number.
+
 ## Reproduce it
 
 Every number above comes from a *vanilla* GKE cluster you can provision yourself — no private
