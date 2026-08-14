@@ -260,6 +260,17 @@ PROVENANCE_FIELDS = (
     # (float), not string, so it needs its own _coerce_provenance branch below
     # rather than the generic string passthrough.
     "prior_warmpool_ttfe_p95_ms",
+    # Fork-provenance stamp (#6682): mirrors render/schema.py's PROVENANCE_FIELDS
+    # allow-list, which already validates these three (fork_sha/fork_base_upstream_sha
+    # as _GITSHA-shaped strings, fork_fix_count as a bounded int) but was never joined
+    # by a matching entry here — so build_provenance()'s correctly-populated fork_*
+    # keys were silently dropped by _coerce_provenance() before the render-side
+    # validator ever saw them. fork_sha/fork_base_upstream_sha are generic strings
+    # (fall through to the passthrough branch below); fork_fix_count is an int and
+    # needs its own branch (see below), mirroring node_count's isinstance guard.
+    "fork_sha",
+    "fork_base_upstream_sha",
+    "fork_fix_count",
 )
 SCENARIO_FIELDS = (
     "name",
@@ -1521,6 +1532,12 @@ def _coerce_provenance(raw: dict) -> dict:
         if v is None:
             continue
         if f == "node_count":
+            if isinstance(v, bool) or not isinstance(v, int):
+                continue
+            out[f] = v
+        elif f == "fork_fix_count":
+            # Numeric (int), not string — mirrors node_count's isinstance guard;
+            # the generic string passthrough below never fires for this field.
             if isinstance(v, bool) or not isinstance(v, int):
                 continue
             out[f] = v
