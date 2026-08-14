@@ -1430,55 +1430,34 @@ def _core_metrics_glossary_bullets():
         "succeeded/total fraction); on a per-cluster throughput figure it marks a rate below the "
         "cluster sizing target.",
         "- **`pending`** — awaits its TTFE-instrumented run (a genuinely not-yet-run cell).",
-        "- **`pending (upstream-blocked)`** — **RESOLVED, no live cell.** This flavor formerly "
-        "gated the gVisor resume cell: the run landed, but an upstream controller gap (the resume "
-        "path's Suspended condition never cleared on resume) held the SLO-compliant figure. That "
-        "fix has since merged upstream and a fresh resume probe landed, so the gVisor resume row "
-        "now carries measured numbers and no live cell renders this flavor — the entry is retained "
-        "as a decoding-key archive. "
-        "Tracked upstream: " + upstream_prose_refs("upstream-blocked") + ".",
         "- **`pending (cluster-fire)`** — the per-node figure is measured, but the per-cluster "
         "half awaits a schema-validated per-mode cluster-throughput fire (distinct from the "
         "whole-cluster Saturation ceiling in DETAILS, which measures the aggregate ceiling at "
         "overload, not these SLO-gated per-mode cells).",
-        "- **`pending (trust-gate)`** — **RESOLVED, no live cell.** This flavor formerly "
-        "gated warm-pool per-cluster SLO-rate cells: derivation was refused by the "
-        "acquire/controller agreement gate (rel-diff tolerance 0.10) because the upstream "
-        "controller startup-latency histogram double-recorded Ready transitions on "
-        "stale-informer replays, inflating the controller leg ~1.7–2× on warm-pool-fulfilled "
-        "paths. Both upstream legs have since merged and a post-fix fire confirmed the "
-        "agreement gate now passes, so no live cell renders this flavor — the entry is "
-        "retained as a decoding-key archive. "
-        "Tracked upstream: " + upstream_prose_refs("trust-gate") + ".",
-        "- **`pending (no-compliant-rung)`** — **RESOLVED, no live cell.** This flavor "
-        "formerly gated cold-start per-cluster SLO-rate cells: the trust gate PASSED, but "
-        "every measured rung's p95 (on the literal-TTFE upper-bound basis) sat over the "
-        "cell's SLO bar, and the tighter true-TTFE basis that could shrink the bound had no "
-        "production writer upstream. That writer has since merged and both formerly-gated "
-        "cold cells graduated independently, so no live cell renders this flavor — the entry "
-        "is retained as a decoding-key archive. "
-        "Tracked upstream: " + upstream_prose_refs("no-compliant-rung") + ".",
         "- **`N/A`** — `N/A` by construction: Resume-from-suspend × Kata + microVM can never be "
         "measured — CRIU checkpoint/restore does not transfer to the Kata VM isolation model — "
         "distinct from `pending`, which awaits a run.",
         "- **Why a `pending` is not just printed as `0`** — a blunter display rule would print "
-        "`0` for any cell that cannot show compliance; each pending flavor above documents why "
-        "that would over-claim here: an upper-bound latency basis cannot prove a true miss "
-        "(`no-compliant-rung`), a failed agreement gate cannot certify a rate in either "
-        "direction (`trust-gate`), and a floor rung whose samples are majority-unevaluable "
-        "cannot establish the negative claim (the floor-zero predicate's evaluability cap). "
-        "Each such cell graduates — to a measured rate or a floor-zero `0` — the moment its "
-        "condition clears.",
+        "`0` for any cell that cannot show compliance: an upper-bound latency basis cannot prove "
+        "a true miss, a failed agreement gate cannot certify a rate in either direction, and a "
+        "floor rung whose samples are majority-unevaluable cannot establish the negative claim "
+        "(the floor-zero predicate's evaluability cap). Each such cell graduates — to a measured "
+        "rate or a floor-zero `0` — the moment its condition clears. (Two now-closed `pending` "
+        "flavors that used to illustrate this — `trust-gate` and `no-compliant-rung` — are "
+        "documented in [Resolved (archive)](#resolved-archive) below.)",
     ]
 
 
 def _core_metrics_caveat_lines():
-    """The consolidated `***` caveat block (header + intro + the four class bullets), returned
-    INCLUDING its trailing blank line. Emitted only when the matrix actually earned a `***`
-    caveat — see the matrix_has_starstar snapshot in render_matrix / the recompute in
-    render_core_metrics_legend."""
+    """The consolidated `***` caveat block (header + intro + the two LIVE class bullets),
+    returned INCLUDING its trailing blank line. Emitted only when the matrix actually earned a
+    `***` caveat — see the matrix_has_starstar snapshot in render_matrix / the recompute in
+    render_core_metrics_legend. The archive of graduated flavors (former `pending (...)` and
+    `***` classes) lives separately in _resolved_archive_lines(), which is NOT gated on
+    matrix_has_starstar — those flavors are historical regardless of what the current matrix
+    shows."""
     return [
-        "**Published-with-caveat cells (`***U` / `***Z` / `***K` / `***R`)**",
+        "**Published-with-caveat cells (`***Z` / `***K`)**",
         "",
         "A cell tagged `***<letter>` prints the best figure we measured, not an "
         "honest-empty `pending`: the measurement exists but carries a bound or a "
@@ -1488,16 +1467,6 @@ def _core_metrics_caveat_lines():
         "it with its caveat. Each class graduates to a clean figure when its upstream "
         "fix lands.",
         "",
-        "- **`***U` — Uncorroborated acquire-side rate** (formerly applied to warm-pool-hit "
-        "SLO-rate cells) — **RESOLVED, no live cell.** This basis formerly applied while "
-        "controller corroboration was unavailable: the upstream controller startup-latency "
-        "histogram double-recorded Ready transitions on stale-informer replays, inflating "
-        "the controller leg ~1.7–2× on warm-pool-fulfilled paths, so a published rate could "
-        "only cite the single-source acquire-side leg. Both upstream legs have since merged "
-        "and a post-fix fire confirmed the histogram-vs-acquire cross-check now PASSES, so "
-        "the warm-pool cells are no longer single-source-capped and no live cell renders "
-        "`***U` — the entry is retained as a decoding-key archive. "
-        "Tracked upstream: " + upstream_prose_refs("trust-gate") + ".",
         "- **`***Z` — Cold-start floor zero** (unique-image-cold SLO-rate cells) — a "
         "MEASURED zero, not an absence: the controller cold-start floor (~14.7s p50) "
         "exceeds BOTH throughput bars at every offered rate (rate-independent), so no "
@@ -1515,13 +1484,66 @@ def _core_metrics_caveat_lines():
         "Kata exec websocket setup overhead; the 5s bar sits INSIDE the bracket — no "
         "supportable claim either way. "
         "Tracked upstream: " + upstream_prose_refs("no-compliant-rung") + ".",
+        "",
+        "Two more caveat classes (`***U`, `***R`) formerly applied here and have since "
+        "graduated — see [Resolved (archive)](#resolved-archive) below; a fresh read of "
+        "this section never needs them.",
+        "",
+    ]
+
+
+def _resolved_archive_lines():
+    """The `## Resolved (archive)` section: former `pending (...)` and `***` classes that no
+    longer back any live Core Metrics cell. Always emitted when include_legend=True, regardless
+    of whether the current matrix carries a `***` cell — the pending-flavor archive entries
+    (upstream-blocked, trust-gate, no-compliant-rung) apply independently of `***` status, and
+    the glossary's forward reference to this section is unconditional. Returned INCLUDING its
+    trailing blank line."""
+    return [
+        "## Resolved (archive)",
+        "",
+        "The classes below no longer back any live Core Metrics cell — each was resolved "
+        "by a merged upstream fix and the affected cells graduated to measured numbers. "
+        "Kept here (not deleted) so an older discussion or result file that still cites "
+        "one of these names resolves to an explanation instead of a dangling reference — "
+        "mirrors the equivalent archive section in WORK_IN_PROGRESS.md.",
+        "",
+        "- **`pending (upstream-blocked)`** — formerly gated the gVisor resume cell: the "
+        "run landed, but an upstream controller gap (the resume path's Suspended condition "
+        "never cleared on resume) held the SLO-compliant figure. That fix has since merged "
+        "upstream and a fresh resume probe landed, so the gVisor resume row now carries "
+        "measured numbers. "
+        "Tracked upstream: " + upstream_prose_refs("upstream-blocked") + ".",
+        "- **`pending (trust-gate)`** — formerly gated warm-pool per-cluster SLO-rate "
+        "cells: derivation was refused by the acquire/controller agreement gate (rel-diff "
+        "tolerance 0.10) because the upstream controller startup-latency histogram "
+        "double-recorded Ready transitions on stale-informer replays, inflating the "
+        "controller leg ~1.7–2× on warm-pool-fulfilled paths. Both upstream legs have "
+        "since merged and a post-fix fire confirmed the agreement gate now passes. "
+        "Tracked upstream: " + upstream_prose_refs("trust-gate") + ".",
+        "- **`pending (no-compliant-rung)`** — formerly gated cold-start per-cluster "
+        "SLO-rate cells: the trust gate PASSED, but every measured rung's p95 (on the "
+        "literal-TTFE upper-bound basis) sat over the cell's SLO bar, and the tighter "
+        "true-TTFE basis that could shrink the bound had no production writer upstream. "
+        "That writer has since merged and both formerly-gated cold cells graduated "
+        "independently. "
+        "Tracked upstream: " + upstream_prose_refs("no-compliant-rung") + ".",
+        "- **`***U` — Uncorroborated acquire-side rate** (formerly applied to warm-pool-hit "
+        "SLO-rate cells) — applied while controller corroboration was unavailable: the "
+        "upstream controller startup-latency histogram double-recorded Ready transitions "
+        "on stale-informer replays, inflating the controller leg ~1.7–2× on "
+        "warm-pool-fulfilled paths, so a published rate could only cite the single-source "
+        "acquire-side leg. Both upstream legs have since merged and a post-fix fire "
+        "confirmed the histogram-vs-acquire cross-check now PASSES, so the warm-pool "
+        "cells are no longer single-source-capped. "
+        "Tracked upstream: " + upstream_prose_refs("trust-gate") + ".",
         "- **`***R` — Resume probe ceiling** (formerly the two TTFE cells of the "
-        "Resume-from-suspend × gVisor row) — **RESOLVED, no live cell.** This basis "
-        "formerly applied while the resume never completed (the upstream Suspended "
-        "condition never cleared on resume), so the probe recorded only the wall-clock "
-        "ceiling it spent waiting and that ceiling printed as a floor (`≥N.Ns`). That "
-        "upstream fix has since merged and a fresh resume probe landed, so the resume row "
-        "graduated to a measured completion distribution — no cell renders `***R`. "
+        "Resume-from-suspend × gVisor row) — applied while the resume never completed "
+        "(the upstream Suspended condition never cleared on resume), so the probe "
+        "recorded only the wall-clock ceiling it spent waiting and that ceiling printed "
+        "as a floor (`≥N.Ns`). That upstream fix has since merged and a fresh resume "
+        "probe landed, so the resume row graduated to a measured completion "
+        "distribution. "
         "Tracked upstream: " + upstream_prose_refs("upstream-blocked") + " (see "
         "[WORK_IN_PROGRESS.md#upstream-blocked](WORK_IN_PROGRESS.md#upstream-blocked)).",
         "",
@@ -1579,6 +1601,7 @@ def render_core_metrics_legend(results, kata_results=None):
     out.append("")
     if include_caveats:
         out.extend(_core_metrics_caveat_lines())
+    out.extend(_resolved_archive_lines())
     return "\n".join(out).rstrip()
 
 
@@ -2024,9 +2047,12 @@ def render_matrix(results, kata_results=None, include_legend=True):
     # `pending` — a caveated number always beats a blank cell. Each caveat class is named ONCE
     # here with its measured basis + the upstream fix that graduates it to a clean number, and
     # its upstream link lives ONLY here (the cells carry the bare `***`, no inline ref). Gated
-    # on the matrix-only snapshot so the block never renders when no cell earned a caveat.
+    # on the matrix-only snapshot so the LIVE block never renders when no cell earned a caveat.
+    # The archive of graduated flavors is unconditional — see _resolved_archive_lines().
     if include_legend and matrix_has_starstar:
         lines.extend(_core_metrics_caveat_lines())
+    if include_legend:
+        lines.extend(_resolved_archive_lines())
 
     # The Kata rows fill from a SEPARATE run (the sandbox-kata product) on the kata node pool —
     # a different cluster substrate + machine shape than the build banner below — so disclose
