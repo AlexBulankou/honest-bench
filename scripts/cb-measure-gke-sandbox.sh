@@ -224,12 +224,16 @@ if [ "${HB_FORK_BUILD:-}" = "1" ]; then
   export BENCH_FORK_BASE_UPSTREAM_SHA="$HB_FORK_BASE_UPSTREAM_SHA"
   export BENCH_FORK_FIX_COUNT="$HB_FORK_FIX_COUNT"
 
-  # ko is required for BUILD_MODE=source and is not in the CB builder base image;
-  # the installer dies if it's absent, so install it here before calling.
+  # ko is required for BUILD_MODE=source and is not in the CB builder base image
+  # (gcr.io/google.com/cloudsdktool/cloud-sdk ships neither ko NOR a go toolchain).
+  # Install the prebuilt release binary — `go install` dies here with exit 127
+  # (`go: command not found`), which is exactly what red-ed the WS4 fork-build fire.
   if ! command -v ko >/dev/null 2>&1; then
     echo "==> [fork-build] installing ko (BUILD_MODE=source requires it)"
-    go install github.com/google/ko@latest
-    export PATH="$PATH:$(go env GOPATH)/bin"
+    KO_VERSION=0.19.1
+    curl -sSfL "https://github.com/ko-build/ko/releases/download/v${KO_VERSION}/ko_${KO_VERSION}_Linux_x86_64.tar.gz" \
+      | tar -xz -C /usr/local/bin ko
+    command -v ko >/dev/null 2>&1 || { echo "ERROR: [fork-build] ko install failed" >&2; exit 1; }
   fi
   echo "==> [fork-build] repo=$UPSTREAM_REPO ref=$UPSTREAM_REF ko_repo=$KO_DOCKER_REPO fork_sha=$HB_FORK_SHA base=$HB_FORK_BASE_UPSTREAM_SHA fixes=$HB_FORK_FIX_COUNT"
 else
