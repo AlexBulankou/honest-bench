@@ -1,4 +1,4 @@
-"""DETAILS.md#<anchor> link-integrity guard (a4s1 PR #570 follow-up, epic #6669 WS1).
+"""DETAILS.md#<anchor> link-integrity guard (PR #570 follow-up, epic #6669 WS1).
 
 DETAILS.md anchors are implicit GitHub heading-slugs (`## Foo Bar` -> `#foo-bar`), never
 explicit `<a id>` tags (unlike WORK_IN_PROGRESS.md, guarded separately in
