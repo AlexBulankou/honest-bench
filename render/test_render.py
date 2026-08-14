@@ -5609,9 +5609,120 @@ def test_provenance_node_image_fields_survive_clean_provenance():
     assert cleaned["node_image"] == "v1.31.1-gke.1846000"
     assert cleaned["prior_node_image"] == "v1.31.2-gke.1000000"
     assert cleaned["runsc_version"] == "release-20260701.0"
+    assert "node_image_bad" not in cleaned
     # a value failing the regex predicate is dropped, not surfaced
     assert render._clean_provenance({"node_image": "not-a-kubelet-version"}) == {}
-    assert "node_image_bad" not in cleaned
+
+
+def test_north_star_delta_flag_machine_type_clause_on_flagged_delta():
+    # A flagged delta that ALSO spans a machine_type change carries the confound clause
+    # FIRST among the confounds (machine-class is the primary confound), after the
+    # verdict-flip clause. An ephemeral-CI rig swap is the whole reason to distrust the swing.
+    flag = render._north_star_delta_flag(
+        "Kata + microVM", 3079, 963,
+        current_machine_type="n2-standard-16",
+        prior_machine_type="e2-standard-16",
+    )
+    assert flag == (
+        "**Kata + microVM** regressed by 2.116s (0.963s → 3.079s, 3.2x) "
+        "· verdict flip ✅→❌ · machine_type e2-standard-16→n2-standard-16"
+    )
+
+
+def test_north_star_delta_flag_no_machine_type_clause_when_unchanged_or_absent():
+    # Same machine_type on both sides -> no clause; missing either side -> no clause;
+    # an empty/whitespace string must never render a "→" with a blank endpoint.
+    base = "**gVisor** regressed by 0.9s (0.9s → 1.8s, 2.0x) · verdict flip ✅→❌"
+    same = "n2-standard-16"
+    assert render._north_star_delta_flag(
+        "gVisor", 1800, 900, current_machine_type=same, prior_machine_type=same
+    ) == base
+    assert render._north_star_delta_flag(
+        "gVisor", 1800, 900, current_machine_type=same, prior_machine_type=None
+    ) == base
+    assert render._north_star_delta_flag(
+        "gVisor", 1800, 900, current_machine_type=None, prior_machine_type=same
+    ) == base
+    assert render._north_star_delta_flag(
+        "gVisor", 1800, 900, current_machine_type="   ", prior_machine_type=same
+    ) == base
+
+
+def test_north_star_delta_flag_machine_type_clause_absent_when_no_delta():
+    # machine_type differs but the ttfe is within threshold and no flip -> no flag at all
+    # (the clause rides ON a flagged delta; a bare rig swap is not a trust downgrade).
+    assert render._north_star_delta_flag(
+        "gVisor", 900, 950,
+        current_machine_type="n2-standard-16",
+        prior_machine_type="e2-standard-16",
+    ) is None
+
+
+def test_north_star_delta_flag_all_three_confound_clauses_compose():
+    # All three confounds present on one flagged delta -> all clauses appear in definition
+    # order: machine_type first, then node_count, then node_image, each after verdict-flip.
+    flag = render._north_star_delta_flag(
+        "Kata + microVM", 3079, 963,
+        current_machine_type="n2-standard-16", prior_machine_type="e2-standard-16",
+        current_node_count=1, prior_node_count=2,
+        current_node_image="v1.31.2-gke.1000000",
+        prior_node_image="v1.31.1-gke.1846000",
+    )
+    assert flag == (
+        "**Kata + microVM** regressed by 2.116s (0.963s → 3.079s, 3.2x) "
+        "· verdict flip ✅→❌ · machine_type e2-standard-16→n2-standard-16 "
+        "· node_count 2→1 · node_image v1.31.1-gke.1846000→v1.31.2-gke.1000000"
+    )
+
+
+def test_north_star_delta_caveat_surfaces_machine_type_confound_end_to_end():
+    # End-to-end: a kata flip that also swapped the machine class renders the machine_type
+    # clause inline on the flagged delta, and the trailing cause list names it. Also proves
+    # machine_type/prior_machine_type survive _clean_provenance (schema round-trip).
+    kata_scen = [{
+        "name": "warmpool_cold_start", "outcome": "FAIL", "n": 30,
+        "sla_metrics": {"ttfe_p95_ms": 3079},
+    }]
+    out = render.render_north_star_caption(
+        _matrix_results(_full_gvisor_scenarios(), provenance={"runtime": "gvisor"}),
+        kata_results=_kata_results(
+            scenarios=kata_scen,
+            provenance={
+                "runtime": "kata-microvm",
+                "prior_warmpool_ttfe_p95_ms": 963.0,
+                "machine_type": "n2-standard-16",
+                "prior_machine_type": "e2-standard-16",
+            },
+        ),
+    )
+    assert "**Kata + microVM** regressed" in out
+    assert "· machine_type e2-standard-16→n2-standard-16" in out
+    assert "a machine-class change" in out
+
+
+def test_north_star_delta_caveat_no_machine_type_clause_without_prior_machine_type():
+    # prior_machine_type absent (first stamped run / unchanged rig) -> flagged delta
+    # renders WITHOUT the machine_type clause, even though machine_type itself is present.
+    kata_scen = [{
+        "name": "warmpool_cold_start", "outcome": "FAIL", "n": 30,
+        "sla_metrics": {"ttfe_p95_ms": 3079},
+    }]
+    out = render.render_north_star_caption(
+        _matrix_results(_full_gvisor_scenarios(), provenance={"runtime": "gvisor"}),
+        kata_results=_kata_results(
+            scenarios=kata_scen,
+            provenance={
+                "runtime": "kata-microvm",
+                "prior_warmpool_ttfe_p95_ms": 963.0,
+                "machine_type": "n2-standard-16",
+            },
+        ),
+    )
+    assert "**Kata + microVM** regressed" in out
+    # Scope to the delta confound clause: the bare token "machine_type" also appears in
+    # the unrelated rig-unknown caveat (the gVisor fixture stamps runtime but no
+    # machine_type), so assert the "· machine_type X→Y" delta clause specifically is absent.
+    assert "· machine_type" not in out
 
 
 # ---------------------------------------------------------------------------

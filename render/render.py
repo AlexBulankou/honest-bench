@@ -2192,6 +2192,7 @@ def _north_star_rows(results, kata_results=None):
 def _north_star_delta_flag(
     label, current_p95, prior_p95, current_node_count=None, prior_node_count=None,
     current_node_image=None, prior_node_image=None,
+    current_machine_type=None, prior_machine_type=None,
 ):
     """One flagged-runtime line, or None if this runtime has nothing to flag.
 
@@ -2199,6 +2200,14 @@ def _north_star_delta_flag(
     against NORTH_STAR_TTFE_P95_MS (✅↔❌) — either condition alone is enough to flag,
     matching the "downgrade OR loses information" trigger in the trust-surface doctrine
     rather than requiring both.
+
+    When the flagged delta ALSO spans a machine_type change (prior != current, both
+    non-empty strings — build_provenance stamps prior_machine_type only when it differs,
+    the same "only if it differs" gate as prior_node_image), a `· machine_type X→Y` clause
+    is appended FIRST among the confound clauses. Machine-class is the primary confound —
+    it is the whole reason _machine_class_caveat exists — so a reader must see it named on
+    the delta line itself rather than left to guess which of the generic trailing candidates
+    applies. Same ride-ON-a-flagged-delta rule as the two clauses below.
 
     When the flagged delta also spans a node_count change (prior != current, both ints),
     a `· node_count X→Y` clause is appended — the warm-pool capacity is a confound on the
@@ -2210,8 +2219,8 @@ def _north_star_delta_flag(
     non-empty strings — the GKE kubeletVersion float on the unpinned RAPID channel), a
     `· node_image X→Y` clause is appended for the same reason: a kernel/kubelet build swap
     is a confound on the TTFE swing. Same ride-ON-a-flagged-delta rule (a node-image
-    change with no ttfe swing/flip is not a trust downgrade), and it composes with the
-    node_count clause — both can appear on one flag.
+    change with no ttfe swing/flip is not a trust downgrade), and all three confound
+    clauses compose — machine_type, node_count, and node_image can appear on one flag.
     """
     if not isinstance(current_p95, (int, float)) or not isinstance(prior_p95, (int, float)):
         return None
@@ -2231,6 +2240,14 @@ def _north_star_delta_flag(
     )
     if flipped:
         flag += " · verdict flip " + ("✅→❌" if prior_pass else "❌→✅")
+    if (
+        isinstance(current_machine_type, str)
+        and isinstance(prior_machine_type, str)
+        and current_machine_type.strip()
+        and prior_machine_type.strip()
+        and current_machine_type != prior_machine_type
+    ):
+        flag += f" · machine_type {prior_machine_type}→{current_machine_type}"
     if (
         isinstance(current_node_count, int)
         and not isinstance(current_node_count, bool)
@@ -2267,6 +2284,8 @@ def _north_star_delta_caveat(results, kata_results=None):
     current_nc_by_runtime = {}
     prior_ni_by_runtime = {}
     current_ni_by_runtime = {}
+    prior_mt_by_runtime = {}
+    current_mt_by_runtime = {}
     prov = _clean_provenance(results.get("provenance"))
     measured_runtime = prov.get("runtime") or "gvisor"
     prior_p95 = prov.get("prior_warmpool_ttfe_p95_ms")
@@ -2280,6 +2299,10 @@ def _north_star_delta_caveat(results, kata_results=None):
         current_ni_by_runtime[measured_runtime] = prov["node_image"]
     if isinstance(prov.get("prior_node_image"), str):
         prior_ni_by_runtime[measured_runtime] = prov["prior_node_image"]
+    if isinstance(prov.get("machine_type"), str):
+        current_mt_by_runtime[measured_runtime] = prov["machine_type"]
+    if isinstance(prov.get("prior_machine_type"), str):
+        prior_mt_by_runtime[measured_runtime] = prov["prior_machine_type"]
     if isinstance(kata_results, dict):
         kp = _clean_provenance(kata_results.get("provenance"))
         if kp.get("runtime") == "kata-microvm":
@@ -2294,6 +2317,10 @@ def _north_star_delta_caveat(results, kata_results=None):
                 current_ni_by_runtime["kata-microvm"] = kp["node_image"]
             if isinstance(kp.get("prior_node_image"), str):
                 prior_ni_by_runtime["kata-microvm"] = kp["prior_node_image"]
+            if isinstance(kp.get("machine_type"), str):
+                current_mt_by_runtime["kata-microvm"] = kp["machine_type"]
+            if isinstance(kp.get("prior_machine_type"), str):
+                prior_mt_by_runtime["kata-microvm"] = kp["prior_machine_type"]
 
     flags = []
     for label, p95, _cell, _p50, _n, _outcome in rows:
@@ -2309,6 +2336,8 @@ def _north_star_delta_caveat(results, kata_results=None):
             prior_node_count=prior_nc_by_runtime.get(rt),
             current_node_image=current_ni_by_runtime.get(rt),
             prior_node_image=prior_ni_by_runtime.get(rt),
+            current_machine_type=current_mt_by_runtime.get(rt),
+            prior_machine_type=prior_mt_by_runtime.get(rt),
         )
         if flag:
             flags.append(flag)
