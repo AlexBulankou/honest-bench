@@ -34,7 +34,7 @@
           "kind": "pr",
           "role": "fix-in-flight",
           "status": "merged",
-          "note": "Terminal CRASHED classification; ends the retry-forever loop. Residual: the runsc fscheckpoint exit-128 checkpoint path is still returned untagged/retriable, so it never reaches CRASHED."
+          "note": "Terminal CRASHED classification; ends the retry-forever loop. Residual (checkpoint-side): the sandbox-gone checkpoint path was still returned untagged/retriable, so it never reached CRASHED -- now addressed upstream by #948 below."
         },
         {
           "repo": "agent-substrate/substrate",
@@ -83,6 +83,14 @@
           "role": "blocks",
           "status": "open",
           "note": "Deferred follow-up off the #791 plan: suspend-from-PAUSED gVisor Full-capture->Data-commit conversion, blocked on #790. This is the remaining gate keeping #791 open and routes to the same gVisor phase-2 leg (#790) as this class's restore-side residual. OPEN."
+        },
+        {
+          "repo": "agent-substrate/substrate",
+          "number": 948,
+          "kind": "pr",
+          "role": "fix-in-flight",
+          "status": "open",
+          "note": "Checkpoint-side classification fix (the S2 'missing piece'): probes the runsc pause-container state on the checkpoint failure path and reports a gone-sandbox checkpoint as DataLoss + actor-crash directive, plus checkpoint idempotency so a replayed checkpoint never re-drives runsc against destroyed state. Fires the existing #353/#475 crash->worker-release recovery on the suspend/pause leg. Maintainer-authored, opened + verified live 2026-08-14; OPEN + DRAFT. Distinct from the restore-side gVisor-sentry leg (#790). A fork adopt-anew of this classification was explored 2026-08-14 and stood down as a dup of this PR (its runsc-state probe is more robust than an exit-code heuristic); adopt-on-merge."
         }
       ]
     },
