@@ -3128,6 +3128,33 @@ def render_warm_bind_decomposition(results):
     return "\n".join(lines)
 
 
+def render_bind_exec_pie(results):
+    """Render the warm-hit bind-vs-exec split as a mermaid pie chart, or "" when INERT.
+
+    Visual companion to render_warm_bind_decomposition (WS2, epic #6669) — same data, same
+    INERT gate (_clean_warm_bind_decomposition), so this chart can never diverge from or
+    outlive the table it sits beside. Uses bind_p50/exec_p50 (not p95) as the pie slices: a
+    pie is a part-of-whole share, and p50 is each stage's typical share of the typical
+    warm-hit TTFE. GitHub's built-in markdown renderer supports mermaid `pie` charts natively
+    — no external image build, no new dependency (mirrors render_measurement_path_diagram's
+    reliance on GitHub-native mermaid, not a newer/unconfirmed diagram type such as
+    xychart-beta).
+    """
+    dec = _clean_warm_bind_decomposition(results.get("scenarios"))
+    if not dec:
+        return ""
+    lines = [
+        "```mermaid",
+        "pie showData",
+        "    title Warm-Hit TTFE p50 split — Bind vs Exec (ms)",
+        f'    "Bind (provisioning)" : {dec["bind_p50"]}',
+        f'    "Exec (websocket + first-instruction)" : {dec["exec_p50"]}',
+        "```",
+        "",
+    ]
+    return "\n".join(lines)
+
+
 def _clean_session_turnover(scenarios):
     """Find session_turnover and closed-schema-clean its refill-latency metrics, or None.
 

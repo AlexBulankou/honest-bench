@@ -2500,6 +2500,30 @@ def _decomp_scen():
     ]
 
 
+def test_bind_exec_pie_inert_when_bind_absent():
+    # Same INERT gate as render_warm_bind_decomposition (WS2, epic #6669) — the pie is a
+    # visual companion to the table, not an independent data path.
+    out = render.render_bind_exec_pie(_matrix_results(_full_gvisor_scenarios()))
+    assert out == ""
+
+
+def test_bind_exec_pie_inert_when_no_warmpool_scenario():
+    scen = [s for s in _full_gvisor_scenarios() if s["name"] != "warmpool_cold_start"]
+    out = render.render_bind_exec_pie(_matrix_results(scen))
+    assert out == ""
+
+
+def test_bind_exec_pie_renders_when_all_present():
+    out = render.render_bind_exec_pie(_matrix_results(_decomp_scen()))
+    assert "```mermaid" in out
+    assert "pie showData" in out
+    assert '"Bind (provisioning)" : 400' in out
+    assert '"Exec (websocket + first-instruction)" : 1000' in out
+    # p50s only — p95 values must never leak into the pie slices.
+    assert "600" not in out
+    assert "1150" not in out
+
+
 def test_warm_bind_decomposition_drained_caveat_renders():
     # #103/#111: provenance.regime == "drained" appends the regime caveat under the block.
     out = render.render_warm_bind_decomposition(
