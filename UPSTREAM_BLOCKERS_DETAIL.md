@@ -65,7 +65,7 @@ Target project: [kubernetes-sigs/agent-sandbox](https://github.com/kubernetes-si
 
 <a id="s2-ttfe-webhook-stamper"></a>
 
-### §S2 — True-TTFE histogram has no production writer (exec-probe stamper dead)
+### §S2 — True-TTFE histogram has no writer on a stock deployment (upstream #761 merged, but ships an opt-in example webhook, not a default in-tree stamper)
 
 **Internal tracking a#3975 (closed 2026-06-29 by directive; patch remains staged, unfiled) · [hb#174](https://github.com/AlexBulankou/honest-bench/issues/174) (open) · prepared upstream PR — DECISION FIRST**
 
