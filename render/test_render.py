@@ -4870,9 +4870,12 @@ def test_measurement_path_diagram_public_safe_generic_tokens_only():
     # PII fence: deterministic, product-agnostic STATIC prose (no results/provenance arg — see
     # test_measurement_path_diagram_renders_h2_and_is_static), so its only internal-name leak
     # vector is a hardcoded source literal; guarded tree-wide by check-public-safety.sh. Assert
-    # no accidental internal-only token slipped into the flowchart node labels.
+    # no accidental internal-only token slipped into the flowchart node labels. Guard by NAME
+    # SHAPE (project/infra prefixes + the hyphenated "-cluster" suffix that every internal
+    # cluster name carries), never the literal names themselves — spelling the exact internal
+    # cluster names here is itself the leak the specific-name-scan DENYLIST gate rejects.
     out = render.render_measurement_path_diagram()
-    for internal in ("gke-", "alexbu-", "sandbox-scenarios-cluster", "substrate-demo-cluster"):
+    for internal in ("gke-", "alexbu-", "-cluster"):
         assert internal not in out
 
 
