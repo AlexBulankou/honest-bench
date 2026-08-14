@@ -57,6 +57,13 @@ Warm-hit TTFE (create → first-instruction result) splits into **bind** (create
 
 _Each row is an independently-measured percentile of its own per-claim distribution (exec is measured per-claim as TTFE − bind, then percentiled — not p50(TTFE) − p50(bind)). Percentiles do not sum, so bind and exec need not add exactly to the total TTFE._
 
+```mermaid
+pie showData
+    title Warm-Hit TTFE p50 split — Bind vs Exec (ms)
+    "Bind (provisioning)" : 3902.1
+    "Exec (websocket + first-instruction)" : 616.8
+```
+
 ## Cold-Start TTFE — Provision vs Exec Decomposition
 
 Cold-start TTFE (create → first-instruction result) splits into **provision** (create → Ready: controller reconcile + pod schedule + image pull + container start) and **exec** (websocket setup + the first-instruction round-trip on the already-Ready sandbox). For a cold start the provision is *expected* to dominate — a cold image pull is genuinely slow — so the signal to watch here is a large **exec**, which would point at the exec channel (a harness/product artifact), not the cold provision itself.
