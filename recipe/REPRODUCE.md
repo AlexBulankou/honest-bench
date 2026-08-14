@@ -499,9 +499,12 @@ step 0 with an empty log.
 
 ## The other product
 
-The `sandbox` harness above is the first portable suite. The `substrate/` product
-currently publishes its results through the same closed-schema renderer (step 3
-renders both products into the single top-level `README.md`); its portable harness
-lands next. Until then, regenerating the README (step 3) reproduces the substrate
-table from its committed `substrate/results/latest.json`, and the sandbox steps
-1-2 are what you run end-to-end.
+The `sandbox` harness above is the first portable suite, and it is currently the
+**only** product on the public page: the top-level `README.md` is sandbox-only by
+deliberate choice (alex, 2026-06-28) — substrate is an internal data-engine, not a
+co-equal published table. The `substrate/` product's harness + schema-validated
+`substrate/results/latest.json` stay in-tree, and the cross-contract guard still
+validates the substrate emitter↔render contract against them, but regenerating the
+README (step 3) will **not** produce a substrate table — re-adding the substrate
+entry to `render/generate.py`'s `_PRODUCTS` tuple is the single switch that would.
+Until substrate publishes, the sandbox steps 1-2 above are what you run end-to-end.
