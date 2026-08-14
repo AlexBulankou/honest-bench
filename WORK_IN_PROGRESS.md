@@ -26,26 +26,6 @@ _Anchors and the entry set are generated from the closed pending-reason enum —
 - **ETA:** No open blocker — [hb#132](https://github.com/AlexBulankou/honest-bench/issues/132) shipped the dual per-node/per-cluster mechanism (closed 2026-07-11; gVisor's per-cluster cells already use it). The Kata warm-pool-hit `<1s` cell needs another manually-invoked, collision-acked fire of `scripts/kata_cold_ttfe_sweep.py` (shared cluster) — no scheduled date, next time the fire is run; the mechanism is not the gap, a qualifying measurement is.
 - **Trace:** [hb#132](https://github.com/AlexBulankou/honest-bench/issues/132) (dual per-node + per-cluster throughput, closed/shipped); [hb#359](https://github.com/AlexBulankou/honest-bench/issues/359) (2026-07-23 true-TTFE adoption fire that produced the current honest-miss state on the Kata `<1s` cell; internal tracking a#5396 box-4).
 
-<a id="trust-gate"></a>
-
-## Warm-pool SLO-rate cluster cells graduated — upstream fix landed (`trust-gate`, RESOLVED)
-
-- **What:** A warm-pool per-**cluster** SLO-rate cell whose measurement fire DID run, but whose per-mode derivation was formerly refused: the controller-side rate leg disagreed with the acquisition-side leg beyond the pre-declared tolerance (rel-diff > 0.10) at every measured rung, on both runtimes.
-- **Why absent:** **Resolved upstream — archive entry, no live cell.** This class formerly gated warm-pool per-cluster SLO-rate cells: the controller startup-latency histogram double-recorded Ready transitions on stale-informer replays, inflating the controller leg ~1.7–2× and failing the acquire/controller agreement gate. Both upstream legs (the suspend/resume re-record guard and the targeted stale-informer-replay fix) have since merged, and the histogram-vs-acquire cross-check now PASSES against a post-fix build (ratios 1.000 / 0.9375, within the 0.10 tolerance) — so no matrix cell currently renders this class, and the entry is retained as a schema/catalog archive. The warm-pool cells graduate to a `≥`-floor figure on the literal-TTFE basis, not a bare measured rate — that further graduation needs the separate true-TTFE (webhook) basis, tracked under `no-compliant-rung`.
-- **In flight:** Resolved — both upstream controller legs have merged: [agent-sandbox#940](https://github.com/kubernetes-sigs/agent-sandbox/issues/940) (issue, closed) → fix [agent-sandbox#1087](https://github.com/kubernetes-sigs/agent-sandbox/pull/1087) (PR, merged) → fix [agent-sandbox#1114](https://github.com/kubernetes-sigs/agent-sandbox/pull/1114) (PR, merged). A fresh fire against a post-fix build confirmed the agreement-gate cross-check passes, so the warm-pool cells are no longer trust-gate-capped.
-- **ETA:** Graduated — both upstream legs merged and a post-fix fire confirmed the agreement gate passes. No outstanding date.
-- **Trace:** Upstream agent-sandbox controller (histogram double-record, resolved): [agent-sandbox#940](https://github.com/kubernetes-sigs/agent-sandbox/issues/940) (issue, closed) → fix [agent-sandbox#1087](https://github.com/kubernetes-sigs/agent-sandbox/pull/1087) (PR, merged) → fix [agent-sandbox#1114](https://github.com/kubernetes-sigs/agent-sandbox/pull/1114) (PR, merged). Internal tracking a#4364 (gate exposure, closed out).
-
-<a id="no-compliant-rung"></a>
-
-## Cold-start per-cluster SLO-rate cells graduated — upstream fix landed (`no-compliant-rung`, RESOLVED)
-
-- **What:** A cold-start per-**cluster** SLO-rate cell whose measurement fire DID run with the trust gate PASSING, but where every measured rung's p95 formerly sat over the cell's SLO bar on the only available (literal upper-bound) basis.
-- **Why absent:** **Resolved upstream — archive entry, no live cell.** This class formerly gated cold-start per-cluster SLO-rate cells on the sizing side (an SLO-gated rate cannot be published as 0 from a finite ladder without a pre-declared floor condition, and the tighter true-TTFE basis had no production writer upstream). The true-TTFE webhook-inject-timestamp example has since merged upstream and was adopted on the Kata cold measurement path, and both formerly-gated cold cells have graduated independently — so no matrix cell currently renders this class, and the entry is retained as a schema/catalog archive.
-- **In flight:** Resolved — the true-TTFE webhook example has merged upstream: [agent-sandbox#751](https://github.com/kubernetes-sigs/agent-sandbox/issues/751) (issue, closed) → fix [agent-sandbox#761](https://github.com/kubernetes-sigs/agent-sandbox/pull/761) (PR, merged). Both formerly-gated cold cells have graduated independently.
-- **ETA:** Graduated — the upstream true-TTFE writer merged and the affected cold cells filled independently. No outstanding date.
-- **Trace:** Upstream agent-sandbox (end-to-end TTFE measurability, resolved): [agent-sandbox#751](https://github.com/kubernetes-sigs/agent-sandbox/issues/751) (issue, closed) → fix [agent-sandbox#761](https://github.com/kubernetes-sigs/agent-sandbox/pull/761) (PR, merged). Internal tracking a#3975 (basis fallback, closed out).
-
 <a id="overshoot-inconclusive"></a>
 
 ## Enforcement overshoot ran but did not classify (`overshoot-inconclusive`)
@@ -55,16 +35,6 @@ _Anchors and the entry set are generated from the closed pending-reason enum —
 - **In flight:** Yes — the controlled-overshoot confinement probe is built and arms on the coordinated substrate fire; a re-fire on the live runtime resolves the cell to PASS/FAIL. Internal tracking a#5634.
 - **ETA:** Next coordinated substrate fire of the enforcement probe.
 - **Trace:** Confinement-enforcement axis (the declared-vs-enforced density-honesty backstop). Internal tracking a#5634 / a#3868.
-
-<a id="upstream-blocked"></a>
-
-## Resume-from-suspend graduated — upstream fix landed (`upstream-blocked`, RESOLVED)
-
-- **What:** TTFE and throughput for the **resume-from-suspend** activation mode — restore a previously-suspended sandbox and run the first instruction.
-- **Why absent:** **Resolved upstream — archive entry, no live cell.** This class formerly gated the gVisor resume cell: the run landed, but an upstream controller gap (the suspended condition never cleared on resume) held graduation. That fix has since merged upstream, and the gVisor resume cell has graduated to measured numbers, so no matrix cell currently renders this class — the entry is retained as a schema/catalog archive. (The Kata + microVM resume cell is a separate story — `na-by-construction`, because this CRIU-based metric does not transfer to the Kata VM isolation model.)
-- **In flight:** Resolved — the upstream agent-sandbox controller fix has merged: [agent-sandbox#873](https://github.com/kubernetes-sigs/agent-sandbox/issues/873) (issue, closed) → fix [agent-sandbox#1150](https://github.com/kubernetes-sigs/agent-sandbox/pull/1150) (PR, merged). A fresh resume probe against a build carrying the fix confirmed the suspended condition clears on resume, and the gVisor resume matrix row now carries real numbers.
-- **ETA:** Graduated — the upstream resume-graduation fix merged and a fresh resume probe run landed, so the gVisor resume cell has flipped from pending to a measured number. No outstanding date.
-- **Trace:** Upstream agent-sandbox controller (resume graduation, resolved): [agent-sandbox#873](https://github.com/kubernetes-sigs/agent-sandbox/issues/873) (issue, closed) → fix [agent-sandbox#1150](https://github.com/kubernetes-sigs/agent-sandbox/pull/1150) (PR, merged).
 
 <a id="requires-gvisor-runtime"></a>
 
@@ -125,3 +95,37 @@ _Anchors and the entry set are generated from the closed pending-reason enum —
 - **In flight:** None — there is nothing to measure.
 - **ETA:** None. This is not a pending measurement and carries no ETA — it will never graduate to a number (an honest `N/A` beats an implied future measurement).
 - **Trace:** None — structural, not tracked.
+
+## Resolved (archive)
+
+The reason classes below no longer back any live pending cell on this benchmark's pages — each was resolved upstream. Kept here (not deleted) so a historical result file still carrying the old reason string resolves to an entry instead of a dangling link.
+
+<a id="trust-gate"></a>
+
+## Warm-pool SLO-rate cluster cells graduated — upstream fix landed (`trust-gate`, RESOLVED)
+
+- **What:** A warm-pool per-**cluster** SLO-rate cell whose measurement fire DID run, but whose per-mode derivation was formerly refused: the controller-side rate leg disagreed with the acquisition-side leg beyond the pre-declared tolerance (rel-diff > 0.10) at every measured rung, on both runtimes.
+- **Why absent:** **Resolved upstream — archive entry, no live cell.** This class formerly gated warm-pool per-cluster SLO-rate cells: the controller startup-latency histogram double-recorded Ready transitions on stale-informer replays, inflating the controller leg ~1.7–2× and failing the acquire/controller agreement gate. Both upstream legs (the suspend/resume re-record guard and the targeted stale-informer-replay fix) have since merged, and the histogram-vs-acquire cross-check now PASSES against a post-fix build (ratios 1.000 / 0.9375, within the 0.10 tolerance) — so no matrix cell currently renders this class, and the entry is retained as a schema/catalog archive. The warm-pool cells graduate to a `≥`-floor figure on the literal-TTFE basis, not a bare measured rate — that further graduation needs the separate true-TTFE (webhook) basis, tracked under `no-compliant-rung`.
+- **In flight:** Resolved — both upstream controller legs have merged: [agent-sandbox#940](https://github.com/kubernetes-sigs/agent-sandbox/issues/940) (issue, closed) → fix [agent-sandbox#1087](https://github.com/kubernetes-sigs/agent-sandbox/pull/1087) (PR, merged) → fix [agent-sandbox#1114](https://github.com/kubernetes-sigs/agent-sandbox/pull/1114) (PR, merged). A fresh fire against a post-fix build confirmed the agreement-gate cross-check passes, so the warm-pool cells are no longer trust-gate-capped.
+- **ETA:** Graduated — both upstream legs merged and a post-fix fire confirmed the agreement gate passes. No outstanding date.
+- **Trace:** Upstream agent-sandbox controller (histogram double-record, resolved): [agent-sandbox#940](https://github.com/kubernetes-sigs/agent-sandbox/issues/940) (issue, closed) → fix [agent-sandbox#1087](https://github.com/kubernetes-sigs/agent-sandbox/pull/1087) (PR, merged) → fix [agent-sandbox#1114](https://github.com/kubernetes-sigs/agent-sandbox/pull/1114) (PR, merged). Internal tracking a#4364 (gate exposure, closed out).
+
+<a id="no-compliant-rung"></a>
+
+## Cold-start per-cluster SLO-rate cells graduated — upstream fix landed (`no-compliant-rung`, RESOLVED)
+
+- **What:** A cold-start per-**cluster** SLO-rate cell whose measurement fire DID run with the trust gate PASSING, but where every measured rung's p95 formerly sat over the cell's SLO bar on the only available (literal upper-bound) basis.
+- **Why absent:** **Resolved upstream — archive entry, no live cell.** This class formerly gated cold-start per-cluster SLO-rate cells on the sizing side (an SLO-gated rate cannot be published as 0 from a finite ladder without a pre-declared floor condition, and the tighter true-TTFE basis had no production writer upstream). The true-TTFE webhook-inject-timestamp example has since merged upstream and was adopted on the Kata cold measurement path, and both formerly-gated cold cells have graduated independently — so no matrix cell currently renders this class, and the entry is retained as a schema/catalog archive.
+- **In flight:** Resolved — the true-TTFE webhook example has merged upstream: [agent-sandbox#751](https://github.com/kubernetes-sigs/agent-sandbox/issues/751) (issue, closed) → fix [agent-sandbox#761](https://github.com/kubernetes-sigs/agent-sandbox/pull/761) (PR, merged). Both formerly-gated cold cells have graduated independently.
+- **ETA:** Graduated — the upstream true-TTFE writer merged and the affected cold cells filled independently. No outstanding date.
+- **Trace:** Upstream agent-sandbox (end-to-end TTFE measurability, resolved): [agent-sandbox#751](https://github.com/kubernetes-sigs/agent-sandbox/issues/751) (issue, closed) → fix [agent-sandbox#761](https://github.com/kubernetes-sigs/agent-sandbox/pull/761) (PR, merged). Internal tracking a#3975 (basis fallback, closed out).
+
+<a id="upstream-blocked"></a>
+
+## Resume-from-suspend graduated — upstream fix landed (`upstream-blocked`, RESOLVED)
+
+- **What:** TTFE and throughput for the **resume-from-suspend** activation mode — restore a previously-suspended sandbox and run the first instruction.
+- **Why absent:** **Resolved upstream — archive entry, no live cell.** This class formerly gated the gVisor resume cell: the run landed, but an upstream controller gap (the suspended condition never cleared on resume) held graduation. That fix has since merged upstream, and the gVisor resume cell has graduated to measured numbers, so no matrix cell currently renders this class — the entry is retained as a schema/catalog archive. (The Kata + microVM resume cell is a separate story — `na-by-construction`, because this CRIU-based metric does not transfer to the Kata VM isolation model.)
+- **In flight:** Resolved — the upstream agent-sandbox controller fix has merged: [agent-sandbox#873](https://github.com/kubernetes-sigs/agent-sandbox/issues/873) (issue, closed) → fix [agent-sandbox#1150](https://github.com/kubernetes-sigs/agent-sandbox/pull/1150) (PR, merged). A fresh resume probe against a build carrying the fix confirmed the suspended condition clears on resume, and the gVisor resume matrix row now carries real numbers.
+- **ETA:** Graduated — the upstream resume-graduation fix merged and a fresh resume probe run landed, so the gVisor resume cell has flipped from pending to a measured number. No outstanding date.
+- **Trace:** Upstream agent-sandbox controller (resume graduation, resolved): [agent-sandbox#873](https://github.com/kubernetes-sigs/agent-sandbox/issues/873) (issue, closed) → fix [agent-sandbox#1150](https://github.com/kubernetes-sigs/agent-sandbox/pull/1150) (PR, merged).

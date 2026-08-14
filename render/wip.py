@@ -328,23 +328,32 @@ WIP_CATALOG = {
     },
 }
 
-# Deterministic render order: the enum classes in a fixed sequence, then the
-# synthetic N/A anchor last. A fixed tuple (not set iteration) keeps the generated
-# page byte-stable across runs.
+# RESOLVED/archive classes: still-live enum members (retained so a historical
+# result file that carries the old reason string doesn't dangle-link), but no
+# matrix cell currently renders any of them — see each entry's "Resolved upstream
+# — archive entry, no live cell" note. Kept in a separate group so a first-time
+# reader hits every still-active reason before wading into resolved history
+# (epic #6669 WS1 vii — "purge RESOLVED/archive entries from live legends").
+RESOLVED_ARCHIVE = (
+    "trust-gate",
+    "no-compliant-rung",
+    "upstream-blocked",
+)
+
+# Deterministic render order: the still-live enum classes in a fixed sequence,
+# then the synthetic N/A anchor, then the RESOLVED/archive classes last. A fixed
+# tuple (not set iteration) keeps the generated page byte-stable across runs.
 WIP_ORDER = (
     "not-yet-measured",
     "cluster-fire",
-    "trust-gate",
-    "no-compliant-rung",
     "overshoot-inconclusive",
-    "upstream-blocked",
     "requires-gvisor-runtime",
     "requires-kata-runtime",
     "requires-gke",
     "requires-kata-microvm",
     "pool-topology-constrained",
     NA_BY_CONSTRUCTION,
-)
+) + RESOLVED_ARCHIVE
 
 
 def _assert_catalog_covers_enum():
@@ -446,6 +455,16 @@ def build_work_in_progress():
         "",
     ]
     for anchor in WIP_ORDER:
+        if anchor == RESOLVED_ARCHIVE[0]:
+            lines.append("## Resolved (archive)")
+            lines.append("")
+            lines.append(
+                "The reason classes below no longer back any live pending cell on this "
+                "benchmark's pages — each was resolved upstream. Kept here (not deleted) so "
+                "a historical result file still carrying the old reason string resolves to "
+                "an entry instead of a dangling link."
+            )
+            lines.append("")
         e = WIP_CATALOG[anchor]
         lines.append(f'<a id="{anchor}"></a>')
         lines.append("")
