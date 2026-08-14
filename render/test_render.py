@@ -4,6 +4,7 @@ These assert the Layer-1 PII guard holds: anything not declared in schema.py is 
 goal columns are always (non-public), and harness free-text can never reach the output.
 """
 
+import datetime
 import re
 
 import render
@@ -266,6 +267,153 @@ def test_runsc_version_invalid_dropped_no_banner_entry():
     )
     assert "runsc_version=" not in out
     assert "SECRET RIG" not in out
+
+
+# --- WS3 (epic #6669): upstream_ref build-banner pin + page-level STALE self-declaration ---
+
+
+def test_upstream_ref_renders_in_build_banner():
+    # WS3: a valid upstream_ref in provenance surfaces in the _build: banner — the
+    # against-what pin recording which upstream agent-sandbox ref the numbers reflect.
+    out = _render(
+        {
+            "product": "sandbox",
+            "provenance": {"upstream_ref": "v0.5.5-66-g575b05f9"},
+            "scenarios": [{"name": "warmpool_cold_start", "outcome": "PASS", "n": 1}],
+        }
+    )
+    assert "upstream_ref=v0.5.5-66-g575b05f9" in out
+
+
+def test_upstream_ref_absent_renders_no_banner_entry():
+    # INERT-when-absent: no upstream_ref ⇒ no banner entry (byte-unchanged from an
+    # unstamped run). Same `if k in prov` discipline as machine_type/runsc_version.
+    out = _render(
+        {
+            "product": "sandbox",
+            "provenance": {"cluster_substrate": "gke-sandbox"},
+            "scenarios": [{"name": "warmpool_cold_start", "outcome": "PASS", "n": 1}],
+        }
+    )
+    assert "upstream_ref=" not in out
+
+
+def test_upstream_ref_invalid_dropped_no_banner_entry():
+    # An out-of-schema upstream_ref (spaces / credential shape) fails its predicate in
+    # _clean_provenance and is dropped, so nothing renders and the raw value never reaches
+    # the page. The WS4(c) fork-build string with spaces/parens is a SEPARATE field.
+    out = _render(
+        {
+            "product": "sandbox",
+            "provenance": {"upstream_ref": "SECRET RIG (ask ops)"},
+            "scenarios": [{"name": "warmpool_cold_start", "outcome": "PASS", "n": 1}],
+        }
+    )
+    assert "upstream_ref=" not in out
+    assert "SECRET RIG" not in out
+
+
+def _dt(days_ago):
+    now = datetime.datetime(2026, 8, 14, 12, 0, 0, tzinfo=datetime.timezone.utc)
+    return (now - datetime.timedelta(days=days_ago)).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+_NOW = datetime.datetime(2026, 8, 14, 12, 0, 0, tzinfo=datetime.timezone.utc)
+
+
+def test_stale_banner_all_fresh_is_silent():
+    # Fresh (every product within threshold) ⇒ "" (no banner). Freshness is the silent,
+    # expected state — the upgrade direction stays quiet per the trust-surface idiom.
+    out = render.render_stale_banner(
+        [("sandbox", {"generated_at": _dt(2)}), ("substrate", {"generated_at": _dt(6)})],
+        as_of=_NOW,
+    )
+    assert out == ""
+
+
+def test_stale_banner_boundary_exactly_threshold_is_fresh():
+    # age == threshold is NOT stale (strict `>` boundary): a run measured exactly 7d ago
+    # is still fresh. Anything a hair over trips.
+    out = render.render_stale_banner([("sandbox", {"generated_at": _dt(7)})], as_of=_NOW)
+    assert out == ""
+
+
+def test_stale_banner_over_threshold_fires_loud():
+    out = render.render_stale_banner([("sandbox", {"generated_at": _dt(20)})], as_of=_NOW)
+    assert "STALE BENCHMARK DATA" in out
+    assert "**sandbox** (20d old)" in out
+    assert out.startswith("> ")  # markdown blockquote
+
+
+def test_stale_banner_missing_generated_at_is_unverified():
+    # Missing timestamp ⇒ fail-LOUD UNVERIFIED (guard-then-fill: cannot certify currency,
+    # so say so rather than imply fresh).
+    out = render.render_stale_banner([("sandbox", {})], as_of=_NOW)
+    assert "FRESHNESS UNVERIFIED" in out
+    assert "**sandbox**" in out
+
+
+def test_stale_banner_malformed_generated_at_is_unverified():
+    out = render.render_stale_banner(
+        [("sandbox", {"generated_at": "not-a-timestamp"})], as_of=_NOW
+    )
+    assert "FRESHNESS UNVERIFIED" in out
+
+
+def test_stale_banner_impossible_calendar_instant_is_unverified():
+    # ISO-SHAPED but not a real instant (month 13) ⇒ unparseable ⇒ UNVERIFIED, never
+    # silently accepted as fresh.
+    out = render.render_stale_banner(
+        [("sandbox", {"generated_at": "2026-13-01T00:00:00Z"})], as_of=_NOW
+    )
+    assert "FRESHNESS UNVERIFIED" in out
+
+
+def test_stale_banner_mixed_stale_and_unknown_renders_both():
+    out = render.render_stale_banner(
+        [("sandbox", {"generated_at": _dt(20)}), ("substrate", {})], as_of=_NOW
+    )
+    assert "STALE BENCHMARK DATA" in out
+    assert "FRESHNESS UNVERIFIED" in out
+    assert "**sandbox** (20d old)" in out
+
+
+def test_stale_banner_none_anchor_is_unverified():
+    # No committed verification anchor (as_of=None) ⇒ fail-LOUD UNVERIFIED regardless of how
+    # fresh the per-product stamps look. A missing anchor is a downgrade that must surface, never
+    # a silent wall-clock fallback (that would red the byte-pinned golden daily + never fire).
+    out = render.render_stale_banner([("sandbox", {"generated_at": _dt(2)})], as_of=None)
+    assert "FRESHNESS UNVERIFIED" in out
+    assert "last_verified" in out  # names the fix: re-establish the anchor
+
+
+def test_stale_banner_cites_as_of_date_in_loud_banner():
+    # Transparency: the STALE banner cites the anchor date it judged against, so a reader can
+    # see the "as of <date>" the page is self-declaring from.
+    out = render.render_stale_banner([("sandbox", {"generated_at": _dt(20)})], as_of=_NOW)
+    assert "2026-08-14" in out
+
+
+def test_parse_as_of_valid_date():
+    dt = render._parse_as_of("2026-08-13")
+    assert dt == datetime.datetime(2026, 8, 13, 0, 0, 0, tzinfo=datetime.timezone.utc)
+
+
+def test_parse_as_of_rejects_malformed_and_impossible():
+    assert render._parse_as_of(None) is None
+    assert render._parse_as_of(12345) is None
+    assert render._parse_as_of("not-a-date") is None
+    assert render._parse_as_of("2026-13-01") is None  # impossible month
+    assert render._parse_as_of("2026-08-13T00:00:00Z") is None  # wrong shape (has time)
+
+
+def test_resolve_default_as_of_reads_committed_anchor():
+    # The live committed upstream_links.json _meta.last_verified must parse to a real UTC date,
+    # so build_readme's anchor is always established in the shipped tree (else the page would
+    # perma-render UNVERIFIED).
+    dt = render.resolve_default_as_of()
+    assert dt is not None
+    assert dt.tzinfo is not None
 
 
 def test_badge_scope_suffixes_isolation_pass_cell():

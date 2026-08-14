@@ -10,6 +10,7 @@ Usage:
 """
 
 import argparse
+import datetime
 import json
 import math
 import sys
@@ -58,6 +59,7 @@ from schema import (
     _SHA256,
 )
 from wip import NA_BY_CONSTRUCTION, build_work_in_progress, link_pending, wip_link
+from upstream_links import META as _UPSTREAM_META
 from upstream_links import upstream_cell_refs, upstream_prose_refs
 
 # #4137: the sentence appended to the drained-regime warm caveat that NAMES the term driving
@@ -277,6 +279,11 @@ def render_product(results):
         "controller_digest",
         "crd_version",
         "suite_git_sha",
+        # WS3 (epic #6669): the upstream agent-sandbox ref these numbers were measured AGAINST.
+        # Stamped by build_provenance from BENCH_UPSTREAM_REF (omit-when-absent); records the
+        # against-what pin so a reader can see exactly which upstream ref the numbers reflect,
+        # complementing the page-level wall-clock STALE banner (render_stale_banner).
+        "upstream_ref",
         "run_id",
         "node_count",
         # PR#313 review: stamp the node machine shape so a machine-class
@@ -303,6 +310,124 @@ def render_product(results):
         lines.append(f"_rows dropped by closed-schema guard: {dropped}_")
     lines.append("")
     return "\n".join(lines)
+
+
+# WS3 (epic #6669) — page-level freshness self-declaration.
+# Default staleness threshold: numbers older than this render a top-of-page STALE banner.
+STALE_THRESHOLD_DAYS = 7
+
+
+def _parse_generated_at(results):
+    """Return the timezone-aware UTC datetime of a results dict's `generated_at`, or None if the
+    key is missing / not a string / not the locked ISO shape / not a real calendar instant.
+
+    Deliberately reuses schema `_ISO` for the shape gate (same contract the build banner uses),
+    then strptime for the value gate — so an ISO-shaped-but-impossible stamp (e.g. month 13)
+    is treated as unparseable (→ None → the fail-loud UNKNOWN path below), never silently
+    accepted.
+    """
+    gen = results.get("generated_at") if isinstance(results, dict) else None
+    if not (isinstance(gen, str) and _ISO.match(gen)):
+        return None
+    try:
+        dt = datetime.datetime.strptime(gen, "%Y-%m-%dT%H:%M:%SZ")
+    except ValueError:
+        return None
+    return dt.replace(tzinfo=datetime.timezone.utc)
+
+
+def render_stale_banner(product_results, as_of, threshold_days=STALE_THRESHOLD_DAYS):
+    """Return a top-of-page markdown STALE banner, or "" when the whole page is fresh.
+
+    `product_results` is an iterable of (product_name, results_dict) for the products being
+    published on the page. `as_of` is the committed freshness anchor — the date the upstream
+    currency of these numbers was last verified (driven by `upstream_links.json`'s
+    `_meta.last_verified`, advanced by `scripts/verify-upstream-freshness.py --update-stamp`).
+    It is a REQUIRED, tz-aware `datetime` (or None). This function is intentionally PURE — it
+    never reads the wall clock — so that `build_readme()` is a deterministic function of the
+    committed data files and the byte-pinned golden test (`test_readme_fresh.py`) stays
+    reproducible. A wall-clock anchor would (a) red the golden on every calendar day and
+    (b) never actually fire, because the page only re-renders on a data-refresh fire (when the
+    numbers are, by construction, ~0 days old).
+
+    This is a TRUST-SURFACE guard (AGENTS.md "Transition guards on trust surfaces"): a measured
+    page must never present a frozen number as if it were current, so the downgrade direction
+    (stale / unverifiable) fails LOUD while the upgrade direction (fresh) stays silent:
+
+      * fresh   — `as_of` is present and every product has a valid `generated_at` within
+                  `threshold_days` of `as_of` → return "" (freshness is the silent state).
+      * stale   — at least one product's `generated_at` is older than `threshold_days` before
+                  `as_of` → loud banner naming the product(s) + age in days.
+      * unknown — `as_of` is None (no committed verification anchor), OR at least one product's
+                  `generated_at` is missing/malformed/impossible → loud "freshness UNVERIFIED"
+                  banner (fail-closed: we cannot certify currency, so we say so).
+
+    A page in BOTH stale and unknown states renders both lines.
+    """
+    if as_of is None:
+        return (
+            "> ⚠️ **FRESHNESS UNVERIFIED** — no upstream-verification anchor is committed "
+            "(`upstream_links.json` `_meta.last_verified` is missing or malformed), so this page "
+            "cannot self-certify how current these numbers are. Treat them as potentially stale; "
+            "run `scripts/verify-upstream-freshness.py --update-stamp` to re-establish the anchor."
+        )
+    if as_of.tzinfo is None:
+        as_of = as_of.replace(tzinfo=datetime.timezone.utc)
+    threshold = datetime.timedelta(days=threshold_days)
+    unknown = []
+    stale = []
+    for name, results in product_results:
+        dt = _parse_generated_at(results)
+        if dt is None:
+            unknown.append(name)
+            continue
+        age = as_of - dt
+        if age > threshold:
+            stale.append((name, age.days))
+    if not unknown and not stale:
+        return ""
+    as_of_str = as_of.strftime("%Y-%m-%d")
+    lines = []
+    if stale:
+        detail = ", ".join(f"**{name}** ({age}d old)" for name, age in stale)
+        lines.append(
+            f"> ⚠️ **STALE BENCHMARK DATA** — as of the last upstream-freshness check ({as_of_str}), "
+            f"these numbers were last measured more than {threshold_days} days earlier: {detail}. "
+            f"They may not reflect the current upstream agent-sandbox; see the `_generated-at:` and "
+            f"`upstream_ref` stamps below for exactly what was measured and against which upstream ref."
+        )
+    if unknown:
+        names = ", ".join(f"**{n}**" for n in unknown)
+        lines.append(
+            f"> ⚠️ **FRESHNESS UNVERIFIED** — the measurement timestamp for {names} is missing or "
+            f"malformed, so this page cannot self-certify how current these numbers are. Treat "
+            f"them as potentially stale."
+        )
+    return "\n>\n".join(lines)
+
+
+def _parse_as_of(value):
+    """Parse a committed `_meta.last_verified` (`YYYY-MM-DD`) into a tz-aware UTC datetime at
+    00:00Z, or None if missing / not a string / not that exact shape / not a real calendar date.
+
+    None flows through to `render_stale_banner`'s fail-loud UNVERIFIED path — an absent or
+    malformed anchor is a downgrade that must surface, never a silent wall-clock fallback.
+    """
+    if not isinstance(value, str):
+        return None
+    try:
+        dt = datetime.datetime.strptime(value, "%Y-%m-%d")
+    except ValueError:
+        return None
+    return dt.replace(tzinfo=datetime.timezone.utc)
+
+
+def resolve_default_as_of():
+    """The page's committed freshness anchor: `upstream_links.json` `_meta.last_verified`,
+    advanced by `scripts/verify-upstream-freshness.py --update-stamp`. Returns a tz-aware UTC
+    datetime or None (→ fail-loud UNVERIFIED banner). Deterministic: reads only committed data.
+    """
+    return _parse_as_of(_UPSTREAM_META.get("last_verified") if isinstance(_UPSTREAM_META, dict) else None)
 
 
 def _clean_history(rows):
@@ -1760,6 +1885,9 @@ def render_matrix(results, kata_results=None, include_legend=True):
         "controller_digest",
         "crd_version",
         "suite_git_sha",
+        # WS3 (epic #6669): upstream ref the numbers were measured against — same pin as the
+        # per-product build banner above (omit-when-absent).
+        "upstream_ref",
         "run_id",
         "node_count",
     ]

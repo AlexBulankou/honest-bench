@@ -1403,6 +1403,14 @@ def build_provenance(
     # run-level property stamped for every product.
     if prior_node_count and prior_node_count != prov["node_count"]:
         prov["prior_node_count"] = prior_node_count
+    # Upstream source-ref pin (WS3, epic #6669 "stamp-the-pin-per-fire"): the upstream
+    # agent-sandbox ref these numbers were measured AGAINST, so the page records WHICH ref the
+    # numbers reflect rather than leaving currency-vs-upstream implicit. Same env-passthrough-or-
+    # omit posture as machine_type/node_image — absent env means the key is omitted, never
+    # guessed. Run-level (not sandbox-gated): both substrate and sandbox track an upstream ref.
+    upstream_ref = os.environ.get("BENCH_UPSTREAM_REF", "").strip()
+    if upstream_ref:
+        prov["upstream_ref"] = upstream_ref
     # Matrix runtime column (#3942/#830): emitted only for sandbox-family products
     # so render flips that runtime's rows to measured and the other to pending.
     runtime = _matrix_runtime_for(product)

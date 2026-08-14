@@ -36,6 +36,8 @@ Usage:
   verify-upstream-freshness.py --json          # machine-readable report on stdout
   verify-upstream-freshness.py --update-stamp  # on a fully-fresh run, bump
                                                #   _meta.last_verified to today (UTC)
+                                               #   AND re-render the pages (the STALE
+                                               #   banner is keyed on this stamp)
 
 stdlib-only + self-contained, matching the repo's test/script convention (CI runs
 modules with bare `python3 <file>`; requests/pytest are intentionally absent from
@@ -49,6 +51,7 @@ import argparse
 import datetime
 import json
 import os
+import subprocess
 import sys
 import urllib.error
 import urllib.request
@@ -208,6 +211,18 @@ def main(argv=None):
             json.dump(raw, f, indent=2, ensure_ascii=False)
             f.write("\n")
         print("\nlast_verified: %s -> %s (stamped)" % (prev, today))
+
+        # The rendered pages carry a page-level STALE banner (WS3, epic #6669) keyed on this
+        # very `last_verified` anchor, so bumping the stamp changes what build_readme() emits.
+        # Regenerate README/DETAILS/WORK_IN_PROGRESS in the SAME operation — otherwise the next
+        # push reds the byte-pinned golden (render/test_readme_fresh.py). Encode-then-merge:
+        # the stamp and its rendered consequence land together, never "stamp now, render later".
+        print("regenerating rendered pages (banner anchor changed) ...")
+        rc = subprocess.call([sys.executable, "-m", "render.generate"], cwd=_REPO_ROOT)
+        if rc != 0:
+            print("*** render.generate failed (exit=%d) — commit the stamp bump AND re-render "
+                  "before pushing, else the golden test will red." % rc, file=sys.stderr)
+            return rc
 
     return code
 
