@@ -66,6 +66,7 @@ def _load_render():
         mod.render_density_detail,
         mod.render_vcpu_footprint,
         mod.render_storage_config,
+        mod.render_measurement_path_diagram,
         mod.render_recipe,
         mod.render_trend,
         mod.check_render_downgrade,
@@ -83,7 +84,8 @@ def _load_render():
  render_warm_pool_acquisition,
  render_at_scale_contention, render_cluster_saturation, render_provisioning_rate_sweep,
  render_session_turnover, render_suspend_latency, render_density_detail, render_vcpu_footprint,
- render_storage_config, render_recipe, render_trend, check_render_downgrade,
+ render_storage_config, render_measurement_path_diagram, render_recipe, render_trend,
+ check_render_downgrade,
  render_stale_banner, resolve_default_as_of) = _load_render()
 
 
@@ -326,6 +328,11 @@ def build_readme(root=None):
     storage_config = render_storage_config(_load_storage_config(root))
     if storage_config.strip():
         sections.append(storage_config.rstrip())
+    # WS2 (epic #6669): the "How is TTFE measured?" mermaid flowchart is product-agnostic
+    # architecture-shape (no measured numbers, same posture as render_recipe below), so it
+    # renders ONCE after the per-product loop — placed right before the recipe so a reader who
+    # wants to reproduce the numbers sees how they were captured first.
+    sections.append(render_measurement_path_diagram().rstrip())
     # #4021: the Reproducibility Recipe is product-agnostic architecture prose, so it renders
     # ONCE after the per-product loop — the preamble forward-refs "the recipe at the bottom".
     sections.append(render_recipe().rstrip())
