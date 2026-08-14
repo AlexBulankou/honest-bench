@@ -96,4 +96,36 @@ if ( cd "$sandbox_repo" && "$SCANNER" >/dev/null 2>&1 ); then
 fi
 echo "ok: no-arg tripped on a tracked tree with a forbidden token (exit 1 as expected)"
 
+# --commits mode: forward-guard on commit author/committer metadata. The corp
+# address is assembled at runtime from fragments so this committed test file never
+# embeds the literal it verifies. Build a throwaway repo with a clean base commit
+# and a corp-authored tip; the range base..tip MUST trip, base..base MUST pass.
+meta_repo="$(mktemp -d)"
+trap 'rm -f "$bad" "$good" "$bad_internal" "$bad_agentid"; rm -rf "$excl_dir" "$sandbox_repo" "$meta_repo"' EXIT
+git -C "$meta_repo" init -q
+git -C "$meta_repo" -c user.name=bot -c user.email="bot${at}users.noreply.github.com" \
+  commit -q --allow-empty -m "clean base"
+base_sha="$(git -C "$meta_repo" rev-parse HEAD)"
+git -C "$meta_repo" -c user.name="Owner" -c user.email="owner${at}google.com" \
+  commit -q --allow-empty -m "corp-authored tip"
+if ( cd "$meta_repo" && "$SCANNER" --commits "${base_sha}..HEAD" >/dev/null 2>&1 ); then
+  echo "FAIL: --commits did NOT trip on a corp-authored commit in range"; exit 1
+fi
+echo "ok: --commits tripped on corp author metadata (exit 1 as expected)"
+if ! ( cd "$meta_repo" && "$SCANNER" --commits "${base_sha}..${base_sha}" >/dev/null 2>&1 ); then
+  echo "FAIL: --commits tripped on a range with only clean (bot noreply) metadata"; exit 1
+fi
+echo "ok: --commits passed clean (bot noreply) metadata range (exit 0 as expected)"
+# The corp-authored commit is ON the branch but BEFORE the range base — grandfathered
+# history must not red the gate. A range that excludes it stays clean.
+if ! ( cd "$meta_repo" && "$SCANNER" --commits "HEAD..HEAD" >/dev/null 2>&1 ); then
+  echo "FAIL: --commits tripped on an empty (no-new-commits) range"; exit 1
+fi
+echo "ok: --commits no-op on empty range — grandfathered history not re-scanned (exit 0)"
+# Unresolvable range fails closed rather than silently passing.
+if ( cd "$meta_repo" && "$SCANNER" --commits "no-such-ref..HEAD" >/dev/null 2>&1 ); then
+  echo "FAIL: --commits passed on an unresolvable range (should fail closed)"; exit 1
+fi
+echo "ok: --commits failed closed on an unresolvable range (exit 1 as expected)"
+
 echo "test-scanner: all assertions passed"

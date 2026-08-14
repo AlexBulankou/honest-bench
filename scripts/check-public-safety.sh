@@ -7,6 +7,8 @@
 #   check-public-safety.sh                   # NO ARGS: scan the full git-tracked tree
 #   check-public-safety.sh <file>...         # scan named files
 #   check-public-safety.sh --staged          # scan git staged files (pre-commit)
+#   check-public-safety.sh --commits [range] # scan NEW commit author/committer metadata
+#                                            # (default range: origin/main..HEAD)
 #
 # The no-arg form is the load-bearing one for CI: a bare invocation (as the auto-refresh
 # Action calls it) MUST be a real whole-repo gate, not a silent no-op over zero files.
@@ -49,6 +51,40 @@ _excluded() {
   return 1
 }
 
+# Corp-domain pattern for the commit-metadata guard below. Deliberately NARROW —
+# only Google corp email domains, not the generic email pattern above: the bot's
+# own author line (a4-<id>[bot]@users.noreply.github.com) and personal domains
+# are legitimate public commit metadata; a corp address is the leak class.
+COMMIT_METADATA_CORP_PATTERN='@(google|googleplex)\.com\b'
+
+# scan_commit_metadata — forward-guard the author/committer name+email baked into
+# commit OBJECTS. The file-content scan (git ls-files, above) reads tracked file
+# bodies only; it cannot see commit metadata, yet a corp address there lands in
+# the public repo's permanent history just the same (the MED gap found 2026-08-13:
+# owner corp address in 19 historical commits' AUTHOR metadata). Scan only the NEW
+# commits a branch adds (default origin/main..HEAD) so grandfathered history already
+# on main — which alex chose NOT to rewrite (would break the published commit-sha
+# provenance anchors) — never reds this gate; only new corp metadata is blocked.
+scan_commit_metadata() {
+  local range="${1:-}" hit=0 base tip
+  [ -n "$range" ] || range="origin/main..HEAD"
+  base="${range%%..*}"; tip="${range##*..}"
+  if ! git rev-parse --verify -q "$base" >/dev/null || ! git rev-parse --verify -q "$tip" >/dev/null; then
+    echo "check-public-safety: BLOCKED — cannot resolve commit range '$range' (fetch the base ref first)."
+    return 1
+  fi
+  while IFS= read -r rec; do
+    [ -n "$rec" ] || continue
+    if grep -qiE "$COMMIT_METADATA_CORP_PATTERN" <<<"$rec"; then
+      # Print the commit SHA only, NOT the matched corp string, so this scan never
+      # re-emits the address it guards even into the (private) build log (#6172).
+      echo "FORBIDDEN [corp address in commit author/committer metadata]: ${rec%% *}"
+      hit=1
+    fi
+  done < <(git log --format='%H %an <%ae> %cn <%ce>' "$range" 2>/dev/null)
+  return $hit
+}
+
 scan_target() {
   local f="$1" hit=0
   [ -f "$f" ] || return 0
@@ -79,7 +115,9 @@ scan_target() {
 }
 
 rc=0
-if [ "${1:-}" = "--staged" ]; then
+if [ "${1:-}" = "--commits" ]; then
+  scan_commit_metadata "${2:-}" || rc=1
+elif [ "${1:-}" = "--staged" ]; then
   while IFS= read -r f; do scan_target "$f" || rc=1; done \
     < <(git diff --cached --name-only --diff-filter=ACM)
 elif [ "$#" -eq 0 ]; then
