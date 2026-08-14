@@ -67,6 +67,8 @@ def _load_render():
         mod.render_recipe,
         mod.render_trend,
         mod.check_render_downgrade,
+        mod.render_stale_banner,
+        mod.resolve_default_as_of,
     )
 
 
@@ -78,7 +80,8 @@ def _load_render():
  render_warm_pool_acquisition,
  render_at_scale_contention, render_cluster_saturation, render_provisioning_rate_sweep,
  render_session_turnover, render_suspend_latency, render_density_detail, render_vcpu_footprint,
- render_storage_config, render_recipe, render_trend, check_render_downgrade) = _load_render()
+ render_storage_config, render_recipe, render_trend, check_render_downgrade,
+ render_stale_banner, resolve_default_as_of) = _load_render()
 
 
 def _env_flag(name):
@@ -246,12 +249,17 @@ def build_readme(root=None):
         with open(kata_path) as fh:
             kata_results = json.load(fh)
     sections = [_PREAMBLE.rstrip()]
+    # WS3 (epic #6669): collect each published product's (name, results) so the page-level
+    # freshness self-declaration (render_stale_banner) can be computed over ALL of them and
+    # inserted at the top, after the loop knows the full published set.
+    published = []
     for product, rel in _PRODUCTS:
         path = os.path.join(root, rel)
         if not os.path.exists(path):
             continue
         with open(path) as fh:
             results = json.load(fh)
+        published.append((product, results))
         kr = kata_results if product == "sandbox" else None
         # hb home-page slim: the home page carries the matrix + a compact `***`-free cell key
         # (include_legend=False); the full glossary + `***` caveat block relocates to DETAILS
@@ -311,6 +319,12 @@ def build_readme(root=None):
     # #4021: the Reproducibility Recipe is product-agnostic architecture prose, so it renders
     # ONCE after the per-product loop — the preamble forward-refs "the recipe at the bottom".
     sections.append(render_recipe().rstrip())
+    # WS3 (epic #6669): the freshness self-declaration renders at the TOP (right after the
+    # preamble H1/intro), so a customer sees a STALE/UNVERIFIED warning before any number. Empty
+    # string (every product fresh) inserts nothing — freshness is the silent, expected state.
+    stale_banner = render_stale_banner(published, as_of=resolve_default_as_of())
+    if stale_banner:
+        sections.insert(1, stale_banner)
     return "\n\n".join(sections) + "\n"
 
 

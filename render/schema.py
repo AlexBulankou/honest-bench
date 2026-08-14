@@ -176,6 +176,11 @@ _NODE_IMAGE = re.compile(r"^v[0-9]+\.[0-9]+\.[0-9]+-gke\.[0-9]+$")
 # release-20240115.0 or a git-describe token. Bounded generic version token — no
 # path/URL/credential shape can ride it.
 _RUNSC_VERSION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+# Upstream source-ref pin (WS3, epic #6669 "stamp-the-pin-per-fire"): a clean single-token
+# upstream ref — a tag (v0.5.5), a git sha (575b05f9), a git-describe token
+# (v0.5.5-66-g575b05f9), or a refs/tags/... path. `/` is permitted for the refs-path form;
+# space, `:`, and URL/credential shapes are excluded so nothing else can ride the field.
+_UPSTREAM_REF = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,63}$")
 
 # DELIBERATELY NOT allow-listed: any GCP project / infra identifier (e.g. a `project`
 # field). It is infra-noise irrelevant to a customer-facing benchmark page, so it stays
@@ -250,6 +255,14 @@ PROVENANCE_FIELDS = {
     # channel) reads as a node-build-confounded swing, not a pure substrate
     # regression/fix. Same GKE kubeletVersion shape as node_image.
     "prior_node_image": lambda v: isinstance(v, str) and bool(_NODE_IMAGE.match(v)),
+    # Upstream source-ref pin (WS3, epic #6669): the upstream agent-sandbox ref these numbers
+    # were measured AGAINST — stamped by build_provenance from BENCH_UPSTREAM_REF when present
+    # (omit-when-absent, like node_image). Records WHICH ref was measured so a reader / the
+    # hb-upstream-freshness detector can compare it to the current upstream head; the
+    # render-time STALE banner is the wall-clock-age self-declaration, this is the against-what
+    # pin. The richer WS4(c) fork-build provenance string ("fork@<sha> (+N over upstream@<sha>)",
+    # which carries spaces/parens) is a SEPARATE field to be defined by WS4 — not this one.
+    "upstream_ref": lambda v: isinstance(v, str) and bool(_UPSTREAM_REF.match(v)),
 }
 
 # scenario internal-name -> public display label. A scenario whose name is not in this

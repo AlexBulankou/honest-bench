@@ -33,6 +33,8 @@ pool — full recipe in [`recipe/REPRODUCE.md`](recipe/REPRODUCE.md), deep-dive 
 blocker — diagnosis plus file-ready patches and comments — is hand-maintained in
 [UPSTREAM_BLOCKERS.md](UPSTREAM_BLOCKERS.md).
 
+> ⚠️ **STALE BENCHMARK DATA** — as of the last upstream-freshness check (2026-08-13), these numbers were last measured more than 7 days earlier: **sandbox** (18d old). They may not reflect the current upstream agent-sandbox; see the `_generated-at:` and `upstream_ref` stamps below for exactly what was measured and against which upstream ref.
+
 ## Agent Sandbox — Core Metrics
 
 **Throughput is dual — `per-node · per-cluster`.** Per-cluster figures are measured per runtime at DIFFERENT node counts — gVisor at 4 nodes; Kata + microVM at 5 nodes — so they are NOT comparable across runtimes here (different X); see the legend below. (This is a different `node_count` than the one printed in each build's provenance banner below the table — that one describes the per-node fire's shape, not this per-cluster measurement.)
