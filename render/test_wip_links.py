@@ -86,8 +86,12 @@ def test_rendered_wip_links_resolve():
 
 # A markdown table DATA row: starts with `|`, is not the `|---|` separator. We only scan
 # data rows (matrix, dual-cell, etc.) — prose paragraphs and legend bullets are exempt by
-# design (hb#166 links DATA cells, never prose).
+# design (hb#166 links DATA cells, never prose). The compact home-page symbol-key table
+# (header "| Symbol | Meaning |", hb#WS1) is a glossary rendered AS a table, not a data
+# table — its `pending` row explains the token, it doesn't measure anything — so it gets
+# the same prose/legend exemption via the _LEGEND_TABLE_HEADER state-skip below.
 _SEP_RE = re.compile(r"^\|[\s:|-]+\|$")
+_LEGEND_TABLE_HEADER = "| Symbol | Meaning |"
 # A bare pending/N/A token NOT already inside a markdown link. `pending` / `pending (x)` / `N/A`
 # preceded by `[` is linked; anything else in a data cell is a dangling bare token.
 _BARE_TOKEN_RE = re.compile(r"(?<!\[)\b(pending)\b(?!\]| \([a-z0-9-]+\)\])|(?<!\[)N/A(?!\])")
@@ -95,8 +99,15 @@ _BARE_TOKEN_RE = re.compile(r"(?<!\[)\b(pending)\b(?!\]| \([a-z0-9-]+\)\])|(?<!\
 
 def _unlinked_pending_cells(page):
     bad = []
+    in_legend_table = False
     for line in page.splitlines():
-        if not line.startswith("|") or _SEP_RE.match(line):
+        if line.strip() == _LEGEND_TABLE_HEADER:
+            in_legend_table = True
+            continue
+        if not line.startswith("|"):
+            in_legend_table = False
+            continue
+        if in_legend_table or _SEP_RE.match(line):
             continue
         cells = [c.strip() for c in line.strip().strip("|").split("|")]
         for cell in cells:
