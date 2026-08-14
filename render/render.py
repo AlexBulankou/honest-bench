@@ -956,6 +956,63 @@ def render_density_detail(results, kata_results=None):
     return "\n".join(lines) + "\n"
 
 
+_DENSITY_BAR_WIDTH = 20
+
+
+def render_density_bars(results, kata_results=None):
+    """Render the per-runtime Max-Density table above as a Unicode block-bar chart, or "" when
+    INERT (no runtime has a measured density yet — a bar chart with zero data points is not a
+    visual, it is noise).
+
+    Visual companion to render_density_detail (WS2, epic #6669) — same source resolution
+    (primary results claim their measured runtime; kata_results may only fill an empty
+    kata-microvm slot), so the bars can never show a runtime the table itself doesn't. Density
+    (sandboxes per vCPU) is an absolute per-runtime figure, not a part-of-whole share, so a
+    length-proportional bar chart is the right shape — not a `pie` (reserved for genuine
+    part-of-whole splits, e.g. render_bind_exec_pie). Rendered as a plain code block of Unicode
+    block characters rather than mermaid `xychart-beta`: GitHub's docs confirm native support
+    for flow/sequence/pie charts but do not confirm xychart-beta, and an unrendered chart block
+    on the public page is worse than no chart — a code-block bar needs no diagram-engine version
+    at all.
+
+    An unmeasured runtime is OMITTED from the chart (not drawn as a zero-length bar, which
+    would misread as "measured at zero") — mirrors the table's `pending` cell semantics without
+    implying a false zero measurement.
+    """
+    product = results.get("product")
+    if product not in PRODUCTS:
+        return ""
+    prov = _clean_provenance(results.get("provenance"))
+    measured_runtime = prov.get("runtime") or "gvisor"
+    sources = {measured_runtime: _matrix_scenarios(results.get("scenarios"))}
+    if (
+        isinstance(kata_results, dict)
+        and kata_results.get("product") == "sandbox-kata"
+        and "kata-microvm" not in sources
+    ):
+        kp = _clean_provenance(kata_results.get("provenance"))
+        if kp.get("runtime") == "kata-microvm":
+            sources["kata-microvm"] = _matrix_scenarios(kata_results.get("scenarios"))
+    rows = []
+    for rt in MATRIX_RUNTIMES:
+        rt_scen = sources.get(rt)
+        density = _runtime_density(rt_scen) if rt_scen is not None else None
+        if isinstance(density, (int, float)) and not isinstance(density, bool) and density > 0:
+            rows.append((RUNTIME_LABELS[rt], density))
+    if not rows:
+        return ""
+    label_width = max(len(label) for label, _ in rows)
+    max_density = max(density for _, density in rows)
+    lines = ["```", "Max Density (sandboxes per vCPU)", ""]
+    for label, density in rows:
+        bar_len = max(1, round(density / max_density * _DENSITY_BAR_WIDTH))
+        bar = "█" * bar_len
+        lines.append(f"{label.ljust(label_width)}  {bar} {_fmt_num(density)}")
+    lines.append("```")
+    lines.append("")
+    return "\n".join(lines)
+
+
 def _landed_cluster_x(m):
     """A metrics dict's landed, valid thpt_cluster_node_count as int — None if absent/invalid.
 

@@ -1753,6 +1753,62 @@ def test_matrix_density_sourced_from_warmpool_not_stale_burst_create():
     assert "0.45" not in out
 
 
+def test_density_bars_inert_on_unknown_product():
+    # WS2 (epic #6669): visual companion to render_density_detail — same INERT gate as the
+    # table it visualizes.
+    assert render.render_density_bars({"product": "not-a-real-product"}) == ""
+
+
+def test_density_bars_inert_when_no_runtime_measured():
+    # no scenario carries density_per_vcpu anywhere -> no bars to draw, not an empty chart.
+    scen = [
+        {"name": "warmpool_cold_start", "outcome": "PASS", "n": 5, "sla_metrics": {}},
+    ]
+    assert render.render_density_bars(_matrix_results(scen)) == ""
+
+
+def test_density_bars_renders_measured_runtime_omits_unmeasured():
+    # gVisor measured (1.88), no kata_results supplied -> one bar, gVisor label + value present,
+    # Kata never drawn as a zero-length bar (simply absent).
+    out = render.render_density_bars(_matrix_results(_full_gvisor_scenarios()))
+    assert out.startswith("```\n")
+    assert out.rstrip().endswith("```")
+    assert "gVisor" in out and "1.88" in out
+    assert "Kata" not in out
+    assert "█" in out
+
+
+def test_density_bars_both_runtimes_bar_lengths_proportional():
+    # kata_results fills the empty kata-microvm slot (same rule as render_density_detail): both
+    # runtimes draw a bar, and the smaller density gets a strictly shorter bar than the larger.
+    kata_scen = [
+        {
+            "name": "warmpool_cold_start", "outcome": "PASS", "n": 5,
+            "sla_metrics": {"density_per_vcpu": 0.94},
+        },
+    ]
+    out = render.render_density_bars(
+        _matrix_results(_full_gvisor_scenarios()), kata_results=_kata_results(scenarios=kata_scen)
+    )
+    assert "gVisor" in out and "1.88" in out
+    assert "Kata + microVM" in out and "0.94" in out
+    lines = [l for l in out.splitlines() if "█" in l]
+    assert len(lines) == 2
+    gvisor_bar_len = len([c for c in lines[0] if c == "█"])
+    kata_bar_len = len([c for c in lines[1] if c == "█"])
+    assert gvisor_bar_len > kata_bar_len
+
+
+def test_density_bars_kata_never_fills_already_measured_gvisor_slot():
+    # kata_results with a mismatched provenance/product must not leak into the gvisor slot or
+    # otherwise corrupt the chart — mirrors render_density_detail's own sourcing guard.
+    out = render.render_density_bars(
+        _matrix_results(_full_gvisor_scenarios()), kata_results={"product": "sandbox"}
+    )
+    assert "gVisor" in out and "1.88" in out
+    assert "Kata" not in out
+
+
 def test_matrix_kata_warm_cold_rows_pending():
     # on an unmeasured kata runtime, the warm-pool + cold rows render pending (not-yet-measured);
     # the resume row is N/A-by-design and is asserted separately below.
