@@ -224,10 +224,23 @@ if [ "${HB_FORK_BUILD:-}" = "1" ]; then
   export BENCH_FORK_BASE_UPSTREAM_SHA="$HB_FORK_BASE_UPSTREAM_SHA"
   export BENCH_FORK_FIX_COUNT="$HB_FORK_FIX_COUNT"
 
-  # ko is required for BUILD_MODE=source and is not in the CB builder base image
-  # (gcr.io/google.com/cloudsdktool/cloud-sdk ships neither ko NOR a go toolchain).
-  # Install the prebuilt release binary — `go install` dies here with exit 127
-  # (`go: command not found`), which is exactly what red-ed the WS4 fork-build fire.
+  # BUILD_MODE=source needs BOTH a go toolchain AND ko, and the CB builder base
+  # image (gcr.io/google.com/cloudsdktool/cloud-sdk) ships NEITHER. ko itself
+  # shells out to `go build` to compile the controller, so installing ko alone is
+  # insufficient — a ko-only image dies at `ko build` (that was the 2nd WS4 red:
+  # ko installed fine, then `ko build` failed instantly because go was absent).
+  # Install the go toolchain first (prebuilt tarball), then the ko release binary.
+  # go1.26.4 matches the fork go.mod's `toolchain` directive so `go build` needs no
+  # network toolchain fetch; GOTOOLCHAIN stays default (auto) so a future go.mod
+  # bump self-heals by auto-downloading the required toolchain.
+  if ! command -v go >/dev/null 2>&1; then
+    echo "==> [fork-build] installing go toolchain (ko build requires it)"
+    GO_VERSION=1.26.4
+    curl -sSfL "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" \
+      | tar -xz -C /usr/local
+    export PATH="/usr/local/go/bin:$PATH"
+    command -v go >/dev/null 2>&1 || { echo "ERROR: [fork-build] go install failed" >&2; exit 1; }
+  fi
   if ! command -v ko >/dev/null 2>&1; then
     echo "==> [fork-build] installing ko (BUILD_MODE=source requires it)"
     KO_VERSION=0.19.1

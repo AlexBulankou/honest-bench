@@ -112,10 +112,18 @@ if [ "$BUILD_MODE" = "source" ]; then
     log "ko building ${import_path}"
     # ko prints build progress to stderr and the final pushed image ref as the last stdout
     # line; `--bare` skips the platform-suffixed tagging ko otherwise appends.
-    built_ref="$(cd "$SRC" && ko build --bare "$import_path" 2>&1 | tail -1)"
+    # Capture the FULL output (not `| tail -1`) so a ko failure is visible: under
+    # `set -euo pipefail`, piping to tail masks ko's non-zero exit AND discards its
+    # diagnostics, so the script would die at the assignment with an empty log (that
+    # was the WS4 go-toolchain-missing red — ko failed instantly with nothing printed).
+    if ! ko_out="$(cd "$SRC" && ko build --bare "$import_path" 2>&1)"; then
+      echo "$ko_out" >&2
+      die "ko build for ${import_path} failed (see ko output above)"
+    fi
+    built_ref="$(printf '%s\n' "$ko_out" | tail -1)"
     case "$built_ref" in
       "${KO_DOCKER_REPO}"*) ;;
-      *) echo "$built_ref" >&2; die "ko build for ${import_path} did not return an image ref under ${KO_DOCKER_REPO} (see build output above)" ;;
+      *) echo "$ko_out" >&2; die "ko build for ${import_path} did not return an image ref under ${KO_DOCKER_REPO} (see ko output above)" ;;
     esac
     log "  -> ${built_ref}"
     esc_ko_path=$(printf '%s' "$ko_path" | sed -e 's/[&\]/\\&/g')
