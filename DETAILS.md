@@ -166,6 +166,15 @@ gVisor          ████████████████████ 5.9
 Kata + microVM  ████ 1.26
 ```
 
+```
+Warm-Pool TTFE (ms) — p50 vs p95
+
+gVisor         p50  ████████████████ 4.541s
+               p95  ████████████████████ 5.6992s
+Kata + microVM p50  ██████ 1.7883s
+               p95  █████████ 2.445s
+```
+
 ## At Scale Under Contention — where sub-second warm activation breaks
 
 The Concurrent Burst legs on the headline page are **1:1** — N ready sandboxes hit with N claims. This is the deliberate **retraction**: the operating point where the pool is **over-subscribed** (more concurrent claims than ready pool members), and warm activation **stops being sub-second**. Measured on **gVisor**: a pool of **30** ready sandboxes hit with **60** simultaneous claims (**2:1 contention**). Every claim still binds, but the over-subscription serializes the bind path — so the "warm hit is <1s" claim from the Core Metrics matrix does **not** hold here. Cluster shape: node_count=1, `e2-standard-16`.

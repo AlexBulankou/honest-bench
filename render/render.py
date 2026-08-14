@@ -1044,6 +1044,84 @@ def render_density_bars(results, kata_results=None):
     return "\n".join(lines)
 
 
+def _runtime_ttfe(scen_by_name):
+    """Per-runtime warm-pool TTFE p50/p95: sourced from the SAME single canonical scenario as
+    _runtime_density (warmpool_cold_start, via DENSITY_SOURCE_SCENARIOS) — the render's one
+    high-N activation-mode row — rather than render_matrix's full per-row/per-mode extraction.
+    Returns (p50_ms, p95_ms, n) only when the scenario carries BOTH percentiles; else None."""
+    for name in DENSITY_SOURCE_SCENARIOS:
+        sc = scen_by_name.get(name)
+        if sc and "ttfe_p50_ms" in sc["metrics"] and "ttfe_p95_ms" in sc["metrics"]:
+            return sc["metrics"]["ttfe_p50_ms"], sc["metrics"]["ttfe_p95_ms"], sc["n"]
+    return None
+
+
+_TTFE_BAR_WIDTH = 20
+
+
+def render_ttfe_bars(results, kata_results=None):
+    """Render warm-pool TTFE p50/p95 per runtime as a Unicode block-bar chart, or "" when INERT
+    (no runtime's canonical scenario carries both percentiles yet).
+
+    Visual companion to the Core Metrics matrix's warm-pool row (WS2, epic #6669). Deliberately
+    sourced from the SAME single canonical scenario as render_density_bars/_runtime_density
+    (warmpool_cold_start) rather than duplicating render_matrix's per-row/per-mode extraction
+    (small-N marker, pending-reason, upstream refs) — that logic is scoped to a specific table
+    cell and re-deriving a subset of it for a chart risks silently disagreeing with the table
+    it's meant to illustrate. Same source-resolution rule as the other runtime-scoped visuals:
+    the primary results claim their measured runtime; kata_results may only fill an empty
+    kata-microvm slot. A runtime whose canonical scenario lacks either percentile is OMITTED
+    (not drawn as a zero bar, which would misread as a real sub-zero measurement).
+
+    A runtime whose canonical-scenario N is below TTFE_COMPARABILITY_MIN_N gets a `*` marker
+    on its label plus a trailing footnote, mirroring the matrix's own low-N TTFE dagger — a
+    single-sample p50 is not a distribution and should not be visually ranked against one.
+
+    Plain code-block Unicode bars, not mermaid xychart-beta (same GitHub-support rationale as
+    render_density_bars: docs confirm pie/flow/sequence, not xychart-beta).
+    """
+    product = results.get("product")
+    if product not in PRODUCTS:
+        return ""
+    prov = _clean_provenance(results.get("provenance"))
+    measured_runtime = prov.get("runtime") or "gvisor"
+    sources = {measured_runtime: _matrix_scenarios(results.get("scenarios"))}
+    if (
+        isinstance(kata_results, dict)
+        and kata_results.get("product") == "sandbox-kata"
+        and "kata-microvm" not in sources
+    ):
+        kp = _clean_provenance(kata_results.get("provenance"))
+        if kp.get("runtime") == "kata-microvm":
+            sources["kata-microvm"] = _matrix_scenarios(kata_results.get("scenarios"))
+    rows = []
+    for rt in MATRIX_RUNTIMES:
+        rt_scen = sources.get(rt)
+        ttfe = _runtime_ttfe(rt_scen) if rt_scen is not None else None
+        if ttfe is not None:
+            p50, p95, n = ttfe
+            rows.append((RUNTIME_LABELS[rt], p50, p95, n))
+    if not rows:
+        return ""
+    any_low_n = any(n < TTFE_COMPARABILITY_MIN_N for _, _, _, n in rows)
+    label_width = max(len(label) for label, _, _, _ in rows) + (1 if any_low_n else 0)
+    max_val = max(max(p50, p95) for _, p50, p95, _ in rows)
+    lines = ["```", "Warm-Pool TTFE (ms) — p50 vs p95", ""]
+    for label, p50, p95, n in rows:
+        star = "*" if n < TTFE_COMPARABILITY_MIN_N else ""
+        row_label = (label + star).ljust(label_width)
+        p50_bar = "█" * max(1, round(p50 / max_val * _TTFE_BAR_WIDTH))
+        p95_bar = "█" * max(1, round(p95 / max_val * _TTFE_BAR_WIDTH))
+        lines.append(f"{row_label} p50  {p50_bar} {_fmt_secs(p50)}")
+        lines.append(f"{' ' * label_width} p95  {p95_bar} {_fmt_secs(p95)}")
+    if any_low_n:
+        lines.append("")
+        lines.append(f"* fewer than {TTFE_COMPARABILITY_MIN_N} samples — not a stable distribution")
+    lines.append("```")
+    lines.append("")
+    return "\n".join(lines)
+
+
 def _landed_cluster_x(m):
     """A metrics dict's landed, valid thpt_cluster_node_count as int — None if absent/invalid.
 
