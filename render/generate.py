@@ -80,6 +80,9 @@ def _load_render():
         mod.check_render_downgrade,
         mod.render_stale_banner,
         mod.resolve_default_as_of,
+        mod.render_commit_distance_banner,
+        mod.resolve_commit_distance,
+        mod.resolve_fork_upstreams,
     )
 
 
@@ -97,7 +100,8 @@ def _load_render():
  render_vcpu_footprint,
  render_storage_config, render_measurement_path_diagram, render_recipe, render_trend,
  check_render_downgrade,
- render_stale_banner, resolve_default_as_of) = _load_render()
+ render_stale_banner, resolve_default_as_of,
+ render_commit_distance_banner, resolve_commit_distance, resolve_fork_upstreams) = _load_render()
 
 
 def _env_flag(name):
@@ -347,12 +351,23 @@ def build_readme(root=None):
     # #4021: the Reproducibility Recipe is product-agnostic architecture prose, so it renders
     # ONCE after the per-product loop — the preamble forward-refs "the recipe at the bottom".
     sections.append(render_recipe().rstrip())
-    # WS3 (epic #6669): the freshness self-declaration renders at the TOP (right after the
-    # preamble H1/intro), so a customer sees a STALE/UNVERIFIED warning before any number. Empty
-    # string (every product fresh) inserts nothing — freshness is the silent, expected state.
+    # WS3 (epic #6669): the freshness self-declarations render at the TOP (right after the
+    # preamble H1/intro), so a customer sees any STALE/UNVERIFIED warning before any number. Empty
+    # string (fresh) inserts nothing — freshness is the silent, expected state. Two orthogonal
+    # axes: calendar age (render_stale_banner, keyed on _meta.last_verified) and commit distance
+    # behind upstream HEAD (render_commit_distance_banner, keyed on _meta.commit_distance). A page
+    # can be calendar-fresh yet built on a fork base dozens of commits behind upstream, so both
+    # are surfaced. Calendar banner sits first (readers are used to it there), distance below it.
+    banners = []
     stale_banner = render_stale_banner(published, as_of=resolve_default_as_of())
     if stale_banner:
-        sections.insert(1, stale_banner)
+        banners.append(stale_banner)
+    distance_banner = render_commit_distance_banner(
+        published, resolve_commit_distance(), resolve_fork_upstreams())
+    if distance_banner:
+        banners.append(distance_banner)
+    for i, banner in enumerate(banners):
+        sections.insert(1 + i, banner)
     return "\n\n".join(sections) + "\n"
 
 

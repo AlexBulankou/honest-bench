@@ -525,6 +525,169 @@ def test_resolve_default_as_of_reads_committed_anchor():
     assert dt.tzinfo is not None
 
 
+# --- commit-distance banner (WS3, epic #6669) ------------------------------------------------
+#
+# Second, orthogonal freshness axis to calendar age: how far behind upstream HEAD the fork base
+# the numbers were measured on is. Same trust-surface idiom as the stale banner — within-threshold
+# is the silent (upgrade) direction; behind-threshold and un-certifiable both fail LOUD.
+
+_FORK_UPSTREAMS = {
+    "sandbox": {
+        "repo": "kubernetes-sigs/agent-sandbox",
+        "branch": "main",
+        "results": "sandbox/results/latest.json",
+    }
+}
+
+
+def _stamp(base_sha, commits_behind, repo="kubernetes-sigs/agent-sandbox",
+           branch="main", checked_at="2026-08-14"):
+    return {
+        "base_sha": base_sha,
+        "commits_behind": commits_behind,
+        "upstream_repo": repo,
+        "upstream_branch": branch,
+        "checked_at": checked_at,
+    }
+
+
+def _prov(base_sha):
+    return {"provenance": {"fork_base_upstream_sha": base_sha}}
+
+
+def test_commit_distance_within_threshold_is_silent():
+    # Within threshold ⇒ "" (no banner). Currency-fresh is the silent, expected state.
+    out = render.render_commit_distance_banner(
+        [("sandbox", _prov("abc123"))],
+        {"sandbox": _stamp("abc123", 10)},
+        _FORK_UPSTREAMS,
+    )
+    assert out == ""
+
+
+def test_commit_distance_boundary_exactly_threshold_is_silent():
+    # commits_behind == threshold is NOT stale (strict `>` boundary), mirroring the calendar banner.
+    out = render.render_commit_distance_banner(
+        [("sandbox", _prov("abc123"))],
+        {"sandbox": _stamp("abc123", render.COMMIT_DISTANCE_THRESHOLD)},
+        _FORK_UPSTREAMS,
+    )
+    assert out == ""
+
+
+def test_commit_distance_over_threshold_fires_loud():
+    out = render.render_commit_distance_banner(
+        [("sandbox", _prov("abc123"))],
+        {"sandbox": _stamp("abc123", 196)},
+        _FORK_UPSTREAMS,
+    )
+    assert "STALE VS UPSTREAM" in out
+    assert "**sandbox** (196 commits behind" in out
+    assert "kubernetes-sigs/agent-sandbox" in out
+    assert "2026-08-14" in out  # cites the checked_at it judged against
+    assert out.startswith("> ")  # markdown blockquote
+
+
+def test_commit_distance_untracked_product_is_silent():
+    # A product not in fork_upstreams makes no distance claim ⇒ silent (no over-claiming).
+    out = render.render_commit_distance_banner(
+        [("substrate", _prov("abc123"))],
+        {},
+        _FORK_UPSTREAMS,
+    )
+    assert out == ""
+
+
+def test_commit_distance_no_stamp_is_unverified():
+    # Tracked product with no committed distance stamp ⇒ fail-LOUD UNVERIFIED.
+    out = render.render_commit_distance_banner(
+        [("sandbox", _prov("abc123"))],
+        {},
+        _FORK_UPSTREAMS,
+    )
+    assert "UPSTREAM DISTANCE UNVERIFIED" in out
+    assert "**sandbox**" in out
+
+
+def test_commit_distance_base_sha_mismatch_is_unverified():
+    # The fork was re-based (current base != stamped base) but the distance was NOT re-measured ⇒
+    # the committed distance is stale-by-construction ⇒ fail LOUD, never present the stale number.
+    out = render.render_commit_distance_banner(
+        [("sandbox", _prov("NEWbase999"))],
+        {"sandbox": _stamp("OLDbase111", 3)},
+        _FORK_UPSTREAMS,
+    )
+    assert "UPSTREAM DISTANCE UNVERIFIED" in out
+    assert "different fork base" in out
+
+
+def test_commit_distance_missing_current_base_is_unverified():
+    # Tracked product whose results carry no fork_base_upstream_sha ⇒ cannot verify the stamp
+    # matches ⇒ fail LOUD.
+    out = render.render_commit_distance_banner(
+        [("sandbox", {"provenance": {}})],
+        {"sandbox": _stamp("abc123", 3)},
+        _FORK_UPSTREAMS,
+    )
+    assert "UPSTREAM DISTANCE UNVERIFIED" in out
+    assert "current fork base is missing" in out
+
+
+def test_commit_distance_malformed_commits_behind_is_unverified():
+    # commits_behind is not a non-negative int (bool, string, negative, None) ⇒ UNVERIFIED.
+    for bad in (True, "12", -1, None):
+        stamp = _stamp("abc123", 3)
+        stamp["commits_behind"] = bad
+        out = render.render_commit_distance_banner(
+            [("sandbox", _prov("abc123"))],
+            {"sandbox": stamp},
+            _FORK_UPSTREAMS,
+        )
+        assert "UPSTREAM DISTANCE UNVERIFIED" in out, "bad commits_behind=%r not caught" % (bad,)
+
+
+def test_commit_distance_empty_fork_upstreams_is_silent():
+    # No tracked products at all ⇒ silent (the feature is opt-in per product).
+    out = render.render_commit_distance_banner([("sandbox", _prov("abc123"))], {}, {})
+    assert out == ""
+
+
+def test_commit_distance_mixed_behind_and_unverified_renders_both():
+    out = render.render_commit_distance_banner(
+        [("sandbox", _prov("abc123")), ("substrate", _prov("xyz789"))],
+        {
+            "sandbox": _stamp("abc123", 196),
+            # substrate stamped against a different base ⇒ unverified
+            "substrate": _stamp("OTHER", 2, repo="agent-substrate/substrate"),
+        },
+        {
+            "sandbox": _FORK_UPSTREAMS["sandbox"],
+            "substrate": {
+                "repo": "agent-substrate/substrate",
+                "branch": "main",
+                "results": "substrate/results/latest.json",
+            },
+        },
+    )
+    assert "STALE VS UPSTREAM" in out
+    assert "UPSTREAM DISTANCE UNVERIFIED" in out
+    assert "**sandbox** (196 commits behind" in out
+
+
+def test_resolve_commit_distance_and_fork_upstreams_read_committed_meta():
+    # The live committed upstream_links.json _meta must expose both maps so build_readme can
+    # feed the pure renderer without a network round-trip.
+    fu = render.resolve_fork_upstreams()
+    cd = render.resolve_commit_distance()
+    assert isinstance(fu, dict) and "sandbox" in fu
+    assert isinstance(cd, dict) and "sandbox" in cd
+    # The committed distance stamp must be measured against the SAME upstream repo/branch the
+    # fork_upstreams config names, else the renderer's cross-check is meaningless.
+    assert cd["sandbox"]["upstream_repo"] == fu["sandbox"]["repo"]
+    assert cd["sandbox"]["upstream_branch"] == fu["sandbox"]["branch"]
+    assert isinstance(cd["sandbox"]["commits_behind"], int)
+
+
 def test_badge_scope_suffixes_isolation_pass_cell():
     # #3905: a valid badge_scope renders as a suffix on the scenario's PASS cell, so the
     # public badge says exactly what the PASS asserts (control-plane admission, not

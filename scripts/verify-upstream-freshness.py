@@ -90,6 +90,60 @@ def _fetch_live(repo, number, token=None):
     return data["state"], is_pr, merged
 
 
+def _fetch_commits_behind(repo, base_sha, branch, token=None):
+    """Return how many commits `base_sha` is behind `branch`'s tip on `repo`, or raise on failure.
+
+    Uses the public compare endpoint `GET /repos/{repo}/compare/{base}...{head}`, whose `ahead_by`
+    is the count of commits reachable from `head` (the branch tip) but NOT from `base` — i.e.
+    exactly how far behind upstream HEAD the fork base is. Unauthenticated like `_fetch_live`; a
+    GITHUB_TOKEN, if present, only raises the anonymous rate limit.
+    """
+    url = "https://api.github.com/repos/%s/compare/%s...%s" % (repo, base_sha, branch)
+    headers = {
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "honest-bench-upstream-freshness",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    if token:
+        headers["Authorization"] = "Bearer %s" % token
+    req = urllib.request.Request(url, headers=headers)
+    with urllib.request.urlopen(req, timeout=20) as resp:
+        data = json.load(resp)
+    ahead = data.get("ahead_by")
+    if not isinstance(ahead, int) or isinstance(ahead, bool):
+        raise ValueError("compare response missing integer ahead_by")
+    return ahead
+
+
+def _refresh_commit_distance(raw, token=None):
+    """Recompute `_meta.commit_distance` for every product in `_meta.fork_upstreams`, live.
+
+    Reads each product's CURRENT `provenance.fork_base_upstream_sha` from its results file (the
+    single source of truth for the fork base — never duplicated into config), fetches the live
+    commits-behind, and returns a fresh `commit_distance` dict. Raises on any failure so the caller
+    can fail closed (never advance the freshness anchor on a partially-verified distance).
+    """
+    today = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
+    fork_upstreams = (raw.get("_meta") or {}).get("fork_upstreams") or {}
+    out = {}
+    for product, cfg in fork_upstreams.items():
+        results_path = os.path.join(_REPO_ROOT, cfg["results"])
+        with open(results_path, encoding="utf-8") as f:
+            results = json.load(f)
+        base_sha = (results.get("provenance") or {}).get("fork_base_upstream_sha")
+        if not (isinstance(base_sha, str) and base_sha):
+            raise ValueError("%s: no fork_base_upstream_sha in %s" % (product, cfg["results"]))
+        behind = _fetch_commits_behind(cfg["repo"], base_sha, cfg["branch"], token=token)
+        out[product] = {
+            "base_sha": base_sha,
+            "commits_behind": behind,
+            "upstream_repo": cfg["repo"],
+            "upstream_branch": cfg["branch"],
+            "checked_at": today,
+        }
+    return out
+
+
 def _expected_ok(declared_kind, declared_status, state, is_pr, merged):
     """True iff the declared (kind, status) matches the live (state, is_pr, merged)."""
     # kind must agree first — a declared issue that is live a PR (or vice-versa)
@@ -205,19 +259,43 @@ def main(argv=None):
         today = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
         with open(_LINKS_PATH, encoding="utf-8") as f:
             raw = json.load(f)
+
+        # Recompute the commit-distance stamp LIVE before touching disk. This is the second,
+        # orthogonal freshness axis (WS3, epic #6669): calendar age vs. commits-behind-upstream-HEAD.
+        # It fails CLOSED — a distance we could not re-measure must never be written stale, and a
+        # partial refresh must never land, so we compute the whole dict first and write NOTHING on
+        # any fetch failure (return UNKNOWN=2 instead). Only on full success do last_verified and
+        # commit_distance land together, in one write — the same encode-then-merge atomicity the
+        # renderer's fail-loud base_sha guard depends on (#4420).
+        try:
+            fresh_distance = _refresh_commit_distance(raw, token=token)
+        except (urllib.error.URLError, urllib.error.HTTPError, KeyError, ValueError,
+                TimeoutError, OSError) as e:
+            print("\n--update-stamp refused: could not re-measure commit distance (%s: %s) — "
+                  "wrote nothing; distance must never be stamped stale." % (type(e).__name__, e),
+                  file=sys.stderr)
+            return 2
+
         prev = raw.get("_meta", {}).get("last_verified")
-        raw.setdefault("_meta", {})["last_verified"] = today
+        meta = raw.setdefault("_meta", {})
+        meta["last_verified"] = today
+        meta["commit_distance"] = fresh_distance
         with open(_LINKS_PATH, "w", encoding="utf-8") as f:
             json.dump(raw, f, indent=2, ensure_ascii=False)
             f.write("\n")
         print("\nlast_verified: %s -> %s (stamped)" % (prev, today))
+        for name, d in fresh_distance.items():
+            print("commit_distance[%s]: %d behind %s@%s (base %s)"
+                  % (name, d["commits_behind"], d["upstream_repo"],
+                     d["upstream_branch"], d["base_sha"][:12]))
 
-        # The rendered pages carry a page-level STALE banner (WS3, epic #6669) keyed on this
-        # very `last_verified` anchor, so bumping the stamp changes what build_readme() emits.
-        # Regenerate README/DETAILS/WORK_IN_PROGRESS in the SAME operation — otherwise the next
-        # push reds the byte-pinned golden (render/test_readme_fresh.py). Encode-then-merge:
-        # the stamp and its rendered consequence land together, never "stamp now, render later".
-        print("regenerating rendered pages (banner anchor changed) ...")
+        # The rendered pages carry two page-level banners (WS3, epic #6669): the STALE banner keyed
+        # on `last_verified`, and the commit-distance banner keyed on `commit_distance`. Bumping
+        # either changes what build_readme() emits, so regenerate README/DETAILS/WORK_IN_PROGRESS in
+        # the SAME operation — otherwise the next push reds the byte-pinned golden
+        # (render/test_readme_fresh.py). Encode-then-merge: the stamps and their rendered
+        # consequence land together, never "stamp now, render later".
+        print("regenerating rendered pages (banner anchors changed) ...")
         rc = subprocess.call([sys.executable, "-m", "render.generate"], cwd=_REPO_ROOT)
         if rc != 0:
             print("*** render.generate failed (exit=%d) — commit the stamp bump AND re-render "
