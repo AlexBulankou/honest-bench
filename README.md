@@ -33,6 +33,8 @@ pool — full recipe in [`recipe/REPRODUCE.md`](recipe/REPRODUCE.md), deep-dive 
 blocker — diagnosis plus file-ready patches and comments — is hand-maintained in
 [UPSTREAM_BLOCKERS.md](UPSTREAM_BLOCKERS.md).
 
+> ⚠️ **STALE VS UPSTREAM** — the fork base these numbers were measured on is more than 25 commits behind the current upstream HEAD: **sandbox** (196 commits behind `kubernetes-sigs/agent-sandbox`@`main` as of 2026-08-14). The measured numbers may not reflect recent upstream changes; re-base the fork and re-fire, then re-run `scripts/verify-upstream-freshness.py --update-stamp` to refresh the distance.
+
 ## Agent Sandbox — Core Metrics
 
 **Throughput is dual — `per-node · per-cluster`.** Per-cluster figures here are a MEASURED cluster rate at 5 nodes; see the legend below for how to read the pair. (This is a different `node_count` than the one printed in each build's provenance banner below the table — that one describes the per-node fire's shape, not this per-cluster measurement.)

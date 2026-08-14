@@ -461,6 +461,136 @@ def resolve_default_as_of():
     return _parse_as_of(_UPSTREAM_META.get("last_verified") if isinstance(_UPSTREAM_META, dict) else None)
 
 
+# WS3 (epic #6669) — commit-distance-behind-upstream-head staleness.
+# A page can be CALENDAR-fresh (re-fired today, so render_stale_banner stays silent) yet built
+# on a fork base many commits behind upstream HEAD — the measured numbers then don't reflect the
+# current upstream code even though the timestamp looks current. Calendar age and commit distance
+# are ORTHOGONAL freshness axes; this banner covers the second one.
+#
+# Commit distance requires a live compare against upstream, which a PURE renderer must never do
+# (it would break the byte-pinned golden + reach the network at render time). So the split mirrors
+# render_stale_banner exactly: scripts/verify-upstream-freshness.py --update-stamp computes the
+# distance LIVE and stamps it into `upstream_links.json` `_meta.commit_distance[product]`; this
+# renderer only READS that committed stamp. Same trust-surface idiom as the stale banner
+# (AGENTS.md "Transition guards on trust surfaces"): the downgrade direction (behind / can't-
+# certify) fails LOUD; the upgrade direction (within threshold) stays silent.
+COMMIT_DISTANCE_THRESHOLD = 25
+
+
+def resolve_fork_upstreams():
+    """The committed product→upstream config (`_meta.fork_upstreams`), or {} if absent.
+
+    A product listed here is one whose commit distance to upstream HEAD the page PROMISES to
+    certify — so a listed product with no valid `_meta.commit_distance` stamp fails loud below
+    (we claimed to track it but haven't). A product NOT listed makes no distance claim and stays
+    silent. Deterministic: reads only committed data.
+    """
+    return _UPSTREAM_META.get("fork_upstreams", {}) if isinstance(_UPSTREAM_META, dict) else {}
+
+
+def resolve_commit_distance():
+    """The committed per-product distance stamps (`_meta.commit_distance`), or {} if absent.
+
+    Written by `scripts/verify-upstream-freshness.py --update-stamp` from a live upstream compare;
+    read here purely. Deterministic: reads only committed data.
+    """
+    return _UPSTREAM_META.get("commit_distance", {}) if isinstance(_UPSTREAM_META, dict) else {}
+
+
+def render_commit_distance_banner(published, distance_stamp, fork_upstreams,
+                                  threshold=COMMIT_DISTANCE_THRESHOLD):
+    """Return a top-of-page markdown banner when a published product's fork base is too far behind
+    (or its distance can't be certified against) upstream HEAD, or "" when every TRACKED product is
+    within threshold.
+
+    `published` is an iterable of (product_name, results_dict) for the products on the page.
+    `distance_stamp` is `_meta.commit_distance` (product → {base_sha, commits_behind, upstream_repo,
+    upstream_branch, checked_at}). `fork_upstreams` is `_meta.fork_upstreams` (product → {repo,
+    branch, results}) — the set of products whose distance the page promises to certify.
+
+    PURE (no wall clock, no network) so build_readme stays a deterministic function of committed
+    data and the golden test stays reproducible.
+
+    Per the trust-surface idiom, downgrade fails LOUD:
+
+      * within-threshold — a valid stamp whose `base_sha` matches the product's CURRENT
+                           `fork_base_upstream_sha` and whose `commits_behind` <= threshold
+                           → silent (return "" if that holds for every tracked product).
+      * behind           — a valid, base-matched stamp with `commits_behind` > threshold → loud
+                           "STALE VS UPSTREAM" banner naming the product + distance.
+      * unverified       — a tracked product with no stamp, a malformed stamp, or a stamp whose
+                           `base_sha` no longer matches the product's current fork base (the fork
+                           was re-based since the distance was last measured, so the stamp is for a
+                           DIFFERENT base and can't certify the live one) → loud "UPSTREAM DISTANCE
+                           UNVERIFIED" banner (guard-then-fill: we cannot certify, so we say so).
+
+    A product only reaches this function if it is BOTH published AND in `fork_upstreams`; an
+    untracked published product is silent (no claim made).
+    """
+    if not isinstance(fork_upstreams, dict) or not fork_upstreams:
+        return ""
+    if not isinstance(distance_stamp, dict):
+        distance_stamp = {}
+    behind = []
+    unverified = []
+    for name, results in published:
+        if name not in fork_upstreams:
+            continue  # untracked product — the page makes no distance claim about it
+        current_base = None
+        if isinstance(results, dict):
+            prov = results.get("provenance")
+            if isinstance(prov, dict):
+                current_base = prov.get("fork_base_upstream_sha")
+        stamp = distance_stamp.get(name)
+        n = stamp.get("commits_behind") if isinstance(stamp, dict) else None
+        stamped_base = stamp.get("base_sha") if isinstance(stamp, dict) else None
+        repo = stamp.get("upstream_repo") if isinstance(stamp, dict) else None
+        branch = stamp.get("upstream_branch") if isinstance(stamp, dict) else None
+        checked_at = stamp.get("checked_at") if isinstance(stamp, dict) else None
+        # A usable stamp needs an int commits_behind (bool is not int here), a base_sha, and repo/
+        # branch context; anything short of that is unverifiable.
+        stamp_ok = (
+            isinstance(n, int) and not isinstance(n, bool) and n >= 0
+            and isinstance(stamped_base, str) and stamped_base
+            and isinstance(repo, str) and isinstance(branch, str)
+            and isinstance(checked_at, str) and checked_at
+        )
+        if not stamp_ok:
+            unverified.append((name, "no valid distance stamp is committed"))
+            continue
+        if not (isinstance(current_base, str) and current_base):
+            unverified.append((name, "the product's current fork base is missing"))
+            continue
+        if stamped_base != current_base:
+            unverified.append((name, "the distance stamp was measured against a different fork base"))
+            continue
+        if n > threshold:
+            behind.append((name, n, repo, branch, checked_at))
+    if not behind and not unverified:
+        return ""
+    lines = []
+    if behind:
+        detail = ", ".join(
+            f"**{name}** ({n} commits behind `{repo}`@`{branch}` as of {checked_at})"
+            for name, n, repo, branch, checked_at in behind
+        )
+        lines.append(
+            f"> ⚠️ **STALE VS UPSTREAM** — the fork base these numbers were measured on is more "
+            f"than {threshold} commits behind the current upstream HEAD: {detail}. The measured "
+            f"numbers may not reflect recent upstream changes; re-base the fork and re-fire, then "
+            f"re-run `scripts/verify-upstream-freshness.py --update-stamp` to refresh the distance."
+        )
+    if unverified:
+        detail = ", ".join(f"**{name}** ({why})" for name, why in unverified)
+        lines.append(
+            f"> ⚠️ **UPSTREAM DISTANCE UNVERIFIED** — this page cannot certify how far behind "
+            f"upstream HEAD these numbers' fork base is: {detail}. Treat them as potentially "
+            f"behind upstream; run `scripts/verify-upstream-freshness.py --update-stamp` to "
+            f"(re)establish the distance."
+        )
+    return "\n>\n".join(lines)
+
+
 def _clean_history(rows):
     """Closed-schema-validate history rows, drop any that fail, sort by generated_at.
 

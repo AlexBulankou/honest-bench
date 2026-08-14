@@ -94,6 +94,31 @@ def _load():
                 raise AssertionError("upstream_links.json class %r: bad role %r" % (cls, ref.get("role")))
             if ref.get("status") not in _STATUSES:
                 raise AssertionError("upstream_links.json class %r: bad status %r" % (cls, ref.get("status")))
+    # WS3 (epic #6669): the commit-distance banner's fork→upstream config lands in _meta and
+    # names an upstream repo that gets rendered on the PUBLIC page — so enforce the same
+    # public-OSS allow-list here at LOAD time as we do for blocker refs above. A non-public
+    # repo can never reach the rendered page through this path either.
+    meta = data.get("_meta")
+    if isinstance(meta, dict):
+        fork_upstreams = meta.get("fork_upstreams")
+        if fork_upstreams is not None:
+            if not isinstance(fork_upstreams, dict):
+                raise AssertionError("upstream_links.json _meta.fork_upstreams must be an object")
+            for product, cfg in fork_upstreams.items():
+                if not isinstance(cfg, dict):
+                    raise AssertionError("upstream_links.json _meta.fork_upstreams[%r] must be an object" % product)
+                repo = cfg.get("repo")
+                if not isinstance(repo, str) or repo.count("/") != 1:
+                    raise AssertionError("upstream_links.json _meta.fork_upstreams[%r]: bad repo %r" % (product, repo))
+                if repo not in _PUBLIC_REPOS:
+                    raise AssertionError(
+                        "upstream_links.json _meta.fork_upstreams[%r]: repo %r not in the public-OSS "
+                        "allow-list %s" % (product, repo, sorted(_PUBLIC_REPOS))
+                    )
+                if not isinstance(cfg.get("branch"), str) or not cfg.get("branch"):
+                    raise AssertionError("upstream_links.json _meta.fork_upstreams[%r]: bad branch %r" % (product, cfg.get("branch")))
+                if not isinstance(cfg.get("results"), str) or not cfg.get("results"):
+                    raise AssertionError("upstream_links.json _meta.fork_upstreams[%r]: bad results path %r" % (product, cfg.get("results")))
     return data
 
 
