@@ -2468,25 +2468,133 @@ def render_north_star_caption(results, kata_results=None):
         "North Star, not the North Star itself; the step-up curve grades sustained creation-rate "
         f"against it — see [DETAILS.md](DETAILS.md)): {_entries(STRETCH_TTFE_P95_MS)}._"
     )
+    # WS1 known-anomalies consolidation (epic #6669): the FAIL / inversion / separation /
+    # regime / cadence blocks formerly appended here unconditionally now live in the
+    # "Known anomalies" table (render_known_anomalies_table) + DETAILS.md
+    # (render_known_anomalies_detail) — see those functions for the live-marker/link
+    # scheme. `caveat` (machine-class) and `delta_caveat` (refresh-over-refresh regression)
+    # are NOT part of that consolidation and stay wired here unchanged.
     caveat = _machine_class_caveat(_clean_provenance(results.get("provenance")))
     delta_caveat = _north_star_delta_caveat(results, kata_results)
-    fail_caveat = _north_star_fail_caveat(rows)
-    inversion_caveat = _warm_cold_inversion_caveat(results, kata_results)
-    separation_caveat = _warmpool_separation_caveat(results, kata_results)
     out = north_star + "\n\n" + stretch
-    if fail_caveat:
-        out += "\n\n" + fail_caveat
-    if inversion_caveat:
-        out += "\n\n" + inversion_caveat
-    if separation_caveat:
-        out += "\n\n" + separation_caveat
     if caveat:
         out += "\n\n" + caveat
     if delta_caveat:
         out += "\n\n" + delta_caveat
-    out += "\n\n" + _REGIME_BOUNDARY_NOTE
-    out += "\n\n" + _REFRESH_CADENCE_NOTE
     return out
+
+
+def render_known_anomalies_table(results, kata_results=None):
+    """Compact "is anything currently wrong?" table (epic #6669 WS1) replacing the 6
+    standalone banner blockquotes that used to render inline under the North Star caption.
+
+    Each row's Status cell is a live marker + link into DETAILS.md's `## Known anomalies`
+    section — the marker degrades loudly (`⚠️ ACTIVE`) the instant its underlying condition
+    trips and reverts to `✅ clear` the instant it doesn't (#4420: never a silent downgrade,
+    never a stale "still looks fine" cell). A clear row still links, so the reader can see
+    exactly what the check covers even when nothing is currently wrong.
+
+    Regime note / Refresh cadence are always-standing context (not conditional checks), so
+    they render an unconditional `ℹ️ standing note` marker rather than active/clear.
+
+    The optional Concurrent-burst row is wayfinding-only, never summarized into a verdict
+    here: that disclosure can fire 0, 1, or N times per refresh (once per date/regime group
+    inside render_cluster_scale), so folding it into one Status cell would either hide
+    multi-group detail or fabricate a single answer. It only appears when the harness
+    emitted a closed-schema-clean top-level `concurrent_burst` object.
+    """
+    product = results.get("product")
+    if product not in PRODUCTS:
+        return ""
+    rows = _north_star_rows(results, kata_results)
+    fail_active = bool(_north_star_fail_caveat(rows))
+    inversion_active = bool(_warm_cold_inversion_caveat(results, kata_results))
+    separation_active = bool(_warmpool_separation_caveat(results, kata_results))
+
+    def _cell(active, anchor):
+        marker = "⚠️ ACTIVE" if active else "✅ clear"
+        return f"[{marker}](DETAILS.md#{anchor})"
+
+    lines = [
+        "### Known anomalies",
+        "",
+        "| Anomaly | Status |",
+        "|---|---|",
+        f"| Scenario FAIL | {_cell(fail_active, 'scenario-fail')} |",
+        f"| Warm-slower-than-cold | {_cell(inversion_active, 'warm-slower-than-cold')} |",
+        "| Warm-cold separation below gate | "
+        f"{_cell(separation_active, 'warm-cold-separation-below-gate')} |",
+        "| Regime note | [ℹ️ standing note](DETAILS.md#regime-note) |",
+        "| Refresh cadence | [ℹ️ standing note](DETAILS.md#refresh-cadence) |",
+    ]
+    if _clean_concurrent_burst(results):
+        lines.append(
+            "| Concurrent-burst measurement regime | [ℹ️ see section]"
+            "(DETAILS.md#concurrent-burst-measurement-regime) |"
+        )
+    lines.append("")
+    return "\n".join(lines)
+
+
+def render_known_anomalies_detail(results, kata_results=None):
+    """DETAILS.md counterpart to render_known_anomalies_table (epic #6669 WS1).
+
+    One `### <heading>` per row, heading text chosen so GitHub's own slug algorithm
+    produces exactly the anchor the README table links to (no explicit `<a id>` — this
+    codebase's DETAILS.md anchors are always plain hand-synced headings, never anchor
+    tags). Live caveat text is byte-identical to what previously rendered inline under the
+    North Star caption; a clear condition gets a short fallback sentence instead of the
+    (empty) caveat text, naming the check without duplicating prose that has nothing to
+    disclose. Regime note / Refresh cadence show their full static text unconditionally —
+    they were never conditional in the first place.
+    """
+    product = results.get("product")
+    if product not in PRODUCTS:
+        return ""
+    rows = _north_star_rows(results, kata_results)
+    fail_caveat = _north_star_fail_caveat(rows)
+    inversion_caveat = _warm_cold_inversion_caveat(results, kata_results)
+    separation_caveat = _warmpool_separation_caveat(results, kata_results)
+
+    def _clear(name):
+        return f"_Clear as of the latest measured refresh — no {name} currently disclosed._"
+
+    lines = ["## Known anomalies", ""]
+    lines.append("### Scenario FAIL")
+    lines.append("")
+    lines.append(fail_caveat if fail_caveat else _clear("scenario FAIL"))
+    lines.append("")
+    lines.append("### Warm-slower-than-cold")
+    lines.append("")
+    lines.append(
+        inversion_caveat if inversion_caveat else _clear("warm-slower-than-cold inversion")
+    )
+    lines.append("")
+    lines.append("### Warm-cold separation below gate")
+    lines.append("")
+    lines.append(
+        separation_caveat if separation_caveat else _clear("warm/cold separation shortfall")
+    )
+    lines.append("")
+    lines.append("### Regime note")
+    lines.append("")
+    lines.append(_REGIME_BOUNDARY_NOTE)
+    lines.append("")
+    lines.append("### Refresh cadence")
+    lines.append("")
+    lines.append(_REFRESH_CADENCE_NOTE)
+    lines.append("")
+    if _clean_concurrent_burst(results):
+        lines.append("### Concurrent-burst measurement regime")
+        lines.append("")
+        lines.append(
+            "Per-fire measurement-regime disclosures for the concurrent-burst sweep render "
+            "inline in [README.md](README.md#does-it-hold-at-cluster-scale) next to each "
+            "burst — the disclosure can repeat once per date/regime group, so it is not "
+            "summarized here."
+        )
+        lines.append("")
+    return "\n".join(lines).rstrip() + "\n"
 
 
 # --- hb#134: operating-envelope headline table -------------------------------------------
