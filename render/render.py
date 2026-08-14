@@ -92,6 +92,31 @@ def _clean_provenance(prov):
     return out
 
 
+def _fork_provenance_str(prov):
+    """Compose the fork-build source string from three closed-schema parts, or "" when INERT.
+
+    WS4(c), epic #6669. When these numbers were measured against a controller built from
+    alex's fork (not the upstream-published image), build_provenance stamps three parts —
+    ``fork_sha``, ``fork_base_upstream_sha``, and ``fork_fix_count`` — each validated by
+    PROVENANCE_FIELDS before reaching here. The renderer assembles them into the display
+    string ``fork@<sha> (+N fixes over upstream@<base>)`` so no space/paren-carrying blob has
+    to survive the closed-schema allow-list.
+
+    Returns "" (INERT — build banner byte-unchanged) unless ALL THREE parts are present AND
+    ``fork_fix_count > 0``: a prebuilt-image (non-fork) fire stamps none of them, and a fork
+    build that is even with its base (0 fixes ahead) has no fix-delta worth claiming, so
+    neither renders a source line.
+    """
+    if not isinstance(prov, dict):
+        return ""
+    fork_sha = prov.get("fork_sha")
+    base = prov.get("fork_base_upstream_sha")
+    n = prov.get("fork_fix_count")
+    if not (fork_sha and base and isinstance(n, int) and not isinstance(n, bool) and n > 0):
+        return ""
+    return f"fork@{fork_sha} (+{n} fixes over upstream@{base})"
+
+
 def _machine_class_caveat(prov):
     """One-line caveat about this run's machine class, or "" when INERT.
 
@@ -301,6 +326,12 @@ def render_product(results):
         "runsc_version",
     ]
     banner = [f"{k}={prov[k]}" for k in banner_order if k in prov]
+    # Fork-build source leg (WS4(c), epic #6669): appends "source=fork@<sha> (+N fixes over
+    # upstream@<base>)" only on a fork-build fire that carries all three parts with a positive
+    # fix count; INERT (byte-unchanged banner) on every prebuilt-image run.
+    fork_str = _fork_provenance_str(prov)
+    if fork_str:
+        banner.append(f"source={fork_str}")
     if banner:
         lines.append("_build: " + " · ".join(banner) + "_")
     gen = results.get("generated_at")
@@ -1896,6 +1927,12 @@ def render_matrix(results, kata_results=None, include_legend=True):
         "node_count",
     ]
     banner = [f"{k}={prov[k]}" for k in banner_order if k in prov]
+    # Fork-build source leg (WS4(c), epic #6669): mirrors the per-product build banner above —
+    # appends "source=fork@<sha> (+N fixes over upstream@<base>)" only on a fork-build fire,
+    # INERT (byte-unchanged) on every prebuilt-image run.
+    fork_str = _fork_provenance_str(prov)
+    if fork_str:
+        banner.append(f"source={fork_str}")
     if banner:
         lines.append("_build: " + " · ".join(banner) + "_")
     gen = results.get("generated_at")

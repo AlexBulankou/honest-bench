@@ -313,6 +313,115 @@ def test_upstream_ref_invalid_dropped_no_banner_entry():
     assert "SECRET RIG" not in out
 
 
+# ---- WS4(c) (epic #6669) fork-build source provenance -----------------------------------
+# The three closed-schema parts (fork_sha, fork_base_upstream_sha, fork_fix_count) are
+# composed by _fork_provenance_str into a "source=fork@<sha> (+N fixes over upstream@<base>)"
+# leg on the _build: banner. INERT unless all three present AND fix_count > 0.
+
+def test_fork_provenance_renders_composed_source_leg_product_banner():
+    out = _render(
+        {
+            "product": "substrate",
+            "provenance": {
+                "fork_sha": "79203112",
+                "fork_base_upstream_sha": "2b3a4715",
+                "fork_fix_count": 2,
+            },
+            "scenarios": [{"name": "durable_dir_lifecycle", "outcome": "PASS", "n": 1}],
+        }
+    )
+    assert "source=fork@79203112 (+2 fixes over upstream@2b3a4715)" in out
+
+
+def test_fork_provenance_renders_in_matrix_banner():
+    out = render.render_matrix(
+        _matrix_results(
+            _full_gvisor_scenarios(),
+            provenance={
+                "fork_sha": "79203112",
+                "fork_base_upstream_sha": "2b3a4715",
+                "fork_fix_count": 2,
+            },
+        )
+    )
+    assert "source=fork@79203112 (+2 fixes over upstream@2b3a4715)" in out
+
+
+def test_fork_provenance_absent_renders_no_source_leg():
+    # INERT-when-absent: a prebuilt-image run stamps none of the three parts ⇒ byte-unchanged
+    # banner (no `source=` leg at all).
+    out = _render(
+        {
+            "product": "substrate",
+            "provenance": {"cluster_substrate": "gke-standard"},
+            "scenarios": [{"name": "durable_dir_lifecycle", "outcome": "PASS", "n": 1}],
+        }
+    )
+    assert "source=fork@" not in out
+
+
+def test_fork_provenance_partial_parts_render_nothing():
+    # Only two of three parts present (missing base) ⇒ the compose gate holds INERT: no
+    # half-rendered "fork@<sha> (+N fixes over upstream@)" leaks a dangling clause.
+    out = _render(
+        {
+            "product": "substrate",
+            "provenance": {"fork_sha": "79203112", "fork_fix_count": 2},
+            "scenarios": [{"name": "durable_dir_lifecycle", "outcome": "PASS", "n": 1}],
+        }
+    )
+    assert "source=fork@" not in out
+    assert "fixes over upstream@" not in out
+
+
+def test_fork_provenance_zero_fix_count_renders_nothing():
+    # A fork build that is even with its base (0 fixes ahead) has no fix-delta worth claiming.
+    # fork_fix_count=0 fails the schema predicate (0 < v) AND the render >0 gate — no leg.
+    out = _render(
+        {
+            "product": "substrate",
+            "provenance": {
+                "fork_sha": "79203112",
+                "fork_base_upstream_sha": "2b3a4715",
+                "fork_fix_count": 0,
+            },
+            "scenarios": [{"name": "durable_dir_lifecycle", "outcome": "PASS", "n": 1}],
+        }
+    )
+    assert "source=fork@" not in out
+
+
+def test_fork_provenance_invalid_sha_dropped_no_leg():
+    # An out-of-schema fork_sha (spaces / non-hex) fails its _GITSHA predicate in
+    # _clean_provenance and is dropped, so the compose gate sees a missing part and renders
+    # nothing — the raw value never reaches the page.
+    out = _render(
+        {
+            "product": "substrate",
+            "provenance": {
+                "fork_sha": "SECRET BRANCH (ask ops)",
+                "fork_base_upstream_sha": "2b3a4715",
+                "fork_fix_count": 2,
+            },
+            "scenarios": [{"name": "durable_dir_lifecycle", "outcome": "PASS", "n": 1}],
+        }
+    )
+    assert "source=fork@" not in out
+    assert "SECRET BRANCH" not in out
+
+
+def test_fork_provenance_str_helper_inert_on_non_dict():
+    assert render._fork_provenance_str(None) == ""
+    assert render._fork_provenance_str("nope") == ""
+
+
+def test_fork_provenance_str_helper_rejects_bool_fix_count():
+    # bool is an int subclass; True must never be treated as a fix count of 1.
+    assert render._fork_provenance_str(
+        {"fork_sha": "abc1234", "fork_base_upstream_sha": "def5678", "fork_fix_count": True}
+    ) == ""
+
+
 def _dt(days_ago):
     now = datetime.datetime(2026, 8, 14, 12, 0, 0, tzinfo=datetime.timezone.utc)
     return (now - datetime.timedelta(days=days_ago)).strftime("%Y-%m-%dT%H:%M:%SZ")

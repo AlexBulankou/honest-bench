@@ -1411,6 +1411,29 @@ def build_provenance(
     upstream_ref = os.environ.get("BENCH_UPSTREAM_REF", "").strip()
     if upstream_ref:
         prov["upstream_ref"] = upstream_ref
+    # Fork-build provenance components (WS4(c), epic #6669): when these numbers were measured
+    # against a controller built from alex's fork (not the upstream-published image), stamp the
+    # three parts the renderer composes into "fork@<sha> (+N fixes over upstream@<base>)":
+    #   BENCH_FORK_SHA               -> fork_sha (the fork commit the controller was built at)
+    #   BENCH_FORK_BASE_UPSTREAM_SHA -> fork_base_upstream_sha (the upstream commit the fork forks from)
+    #   BENCH_FORK_FIX_COUNT         -> fork_fix_count (# of fork-ahead fixes over that base)
+    # Same env-passthrough-or-omit posture as upstream_ref — a prebuilt-image (non-fork) fire
+    # leaves all three env vars unset, so the keys are omitted and the render leg stays INERT
+    # (the build banner is byte-unchanged from today). Stored as three closed-schema-validated
+    # parts rather than one free-text string so no space/paren-carrying blob has to survive the
+    # PROVENANCE_FIELDS allow-list; the renderer assembles the display string from the parts.
+    fork_sha = os.environ.get("BENCH_FORK_SHA", "").strip()
+    if fork_sha:
+        prov["fork_sha"] = fork_sha
+    fork_base_upstream_sha = os.environ.get("BENCH_FORK_BASE_UPSTREAM_SHA", "").strip()
+    if fork_base_upstream_sha:
+        prov["fork_base_upstream_sha"] = fork_base_upstream_sha
+    fork_fix_count = os.environ.get("BENCH_FORK_FIX_COUNT", "").strip()
+    if fork_fix_count:
+        try:
+            prov["fork_fix_count"] = int(fork_fix_count)
+        except ValueError:
+            pass  # non-int env -> omit; the schema would drop it anyway
     # Matrix runtime column (#3942/#830): emitted only for sandbox-family products
     # so render flips that runtime's rows to measured and the other to pending.
     runtime = _matrix_runtime_for(product)
