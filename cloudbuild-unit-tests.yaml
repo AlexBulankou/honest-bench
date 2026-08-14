@@ -106,6 +106,27 @@ steps:
         fi
         echo "specific-name-scan: clean — no forbidden internal names in tree."
 
+  # Commit-metadata leak scan. The two scans above read tracked file BODIES; neither
+  # can see the author/committer name+email baked into commit OBJECTS, yet a corp
+  # address there lands in the public repo's permanent history just the same (the
+  # 2026-08-13 MED gap: owner corp address in 19 historical commits' AUTHOR metadata).
+  # Forward-guard only: scan just the NEW commits this branch adds (origin/main..HEAD),
+  # so grandfathered history — which was NOT rewritten (a rewrite would break the
+  # published commit-sha provenance anchors) — never reds the gate. On a push-to-main
+  # build HEAD==origin/main, so the range is empty and this is a clean no-op. Fetch
+  # main first (the PR checkout may not carry it); if the base can't be resolved the
+  # scanner fails CLOSED rather than silently skipping a security gate.
+  - name: python:3.12
+    id: commit-metadata
+    entrypoint: bash
+    waitFor: ['specific-name-scan']
+    args:
+      - -c
+      - |
+        set -uo pipefail
+        git fetch --no-tags --depth=50 origin main >/dev/null 2>&1 || true
+        bash scripts/check-public-safety.sh --commits origin/main..HEAD
+
   # Discover-all + run every test_*.py. Mirrors the workflow's discover-all glob
   # so a new test_*.py is gated the instant it is committed (no per-file list to
   # drift). Most modules are stdlib-pure, but the render tests import kubernetes
@@ -115,7 +136,7 @@ steps:
   - name: python:3.12
     id: unit-tests
     entrypoint: bash
-    waitFor: ['specific-name-scan']
+    waitFor: ['commit-metadata']
     args:
       - -c
       - |
