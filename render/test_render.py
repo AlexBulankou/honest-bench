@@ -6770,6 +6770,109 @@ def test_rig_unknown_marker_reaches_rendered_page():
     assert "Machine-class change" not in out
 
 
+# --- Stale-carry-forward disclosure (hb#612) -----------------------------------------------
+# at_scale_contention and concurrent_burst have no daily in-process producer; they are carried
+# forward byte-unchanged across the daily refresh until the next heavy manual fire. Prior to
+# this, neither renderer compared its own stamped machine_type against the current run's
+# top-level provenance.machine_type, so a rig change since the section's last fire rendered
+# silently as if still fresh -- exactly the trust-surface downgrade AGENTS.md #4420 forbids.
+
+
+def test_stale_carry_forward_caveat_inert_when_machine_types_match():
+    assert render._stale_carry_forward_caveat(
+        {"machine_type": "e2-standard-16"}, {"machine_type": "e2-standard-16"}, label="x"
+    ) == ""
+
+
+def test_stale_carry_forward_caveat_inert_when_either_side_missing():
+    assert render._stale_carry_forward_caveat(
+        {}, {"machine_type": "e2-standard-16"}, label="x") == ""
+    assert render._stale_carry_forward_caveat(
+        {"machine_type": "e2-standard-16"}, {}, label="x") == ""
+    assert render._stale_carry_forward_caveat({}, {}, label="x") == ""
+
+
+def test_stale_carry_forward_caveat_fires_when_machine_types_differ():
+    out = render._stale_carry_forward_caveat(
+        {"machine_type": "e2-standard-16"}, {"machine_type": "n2-standard-16"}, label="at-scale-contention")
+    assert "Stale" in out
+    assert "no producer since rig change" in out
+    assert "e2-standard-16" in out and "n2-standard-16" in out
+    assert "at-scale-contention" in out
+
+
+def test_at_scale_contention_page_stale_caveat_on_rig_change():
+    out = render.render_at_scale_contention(
+        _matrix_results(
+            _full_gvisor_scenarios(),
+            provenance={"machine_type": "n2-standard-16"},
+            at_scale_contention=_asc(machine_type="e2-standard-16"),
+        )
+    )
+    assert "Stale — no producer since rig change" in out
+    assert "e2-standard-16" in out and "n2-standard-16" in out
+
+
+def test_at_scale_contention_detail_stale_caveat_on_rig_change():
+    out = render.render_at_scale_contention(
+        _matrix_results(
+            _full_gvisor_scenarios(),
+            provenance={"machine_type": "n2-standard-16"},
+            at_scale_contention=_asc(machine_type="e2-standard-16"),
+        ),
+        detail=True,
+    )
+    assert "Stale — no producer since rig change" in out
+
+
+def test_at_scale_contention_no_stale_caveat_when_rig_matches_current():
+    out = render.render_at_scale_contention(
+        _matrix_results(
+            _full_gvisor_scenarios(),
+            provenance={"machine_type": "e2-standard-16"},
+            at_scale_contention=_asc(machine_type="e2-standard-16"),
+        )
+    )
+    assert "Stale — no producer since rig change" not in out
+
+
+def test_at_scale_contention_no_stale_caveat_when_no_top_level_provenance():
+    # No top-level provenance at all -> nothing to compare against; fail-closed to no claim.
+    out = render.render_at_scale_contention(
+        _matrix_results(_full_gvisor_scenarios(), at_scale_contention=_asc()))
+    assert "Stale — no producer since rig change" not in out
+
+
+def test_concurrent_burst_stale_caveat_on_rig_change():
+    out = render.render_concurrent_burst(
+        _matrix_results(
+            _full_gvisor_scenarios(),
+            provenance={"machine_type": "n2-standard-16"},
+            concurrent_burst=_cb(machine_type="e2-standard-16"),
+        )
+    )
+    assert "Stale — no producer since rig change" in out
+    assert "e2-standard-16" in out and "n2-standard-16" in out
+    assert "concurrent-burst" in out
+
+
+def test_concurrent_burst_no_stale_caveat_when_rig_matches_current():
+    out = render.render_concurrent_burst(
+        _matrix_results(
+            _full_gvisor_scenarios(),
+            provenance={"machine_type": "e2-standard-16"},
+            concurrent_burst=_cb(machine_type="e2-standard-16"),
+        )
+    )
+    assert "Stale — no producer since rig change" not in out
+
+
+def test_concurrent_burst_no_stale_caveat_when_no_top_level_provenance():
+    out = render.render_concurrent_burst(
+        _matrix_results(_full_gvisor_scenarios(), concurrent_burst=_cb()))
+    assert "Stale — no producer since rig change" not in out
+
+
 def _run_all():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:
