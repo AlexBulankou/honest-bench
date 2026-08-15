@@ -4,7 +4,7 @@ Active upstream blockers that need action now, ordered **substrate-first** (subs
 
 **Engagement model:** upstream approvers are engaged directly through existing maintainer relationships. We do not open new issues/PRs in the upstream repos; reference patches are staged and offered only if a maintainer asks. Fixes are staged and validated on integration forks and proven from fork builds before they are relied on — per-blocker strategy in [**Fork-fix conversion status**](#fork-fix-conversion-status). Engineering depth for every item: [**UPSTREAM_BLOCKERS_DETAIL.md**](UPSTREAM_BLOCKERS_DETAIL.md). Machine-readable link states: [`render/upstream_links.json`](render/upstream_links.json) — updated in the same commit as any state change here, and re-swept against the public GitHub API on each refresh.
 
-_Link states last verified live against the public GitHub API: **2026-08-14**._
+_Link states last verified live against the public GitHub API: **2026-08-15**._
 
 ## Substrate (primary product — GA-critical)
 
