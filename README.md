@@ -33,7 +33,7 @@ pool — full recipe in [`recipe/REPRODUCE.md`](recipe/REPRODUCE.md), deep-dive 
 blocker — diagnosis plus file-ready patches and comments — is hand-maintained in
 [UPSTREAM_BLOCKERS.md](UPSTREAM_BLOCKERS.md).
 
-> ⚠️ **STALE VS UPSTREAM** — the fork base these numbers were measured on is more than 25 commits behind the current upstream HEAD: **sandbox** (196 commits behind `kubernetes-sigs/agent-sandbox`@`main` as of 2026-08-14). The measured numbers may not reflect recent upstream changes; re-base the fork and re-fire, then re-run `scripts/verify-upstream-freshness.py --update-stamp` to refresh the distance.
+> ⚠️ **UPSTREAM DISTANCE UNVERIFIED** — this page cannot certify how far behind upstream HEAD these numbers' fork base is: **sandbox** (the product's current fork base is missing). Treat them as potentially behind upstream; run `scripts/verify-upstream-freshness.py --update-stamp` to (re)establish the distance.
 
 ## Agent Sandbox — Core Metrics
 
@@ -42,9 +42,9 @@ blocker — diagnosis plus file-ready patches and comments — is hand-maintaine
 
 | Runtime | Activation Mode | Throughput @ <5s TTFE (sb/s — node · cluster) | Throughput @ <1s TTFE (sb/s — node · cluster) | TTFE p50 | TTFE p95 | Execution Success (Honesty Check) |
 |---|---|---|---|---|---|---|
-| gVisor | Warm-pool hit (Base image) | 24.067 /node · [pending (cluster-fire)](WORK_IN_PROGRESS.md#cluster-fire) | 11.231 /node · [pending (cluster-fire)](WORK_IN_PROGRESS.md#cluster-fire) | 1.0603s (count=30) | 1.3574s (count=30) | 100% |
-| gVisor | Unique-image cold (RL reality) | [pending](WORK_IN_PROGRESS.md#not-yet-measured) | 0 /node · 0 /cluster | 3.9747s (count=30) | 4.1537s (count=30) | 100% |
-| gVisor | Resume-from-suspend | [pending](WORK_IN_PROGRESS.md#not-yet-measured) | 0 /node · 0 /cluster | 4.2808s (count=30) | 4.391s (count=30) | 100% |
+| gVisor | Warm-pool hit (Base image) | 2.038 /node · [pending (cluster-fire)](WORK_IN_PROGRESS.md#cluster-fire) | 0 /node · [pending (cluster-fire)](WORK_IN_PROGRESS.md#cluster-fire) | 4.7436s (count=30) | 7.8438s (count=30) | 100% |
+| gVisor | Unique-image cold (RL reality) | 0 /node · 0 /cluster | 0 /node · 0 /cluster | 4.3004s (count=30) | 5.127s (count=30) | 100% |
+| gVisor | Resume-from-suspend | 0 /node · 0 /cluster | 0 /node · 0 /cluster | 4.6642s (count=30) | 5.2098s (count=30) | 100% |
 | Kata + microVM | Warm-pool hit (Base image) | 14.994 /node · 0.75 /cluster ⚠️ | 1 /node · [pending (cluster-fire)](WORK_IN_PROGRESS.md#cluster-fire) | 1.6668s (count=30) | 2.2426s (count=30) | 100% |
 | Kata + microVM | Unique-image cold (RL reality) | unk.***K | 0 /node · 0 /cluster | 3.1176s (count=30) | 3.3883s (count=30) | 100% |
 | Kata + microVM | Resume-from-suspend | [N/A](WORK_IN_PROGRESS.md#na-by-construction) | [N/A](WORK_IN_PROGRESS.md#na-by-construction) | [N/A](WORK_IN_PROGRESS.md#na-by-construction) | [N/A](WORK_IN_PROGRESS.md#na-by-construction) | [N/A](WORK_IN_PROGRESS.md#na-by-construction) |
@@ -73,21 +73,21 @@ Full cell-decoding key — TTFE basis, honest vs. measured zeros, the dual per-n
 
 _Kata + microVM rows are measured in a separate run on the kata node pool: cluster_substrate=gke-kata · node_count=1 · generated-at=2026-08-14T08:02:07Z._
 
-_build: cluster_substrate=gke-sandbox · run_id=bf9e6a031fed4488a43eef4967de3f4b · node_count=1 · source=fork@4c71c2cf9fa7c1039357d52701f80faa14971e81 (+1 fixes over upstream@0be472b745dabc8015c38bf00ce21c9a565537c0)_
-_generated-at: 2026-08-14T04:39:44Z_
+_build: cluster_substrate=gke-sandbox · controller_digest=sha256:ded4a8bbfa0443e62d20a8b9e16cf6d57e70abae1716535c86dd7a94422b3949 · suite_git_sha=0cc10b70dd6d855c570d9ef0cdc5def8db24a27b · run_id=0e9c8bb0528845bf9726e846ce008ac9 · node_count=1_
+_generated-at: 2026-08-15T07:18:38Z_
 
-_**North Star** — warm-pool-hit TTFE p95 < 1s (the spec doc bar): gVisor 1.3574s (count=30) ❌ not met (0.3574s above the bar); Kata + microVM 2.2426s (count=30) ❌ not met (1.2426s above the bar). An honest ❌ prints the measured gap to the bar (tagged `within sampling noise` when the miss sits inside the sample spread — it stays a ❌, the tag never flips a miss to a pass); `pending` = unmeasured (never a guess); † marks a p95 over fewer than N=30 samples._
+_**North Star** — warm-pool-hit TTFE p95 < 1s (the spec doc bar): gVisor 7.8438s (count=30) ❌ not met (6.8438s above the bar); Kata + microVM 2.2426s (count=30) ❌ not met (1.2426s above the bar). An honest ❌ prints the measured gap to the bar (tagged `within sampling noise` when the miss sits inside the sample spread — it stays a ❌, the tag never flips a miss to a pass); `pending` = unmeasured (never a guess); † marks a p95 over fewer than N=30 samples._
 
-_**Stretch bar** — warm-pool-hit TTFE p95 < 0.5s (an aspiration above the North Star, not the North Star itself; the step-up curve grades sustained creation-rate against it — see [DETAILS.md](DETAILS.md)): gVisor 1.3574s (count=30) ❌ not met (0.8574s above the bar); Kata + microVM 2.2426s (count=30) ❌ not met (1.7426s above the bar)._
+_**Stretch bar** — warm-pool-hit TTFE p95 < 0.5s (an aspiration above the North Star, not the North Star itself; the step-up curve grades sustained creation-rate against it — see [DETAILS.md](DETAILS.md)): gVisor 7.8438s (count=30) ❌ not met (7.3438s above the bar); Kata + microVM 2.2426s (count=30) ❌ not met (1.7426s above the bar)._
 
-> ⚠️ **Machine class unknown:** this sandbox-family run did not stamp `machine_type`, so a rig change relative to the previously published run cannot be ruled out. Treat any delta as possibly machine-class-confounded until a matched-rig run is published.
+> ⚠️ **Refresh delta:** **gVisor** regressed by 6.4864s (1.3574s → 7.8438s, 5.8x). A swing this large, or a bar-crossing flip, between consecutive published runs is flagged for a second look before trusting it as a substrate signal — check for a machine-class change, a node-count change, a node-image change, a broken measurement, or a real regression/fix.
 
 ### Known anomalies
 
 | Anomaly | Status |
 |---|---|
 | Scenario FAIL | [✅ clear](DETAILS.md#scenario-fail) |
-| Warm-slower-than-cold | [✅ clear](DETAILS.md#warm-slower-than-cold) |
+| Warm-slower-than-cold | [⚠️ ACTIVE](DETAILS.md#warm-slower-than-cold) |
 | Warm-cold separation below gate | [⚠️ ACTIVE](DETAILS.md#warm-cold-separation-below-gate) |
 | Regime note | [ℹ️ standing note](DETAILS.md#regime-note) |
 | Refresh cadence | [ℹ️ standing note](DETAILS.md#refresh-cadence) |
@@ -103,7 +103,7 @@ Find the row closest to **your** load; the p50 is the wait to plan around. The *
 
 | Your load pattern | Wait to budget (p50) | Scope |
 |---|---|---|
-| Steady trickle — warm pool keeps up with demand | ~1.1s | full start → first result |
+| Steady trickle — warm pool keeps up with demand | ~4.7s | full start → first result |
 | Bursty — pool oversubscribed 2:1 (60 claims / 30 ready) | ~1.7s | full start → first result |
 | 300 sandboxes requested at once (1:1 pool) | ~6.9s | full start → first result |
 | Sustained 300/sec churn | ~2.9s | pool hand-off only (before exec) |
@@ -169,14 +169,13 @@ COUNT vs the prior build; the first build is the baseline. Drive this COUNT up.
 |---|---|---|---|---|---|---|
 | `sha256:6edaf7b6b22d…` | 2026-06-28 | 9 | — | 0.45 | 10 | PASS |
 | `sha256:4e36a61c6bdc…` | 2026-07-25 | 2 | -7 † | 0.0416667 | 10 | FAIL |
+| `sha256:ded4a8bbfa04…` | 2026-08-15 | 10 | +8 † | 0.15625 | 10 | PASS |
 
 _† Δ spans a build whose burst sampled fewer than N=30 claims — too few to rank build-over-build; the swing may be sampling noise, not a real move._
 
 _A FAIL Outcome means that build's burst did not clear the delivery-ratio SLA — the COUNT is still the real, measured number, not fabricated or estimated._
 
 _Density /vCPU (this build) is this single burst's own per-vCPU figure — a different, typically much smaller measurement than the Max Density table above (peak across scenarios), not a build-over-build regression._
-
-_⚠️ The most recent fire (2026-08-14) measured a headline COUNT of 10 but is not reflected above — its provenance carries no `controller_digest`, so it cannot be anchored to a build. The trend is not advanced past 2026-07-25; fix the fire's provenance capture and this caveat clears on the next accrual._
 
 ## Which storage class should you pick?
 
