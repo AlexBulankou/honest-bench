@@ -102,6 +102,16 @@ substitutions:
   _HB_FORK_SHA: ""
   _HB_FORK_BASE_UPSTREAM_SHA: ""
   _HB_FORK_FIX_COUNT: ""
+  # #6762 / hb#615 follow-up: ephemeral-cluster node floor. Default 2 preserves
+  # the #6743 min-nodes=2 pre-scale fix (the standing daily fire is unchanged).
+  # Override at fire time for the S27 controlled re-fire that varies node-count
+  # ALONE (isolating the node-floor bump from a same-run controller-build change):
+  #   gcloud builds triggers run hb-refresh-gke-sandbox --project=<PROJECT> \
+  #     --substitutions=_NUM_NODES=1,_MAX_NODES=3   # then repeat with _NUM_NODES=2
+  # _MAX_NODES empty ⇒ the script derives floor+1 (historical 2->3 headroom);
+  # pin it so a clean single-variable fire holds max constant across both floors.
+  _NUM_NODES: "2"
+  _MAX_NODES: ""
 
 steps:
   # PRE-FIRE FUNCTIONAL PROBE: a policy READ (`gcloud projects get-iam-policy`)
@@ -205,6 +215,11 @@ steps:
       # way, and the script reuses it rather than adding a third copy).
       - "HB_REGION=${_REGION}"
       - "HB_KEEP_CLUSTER_ON_FAILURE=${_KEEP_CLUSTER_ON_FAILURE}"
+      # #6762 / hb#615: ephemeral-cluster node floor + headroom, same env-handoff
+      # reason as HB_REGION above (CB substitutions can't be read inline from a
+      # checked-in script). Default _NUM_NODES=2 / _MAX_NODES="" preserves 2/2/3.
+      - "HB_NUM_NODES=${_NUM_NODES}"
+      - "HB_MAX_NODES=${_MAX_NODES}"
       # epic #6669 WS4 fork-build inputs (see the substitutions block above). All
       # empty by default ⇒ the fork block in cb-measure-gke-sandbox.sh is skipped
       # and this env is inert. HB_FORK_KO_DOCKER_REPO is the ko push target;

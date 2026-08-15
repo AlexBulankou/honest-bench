@@ -99,14 +99,32 @@ pip install --quiet --no-cache-dir --break-system-packages -r harness/requiremen
 # badges (cross_tenant_network_isolation, default_deny_egress) read
 # FAIL — not a flake, a real enforcement gap: NetworkPolicy objects
 # admit cleanly but nothing enforces them. See #314.
+# Ephemeral-cluster node floor (#6762 / hb#615 follow-up). Parameterized so the
+# S27 controlled re-fire can vary node-count ALONE — fire at floor=1 vs floor=2,
+# holding machine_type + controller-build constant — to isolate whether the
+# #6743 warm-pool improvement came from the node-floor bump (#615) or a same-run
+# controller-build change. Default 2 preserves the #6743 `min-nodes=2` pre-scale
+# fix documented at the sampler block below, so a normal refresh is unchanged.
+# MAX defaults to floor+1 (the historical 2->3 headroom) but can be pinned via
+# HB_MAX_NODES so a clean single-variable fire holds max constant across both
+# floors (e.g. HB_MAX_NODES=3 with HB_NUM_NODES 1 vs 2). The live
+# BENCH_NODE_COUNT provenance capture (~line 343) still auto-reads the real pool
+# size, so this control and that stamp can never disagree.
+NUM_NODES="${HB_NUM_NODES:-2}"
+MAX_NODES="${HB_MAX_NODES:-}"
+if ! echo "$MAX_NODES" | grep -Eq '^[1-9][0-9]*$' || [ "$MAX_NODES" -lt "$NUM_NODES" ]; then
+  MAX_NODES=$((NUM_NODES + 1))
+fi
+echo "==> ephemeral node floor=$NUM_NODES max=$MAX_NODES (HB_NUM_NODES/HB_MAX_NODES override)"
+
 echo "==> creating ephemeral cluster $CLUSTER in $REGION"
 gcloud container clusters create "$CLUSTER" \
   --region "$REGION" \
   --release-channel rapid \
   --machine-type "$BENCH_MACHINE_TYPE" \
   --node-locations "$REGION-a" \
-  --num-nodes 2 \
-  --enable-autoscaling --min-nodes 2 --max-nodes 3 \
+  --num-nodes "$NUM_NODES" \
+  --enable-autoscaling --min-nodes "$NUM_NODES" --max-nodes "$MAX_NODES" \
   --enable-network-policy \
   --no-enable-basic-auth --no-issue-client-certificate
 
@@ -116,8 +134,8 @@ gcloud container node-pools create hb-gvisor-pool \
   --region "$REGION" \
   --machine-type "$BENCH_MACHINE_TYPE" \
   --node-locations "$REGION-a" \
-  --num-nodes 2 \
-  --enable-autoscaling --min-nodes 2 --max-nodes 3 \
+  --num-nodes "$NUM_NODES" \
+  --enable-autoscaling --min-nodes "$NUM_NODES" --max-nodes "$MAX_NODES" \
   --sandbox=type=gvisor
 
 gcloud container clusters get-credentials "$CLUSTER" --region "$REGION"
