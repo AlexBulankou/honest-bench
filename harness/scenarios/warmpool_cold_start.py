@@ -79,6 +79,7 @@ except ImportError:  # standalone (dependency-free test from the scenarios/ dir)
 
 import logging
 import os
+import statistics
 import time
 import uuid
 
@@ -97,19 +98,41 @@ _CLAIM_COUNT = int(os.environ.get("WARMPOOL_COLD_START_CLAIM_COUNT", "10"))
 
 # Warm-tier gate (separation-based). The scenario verifies the warm pool yields
 # a DISTINCT FAST provisioning tier — not an absolute latency. PASS iff the
-# _POOL_REPLICAS fastest claims form a warm cluster that is EITHER absolutely
-# fast (warm_max < _ABS_FAST_CEILING_S) OR clearly separated from the
-# next-fastest claim (next/warm_max >= _SEPARATION_RATIO).
+# _POOL_REPLICAS fastest genuine-warm claims form a warm cluster that is EITHER
+# absolutely fast (warm_max < _ABS_FAST_CEILING_S) OR clearly separated from the
+# cold tier by median (cold_p50 / warm_p50 >= _SEPARATION_RATIO).
 #
 # Rationale: warm-tier end-to-end latency (scheduler + kubelet + container start)
 # drifts up under cluster load, so a zero-margin absolute gate false-FAILs when
 # genuinely-warm binds drift past the line while staying far below the cold tier.
-# The separation gate is robust to absolute drift in either tier yet still
-# catches genuine under-delivery (if the pool serves fewer than _POOL_REPLICAS
-# warm slots, the _POOL_REPLICAS-th fastest claim falls into the cold cluster ->
-# ratio ~= 1.0 -> FAIL). The absolute clause keeps the gate honest if a future
-# instant-on/snapshot path makes the cold tier fast too (separation collapses but
-# provisioning is genuinely fast). Both bounds env-tunable for recalibration.
+# The separation gate is robust to absolute drift in either tier.
+#
+# The separation clause is PERCENTILE-MATCHED (cold_p50 / warm_p50), NOT
+# min-vs-max (#6743). The prior cold_min/warm_max form let a single fast-cold
+# bind crater the ratio: in a spread submission burst a late-created cold claim
+# starts its create->bind clock late, so its span is tiny -> cold_min collapses
+# -> ratio craters 20x even on a run whose warm adoption was actually HEALTHY
+# (the fork run that scored 2.19 bound its warm claims ~3x SLOWER per-claim than
+# the upstream run that scored 0.11 — the old metric inverted relative to warm
+# health). Comparing the MEDIAN cold bind to the MEDIAN warm bind is robust to
+# that outlier AND to submission-cadence queue pressure, which inflates both
+# tiers ~equally so their ratio stays stable. Genuine under-delivery is caught by
+# the provenance gate (fewer than _POOL_REPLICAS genuine pre-warmed hits -> FAIL,
+# hb#450), decoupled from the separation clause. The absolute clause keeps the
+# gate honest if a future instant-on/snapshot path makes the cold tier fast too
+# (separation collapses but provisioning is genuinely fast). Both bounds
+# env-tunable for recalibration.
+#
+# Evaluated-and-dropped (#6743): rebasing per-claim latency onto the asbx#761
+# `webhook-first-observed-at` server stamp (to remove the serial-submission
+# confound at the source). Dropped for two reasons — (1) it is not cleanly
+# implementable: bound_at is a client monotonic clock while the webhook stamp is
+# server wall-clock, and the two cannot be subtracted; the Ready-condition
+# wall-clock stamp is only second-granular, too coarse for sub-second warm binds.
+# (2) It buys ~nothing for the SEPARATION ratio anyway: create_times are recorded
+# immediately AFTER each create() returns, so a claim's own POST tail is already
+# excluded from its create->bind span; the residual confound is reconcile-queue
+# pressure, which p50-vs-p50 already absorbs.
 _ABS_FAST_CEILING_S = float(
     os.environ.get("WARMPOOL_COLD_START_ABS_CEILING_S", "2.5")
 )
@@ -633,11 +656,18 @@ def _classify_latencies(
     The warm cluster = the `pool_replicas` fastest completed claims. PASS iff
     that cluster is fast by EITHER measure:
       - absolute   : warm_max < abs_ceiling_s, OR
-      - separation : next_fastest / warm_max >= separation_ratio
-    Robust to absolute warm-tier drift while still catching genuine
-    under-delivery: if the pool serves fewer than `pool_replicas` warm slots, the
-    `pool_replicas`-th fastest claim is itself a cold-path bind, so warm_max ~=
-    next_fastest -> ratio ~= 1.0 -> FAIL.
+      - separation : cold_p50 / warm_p50 >= separation_ratio
+    Robust to absolute warm-tier drift.
+
+    The separation clause is PERCENTILE-MATCHED — the MEDIAN cold-tier bind over
+    the MEDIAN warm-tier bind, not cold_min/warm_max (#6743). min-vs-max let a
+    single fast-cold bind (created late in a spread submission burst, so its
+    create->bind span is tiny) crater cold_min and collapse the ratio ~20x on a
+    run where warm adoption was actually healthy; p50-vs-p50 is robust to that
+    outlier AND to submission-cadence queue pressure (which inflates both tiers
+    ~equally, leaving their ratio stable). Genuine under-delivery is caught by the
+    provenance gate below (fewer than `pool_replicas` genuine pre-warmed hits ->
+    FAIL), NOT by the separation clause — the two concerns are decoupled.
 
     ## Provenance gating (hb#450)
 
@@ -692,6 +722,8 @@ def _classify_latencies(
         "warm_names": [],
         "next_fastest_s": None,
         "separation_observed": None,
+        "warm_p50_s": None,
+        "cold_p50_s": None,
         "cold_path_min_s": None,
         "cold_path_max_s": None,
         "absolute_ok": False,
@@ -737,13 +769,23 @@ def _classify_latencies(
     breakdown["cold_path_min_s"] = cold_path_min
     breakdown["cold_path_max_s"] = cold_path_max
 
+    # Percentile-matched separation (#6743): MEDIAN cold bind vs MEDIAN warm bind.
+    # warm_pairs is empty in cold-baseline mode (pool_replicas == 0), so warm_p50
+    # is None there and the separation clause is skipped (only the absolute clause
+    # applies) — same neutral-cold behavior the prior min/max form had.
+    warm_latencies = [v for v, _ in warm_pairs]
+    warm_p50 = statistics.median(warm_latencies) if warm_latencies else None
+    cold_p50 = statistics.median(remainder) if remainder else None
+    breakdown["warm_p50_s"] = warm_p50
+    breakdown["cold_p50_s"] = cold_p50
+
     absolute_ok = warm_max < abs_ceiling_s
-    if remainder and warm_max > 0:
-        separation_observed = remainder[0] / warm_max
+    if remainder and warm_p50 is not None and warm_p50 > 0:
+        separation_observed = cold_p50 / warm_p50
         separation_ok = separation_observed >= separation_ratio
     else:
-        # No cold tier to separate from (claim_count == pool_replicas):
-        # only the absolute clause applies.
+        # No cold tier to separate from (claim_count == pool_replicas), or
+        # cold-baseline mode (no warm tier): only the absolute clause applies.
         separation_observed = None
         separation_ok = False
 
@@ -764,11 +806,14 @@ def _add_gate_diagnostic_metrics(
     """Mutate + return `sla_metrics` with numeric hb#379 gate-diagnostic keys.
 
     The excerpt string that names WHY the gate passed/failed (warm_max /
-    cold_path_min / separation) is deliberately NEVER persisted (run.py:
-    `del excerpt`, the raw-failure_excerpt public-safety rule), so a committed
-    FAIL row previously carried no way to tell "absolute ceiling missed" from
-    "separation ratio missed" or by how much. These three pure numbers close
-    that gap without touching the excerpt-scrubbing rule. Numeric-only keys
+    cold_path_min / warm_p50 / cold_p50 / separation) is deliberately NEVER
+    persisted (run.py: `del excerpt`, the raw-failure_excerpt public-safety
+    rule), so a committed FAIL row previously carried no way to tell "absolute
+    ceiling missed" from "separation ratio missed" or by how much. These pure
+    numbers close that gap without touching the excerpt-scrubbing rule — the
+    p50-vs-p50 pair (warm_p50_ms / cold_p50_ms) are the separation ratio's
+    inputs, and warm_max_ms / cold_min_ms are retained for the absolute clause
+    and longitudinal continuity. Numeric-only keys
     need no results_schema change — `_coerce_sla_metrics` auto-passes any
     finite-number key by shape, not by name allow-list.
 
@@ -784,6 +829,14 @@ def _add_gate_diagnostic_metrics(
         sla_metrics["warmpool_gate_cold_min_ms"] = (
             breakdown["cold_path_min_s"] * 1000.0
         )
+    # p50-vs-p50 separation diagnostics (#6743): the two medians the separation
+    # ratio is now computed from. Emitted alongside the retained min/max keys so a
+    # committed FAIL row shows both the new ratio's inputs and the absolute clause's
+    # warm_max. Present only when a warm tier exists (skipped in cold-baseline).
+    if breakdown.get("warm_p50_s") is not None:
+        sla_metrics["warmpool_gate_warm_p50_ms"] = breakdown["warm_p50_s"] * 1000.0
+    if breakdown.get("cold_p50_s") is not None:
+        sla_metrics["warmpool_gate_cold_p50_ms"] = breakdown["cold_p50_s"] * 1000.0
     if breakdown["separation_observed"] is not None:
         sla_metrics["warmpool_gate_separation_ratio"] = (
             breakdown["separation_observed"]
