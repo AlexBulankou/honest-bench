@@ -319,6 +319,37 @@ echo "==> controller_digest=${BENCH_CONTROLLER_DIGEST:-<empty>} (pod=${CONTROLLE
 echo "==> deploying TTFE-true webhook (asbx#761, hb#5396)"
 bash recipe/deploy-ttfe-webhook.sh
 
+# BENCH_NODE_COUNT provenance (follow-up to #615): harness.run build_provenance() reads
+# node_count from this env var and silent-defaults to 1 when it is unset (see
+# run.py's finalize verify: "the fix is to set BENCH_NODE_COUNT correctly").
+# This script never set it, so EVERY fire stamped node_count=1 in latest.json's
+# provenance — including the post-#615 fires whose ephemeral cluster + gVisor
+# pool are physically 2 nodes. That is a trust-surface mis-stamp: the published
+# rig reports a topology it never ran on, and it doubly-confounded the #613
+# warm-pool refresh comparison (the reader could not tell node-count 1->2 apart
+# from a same-run controller-build change). Capture the LIVE gVisor-pool node
+# count here — the pre-burst floor the warm pool is provisioned on, scoped to the
+# same hb-gvisor-pool selector the #319 sampler uses so the two agree; a
+# mid-burst reactive autoscale is a separate regression signal that sampler
+# catches, not this provenance field. Guard the value: a non-positive/empty
+# capture would re-poison the very provenance this fixes, so on a bad read leave
+# BENCH_NODE_COUNT unset (harness keeps its default) and log loudly rather than
+# export a bogus count. The trailing `|| true` is load-bearing: this runs at top
+# level under `set -euo pipefail`, so a kubectl *error* (non-zero exit, not just
+# empty output) would otherwise abort the whole measure script here before the
+# empty/non-numeric guard below ever runs — `|| true` lets a bad read fall
+# through to that guard instead of killing the fire (unlike the #319 sampler's
+# copy of this pipeline, which is insulated inside a backgrounded subshell).
+BENCH_NODE_COUNT=$(kubectl get nodes -l cloud.google.com/gke-nodepool=hb-gvisor-pool \
+  --no-headers 2>/dev/null | wc -l | tr -d ' ' || true)
+if echo "$BENCH_NODE_COUNT" | grep -Eq '^[1-9][0-9]*$'; then
+  export BENCH_NODE_COUNT
+  echo "==> node_count=$BENCH_NODE_COUNT (hb-gvisor-pool pre-burst floor — provenance, #615 follow-up)"
+else
+  echo "==> WARNING: node_count capture returned '${BENCH_NODE_COUNT:-<empty>}' — leaving BENCH_NODE_COUNT unset; provenance will silent-default (#615 follow-up)" >&2
+  unset BENCH_NODE_COUNT
+fi
+
 echo "==> running sandbox harness (gke-sandbox / gVisor)"
 python3 -m harness.run --product sandbox
 
