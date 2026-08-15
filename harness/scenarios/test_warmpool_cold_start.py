@@ -225,32 +225,42 @@ def test_provenance_all_eligible_matches_rank_only():
 
 
 def test_provenance_excludes_fast_cold_blend_from_warm_tier():
-    # c2 binds fast (0.7s, 3rd fastest) but is a COLD BLEND (not in warm_eligible);
-    # c3/c4 are genuine pre-warmed hits that bound slow. Rank-only would pick
-    # {c0,c1,c2} and PASS on warm_max 0.7 — the exact phantom the fix kills.
-    # Provenance draws the warm tier from eligibles only: {c0,c1,c3}, warm_max 5.0,
-    # which fails both the absolute and separation clauses -> honest FAIL.
-    latencies = {"c0": 0.5, "c1": 0.6, "c2": 0.7, "c3": 5.0, "c4": 6.0}
-    eligible = {"c0", "c1", "c3", "c4"}  # c2 is the cold blend
+    # The pool has collapsed: the 3 fast binds {c0,c1,c2} are all COLD BLENDS
+    # (depletion-replacement, not pre-warmed), while the 3 genuine pre-warmed hits
+    # {c3,c4,c5} bound slow. Rank-only picks the fast blends {c0,c1,c2}, sees
+    # warm_max 0.7 < 2.5, and PHANTOM-PASSES on the absolute clause — the exact
+    # phantom the provenance fix kills. Provenance draws the warm tier from the
+    # eligibles only ({c3,c4,c5}), so under p50-vs-p50 (#6743) the warm median
+    # (5.5s) is SLOWER than the cold median (0.6s): separation 0.11 (inverted),
+    # warm_max 6.0 > ceiling -> BOTH clauses fail -> honest FAIL. The 0.11 mirrors
+    # the real upstream collapse this metric was rebuilt to surface.
+    latencies = {"c0": 0.5, "c1": 0.6, "c2": 0.7, "c3": 5.0, "c4": 5.5, "c5": 6.0}
+    eligible = {"c3", "c4", "c5"}  # c0/c1/c2 are the fast cold blends
 
-    # rank-only WOULD pass on the fast cold blend...
+    # rank-only WOULD pass on the fast cold blends...
     rank_passed, rank_bd = cell._classify_latencies(
         latencies, pool_replicas=3, abs_ceiling_s=2.5, separation_ratio=1.8,
     )
     assert rank_passed and rank_bd["warm_names"] == ["c0", "c1", "c2"]
 
-    # ...provenance gating excludes it and reflects the real warm delivery.
+    # ...provenance gating excludes them and reflects the real (slow) warm delivery.
     passed, bd = cell._classify_latencies(
         latencies, pool_replicas=3, abs_ceiling_s=2.5, separation_ratio=1.8,
         warm_eligible=eligible,
     )
     assert not passed
-    assert bd["warm_names"] == ["c0", "c1", "c3"]
-    assert "c2" not in bd["warm_names"]
-    assert bd["warm_max_s"] == 5.0
-    assert bd["warm_eligible_count"] == 4
-    # the excluded fast blend rejoins the cold tier the separation gate measures.
-    assert bd["cold_path_min_s"] == 0.7
+    assert bd["warm_names"] == ["c3", "c4", "c5"]
+    assert not ({"c0", "c1", "c2"} & set(bd["warm_names"]))
+    assert bd["warm_max_s"] == 6.0
+    assert bd["warm_eligible_count"] == 3
+    # The excluded fast blends rejoin the cold tier the separation gate measures;
+    # their fast median inverts the ratio the metric now keys on.
+    assert bd["cold_path_min_s"] == 0.5
+    assert bd["warm_p50_s"] == 5.5
+    assert bd["cold_p50_s"] == 0.6
+    assert abs(bd["separation_observed"] - 0.6 / 5.5) < 1e-9
+    assert not bd["separation_ok"]
+    assert not bd["absolute_ok"]
 
 
 def test_provenance_under_delivery_when_few_genuine_hits():
@@ -300,6 +310,9 @@ def test_gate_diagnostics_adds_all_three_keys_when_cold_tier_present():
     assert sla_metrics["warmpool_gate_warm_max_ms"] == 1500.0
     assert sla_metrics["warmpool_gate_cold_min_ms"] == 5000.0
     assert sla_metrics["warmpool_gate_separation_ratio"] == bd["separation_observed"]
+    # p50-vs-p50 diagnostic keys (#6743): warm median 1.2s, cold median 7.0s.
+    assert sla_metrics["warmpool_gate_warm_p50_ms"] == 1200.0
+    assert sla_metrics["warmpool_gate_cold_p50_ms"] == 7000.0
 
 
 def test_gate_diagnostics_omits_cold_and_separation_keys_when_no_cold_tier():
