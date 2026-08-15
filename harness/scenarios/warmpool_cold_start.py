@@ -1440,7 +1440,7 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
             else "separation" if breakdown["separation_ok"]
             else "none"
         )
-        # hb#6743 diagnostic: surface the separation-gate inputs (warm/cold p50,
+        # #6743 diagnostic: surface the separation-gate inputs (warm/cold p50,
         # ratio, warm_max) to the build-log stdout on EVERY warm-tier fire. These
         # numbers otherwise reach only sla_metrics (the published results JSON) —
         # a fire that refuses to publish (check_n_regression on a reduced-shape
@@ -1453,7 +1453,7 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
             def _ms(v: float | None) -> str:
                 return f"{v * 1000.0:.1f}" if v is not None else "<n/a>"
             log.info(
-                "hb#6743 gate diagnostics: warm_p50=%sms cold_p50=%sms "
+                "#6743 gate diagnostics: warm_p50=%sms cold_p50=%sms "
                 "separation=%s (>= %sx) warm_max=%sms cold_min=%sms clause=%s",
                 _ms(breakdown.get("warm_p50_s")), _ms(breakdown.get("cold_p50_s")),
                 sep_str, _SEPARATION_RATIO,

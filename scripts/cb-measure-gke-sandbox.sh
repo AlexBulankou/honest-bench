@@ -124,7 +124,7 @@ gcloud container clusters get-credentials "$CLUSTER" --region "$REGION"
 
 # Background node-count sampler (hb#319 diagnostic): warmpool_cold_start asks
 # for 30 resident + 40 claims on hb-gvisor-pool. hb#318's "warm slower than
-# cold" anomaly was root-caused (a#6743) to single-node oversubscription: the
+# cold" anomaly was root-caused (#6743) to single-node oversubscription: the
 # pool floored at min-nodes=1, so 30 warm gVisor sandboxes + a 40-claim burst
 # contended a single n2-standard-16, and a reactive GKE scale-up (VM boot +
 # gVisor runtime init + kubelet join) could not land inside the ~9s burst
