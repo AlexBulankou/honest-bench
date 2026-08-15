@@ -105,8 +105,8 @@ gcloud container clusters create "$CLUSTER" \
   --release-channel rapid \
   --machine-type "$BENCH_MACHINE_TYPE" \
   --node-locations "$REGION-a" \
-  --num-nodes 1 \
-  --enable-autoscaling --min-nodes 1 --max-nodes 3 \
+  --num-nodes 2 \
+  --enable-autoscaling --min-nodes 2 --max-nodes 3 \
   --enable-network-policy \
   --no-enable-basic-auth --no-issue-client-certificate
 
@@ -116,23 +116,27 @@ gcloud container node-pools create hb-gvisor-pool \
   --region "$REGION" \
   --machine-type "$BENCH_MACHINE_TYPE" \
   --node-locations "$REGION-a" \
-  --num-nodes 1 \
-  --enable-autoscaling --min-nodes 1 --max-nodes 3 \
+  --num-nodes 2 \
+  --enable-autoscaling --min-nodes 2 --max-nodes 3 \
   --sandbox=type=gvisor
 
 gcloud container clusters get-credentials "$CLUSTER" --region "$REGION"
 
 # Background node-count sampler (hb#319 diagnostic): warmpool_cold_start asks
-# for 30 resident + 40 claims on hb-gvisor-pool's 1-3 node autoscale ceiling —
-# the leading hypothesis for hb#318's "warm slower than cold" anomaly is that
-# the burst saturates the 1-node floor and a reactive GKE scale-up (VM boot +
-# gVisor runtime init + kubelet join) lands inside the measured bind-time
-# window, smearing "warm" and "cold" together. This can't be reconstructed
-# post-hoc (the cluster is ephemeral, no retained autoscaler event history),
-# so sample hb-gvisor-pool's node count across the WHOLE measure phase and
-# print it at the end — confirms or rules out the ceiling directly from the
-# next fire's build log, no separate debugging fire required. Best-effort:
-# a sampler hiccup must never fail the measure step over a diagnostic.
+# for 30 resident + 40 claims on hb-gvisor-pool. hb#318's "warm slower than
+# cold" anomaly was root-caused (#6743) to single-node oversubscription: the
+# pool floored at min-nodes=1, so 30 warm gVisor sandboxes + a 40-claim burst
+# contended a single n2-standard-16, and a reactive GKE scale-up (VM boot +
+# gVisor runtime init + kubelet join) could not land inside the ~9s burst
+# window — smearing "warm" and "cold" together. The fix is the min-nodes=2
+# PRE-SCALE above (reactive autoscale can't win a ~9s race; the floor has to
+# be there before the burst). This sampler now serves as the regression guard:
+# it should show a STEADY node count with no mid-burst scale event. It can't be
+# reconstructed post-hoc (the cluster is ephemeral, no retained autoscaler
+# event history), so sample hb-gvisor-pool's node count across the WHOLE measure
+# phase and print it — confirms the floor held directly from the fire's build
+# log, no separate debugging fire required. Best-effort: a sampler hiccup must
+# never fail the measure step over a diagnostic.
 #
 # Stream EACH sample line to stdout as it's taken (prefixed hb319-sample,
 # easy to grep out of the full step log), not only the end-of-window `cat`
