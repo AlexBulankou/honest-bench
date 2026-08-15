@@ -264,10 +264,27 @@ steps:
         git config --global user.name "honest-bench-refresh"
         git config --global user.email "refresh@localhost"
 
-        BRANCH="auto/refresh-gke-sandbox"
+        # epic #6669 WS3/WS4: route the staging branch by fire flavor so an
+        # upstream refresh never force-pushes over a pending fork-build PR (and
+        # vice-versa). A branch here is a STAGING LANE, not the public headline —
+        # the headline is whichever PR is reviewed and merged — so two lanes let
+        # the latest-upstream and fork headlines both stay open for review at once
+        # (epic goal 2: publish both). Fork fires keep the ORIGINAL branch so the
+        # in-flight WS4 PR #594 is preserved; upstream/default fires get their
+        # own lane. _HB_FORK_BUILD is "" (upstream) or "1" (fork) and inlines at
+        # submit time (non-secret substitution — the $$-escape / runtime-read
+        # discipline the GITHUB_TOKEN comment above describes applies to secrets,
+        # not to this plain flag).
+        if [ -n "${_HB_FORK_BUILD}" ]; then
+          BRANCH="auto/refresh-gke-sandbox"
+          FLAVOR="fork-build"
+        else
+          BRANCH="auto/refresh-gke-sandbox-upstream"
+          FLAVOR="latest-upstream"
+        fi
         git checkout -B "$$BRANCH"
         git add sandbox/results/latest.json sandbox/results/history.jsonl README.md DETAILS.md
-        git commit -m "data: auto-refresh benchmark results (substrate=gke-sandbox, gVisor)"
+        git commit -m "data: auto-refresh benchmark results (substrate=gke-sandbox, gVisor, $$FLAVOR)"
 
         # A fresh CB clone fetches only main, so it has no remote-tracking ref for
         # origin/BRANCH — and `--force-with-lease` with no explicit expected value
@@ -295,7 +312,7 @@ steps:
           echo "$existing_url" > /workspace/pr_url.txt
           exit 0
         fi
-        payload=$(python3 -c 'import json,sys; print(json.dumps({"title":"data: auto-refresh gke-sandbox (gVisor) benchmark headline","head":sys.argv[1],"base":"main","body":sys.argv[2]}))' "$$BRANCH" "$$BODY")
+        payload=$(python3 -c 'import json,sys; print(json.dumps({"title":"data: auto-refresh gke-sandbox (gVisor) benchmark headline ["+sys.argv[3]+"]","head":sys.argv[1],"base":"main","body":sys.argv[2]}))' "$$BRANCH" "$$BODY" "$$FLAVOR")
         pr_response=$(curl -sS -X POST -H "Authorization: Bearer $${GITHUB_TOKEN}" \
           -H "Accept: application/vnd.github+json" "$api" -d "$payload")
         echo "$pr_response"
