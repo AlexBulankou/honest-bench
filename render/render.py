@@ -164,6 +164,42 @@ def _machine_class_caveat(prov):
     )
 
 
+def _stale_carry_forward_caveat(section, prov, *, label):
+    """Stale-carry-forward disclosure for sections with no daily in-process producer, or "" when
+    INERT (hb#612; Transition guards on trust surfaces, AGENTS.md #4420).
+
+    at_scale_contention and concurrent_burst have no producer in the daily single-node
+    auto-refresh — they are produced only by heavy, manual, collision-acked fires and carried
+    forward byte-unchanged (harness/run.py's `carry_prior_*` functions) across every daily
+    refresh in between, retaining their ORIGINAL `machine_type`/`measured_at`. Prior to this,
+    neither section's renderer compared its own stamped `machine_type` against the CURRENT run's
+    top-level `provenance.machine_type`, so a rig change since the section's last fire rendered
+    silently as if still fresh — the section already prints its own `_Measured {date}_`/"Cluster
+    shape" line, but nothing tied a stale rig to that date. That is exactly the "downgrades trust
+    quietly" failure the trust-surface idiom forbids: the section's own freshness has silently
+    regressed (still-valid rig -> now-stale rig) with no loud reopen.
+
+    Returns "" (INERT) when either machine_type is absent or they match — nothing to disclose,
+    mirroring `_machine_class_caveat`'s fail-closed shape (no claim without two comparable,
+    validated values). Deliberately scoped to disclosure only: detecting an INTRA-run mixed-rig
+    confound (comparing a section against sibling sections, not the top-level run) is #608's
+    separate, still-open concern.
+    """
+    if not isinstance(section, dict) or not isinstance(prov, dict):
+        return ""
+    section_mt = section.get("machine_type")
+    current_mt = prov.get("machine_type")
+    if not section_mt or not current_mt or section_mt == current_mt:
+        return ""
+    return (
+        f"> ⚠️ **Stale — no producer since rig change:** this {label} figure has no daily "
+        f"producer; it is carried forward unchanged from its last fire, measured on "
+        f"`{section_mt}`. This run measured the rest of the page on `{current_mt}`. Treat this "
+        "section as a frozen snapshot from the prior rig, not a live signal for the current one, "
+        "until a fresh fire republishes it on the current machine class."
+    )
+
+
 def _clean_metrics(metrics):
     """Keep only known metric keys with numeric (non-bool) values."""
     if not isinstance(metrics, dict):
@@ -4537,6 +4573,11 @@ def render_concurrent_burst(results, heading="## Concurrent Burst — TTFE at N 
         lines.append("| " + " | ".join(row) + " |")
     lines.append("")
     lines.extend(_concurrent_burst_provenance_lines(cb))
+    stale_caveat = _stale_carry_forward_caveat(
+        cb, _clean_provenance(results.get("provenance")), label="concurrent-burst")
+    if stale_caveat:
+        lines.append(stale_caveat)
+        lines.append("")
     return "\n".join(lines)
 
 
@@ -4769,6 +4810,8 @@ def render_at_scale_contention(results, detail=False, page_heading=None):
     asc = _clean_at_scale_contention(results)
     if not asc:
         return ""
+    prov = _clean_provenance(results.get("provenance"))
+    stale_caveat = _stale_carry_forward_caveat(asc, prov, label="at-scale-contention")
     label = RUNTIME_LABELS[asc["runtime_class"]]
     pool, claims = asc["pool_size"], asc["claim_count"]
     ratio = f"{_fmt_ratio(claims / pool)}:1" if pool else "—"
@@ -4819,6 +4862,9 @@ def render_at_scale_contention(results, detail=False, page_heading=None):
         if asc.get("measured_at"):
             lines.append(f"_Measured {asc['measured_at'][:10]} — warm-pool at-scale contention ceiling (point-in-time)._")
             lines.append("")
+        if stale_caveat:
+            lines.append(stale_caveat)
+            lines.append("")
         return "\n".join(lines)
     header = ["Pool", "Claims", "Contention", "TTFE p50", "TTFE p95"]
     have_bind = "bind_p50_ms" in asc and "bind_p95_ms" in asc
@@ -4851,6 +4897,9 @@ def render_at_scale_contention(results, detail=False, page_heading=None):
     lines.append("")
     if asc.get("measured_at"):
         lines.append(f"_Measured {asc['measured_at'][:10]} — warm-pool at-scale contention ceiling (point-in-time)._")
+        lines.append("")
+    if stale_caveat:
+        lines.append(stale_caveat)
         lines.append("")
     return "\n".join(lines)
 
