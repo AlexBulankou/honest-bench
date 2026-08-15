@@ -20,6 +20,10 @@ _Clear as of the latest measured refresh — no warm-slower-than-cold inversion 
 
 > ⚠️ **Warm/cold separation below gate:** the warm-pool separation ratio (fastest cold start ÷ slowest warm-pool hit) is below the 1.8x gate for **Kata + microVM** (warm count=30): 0.661x (slowest warm bind 1.97997s vs fastest cold bind 1.30837s) — at ~1x the warm and cold populations overlap, so the published warm tier is not demonstrably faster than a unique-image cold start. The warm row clears the N=30 floor, so this is not a small-sample artifact. The cause is a supply-constrained pool draining under load, not cold-claim contamination (hb#450's provenance gate already excludes blends from the counted warm hits): **Kata + microVM** min readyReplicas=0 during the burst — remaining warm-tier binds queue behind the drain rather than being served pre-warmed. A later refresh whose ratio returns to the gate clears this.
 
+### Mixed rig within this run
+
+> ⚠️ **Mixed rig within this run:** this run's sections were not all measured on the same machine class — `e2-standard-16` (at-scale contention, concurrent burst); `n2-standard-16` (cluster saturation, warm-pool acquisition). Cross-section comparisons on this page may reflect hardware differences, not workload differences, until every section re-measures on one rig.
+
 ### Regime note
 
 > ℹ️ **Regime note:** every CI-measured refresh since **2026-07-20** measures a brand-new, single-node ephemeral CI cluster with an empty containerd cache per run — a deliberately cold pull (see "Reproduce it" below). Numbers published **before 2026-07-20** (e.g. the 2026-07-04 baseline) were instead measured on a long-lived, pre-warmed internal cluster, not by this repo's own CI. If you're comparing today's cold-start figures against an older citation of this page and see a large jump, that's this regime switch — not a code or controller regression. ("CI-measured" means *machine-measured on a cold ephemeral cluster*, **not** *scheduled* — see the refresh cadence below.)
