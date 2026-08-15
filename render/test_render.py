@@ -6873,6 +6873,105 @@ def test_concurrent_burst_no_stale_caveat_when_no_top_level_provenance():
     assert "Stale — no producer since rig change" not in out
 
 
+# --- Mixed-rig-within-this-run disclosure (hb#608) -----------------------------------------
+# _machine_class_caveat and _stale_carry_forward_caveat both compare a value against a PRIOR
+# run (inter-run). Neither catches an intra-run confound: at_scale_contention/concurrent_burst
+# carried forward from an old manual fire coexisting, in the SAME published run, with a freshly
+# measured top-level/cluster_saturation/warm_pool_acquisition/stepup rig. AGENTS.md #4420: a
+# trust surface that silently mixes rigs must fail closed and disclose loudly.
+
+
+def test_mixed_rig_confound_caveat_inert_when_nothing_present():
+    assert render._mixed_rig_confound_caveat({}) == ""
+
+
+def test_mixed_rig_confound_caveat_inert_when_only_top_level_present():
+    assert render._mixed_rig_confound_caveat(
+        {"provenance": {"machine_type": "n2-standard-16"}}) == ""
+
+
+def test_mixed_rig_confound_caveat_inert_when_all_sections_agree():
+    results = _matrix_results(
+        _full_gvisor_scenarios(),
+        provenance={"machine_type": "n2-standard-16"},
+        at_scale_contention=_asc(machine_type="n2-standard-16"),
+        concurrent_burst=_cb(machine_type="n2-standard-16"),
+        cluster_saturation=_cs(machine_type="n2-standard-16"),
+        warm_pool_acquisition=_wpa(machine_type="n2-standard-16"),
+        stepup=_su(machine_type="n2-standard-16"),
+    )
+    assert render._mixed_rig_confound_caveat(results) == ""
+
+
+def test_mixed_rig_confound_caveat_fires_on_two_way_split():
+    # hb#608's own concrete example: at_scale_contention + concurrent_burst carried forward on
+    # e2-standard-16 while the rest of the run (cluster_saturation/warm_pool_acquisition/
+    # top-level) measured fresh on n2-standard-16.
+    results = _matrix_results(
+        _full_gvisor_scenarios(),
+        provenance={"machine_type": "n2-standard-16"},
+        at_scale_contention=_asc(machine_type="e2-standard-16"),
+        concurrent_burst=_cb(machine_type="e2-standard-16"),
+        cluster_saturation=_cs(machine_type="n2-standard-16"),
+        warm_pool_acquisition=_wpa(machine_type="n2-standard-16"),
+    )
+    out = render._mixed_rig_confound_caveat(results)
+    assert "Mixed rig within this run" in out
+    assert "e2-standard-16" in out and "n2-standard-16" in out
+    assert "at-scale contention" in out and "concurrent burst" in out
+
+
+def test_mixed_rig_confound_caveat_fires_on_three_way_split():
+    results = _matrix_results(
+        _full_gvisor_scenarios(),
+        provenance={"machine_type": "n2-standard-16"},
+        at_scale_contention=_asc(machine_type="e2-standard-16"),
+        stepup=_su(machine_type="c2-standard-16"),
+    )
+    out = render._mixed_rig_confound_caveat(results)
+    assert out.count("`") >= 6  # 3 distinct machine_type values, each backtick-quoted once
+    assert "e2-standard-16" in out and "c2-standard-16" in out and "n2-standard-16" in out
+
+
+def test_mixed_rig_confound_caveat_inert_when_only_one_section_stamps_machine_type():
+    # Only one comparable value exists (top-level absent) -> nothing to disagree with.
+    results = _matrix_results(
+        _full_gvisor_scenarios(),
+        at_scale_contention=_asc(machine_type="e2-standard-16"),
+    )
+    assert render._mixed_rig_confound_caveat(results) == ""
+
+
+def test_known_anomalies_table_mixed_rig_row_reflects_state():
+    clean = _matrix_results(_full_gvisor_scenarios(), provenance={"machine_type": "n2-standard-16"})
+    out = render.render_known_anomalies_table(clean)
+    assert "| Mixed rig within this run | [✅ clear](DETAILS.md#mixed-rig-within-this-run) |" in out
+
+    dirty = _matrix_results(
+        _full_gvisor_scenarios(),
+        provenance={"machine_type": "n2-standard-16"},
+        at_scale_contention=_asc(machine_type="e2-standard-16"),
+    )
+    out = render.render_known_anomalies_table(dirty)
+    assert "| Mixed rig within this run | [⚠️ ACTIVE](DETAILS.md#mixed-rig-within-this-run) |" in out
+
+
+def test_known_anomalies_detail_mixed_rig_section_reflects_state():
+    clean = _matrix_results(_full_gvisor_scenarios(), provenance={"machine_type": "n2-standard-16"})
+    out = render.render_known_anomalies_detail(clean)
+    assert "### Mixed rig within this run" in out
+    assert "no mixed-rig confound currently disclosed" in out
+
+    dirty = _matrix_results(
+        _full_gvisor_scenarios(),
+        provenance={"machine_type": "n2-standard-16"},
+        at_scale_contention=_asc(machine_type="e2-standard-16"),
+    )
+    out = render.render_known_anomalies_detail(dirty)
+    assert "Mixed rig within this run" in out
+    assert "e2-standard-16" in out and "n2-standard-16" in out
+
+
 def _run_all():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:

@@ -89,6 +89,7 @@ _**Stretch bar** — warm-pool-hit TTFE p95 < 0.5s (an aspiration above the Nort
 | Scenario FAIL | [✅ clear](DETAILS.md#scenario-fail) |
 | Warm-slower-than-cold | [✅ clear](DETAILS.md#warm-slower-than-cold) |
 | Warm-cold separation below gate | [⚠️ ACTIVE](DETAILS.md#warm-cold-separation-below-gate) |
+| Mixed rig within this run | [⚠️ ACTIVE](DETAILS.md#mixed-rig-within-this-run) |
 | Regime note | [ℹ️ standing note](DETAILS.md#regime-note) |
 | Refresh cadence | [ℹ️ standing note](DETAILS.md#refresh-cadence) |
 | Concurrent-burst measurement regime | [ℹ️ see section](DETAILS.md#concurrent-burst-measurement-regime) |

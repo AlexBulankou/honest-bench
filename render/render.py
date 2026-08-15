@@ -200,6 +200,69 @@ def _stale_carry_forward_caveat(section, prov, *, label):
     )
 
 
+# (section-key, cleaner, human label) for every section that stamps its own schema-validated
+# `machine_type` (render/schema.py) and can therefore be compared against its siblings within a
+# single run. Referenced only inside `_mixed_rig_confound_caveat` below, which resolves these
+# names at call time, not at module-load time — so it is safe for this tuple to reference
+# cleaners defined much later in this file. `render_known_anomalies_detail` already establishes
+# this same forward-reference pattern (calls `_clean_concurrent_burst` despite being defined
+# hundreds of lines earlier in the file).
+_MIXED_RIG_SECTIONS = (
+    ("at_scale_contention", lambda r: _clean_at_scale_contention(r), "at-scale contention"),
+    ("concurrent_burst", lambda r: _clean_concurrent_burst(r), "concurrent burst"),
+    ("cluster_saturation", lambda r: _clean_cluster_saturation(r), "cluster saturation"),
+    ("warm_pool_acquisition", lambda r: _clean_warm_pool_acquisition(r), "warm-pool acquisition"),
+    ("stepup", lambda r: _clean_stepup(r), "step-up sweep"),
+)
+
+
+def _mixed_rig_confound_caveat(results):
+    """Loud disclosure when per-section `machine_type` stamps disagree WITHIN a single run,
+    or "" when INERT (hb#608; Transition guards on trust surfaces, AGENTS.md #4420).
+
+    `_machine_class_caveat` and `_stale_carry_forward_caveat` both compare a value against a
+    PRIOR run (inter-run) — a same-run mixed-rig confound slips through both: at_scale_contention
+    and concurrent_burst are carried forward from whatever rig last fired a heavy manual
+    measurement (harness/run.py's `carry_prior_*`), so a single published run can legitimately
+    mix a freshly-measured `n2-standard-16` top-level/cluster_saturation/warm_pool_acquisition
+    figure with an `e2-standard-16` at_scale_contention/concurrent_burst figure carried forward
+    from weeks earlier, with nothing on the page saying so (hb#608's concrete example: hb#594's
+    2026-07-01 23:51:53Z auto-refresh republished exactly this split silently for ~6 weeks).
+
+    Collects every present, schema-validated `machine_type` — top-level provenance plus every
+    section in `_MIXED_RIG_SECTIONS` — and, when two or more DISTINCT values are present, emits
+    one caveat naming which sections sit on which machine class. This is independent of whether
+    any single section's own value changed vs. its own prior fire (that axis is `_stale_carry_
+    forward_caveat`'s); this check only asks whether the sections agree with each other RIGHT NOW.
+
+    Returns "" (INERT) when fewer than two distinct machine classes are present across every
+    section that stamped one — the common case where every section measured on the same rig, or
+    at most one section stamped `machine_type` at all — mirroring the sibling checks' fail-closed
+    shape (no claim without ≥2 comparable, validated values).
+    """
+    prov = _clean_provenance(results.get("provenance"))
+    seen = {}
+    top_mt = prov.get("machine_type") if isinstance(prov, dict) else None
+    if top_mt:
+        seen.setdefault(top_mt, []).append("top-level provenance")
+    for _key, cleaner, label in _MIXED_RIG_SECTIONS:
+        section = cleaner(results)
+        if not isinstance(section, dict):
+            continue
+        mt = section.get("machine_type")
+        if not mt:
+            continue
+        seen.setdefault(mt, []).append(label)
+    if len(seen) < 2:
+        return ""
+    parts = "; ".join(f"`{mt}` ({', '.join(labels)})" for mt, labels in sorted(seen.items()))
+    return (
+        "> ⚠️ **Mixed rig within this run:** this run's sections were not all measured on the "
+        f"same machine class — {parts}. Cross-section comparisons on this page may reflect "
+        "hardware differences, not workload differences, until every section re-measures on one rig."
+    )
+
+
 def _clean_metrics(metrics):
     """Keep only known metric keys with numeric (non-bool) values."""
     if not isinstance(metrics, dict):
@@ -2930,6 +2993,7 @@ def render_known_anomalies_table(results, kata_results=None):
     fail_active = bool(_north_star_fail_caveat(rows))
     inversion_active = bool(_warm_cold_inversion_caveat(results, kata_results))
     separation_active = bool(_warmpool_separation_caveat(results, kata_results))
+    mixed_rig_active = bool(_mixed_rig_confound_caveat(results))
 
     def _cell(active, anchor):
         marker = "⚠️ ACTIVE" if active else "✅ clear"
@@ -2944,6 +3008,8 @@ def render_known_anomalies_table(results, kata_results=None):
         f"| Warm-slower-than-cold | {_cell(inversion_active, 'warm-slower-than-cold')} |",
         "| Warm-cold separation below gate | "
         f"{_cell(separation_active, 'warm-cold-separation-below-gate')} |",
+        "| Mixed rig within this run | "
+        f"{_cell(mixed_rig_active, 'mixed-rig-within-this-run')} |",
         "| Regime note | [ℹ️ standing note](DETAILS.md#regime-note) |",
         "| Refresh cadence | [ℹ️ standing note](DETAILS.md#refresh-cadence) |",
     ]
@@ -2975,6 +3041,7 @@ def render_known_anomalies_detail(results, kata_results=None):
     fail_caveat = _north_star_fail_caveat(rows)
     inversion_caveat = _warm_cold_inversion_caveat(results, kata_results)
     separation_caveat = _warmpool_separation_caveat(results, kata_results)
+    mixed_rig_caveat = _mixed_rig_confound_caveat(results)
 
     def _clear(name):
         return f"_Clear as of the latest measured refresh — no {name} currently disclosed._"
@@ -2995,6 +3062,10 @@ def render_known_anomalies_detail(results, kata_results=None):
     lines.append(
         separation_caveat if separation_caveat else _clear("warm/cold separation shortfall")
     )
+    lines.append("")
+    lines.append("### Mixed rig within this run")
+    lines.append("")
+    lines.append(mixed_rig_caveat if mixed_rig_caveat else _clear("mixed-rig confound"))
     lines.append("")
     lines.append("### Regime note")
     lines.append("")
