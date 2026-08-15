@@ -334,14 +334,19 @@ bash recipe/deploy-ttfe-webhook.sh
 # catches, not this provenance field. Guard the value: a non-positive/empty
 # capture would re-poison the very provenance this fixes, so on a bad read leave
 # BENCH_NODE_COUNT unset (harness keeps its default) and log loudly rather than
-# export a bogus count.
+# export a bogus count. The trailing `|| true` is load-bearing: this runs at top
+# level under `set -euo pipefail`, so a kubectl *error* (non-zero exit, not just
+# empty output) would otherwise abort the whole measure script here before the
+# empty/non-numeric guard below ever runs — `|| true` lets a bad read fall
+# through to that guard instead of killing the fire (unlike the #319 sampler's
+# copy of this pipeline, which is insulated inside a backgrounded subshell).
 BENCH_NODE_COUNT=$(kubectl get nodes -l cloud.google.com/gke-nodepool=hb-gvisor-pool \
-  --no-headers 2>/dev/null | wc -l | tr -d ' ')
+  --no-headers 2>/dev/null | wc -l | tr -d ' ' || true)
 if echo "$BENCH_NODE_COUNT" | grep -Eq '^[1-9][0-9]*$'; then
   export BENCH_NODE_COUNT
-  echo "==> node_count=$BENCH_NODE_COUNT (hb-gvisor-pool pre-burst floor — provenance, hb#6743)"
+  echo "==> node_count=$BENCH_NODE_COUNT (hb-gvisor-pool pre-burst floor — provenance, #615 follow-up)"
 else
-  echo "==> WARNING: node_count capture returned '${BENCH_NODE_COUNT:-<empty>}' — leaving BENCH_NODE_COUNT unset; provenance will silent-default (hb#6743)" >&2
+  echo "==> WARNING: node_count capture returned '${BENCH_NODE_COUNT:-<empty>}' — leaving BENCH_NODE_COUNT unset; provenance will silent-default (#615 follow-up)" >&2
   unset BENCH_NODE_COUNT
 fi
 
