@@ -33,7 +33,7 @@ pool — full recipe in [`recipe/REPRODUCE.md`](recipe/REPRODUCE.md), deep-dive 
 blocker — diagnosis plus file-ready patches and comments — is hand-maintained in
 [UPSTREAM_BLOCKERS.md](UPSTREAM_BLOCKERS.md).
 
-> ⚠️ **STALE VS UPSTREAM** — the fork base these numbers were measured on is more than 25 commits behind the current upstream HEAD: **sandbox** (196 commits behind `kubernetes-sigs/agent-sandbox`@`main` as of 2026-08-14). The measured numbers may not reflect recent upstream changes; re-base the fork and re-fire, then re-run `scripts/verify-upstream-freshness.py --update-stamp` to refresh the distance.
+> ⚠️ **STALE VS UPSTREAM** — the fork base these numbers were measured on is more than 25 commits behind the current upstream HEAD: **sandbox** (200 commits behind `kubernetes-sigs/agent-sandbox`@`main` as of 2026-08-15). The measured numbers may not reflect recent upstream changes; re-base the fork and re-fire, then re-run `scripts/verify-upstream-freshness.py --update-stamp` to refresh the distance.
 
 ## Agent Sandbox — Core Metrics
 
