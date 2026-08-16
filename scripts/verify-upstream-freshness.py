@@ -258,7 +258,8 @@ def main(argv=None):
             return code
         today = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
         with open(_LINKS_PATH, encoding="utf-8") as f:
-            raw = json.load(f)
+            original_links_text = f.read()
+        raw = json.loads(original_links_text)
 
         # Recompute the commit-distance stamp LIVE before touching disk. This is the second,
         # orthogonal freshness axis (WS3, epic #6669): calendar age vs. commits-behind-upstream-HEAD.
@@ -298,8 +299,16 @@ def main(argv=None):
         print("regenerating rendered pages (banner anchors changed) ...")
         rc = subprocess.call([sys.executable, "-m", "render.generate"], cwd=_REPO_ROOT)
         if rc != 0:
-            print("*** render.generate failed (exit=%d) — commit the stamp bump AND re-render "
-                  "before pushing, else the golden test will red." % rc, file=sys.stderr)
+            # Atomicity: the stamp bump already landed on disk above, but its mandatory
+            # re-render failed. Revert upstream_links.json to its pre-run bytes so the
+            # fire's "publish with the existing stamp" fallback is literally true on disk,
+            # not merely uncommitted. Encode-then-merge (#4420): the stamp and its rendered
+            # consequence persist together or not at all — a stamp-only file must never
+            # survive a render failure, even transiently before the commit gate.
+            with open(_LINKS_PATH, "w", encoding="utf-8") as f:
+                f.write(original_links_text)
+            print("*** render.generate failed (exit=%d) — reverted the stamp bump on disk; "
+                  "no partial write persists." % rc, file=sys.stderr)
             return rc
 
     return code

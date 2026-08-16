@@ -202,6 +202,82 @@ def test_refresh_commit_distance_empty_when_no_fork_upstreams():
     _check("absent meta -> {}", vuf._refresh_commit_distance({}) == {})
 
 
+def _drive_update_stamp(links_obj, render_rc, results_base_sha="abc123"):
+    """Run main(['--update-stamp']) against a temp _LINKS_PATH, with the freshness
+    verification, live distance fetch, and render subprocess all stubbed.
+
+    Returns (return_code, on_disk_text_after) so a caller can assert both the exit code
+    and the persisted byte-state of upstream_links.json.
+    """
+    results_path = _write_results(results_base_sha)
+    fd, links_path = tempfile.mkstemp(suffix=".json")
+    # inject a fork_upstreams entry pointing at the temp results file so
+    # _refresh_commit_distance has a base to key on (it is stubbed, but main() still
+    # calls it with the real raw dict)
+    links_obj.setdefault("_meta", {}).setdefault("fork_upstreams", {})["sandbox"] = {
+        "repo": "kubernetes-sigs/agent-sandbox",
+        "branch": "main",
+        "results": results_path,
+    }
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        json.dump(links_obj, f, indent=2, ensure_ascii=False)
+        f.write("\n")
+
+    saved = {
+        "LINKS": vuf._LINKS_PATH,
+        "iter": vuf._iter_unique_refs,
+        "dist": vuf._refresh_commit_distance,
+        "call": vuf.subprocess.call,
+    }
+    vuf._LINKS_PATH = links_path
+    vuf._iter_unique_refs = lambda classes: []  # no refs -> code == 0 (fully fresh)
+    vuf._refresh_commit_distance = lambda raw, token=None: {
+        "sandbox": {
+            "base_sha": results_base_sha,
+            "commits_behind": 7,
+            "upstream_repo": "kubernetes-sigs/agent-sandbox",
+            "upstream_branch": "main",
+            "checked_at": "2026-01-01",
+        }
+    }
+    vuf.subprocess.call = lambda *a, **k: render_rc
+    try:
+        rc = vuf.main(["--update-stamp"])
+        with open(links_path, encoding="utf-8") as f:
+            on_disk = f.read()
+    finally:
+        vuf._LINKS_PATH = saved["LINKS"]
+        vuf._iter_unique_refs = saved["iter"]
+        vuf._refresh_commit_distance = saved["dist"]
+        vuf.subprocess.call = saved["call"]
+        os.unlink(links_path)
+        os.unlink(results_path)
+    return rc, on_disk
+
+
+def test_update_stamp_reverts_on_render_failure():
+    # If render.generate fails AFTER the stamp write, upstream_links.json must be reverted
+    # to its exact pre-run bytes — the "publish with the existing stamp" fallback has to be
+    # literally true on disk, not merely uncommitted.
+    before = {"_meta": {"last_verified": "2020-01-01"}}
+    before_text = json.dumps(dict(before), indent=2, ensure_ascii=False)  # snapshot for compare
+    rc, on_disk = _drive_update_stamp(before, render_rc=1)
+    _check("render failure propagates rc", rc == 1)
+    parsed = json.loads(on_disk)
+    _check("last_verified reverted", parsed["_meta"]["last_verified"] == "2020-01-01")
+    _check("no commit_distance persisted", "commit_distance" not in parsed["_meta"])
+
+
+def test_update_stamp_persists_bump_on_render_success():
+    # The revert must fire ONLY on render failure: a successful render leaves the bump on disk.
+    before = {"_meta": {"last_verified": "2020-01-01"}}
+    rc, on_disk = _drive_update_stamp(before, render_rc=0)
+    _check("success rc is 0", rc == 0)
+    parsed = json.loads(on_disk)
+    _check("last_verified bumped", parsed["_meta"]["last_verified"] != "2020-01-01")
+    _check("commit_distance persisted", "sandbox" in parsed["_meta"].get("commit_distance", {}))
+
+
 def _run_all():
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for t in tests:
