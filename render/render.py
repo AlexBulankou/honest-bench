@@ -2540,6 +2540,49 @@ def _north_star_delta_flag(
     return flag
 
 
+# One-off, run_id-scoped disposition addendum (honest-bench#636) for the gVisor
+# warmpool_cold_start TTFE p95 swing published by hb#621 (1357.4ms -> 3995.5ms,
+# run_id f71eac5dede24c11bf818053d3b5d0d8). hb#621's data commit predates #6828/#633's
+# controller_digest/suite_git_sha auto-disclosure clause, so it never stamped
+# prior_controller_digest/prior_suite_git_sha — the generic _north_star_delta_flag
+# clause guard (both-sides-non-empty-string check) correctly falls through to the
+# generic checklist text for this one data point, and the exact prior digest/sha are
+# not honestly recoverable from sandbox/results/history.jsonl (it tracks an unrelated
+# density-per-vcpu build metric, not per-scenario TTFE — see #636). Rather than
+# fabricate the missing prior fields, this is a hand-written, run_id-scoped addendum —
+# same "manual footnote for a fact the automated mechanism can't see" shape as hb#352's
+# _REGIME_BOUNDARY_NOTE above, but deliberately CONDITIONAL, not permanent: it stops
+# applying the instant the next refresh publishes a different run_id, since at that
+# point the banner is comparing a different pair of runs entirely. The underlying swing
+# IS already investigated to a conclusion — a controlled single-variable re-fire
+# cleared node-count as a cause (holding the controller build identical across 1->2
+# nodes did not inflate the warm tier; separation improved) and found build-lineage
+# (fork@4c71c2cf vs. upstream) to be the confirmed, reproducible residual driver.
+_HB621_SWING_RUN_ID = "f71eac5dede24c11bf818053d3b5d0d8"
+_HB621_SWING_DISPOSITION = (
+    " Disposition (honest-bench#636): node-count cleared as a cause — a "
+    "controlled single-variable re-fire held the controller build byte-identical "
+    "across 1→2 nodes and saw the warm-tier separation improve, not worsen; "
+    "build-lineage (fork@4c71c2cf vs. upstream) is the confirmed, reproducible "
+    "residual driver. The exact prior controller_digest/suite_git_sha for this data "
+    "point are not recoverable from sandbox/results/history.jsonl (it tracks an "
+    "unrelated build metric, not per-scenario TTFE), so this note stands in for the "
+    "automated build-lineage clause on this one refresh."
+)
+
+
+def _hb621_swing_disposition_addendum(prov):
+    """One-off addendum for the hb#621 swing (see _HB621_SWING_DISPOSITION above).
+
+    Fires only while the CURRENT published run carries hb#621's run_id — the next
+    refresh publishes a new run_id and this addendum silently stops applying on its
+    own, no manual cleanup required.
+    """
+    if prov.get("run_id") == _HB621_SWING_RUN_ID:
+        return _HB621_SWING_DISPOSITION
+    return ""
+
+
 def _north_star_delta_caveat(results, kata_results=None):
     """Refresh-over-refresh delta/verdict-flip caveat for the North Star cell (hb#5414).
 
@@ -2650,7 +2693,7 @@ def _north_star_delta_caveat(results, kata_results=None):
         "flip, between consecutive published runs is flagged for a second look before trusting it "
         "as a substrate signal — check for a machine-class change, a node-count change, a "
         "node-image change, a build-lineage change (controller/suite rebuild), a broken "
-        "measurement, or a real regression/fix."
+        "measurement, or a real regression/fix." + _hb621_swing_disposition_addendum(prov)
     )
 
 
