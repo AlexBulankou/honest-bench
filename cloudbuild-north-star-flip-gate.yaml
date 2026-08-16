@@ -114,10 +114,17 @@ steps:
           # checker sees a MISSING base -> bootstrap -> blocks nothing.
           if ! git show "origin/main:${rel}" > "$base" 2>/dev/null; then
             rm -f "$base"
-            # $$ escapes the $ so Cloud Build does not parse ${RANDOM} as a build
-            # substitution key (uppercase => read as a builtin, failing the build
-            # at submit time); bash still gets a literal $RANDOM at step runtime.
-            base="/nonexistent-bootstrap-$${RANDOM}"
+            # A guaranteed-nonexistent path via `mktemp -u` (a command
+            # substitution). Do NOT reach for a dollar-brace-UPPERCASE token
+            # (RANDOM etc.) here, not even inside this comment: Cloud Build
+            # validates the raw args string at SUBMIT time and rejects any bare
+            # dollar-brace-UPPERCASE token as an unknown built-in — and the
+            # dollar-dollar escape does NOT reliably suppress that (it only slips
+            # through when a non-identifier char breaks the pattern, e.g. the
+            # colon-dash default form used in sibling files). A command
+            # substitution is never a substitution pattern, so it passes submit
+            # untouched (same as the mktemp on the first line of this loop body).
+            base="$(mktemp -u)"
           fi
           echo "==> ${rel}"
           python3 scripts/check_north_star_flip.py --base "$base" --pr "$pr" $allow
