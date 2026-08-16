@@ -103,7 +103,7 @@ that require one render `pending` rather than a false failure.
 - Keep the published `README.md` a generated artifact — regenerate it with
   `python3 -m render.generate` rather than editing it by hand.
 - Run the test commands above before opening a PR.
-- Each change is reviewed before merge.
+- Each change is reviewed before merge, and CI merge-gates run automatically.
 
 ## Code of conduct
 
