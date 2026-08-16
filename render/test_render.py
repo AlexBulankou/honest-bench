@@ -6053,6 +6053,59 @@ def test_north_star_delta_caveat_no_controller_digest_clause_without_prior_contr
     assert "· controller_digest" not in out
 
 
+def test_hb621_swing_disposition_addendum_present_for_known_run_id():
+    # honest-bench#636: the hb#621 data commit predates #6828/#633's
+    # controller_digest/suite_git_sha stamping, so the generic build-lineage clause
+    # can't self-disambiguate this one data point. The hand-written addendum fires
+    # keyed on hb#621's run_id alone.
+    addendum = render._hb621_swing_disposition_addendum({"run_id": render._HB621_SWING_RUN_ID})
+    assert "honest-bench#636" in addendum
+    assert "node-count cleared" in addendum
+
+
+def test_hb621_swing_disposition_addendum_absent_for_other_or_missing_run_id():
+    # A different run_id (the next refresh) or no run_id at all -> no addendum, so this
+    # one-off note self-retires the moment a new run publishes.
+    assert render._hb621_swing_disposition_addendum({"run_id": "deadbeefdeadbeefdeadbeefdeadbeef"}) == ""
+    assert render._hb621_swing_disposition_addendum({}) == ""
+
+
+def test_north_star_delta_caveat_surfaces_hb621_disposition_end_to_end():
+    # End-to-end: the exact hb#621 shape (flagged gVisor delta, run_id present, no
+    # prior_controller_digest/prior_suite_git_sha) renders the disposition addendum
+    # appended after the generic checklist sentence.
+    scen = [{
+        "name": "warmpool_cold_start", "outcome": "PASS", "n": 30,
+        "sla_metrics": {"ttfe_p95_ms": 3995.5},
+    }]
+    out = render.render_north_star_caption(_matrix_results(scen, provenance={
+        "runtime": "gvisor",
+        "prior_warmpool_ttfe_p95_ms": 1357.4,
+        "run_id": render._HB621_SWING_RUN_ID,
+    }))
+    assert "**gVisor** regressed by 2.6381s (1.3574s → 3.9955s, 2.9x)" in out
+    assert "Disposition (honest-bench#636)" in out
+    assert "build-lineage (fork@4c71c2cf vs. upstream)" in out
+
+
+def test_north_star_delta_caveat_no_hb621_disposition_for_different_run_id():
+    # Same flagged-delta shape but a different run_id (the next refresh already
+    # published) -> the one-off addendum must NOT appear; the generic checklist
+    # sentence stands alone again.
+    scen = [{
+        "name": "warmpool_cold_start", "outcome": "PASS", "n": 30,
+        "sla_metrics": {"ttfe_p95_ms": 3995.5},
+    }]
+    out = render.render_north_star_caption(_matrix_results(scen, provenance={
+        "runtime": "gvisor",
+        "prior_warmpool_ttfe_p95_ms": 1357.4,
+        "run_id": "deadbeefdeadbeefdeadbeefdeadbeef",
+    }))
+    assert "**gVisor** regressed" in out
+    assert "Disposition (honest-bench#636" not in out
+    assert out.rstrip().endswith("a real regression/fix.")
+
+
 # ---------------------------------------------------------------------------
 # #4420 trust-surface: the North Star p95 is sourced from warmpool_cold_start
 # REGARDLESS of that scenario's own outcome, so a FAILing run's p95 would render
