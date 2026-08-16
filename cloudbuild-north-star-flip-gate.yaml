@@ -114,7 +114,10 @@ steps:
           # checker sees a MISSING base -> bootstrap -> blocks nothing.
           if ! git show "origin/main:${rel}" > "$base" 2>/dev/null; then
             rm -f "$base"
-            base="/nonexistent-bootstrap-${RANDOM}"
+            # $$ escapes the $ so Cloud Build does not parse ${RANDOM} as a build
+            # substitution key (uppercase => read as a builtin, failing the build
+            # at submit time); bash still gets a literal $RANDOM at step runtime.
+            base="/nonexistent-bootstrap-$${RANDOM}"
           fi
           echo "==> ${rel}"
           python3 scripts/check_north_star_flip.py --base "$base" --pr "$pr" $allow
