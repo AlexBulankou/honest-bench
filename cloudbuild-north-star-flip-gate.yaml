@@ -1,0 +1,142 @@
+# Cross-lane North Star PASS->FAIL merge-gate — Cloud Build PR-trigger config (hb#623).
+#
+# WHY THIS EXISTS. honest-bench renders the live customer-facing headline from a
+# SINGLE per-product `latest.json`, so the README shows only the LAST-merged fire.
+# Two auto-refresh lanes write the same target — the fork lane and the upstream
+# lane — with SEPARATE provenance chains. render.py's existing delta caveat
+# (`_north_star_delta_flag`) compares each lane only against its OWN carried-forward
+# prior fire, so it structurally cannot see a CROSS-lane overwrite: merging an
+# upstream-lane FAIL after a fork-lane PASS silently flips the live headline
+# PASS->FAIL (the #6762 near-miss). This config closes that gap as a MERGE GATE.
+#
+# WHAT IT GATES. For every product `<p>/results/latest.json` in the PR, it derives
+# the North Star verdict (reusing render's own `_north_star_rows` +
+# NORTH_STAR_TTFE_P95_MS, so the gate and the rendered headline cannot drift) and
+# compares it against main's CURRENTLY-MERGED latest.json for the same product. A
+# PASS->FAIL flip on any runtime reds the build and blocks the merge. Products are
+# auto-discovered (glob), so a new product lane is gated the instant it lands — no
+# per-product list to drift (mirrors the unit-tests gate's discover-all posture).
+#
+# POSTURE — FAIL-CLOSED (a real gate, the trust-surface idiom: a downgrade on a
+# customer-facing surface must fail closed, never overwrite quietly).
+# The checker exits 2 on malformed/unreadable input and 3 on an un-overridden flip;
+# both red the build. There is no WARN-wrap. Meant to be wired as a REQUIRED status
+# check on main (the fleet admin + alex own the branch-protection wiring). A missing
+# base (brand-new product lane) is a bootstrap and blocks nothing.
+#
+# OVERRIDE. A deliberate PASS->FAIL publish (e.g. a real upstream regression the
+# team is choosing to surface) is permitted by putting a bare `[NORTH-STAR-FLIP-OK]`
+# line in the PR HEAD commit message — the fleet `[ROLL-NOW]` opt-in idiom. The
+# line is anchored (a prose mention inside a paragraph does NOT trigger it), the
+# same hardening #241 applied to [ROLL-NOW]. Chosen over a GitHub label because
+# Cloud Build does NOT re-fire on label-only events (adding/removing a label is a
+# silent no-op on the check), whereas a commit-trailer is re-evaluated on every push.
+#
+# AUTH: runs as a native Cloud Build service account — no WIF, no long-lived keys,
+# no repo secrets. Offline: leak scan + a git fetch of main + stdlib-only checker
+# (render.py imports only local modules). No cluster access, no GitHub token.
+#
+# TRUSTED-REF re-bake (edits here require re-baking the live inline trigger from
+# THIS file via user-ADC — the trusted-gate boundary; repo + live share one source
+# so they cannot drift). The exact --service-account and --project values are
+# project-specific and kept OUT of this public file — see
+# scripts/setup-cloud-build-triggers.sh (parametrized) for the full commands.
+# The shape:
+#   gcloud builds triggers update github hb-north-star-flip-gate \
+#     --inline-config=cloudbuild-north-star-flip-gate.yaml \
+#     --repo-owner=AlexBulankou --repo-name=honest-bench \
+#     --pull-request-pattern='^main$' \
+#     --comment-control=COMMENTS_DISABLED \
+#     --service-account=<CLOUDBUILD_SA> --project=<PROJECT>
+# GOTCHA (inherited from a4-pr-lint / hb-unit-tests): --comment-control=COMMENTS_DISABLED
+# is REQUIRED. `update github` with --pull-request-pattern silently defaults to
+# COMMENTS_ENABLED, which gates every PR build behind a /gcbrun owner comment.
+
+steps:
+  # Gate-zero leak scan. Fail fast on an internal-name leak before spending gate
+  # minutes. Offline, fail-closed. Same posture as the unit-tests gate. The
+  # python:3.12 (buildpack-deps base) image ships git, which this scan needs.
+  - name: python:3.12
+    id: public-safety
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        bash scripts/check-public-safety.sh
+
+  # The flip gate. Fetch main (the PR checkout may not carry it), then for every
+  # product's latest.json compare the PR's verdict against main's currently-merged
+  # verdict. A PASS->FAIL flip reds the build unless the HEAD commit carries the
+  # [NORTH-STAR-FLIP-OK] override line. Fail-closed on every axis.
+  - name: python:3.12
+    id: north-star-flip-gate
+    entrypoint: bash
+    waitFor: ['public-safety']
+    args:
+      - -c
+      - |
+        set -uo pipefail
+
+        # Resolve main's currently-merged tree. If main can't be fetched, fail
+        # CLOSED rather than silently skip a security gate.
+        if ! git fetch --no-tags --depth=1 origin main >/dev/null 2>&1; then
+          echo "ERROR: could not fetch origin/main — failing closed." >&2
+          exit 2
+        fi
+
+        # Override: a bare [NORTH-STAR-FLIP-OK] line in the HEAD commit body.
+        # Line-anchored (grep -x on a trimmed copy) so a prose mention like
+        # "no [NORTH-STAR-FLIP-OK] needed" inside a paragraph does NOT trigger it.
+        allow=""
+        if git log -1 --format=%B \
+             | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' \
+             | grep -qxF '[NORTH-STAR-FLIP-OK]'; then
+          allow="--allow-flip"
+          echo "[flip-gate] HEAD commit carries [NORTH-STAR-FLIP-OK] — flips will be permitted (loud warn, non-blocking)."
+        fi
+
+        # Auto-discover every product latest.json in the PR working tree.
+        mapfile -t prfiles < <(find . -path ./.git -prune -o \
+          -path '*/results/latest.json' -print | sort)
+        if [ "${#prfiles[@]}" -eq 0 ]; then
+          echo "[flip-gate] no */results/latest.json in tree — nothing to gate (clean)."
+          exit 0
+        fi
+        echo "[flip-gate] gating ${#prfiles[@]} product latest.json file(s)."
+
+        rc=0
+        for pr in "${prfiles[@]}"; do
+          rel="${pr#./}"
+          base="$(mktemp)"
+          # Extract main's currently-merged version for this product. If the path
+          # does not exist on main (brand-new product lane), remove the temp so the
+          # checker sees a MISSING base -> bootstrap -> blocks nothing.
+          if ! git show "origin/main:${rel}" > "$base" 2>/dev/null; then
+            rm -f "$base"
+            base="/nonexistent-bootstrap-${RANDOM}"
+          fi
+          echo "==> ${rel}"
+          python3 scripts/check_north_star_flip.py --base "$base" --pr "$pr" $allow
+          code=$?
+          [ -f "$base" ] && rm -f "$base"
+          # Preserve the hardest failure: 2 (input error) outranks 3 (flip) outranks 0.
+          if [ "$code" -eq 2 ]; then rc=2
+          elif [ "$code" -eq 3 ] && [ "$rc" -ne 2 ]; then rc=3
+          fi
+        done
+
+        if [ "$rc" -ne 0 ]; then
+          echo "----------------------------------------" >&2
+          echo "[flip-gate] BLOCKED (exit $rc) — see per-product output above." >&2
+          exit "$rc"
+        fi
+        echo "----------------------------------------"
+        echo "[flip-gate] all products clean — no un-overridden PASS->FAIL flip."
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+
+# Offline: a shallow fetch of main + a stdlib-only per-product comparison. Fast;
+# 300s is ample.
+timeout: 300s
