@@ -2156,9 +2156,9 @@ def test_ttfe_bars_low_n_gets_marker_and_footnote():
 
 
 def test_ttfe_bars_cluster_shape_footer_when_provenance_present():
-    # a#6823 (a4z1 tick-494): the chart that produces the swing-flag headline had no rig
-    # disclosure at all, unlike the adjacent at-scale-under-contention section. node_count /
-    # machine_type ride the same PROVENANCE_FIELDS allow-list as the rest of the file.
+    # the swing-flag chart had no rig disclosure, unlike the adjacent at-scale section;
+    # node_count / machine_type ride the same PROVENANCE_FIELDS allow-list as the rest
+    # of the file.
     out = render.render_ttfe_bars(
         _matrix_results(_full_gvisor_scenarios(), provenance={"node_count": 1, "machine_type": "e2-standard-16"})
     )
