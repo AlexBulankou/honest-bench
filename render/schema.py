@@ -255,6 +255,15 @@ PROVENANCE_FIELDS = {
     # channel) reads as a node-build-confounded swing, not a pure substrate
     # regression/fix. Same GKE kubeletVersion shape as node_image.
     "prior_node_image": lambda v: isinstance(v, str) and bool(_NODE_IMAGE.match(v)),
+    # Prior-run controller_digest / suite_git_sha (#6828, mirrors prior_machine_type's
+    # "only if it differs" gate): stamped by build_provenance only when the build actually
+    # changed since the previously published run — drives the build-lineage clause on the
+    # North Star refresh-delta caveat, so a swing driven by a controller/suite rebuild between
+    # fires (the #6762 investigation) self-disambiguates on-page the same way a rig change
+    # already does, instead of costing a fresh manual dig every time. Same shape regexes as
+    # the current-run fields.
+    "prior_controller_digest": lambda v: isinstance(v, str) and bool(_SHA256.match(v)),
+    "prior_suite_git_sha": lambda v: isinstance(v, str) and bool(_GITSHA.match(v)),
     # Upstream source-ref pin (WS3, epic #6669): the upstream agent-sandbox ref these numbers
     # were measured AGAINST — stamped by build_provenance from BENCH_UPSTREAM_REF when present
     # (omit-when-absent, like node_image). Records WHICH ref was measured so a reader / the

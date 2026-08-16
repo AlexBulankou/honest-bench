@@ -80,7 +80,7 @@ _**North Star** — warm-pool-hit TTFE p95 < 1s (the spec doc bar): gVisor 3.995
 
 _**Stretch bar** — warm-pool-hit TTFE p95 < 0.5s (an aspiration above the North Star, not the North Star itself; the step-up curve grades sustained creation-rate against it — see [DETAILS.md](DETAILS.md)): gVisor 3.9955s (count=30) ❌ not met (3.4955s above the bar); Kata + microVM 2.2426s (count=30) ❌ not met (1.7426s above the bar)._
 
-> ⚠️ **Refresh delta:** **gVisor** regressed by 2.6381s (1.3574s → 3.9955s, 2.9x). A swing this large, or a bar-crossing flip, between consecutive published runs is flagged for a second look before trusting it as a substrate signal — check for a machine-class change, a node-count change, a node-image change, a broken measurement, or a real regression/fix.
+> ⚠️ **Refresh delta:** **gVisor** regressed by 2.6381s (1.3574s → 3.9955s, 2.9x). A swing this large, or a bar-crossing flip, between consecutive published runs is flagged for a second look before trusting it as a substrate signal — check for a machine-class change, a node-count change, a node-image change, a build-lineage change (controller/suite rebuild), a broken measurement, or a real regression/fix.
 
 ### Known anomalies
 
