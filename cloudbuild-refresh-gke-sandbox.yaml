@@ -261,12 +261,35 @@ steps:
       - |
         set -euo pipefail
 
+        # Freshness self-declaration: advance the stamp BEFORE the skip-guard so EVERY
+        # fire re-anchors it. verify-upstream-freshness.py --update-stamp cross-checks
+        # every upstream ref live and, on a fully-fresh run, bumps _meta.last_verified
+        # (calendar-age banner) AND recomputes _meta.commit_distance (commits-behind-
+        # upstream banner) in one write, then re-renders README/DETAILS/WORK_IN_PROGRESS
+        # so the byte-pinned golden stays self-consistent (render/test_readme_fresh.py).
+        # Runs AFTER the measure step, so it reads the fresh latest.json provenance
+        # (fork_base_upstream_sha), and inherits GITHUB_TOKEN from secretEnv for public-
+        # read rate headroom (the script works unauthenticated too). It is FAIL-CLOSED:
+        # on drift (exit 1) or an unreachable/unmeasurable upstream (exit 2) it writes
+        # NOTHING partial. Best-effort here — a non-fresh cross-check must never red the
+        # fire: the benchmark numbers still publish with the last-known-good stamp, and
+        # the commit-distance banner self-declares "UNVERIFIED" loudly on its own.
+        if python3 scripts/verify-upstream-freshness.py --update-stamp; then
+          echo "freshness stamp advanced + pages re-rendered (last_verified + commit_distance)."
+        else
+          echo "--update-stamp non-fresh or upstream unreachable — publishing numbers with the existing stamp; fail-closed, no partial write."
+        fi
+
         # No result change -> nothing to PR (parity with peter-evans's no-op skip).
+        # render/upstream_links.json is in the skip-guard + git-add lists below so a
+        # freshness-only re-anchor (numbers unchanged, stamp bumped by --update-stamp
+        # above) still publishes — otherwise the committed last_verified would lag the
+        # actual fire and the "numbers <=72h old, self-declared" contract would rot.
         # history.jsonl (hb#3918/hb#439) included: a build-over-build accrual can land a
         # new/refreshed row with README/DETAILS otherwise unchanged (e.g. the COUNT is
         # identical to the prior build but the digest/date differ) — without it here that
         # accrual would silently never publish.
-        if git diff --quiet -- sandbox/results/latest.json sandbox/results/history.jsonl README.md DETAILS.md; then
+        if git diff --quiet -- sandbox/results/latest.json sandbox/results/history.jsonl README.md DETAILS.md render/upstream_links.json; then
           echo "No benchmark diff to publish — skipping PR."
           exit 0
         fi
@@ -298,7 +321,7 @@ steps:
           FLAVOR="latest-upstream"
         fi
         git checkout -B "$$BRANCH"
-        git add sandbox/results/latest.json sandbox/results/history.jsonl README.md DETAILS.md
+        git add sandbox/results/latest.json sandbox/results/history.jsonl README.md DETAILS.md render/upstream_links.json
         git commit -m "data: auto-refresh benchmark results (substrate=gke-sandbox, gVisor, $$FLAVOR)"
 
         # A fresh CB clone fetches only main, so it has no remote-tracking ref for
