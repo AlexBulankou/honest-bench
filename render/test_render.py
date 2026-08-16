@@ -2155,6 +2155,23 @@ def test_ttfe_bars_low_n_gets_marker_and_footnote():
     assert "fewer than" in out and "not a stable distribution" in out
 
 
+def test_ttfe_bars_cluster_shape_footer_when_provenance_present():
+    # the swing-flag chart had no rig disclosure, unlike the adjacent at-scale section;
+    # node_count / machine_type ride the same PROVENANCE_FIELDS allow-list as the rest
+    # of the file.
+    out = render.render_ttfe_bars(
+        _matrix_results(_full_gvisor_scenarios(), provenance={"node_count": 1, "machine_type": "e2-standard-16"})
+    )
+    assert "Cluster shape (gVisor leg): node_count=1, `e2-standard-16`" in out
+
+
+def test_ttfe_bars_no_cluster_shape_footer_when_provenance_absent():
+    # inert-by-default: no provenance data -> no footer line, matching every other
+    # provenance-gated caption in this file (e.g. render_warm_pool_acquisition).
+    out = render.render_ttfe_bars(_matrix_results(_full_gvisor_scenarios()))
+    assert "Cluster shape" not in out
+
+
 def test_matrix_kata_warm_cold_rows_pending():
     # on an unmeasured kata runtime, the warm-pool + cold rows render pending (not-yet-measured);
     # the resume row is N/A-by-design and is asserted separately below.

@@ -1348,6 +1348,18 @@ def render_ttfe_bars(results, kata_results=None):
         lines.append(f"* fewer than {TTFE_COMPARABILITY_MIN_N} samples — not a stable distribution")
     lines.append("```")
     lines.append("")
+    shape = []
+    if prov.get("node_count") is not None:
+        shape.append(f"node_count={prov['node_count']}")
+    if prov.get("machine_type"):
+        shape.append(f"`{prov['machine_type']}`")
+    if shape:
+        lines.append(
+            f"_Cluster shape (gVisor leg): {', '.join(shape)} — the swing-flag threshold "
+            "compares consecutive fires on this chart, so a node-count or machine-class change "
+            "shows up here first._"
+        )
+        lines.append("")
     return "\n".join(lines)
 
 
