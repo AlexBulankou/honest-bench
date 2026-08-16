@@ -61,6 +61,12 @@ python3 -m harness.test_run_merge        # additive seed/measured merge rules
 python3 -m harness.test_metrics          # pure TTFE metrics-derivation core
 ```
 
+The merge-gate checkers under `scripts/` are likewise dependency-free:
+
+```
+python3 scripts/test_check_north_star_flip.py   # cross-lane PASS->FAIL merge-guard
+```
+
 To reproduce a full run, follow the recipe in the README: install the controller
 from upstream `main` with `recipe/install-controller-from-main.sh`, then run the
 harness against your GKE cluster. On a cluster without a sandbox runtime, scenarios
