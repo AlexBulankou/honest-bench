@@ -375,6 +375,44 @@ def _read_prior_provenance_node_image(out_path: pathlib.Path) -> str | None:
     return ni.strip()
 
 
+def _read_prior_provenance_controller_digest(out_path: pathlib.Path) -> str | None:
+    """Read the existing results file's provenance.controller_digest (#6828 confound).
+
+    Best-effort, mirroring _read_prior_provenance_node_image: a missing/malformed
+    file or an absent/non-string controller_digest means there is nothing to compare
+    against, so return None (build_provenance then omits prior_controller_digest and
+    no build-lineage clause renders on the North Star delta caveat).
+    """
+    try:
+        prior = json.loads(out_path.read_text())
+    except (FileNotFoundError, ValueError):
+        return None
+    prov = prior.get("provenance") if isinstance(prior, dict) else None
+    cd = prov.get("controller_digest") if isinstance(prov, dict) else None
+    if not isinstance(cd, str) or not cd.strip():
+        return None
+    return cd.strip()
+
+
+def _read_prior_provenance_suite_git_sha(out_path: pathlib.Path) -> str | None:
+    """Read the existing results file's provenance.suite_git_sha (#6828 confound).
+
+    Best-effort, mirroring _read_prior_provenance_controller_digest: a missing/
+    malformed file or an absent/non-string suite_git_sha means there is nothing to
+    compare against, so return None (build_provenance then omits prior_suite_git_sha
+    and no build-lineage clause renders on the North Star delta caveat).
+    """
+    try:
+        prior = json.loads(out_path.read_text())
+    except (FileNotFoundError, ValueError):
+        return None
+    prov = prior.get("provenance") if isinstance(prior, dict) else None
+    sha = prov.get("suite_git_sha") if isinstance(prov, dict) else None
+    if not isinstance(sha, str) or not sha.strip():
+        return None
+    return sha.strip()
+
+
 def _read_prior_warmpool_ttfe_p95(out_path: pathlib.Path) -> float | None:
     """Read the existing results file's warmpool_cold_start TTFE p95 (hb#5414).
 
@@ -1357,6 +1395,8 @@ def build_provenance(
     prior_warmpool_ttfe_p95: float | None = None,
     prior_node_count: int | None = None,
     prior_node_image: str | None = None,
+    prior_controller_digest: str | None = None,
+    prior_suite_git_sha: str | None = None,
 ) -> dict:
     prov = {
         "cluster_substrate": substrate,
@@ -1403,6 +1443,18 @@ def build_provenance(
     # run-level property stamped for every product.
     if prior_node_count and prior_node_count != prov["node_count"]:
         prov["prior_node_count"] = prior_node_count
+    # Prior-run controller_digest / suite_git_sha (#6828, mirrors prior_node_count's "only
+    # if it differs" gate): carry the PREVIOUSLY published build-lineage identifiers forward
+    # as their own fields so the renderer can data-key a build-lineage-change clause on the
+    # North Star refresh-delta caveat off two closed-schema-validated values. Stamped only
+    # when the build actually changed between fires (a controller/suite rebuild — the #6762
+    # investigation's confound axis): a same-build refresh needs no clause, and a run with no
+    # prior value on record never emits a spurious comparison. Run-level (not runtime-gated),
+    # same as prior_node_count — both fields are always present (possibly "") in prov above.
+    if prior_controller_digest and prior_controller_digest != prov["controller_digest"]:
+        prov["prior_controller_digest"] = prior_controller_digest
+    if prior_suite_git_sha and prior_suite_git_sha != prov["suite_git_sha"]:
+        prov["prior_suite_git_sha"] = prior_suite_git_sha
     # Upstream source-ref pin (WS3, epic #6669 "stamp-the-pin-per-fire"): the upstream
     # agent-sandbox ref these numbers were measured AGAINST, so the page records WHICH ref the
     # numbers reflect rather than leaving currency-vs-upstream implicit. Same env-passthrough-or-
@@ -1557,6 +1609,8 @@ def main(argv=None) -> int:
     prior_warmpool_ttfe_p95 = _read_prior_warmpool_ttfe_p95(out)
     prior_node_count = _read_prior_provenance_node_count(out)
     prior_node_image = _read_prior_provenance_node_image(out)
+    prior_controller_digest = _read_prior_provenance_controller_digest(out)
+    prior_suite_git_sha = _read_prior_provenance_suite_git_sha(out)
     raw = merge_seed_placeholders(raw, prior_scenarios)
     # Per-mode SLO cluster-rate legs (hb#132/#149): fresh env-armed sweep
     # derivations merge first (fresh wins), then prior committed triples carry
@@ -1685,6 +1739,8 @@ def main(argv=None) -> int:
             prior_warmpool_ttfe_p95=prior_warmpool_ttfe_p95,
             prior_node_count=prior_node_count,
             prior_node_image=prior_node_image,
+            prior_controller_digest=prior_controller_digest,
+            prior_suite_git_sha=prior_suite_git_sha,
         ),
         generated_at=generated_at, product=args.product,
         scale_proof=scale_proof, stepup=stepup, warm_vs_cold=warm_vs_cold_obj,

@@ -2434,6 +2434,8 @@ def _north_star_delta_flag(
     label, current_p95, prior_p95, current_node_count=None, prior_node_count=None,
     current_node_image=None, prior_node_image=None,
     current_machine_type=None, prior_machine_type=None,
+    current_controller_digest=None, prior_controller_digest=None,
+    current_suite_git_sha=None, prior_suite_git_sha=None,
 ):
     """One flagged-runtime line, or None if this runtime has nothing to flag.
 
@@ -2462,6 +2464,17 @@ def _north_star_delta_flag(
     is a confound on the TTFE swing. Same ride-ON-a-flagged-delta rule (a node-image
     change with no ttfe swing/flip is not a trust downgrade), and all three confound
     clauses compose — machine_type, node_count, and node_image can appear on one flag.
+
+    When the flagged delta ALSO spans a build-lineage change — a different
+    controller_digest and/or suite_git_sha between the prior and current published run
+    (#6828, the confound axis that cost the full #6762 investigation for the 1.36s→4.00s
+    swing) — a `· controller_digest X→Y` and/or `· suite_git_sha X→Y` clause is appended
+    last, same ride-ON-a-flagged-delta rule as the three clauses above (a rebuild with no
+    ttfe swing/flip is not itself a trust downgrade). controller_digest is shown truncated
+    to its first 19 chars (the `sha256:` prefix + 12 hex chars, mirroring render_trend's
+    existing digest-display convention) since the full 64-hex-char digest would dominate
+    the line; suite_git_sha is short enough to show in full. The two are independent —
+    either, both, or neither can fire depending on which build components actually moved.
     """
     if not isinstance(current_p95, (int, float)) or not isinstance(prior_p95, (int, float)):
         return None
@@ -2505,6 +2518,25 @@ def _north_star_delta_flag(
         and current_node_image != prior_node_image
     ):
         flag += f" · node_image {prior_node_image}→{current_node_image}"
+    if (
+        isinstance(current_controller_digest, str)
+        and isinstance(prior_controller_digest, str)
+        and current_controller_digest.strip()
+        and prior_controller_digest.strip()
+        and current_controller_digest != prior_controller_digest
+    ):
+        flag += (
+            f" · controller_digest `{prior_controller_digest[:19]}…` → "
+            f"`{current_controller_digest[:19]}…`"
+        )
+    if (
+        isinstance(current_suite_git_sha, str)
+        and isinstance(prior_suite_git_sha, str)
+        and current_suite_git_sha.strip()
+        and prior_suite_git_sha.strip()
+        and current_suite_git_sha != prior_suite_git_sha
+    ):
+        flag += f" · suite_git_sha `{prior_suite_git_sha}`→`{current_suite_git_sha}`"
     return flag
 
 
@@ -2514,8 +2546,12 @@ def _north_star_delta_caveat(results, kata_results=None):
     Reads the `prior_warmpool_ttfe_p95_ms` provenance field (stamped by
     harness/run.py's build_provenance, carried forward from the previously published
     run, same mechanism as _machine_class_caveat's prior_machine_type) and compares it
-    to this run's measured p95 per runtime. Pure function of (results, kata_results);
-    returns "" when nothing to flag so callers can unconditionally append it.
+    to this run's measured p95 per runtime. Also reads the `prior_controller_digest` /
+    `prior_suite_git_sha` fields (#6828, same "only if it differs" stamping gate) so a
+    build-lineage confound self-disambiguates on-page alongside the existing
+    machine_type/node_count/node_image confound clauses. Pure function of (results,
+    kata_results); returns "" when nothing to flag so callers can unconditionally
+    append it.
     """
     rows = _north_star_rows(results, kata_results)
     label_to_rt = {v: k for k, v in RUNTIME_LABELS.items()}
@@ -2527,6 +2563,10 @@ def _north_star_delta_caveat(results, kata_results=None):
     current_ni_by_runtime = {}
     prior_mt_by_runtime = {}
     current_mt_by_runtime = {}
+    prior_cd_by_runtime = {}
+    current_cd_by_runtime = {}
+    prior_sha_by_runtime = {}
+    current_sha_by_runtime = {}
     prov = _clean_provenance(results.get("provenance"))
     measured_runtime = prov.get("runtime") or "gvisor"
     prior_p95 = prov.get("prior_warmpool_ttfe_p95_ms")
@@ -2544,6 +2584,14 @@ def _north_star_delta_caveat(results, kata_results=None):
         current_mt_by_runtime[measured_runtime] = prov["machine_type"]
     if isinstance(prov.get("prior_machine_type"), str):
         prior_mt_by_runtime[measured_runtime] = prov["prior_machine_type"]
+    if isinstance(prov.get("controller_digest"), str):
+        current_cd_by_runtime[measured_runtime] = prov["controller_digest"]
+    if isinstance(prov.get("prior_controller_digest"), str):
+        prior_cd_by_runtime[measured_runtime] = prov["prior_controller_digest"]
+    if isinstance(prov.get("suite_git_sha"), str):
+        current_sha_by_runtime[measured_runtime] = prov["suite_git_sha"]
+    if isinstance(prov.get("prior_suite_git_sha"), str):
+        prior_sha_by_runtime[measured_runtime] = prov["prior_suite_git_sha"]
     if isinstance(kata_results, dict):
         kp = _clean_provenance(kata_results.get("provenance"))
         if kp.get("runtime") == "kata-microvm":
@@ -2562,6 +2610,14 @@ def _north_star_delta_caveat(results, kata_results=None):
                 current_mt_by_runtime["kata-microvm"] = kp["machine_type"]
             if isinstance(kp.get("prior_machine_type"), str):
                 prior_mt_by_runtime["kata-microvm"] = kp["prior_machine_type"]
+            if isinstance(kp.get("controller_digest"), str):
+                current_cd_by_runtime["kata-microvm"] = kp["controller_digest"]
+            if isinstance(kp.get("prior_controller_digest"), str):
+                prior_cd_by_runtime["kata-microvm"] = kp["prior_controller_digest"]
+            if isinstance(kp.get("suite_git_sha"), str):
+                current_sha_by_runtime["kata-microvm"] = kp["suite_git_sha"]
+            if isinstance(kp.get("prior_suite_git_sha"), str):
+                prior_sha_by_runtime["kata-microvm"] = kp["prior_suite_git_sha"]
 
     flags = []
     for label, p95, _cell, _p50, _n, _outcome in rows:
@@ -2579,6 +2635,10 @@ def _north_star_delta_caveat(results, kata_results=None):
             prior_node_image=prior_ni_by_runtime.get(rt),
             current_machine_type=current_mt_by_runtime.get(rt),
             prior_machine_type=prior_mt_by_runtime.get(rt),
+            current_controller_digest=current_cd_by_runtime.get(rt),
+            prior_controller_digest=prior_cd_by_runtime.get(rt),
+            current_suite_git_sha=current_sha_by_runtime.get(rt),
+            prior_suite_git_sha=prior_sha_by_runtime.get(rt),
         )
         if flag:
             flags.append(flag)
@@ -2589,7 +2649,8 @@ def _north_star_delta_caveat(results, kata_results=None):
         "> ⚠️ **Refresh delta:** " + "; ".join(flags) + ". A swing this large, or a bar-crossing "
         "flip, between consecutive published runs is flagged for a second look before trusting it "
         "as a substrate signal — check for a machine-class change, a node-count change, a "
-        "node-image change, a broken measurement, or a real regression/fix."
+        "node-image change, a build-lineage change (controller/suite rebuild), a broken "
+        "measurement, or a real regression/fix."
     )
 
 
