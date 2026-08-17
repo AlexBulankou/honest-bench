@@ -742,10 +742,14 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
                 verified, _RUNTIME_CLASS,
             )
 
-        # Representative gap verdict: pending if ANY cycle's Suspended condition
-        # never cleared (the tracked upstream gap), else the first (PASS) cycle.
+        # Representative gap verdict: surface a FAIL if ANY cycle's Suspended
+        # condition persisted past the clear-window, else the first (PASS) cycle.
+        # Post-#6913 re-key _eval_resume_gap returns FAIL (not the former
+        # pending) for a persisted Suspended — a regression of the closed #1150
+        # gap that must fail LOUD, so a first-cycle PASS must NEVER mask a
+        # later-cycle FAIL in a multi-cycle run (#4420 trust-surface rule).
         verdict, excerpt, sla_metrics = next(
-            (v for v in gap_verdicts if v[0] == "pending"), gap_verdicts[0])
+            (v for v in gap_verdicts if v[0] == "FAIL"), gap_verdicts[0])
 
         # Merge the administrative-suspend latency point into the gap verdict's
         # sla_metrics. UNGATED by _TTFE_EXEC: the suspend leg runs on every cycle,

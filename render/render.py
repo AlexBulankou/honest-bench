@@ -2013,6 +2013,12 @@ def render_matrix(results, kata_results=None, include_legend=True):
     # caption's own FAIL caveat closes.
     fail_cells = []
 
+    # #6913: the suspend_resume Suspended-persists FAIL is a CONTRACT regression, not a
+    # metric-SLA miss (see the disclosure-gate comment in the loop). Collected separately so
+    # it gets its own honest caveat ("contract regression … not an SLA miss") rather than the
+    # metric-SLA-miss wording, which would misdescribe a no-measurement FAIL.
+    contract_fail_cells = []
+
     # hb#554: collect (runtime, activation-mode, date) for any row whose per-cluster SLO
     # triple carries a `thpt_slo_measured_at` stamp — the disclosure that lets a reader
     # tell a carried (point-in-time, do-not-auto-decay) cluster figure from today's fresh
@@ -2040,13 +2046,28 @@ def render_matrix(results, kata_results=None, include_legend=True):
             sc_pending = bool(sc) and sc.get("outcome") == "pending"
             sc_fail = bool(sc) and sc.get("outcome") == "FAIL"
             m = sc["metrics"] if sc else {}
-            # #4420 scope-gate: a FAIL earns the loud ⚠️ FAIL tag + caveat ONLY when it
-            # carries a REAL TTFE measurement — the caveat text asserts a real measurement
-            # whose SLA was not met. The never-reached-first-execution FAIL (empty TTFE
-            # metrics, only exec_success_rate:0.0) is a DIFFERENT failure the Execution-Success
-            # cell already discloses (`0% ⚠️`); tagging it would claim a measurement that
-            # isn't there. Mirrors the North Star caveat's own `p95 is not None` gate.
-            sc_fail = sc_fail and ("ttfe_p95_ms" in m or "ttfe_p50_ms" in m)
+            # #4420 disclosure-gate for the loud ⚠️ FAIL tag. Two honest FAIL classes:
+            #   - metric-SLA-miss FAIL (throughput/TTFE family): earns the tag ONLY with a
+            #     REAL TTFE measurement — the caveat asserts a measured SLA miss. The
+            #     never-reached-first-execution FAIL (empty TTFE, only exec_success_rate:0.0)
+            #     is a DIFFERENT failure the Execution-Success cell already discloses (`0% ⚠️`);
+            #     tagging it would claim a measurement that isn't there. Mirrors the North Star
+            #     caveat's own `p95 is not None` gate.
+            #   - suspend_resume FAIL (#6913 re-key): ALWAYS a CONTRACT regression of the
+            #     closed agent-sandbox#1150 fix (Suspended persisted past resume), NEVER a
+            #     metric-SLA miss — the scenario's verdict is set SOLELY by the Suspended-clear
+            #     check (harness/scenarios/suspend_resume.py `_eval_resume_gap`); ttfe/exec are
+            #     orthogonal and never flip it. In the INERT (TTFE-probe-off) default it carries
+            #     NO ttfe AND no exec_success_rate, so the ttfe-gated tag alone would leave it
+            #     reading as a bare `pending` cell — silently downgrading a closed gate back to
+            #     a known-gap (the exact #4420 failure this re-key exists to catch). Tag it off
+            #     the RAW outcome so the regression fails LOUD; its own honest caveat (below)
+            #     carries the "contract regression, not an SLA miss" framing without claiming a
+            #     ttfe measurement that isn't there (fabricating exec_success_rate:0.0 is
+            #     rejected for the same reason — no exec probe ran in INERT mode).
+            resume_contract_fail = is_resume and sc_fail
+            sc_fail = resume_contract_fail or (
+                sc_fail and ("ttfe_p95_ms" in m or "ttfe_p50_ms" in m))
 
             # hb#230 Fork 5 (resume Class-C ceiling): the gVisor resume row DID record a probe
             # ceiling — the wall-clock it waited out against a never-clearing Suspended
@@ -2227,7 +2248,10 @@ def render_matrix(results, kata_results=None, include_legend=True):
             # the row cannot read as a clean pass; the full disclosure rides the caveat below.
             row_mode_label = f"{mode_label} ⚠️ FAIL" if sc_fail else mode_label
             if sc_fail:
-                fail_cells.append((rt_label, mode_label))
+                if resume_contract_fail:
+                    contract_fail_cells.append((rt_label, mode_label))
+                else:
+                    fail_cells.append((rt_label, mode_label))
             stale_ma = m.get("thpt_slo_measured_at")
             if isinstance(stale_ma, str) and stale_ma:
                 stale_triple_cells.append((rt_label, mode_label, stale_ma[:10]))
@@ -2248,6 +2272,25 @@ def render_matrix(results, kata_results=None, include_legend=True):
             "own scenario outcome is **FAIL** (SLA not met), not a passing warm hit. The "
             "numbers are honest data, disclosed as a miss rather than dropped or greened; a "
             "later refresh whose scenario returns to PASS clears this._"
+        )
+        lines.append("")
+
+    # #6913 / #4420: the suspend_resume Suspended-persists FAIL gets its own honest headline —
+    # it is a CONTRACT regression (the resume completed but the Suspended condition never
+    # cleared), NOT a measured-SLA miss, so the metric-SLA caveat above would misdescribe it.
+    # Failing it LOUD here is the whole point of the re-key: a silent downgrade of the closed
+    # agent-sandbox#1150 gate back to a benign pending cell is the trust-surface failure this
+    # gate exists to catch.
+    if contract_fail_cells:
+        who = "; ".join(f"**{rt}** {mode}" for rt, mode in contract_fail_cells)
+        lines.append(
+            f"_⚠️ **Scenario FAIL (resume contract regression):** {who} — the resume "
+            "lifecycle completed (new Pod, Ready) but the **Suspended** condition PERSISTED "
+            "past the clear-window. This regresses the closed agent-sandbox#1150 fix "
+            "(resume status-write retry-to-convergence); it is disclosed LOUD rather than "
+            "masked as a benign `pending` cell, and is a contract failure, NOT an SLA miss on "
+            "a measured number. A later refresh whose Suspended condition clears returns this "
+            "row to PASS._"
         )
         lines.append("")
 

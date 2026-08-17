@@ -6421,6 +6421,48 @@ def test_matrix_no_fail_caveat_when_all_pass():
     assert "⚠️ FAIL" not in out
 
 
+def test_matrix_resume_inert_fail_is_loud_not_pending():
+    # #6913 / #4420: the suspend_resume Suspended-persists FAIL in the INERT (TTFE-probe-off)
+    # default carries EMPTY metrics — no ttfe, no exec_success_rate. The ttfe-gated FAIL tag
+    # alone would leave it reading as a bare `pending` cell, silently downgrading the closed
+    # agent-sandbox#1150 gate back to a known-gap (the exact trust-surface failure this re-key
+    # exists to catch). It must fail LOUD off the raw outcome instead.
+    scen = _full_gvisor_scenarios()
+    scen[2] = {"name": "suspend_resume", "outcome": "FAIL", "n": 1376}  # INERT: no sla_metrics
+    out = render.render_matrix(_matrix_results(scen))
+    resume_line = [l for l in out.splitlines() if "Resume-from-suspend" in l][0]
+    # the row is tagged LOUD, visually distinguishable from a bare pending cell
+    assert "⚠️ FAIL" in resume_line
+    # its own honest caveat renders — a CONTRACT regression, NOT the metric-SLA-miss wording
+    assert "**Scenario FAIL (resume contract regression):**" in out
+    assert "agent-sandbox#1150" in out
+    # routed to the contract caveat, NOT the metric-SLA-miss caveat (which claims a measurement)
+    assert "carries a real measurement whose" not in out
+    # the two PASS rows are NOT tagged
+    warm_line = [l for l in out.splitlines() if "Warm-pool hit" in l][0]
+    assert "⚠️ FAIL" not in warm_line
+
+
+def test_matrix_resume_fail_routes_separately_from_metric_sla_fail():
+    # #6913: a suspend_resume contract FAIL and a warmpool metric-SLA-miss FAIL in the SAME
+    # render must each land in their OWN caveat — the contract regression must never be
+    # described as "a real measurement whose SLA was not met", and vice versa.
+    scen = _full_gvisor_scenarios()
+    scen[0]["outcome"] = "FAIL"  # warmpool: metric-SLA-miss FAIL (keeps real ttfe metrics)
+    scen[2] = {"name": "suspend_resume", "outcome": "FAIL", "n": 1376}  # INERT contract FAIL
+    out = render.render_matrix(_matrix_results(scen))
+    # both caveats present, distinct
+    assert "**Scenario FAIL:**" in out                                   # metric-SLA-miss
+    assert "**Scenario FAIL (resume contract regression):**" in out      # contract regression
+    # the metric-SLA caveat names the warmpool row; the contract caveat names the resume row
+    sla_caveat = [l for l in out.splitlines() if l.startswith("_⚠️ **Scenario FAIL:**")][0]
+    contract_caveat = [
+        l for l in out.splitlines()
+        if l.startswith("_⚠️ **Scenario FAIL (resume contract regression):**")][0]
+    assert "Warm-pool hit" in sla_caveat and "Resume-from-suspend" not in sla_caveat
+    assert "Resume-from-suspend" in contract_caveat and "Warm-pool hit" not in contract_caveat
+
+
 # ---------------------------------------------------------------------------
 # #4420 trust-surface: warm-pool-hit p95 is meant to sit AT or BELOW the
 # unique-image cold-start p95 (warm is the fast path). When the published matrix
