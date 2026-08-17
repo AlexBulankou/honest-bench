@@ -1,0 +1,133 @@
+# Diagnostic-lineage merge-gate — Cloud Build PR-trigger config (hb#646
+# root-cause follow-up).
+#
+# WHY THIS EXISTS. hb#643/#644 merged a deliberate zero-fix "clean-upstream"
+# reproduction fire (fork_fix_count=0, fork_sha == fork_base_upstream_sha —
+# staged for the #6890 warm-pool investigation) straight into main's
+# `results/latest.json`, silently overwriting the validated production fork
+# pin with known-bad diagnostic data for ~1.9h until the hb#646 revert.
+# Nothing at merge time distinguished that diagnostic fire from the
+# auto-refresh cron's normal output. This config closes that gap as a MERGE
+# GATE (the trust-surface idiom, #4420 — a downgrade on a customer-facing
+# surface must fail closed, never overwrite quietly).
+#
+# WHAT IT GATES. For every product `<p>/results/latest.json` in the PR, it
+# checks the PR's OWN provenance for a diagnostic-lineage fork-build
+# signature (scripts/check_diagnostic_lineage.py — fork_fix_count == 0, or
+# fork_sha == fork_base_upstream_sha). Unlike the North Star flip gate
+# (hb#623), this signature is INTRINSICALLY bad on its own terms — a fork
+# with zero staged fixes, or one byte-identical to its own base, is not a
+# validated fix pin regardless of what main currently contains — so this
+# checker needs no origin/main fetch and no per-product base file. Products
+# are auto-discovered (glob), so a new product lane is gated the instant it
+# lands — no per-product list to drift.
+#
+# POSTURE — FAIL-CLOSED. The checker exits 2 on malformed/unreadable input
+# and 3 on an un-overridden diagnostic-lineage signature; both red the
+# build. There is no WARN-wrap. Meant to be wired as a REQUIRED status check
+# on main (the fleet admin + alex own the branch-protection wiring).
+#
+# OVERRIDE. A deliberate "yes, publish diagnostic data" decision is
+# permitted by putting a bare `[DIAGNOSTIC-LINEAGE-OK]` line in the PR HEAD
+# commit message — the fleet [ROLL-NOW]/[NORTH-STAR-FLIP-OK] opt-in idiom.
+# The line is anchored (a prose mention inside a paragraph does NOT trigger
+# it), the same hardening #241 applied to [ROLL-NOW]. Chosen over a GitHub
+# label because Cloud Build does NOT re-fire on label-only events (adding/
+# removing a label is a silent no-op on the check), whereas a commit-trailer
+# is re-evaluated on every push.
+#
+# AUTH: runs as a native Cloud Build service account — no WIF, no long-lived
+# keys, no repo secrets. Offline: leak scan + a stdlib-only checker on the
+# PR's own tree. No git fetch, no cluster access, no GitHub token.
+#
+# TRUSTED-REF re-bake (edits here require re-baking the live inline trigger
+# from THIS file via user-ADC — the trusted-gate boundary; repo + live share
+# one source so they cannot drift). The exact --service-account and
+# --project values are project-specific and kept OUT of this public file —
+# see scripts/setup-cloud-build-triggers.sh (parametrized) for the full
+# commands. The shape:
+#   gcloud builds triggers update github hb-diagnostic-lineage-gate \
+#     --inline-config=cloudbuild-diagnostic-lineage-gate.yaml \
+#     --repo-owner=AlexBulankou --repo-name=honest-bench \
+#     --pull-request-pattern='^main$' \
+#     --comment-control=COMMENTS_DISABLED \
+#     --service-account=<CLOUDBUILD_SA> --project=<PROJECT>
+# GOTCHA (inherited from a4-pr-lint / hb-unit-tests / hb-north-star-flip-gate):
+# --comment-control=COMMENTS_DISABLED is REQUIRED. `update github` with
+# --pull-request-pattern silently defaults to COMMENTS_ENABLED, which gates
+# every PR build behind a /gcbrun owner comment.
+
+steps:
+  # Gate-zero leak scan. Fail fast on an internal-name leak before spending
+  # gate minutes. Offline, fail-closed. Same posture as the unit-tests and
+  # north-star-flip gates.
+  - name: python:3.12
+    id: public-safety
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        bash scripts/check-public-safety.sh
+
+  # The diagnostic-lineage gate. For every product's latest.json in the PR,
+  # check its OWN provenance for a diagnostic-lineage fork-build signature.
+  # An un-overridden signature reds the build unless the HEAD commit carries
+  # the [DIAGNOSTIC-LINEAGE-OK] override line. Fail-closed on every axis.
+  - name: python:3.12
+    id: diagnostic-lineage-gate
+    entrypoint: bash
+    waitFor: ['public-safety']
+    args:
+      - -c
+      - |
+        set -uo pipefail
+
+        # Override: a bare [DIAGNOSTIC-LINEAGE-OK] line in the HEAD commit
+        # body. Line-anchored (grep -x on a trimmed copy) so a prose mention
+        # like "no [DIAGNOSTIC-LINEAGE-OK] needed" inside a paragraph does
+        # NOT trigger it.
+        allow=""
+        if git log -1 --format=%B \
+             | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' \
+             | grep -qxF '[DIAGNOSTIC-LINEAGE-OK]'; then
+          allow="--allow-diagnostic"
+          echo "[diagnostic-lineage-gate] HEAD commit carries [DIAGNOSTIC-LINEAGE-OK] — signature will be permitted (loud warn, non-blocking)."
+        fi
+
+        # Auto-discover every product latest.json in the PR working tree.
+        mapfile -t prfiles < <(find . -path ./.git -prune -o \
+          -path '*/results/latest.json' -print | sort)
+        if [ "${#prfiles[@]}" -eq 0 ]; then
+          echo "[diagnostic-lineage-gate] no */results/latest.json in tree — nothing to gate (clean)."
+          exit 0
+        fi
+        echo "[diagnostic-lineage-gate] gating ${#prfiles[@]} product latest.json file(s)."
+
+        rc=0
+        for pr in "${prfiles[@]}"; do
+          rel="${pr#./}"
+          echo "==> ${rel}"
+          python3 scripts/check_diagnostic_lineage.py --pr "$pr" $allow
+          code=$?
+          # Preserve the hardest failure: 2 (input error) outranks 3
+          # (diagnostic-lineage signature) outranks 0.
+          if [ "$code" -eq 2 ]; then rc=2
+          elif [ "$code" -eq 3 ] && [ "$rc" -ne 2 ]; then rc=3
+          fi
+        done
+
+        if [ "$rc" -ne 0 ]; then
+          echo "----------------------------------------" >&2
+          echo "[diagnostic-lineage-gate] BLOCKED (exit $rc) — see per-product output above." >&2
+          exit "$rc"
+        fi
+        echo "----------------------------------------"
+        echo "[diagnostic-lineage-gate] all products clean — no un-overridden diagnostic-lineage signature."
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+
+# Offline: no git fetch, a stdlib-only per-product check on the PR's own
+# tree. Fast; 300s is ample.
+timeout: 300s
