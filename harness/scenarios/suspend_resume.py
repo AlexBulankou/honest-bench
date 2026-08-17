@@ -33,25 +33,26 @@
   - resume (spec.operatingMode=Running): the Pod is recreated (new UID) and
     Ready returns True/message "Pod is Ready" — the compute lifecycle works.
 
-## Resume is a gap probe (known upstream controller gap)
+## Resume is a strict gate (re-keyed — the upstream gap is closed)
 
-The current build-from-main controller has a known resume defect: after a resume
-the compute lifecycle completes (new Pod + Ready=True) BUT the controller never
-clears the stale Suspended=True condition — its resume status write hits a
-resourceVersion conflict and is not retried to convergence, so a resumed,
-fully-operational Sandbox perpetually advertises Suspended=True. The resume leg
-is therefore a TWO-PART probe that flips the moment upstream fixes the bug:
+The controller once had a resume defect: after a resume the compute lifecycle
+completed (new Pod + Ready=True) BUT the controller never cleared the stale
+Suspended=True condition — its resume status write hit a resourceVersion conflict
+and was not retried to convergence, so a resumed, fully-operational Sandbox
+perpetually advertised Suspended=True. That gap was CLOSED upstream
+(agent-sandbox#1150 added retry-to-convergence on the resume status write), so
+the resume leg is now a TWO-PART STRICT gate — not a known-gap pend:
 
   - resume lifecycle MUST complete (new Pod uid != pre-suspend uid AND
     Ready=True/"Pod is Ready"). A lifecycle break is a REAL regression and
     returns a plain FAIL.
   - given lifecycle-OK, the Suspended condition is then checked:
-      * Suspended PERSISTS past the clear-window → outcome=pending,
-        pending_reason=upstream-blocked — the documented tracked gap, rendered as
-        a known-gap rather than a green PASS or a red regression.
-      * Suspended CLEARS on resume → PASS — the signal that upstream closed the
-        gap. A pending member newly PASSing is the cue to re-key this scenario to
-        a strict gate.
+      * Suspended CLEARS on resume → PASS — the contract-satisfying outcome.
+      * Suspended PERSISTS past the clear-window → FAIL — a REGRESSION of the
+        closed #1150 fix, failed LOUD rather than masked as a benign
+        pending(upstream-blocked) known-gap (#4420 trust-surface rule: a silent
+        downgrade of a closed gate back to a known-gap is exactly the failure
+        this gate exists to catch).
 
 ## Why NOT pods:delete in this scenario
 
@@ -65,9 +66,9 @@ only needs pods:get (read UID + observe NotFound), never pods:delete.
 
 Infrastructure-level failures (CRD missing, controller unhealthy, RBAC gap,
 quota) raise — the harness loop classifies a raised exception as a crash-fail
-cell. Scenario-outcome FAILs return ("FAIL", <excerpt>, {}); the tracked resume
-gap returns ("pending", <excerpt>, {"pending_reason": "upstream-blocked"});
-success returns ("PASS", <excerpt>, {}).
+cell. Scenario-outcome FAILs return ("FAIL", <excerpt>, {}) — including a resume
+that recreates + goes Ready but leaves Suspended=True (a regression of the closed
+#1150 gap); success returns ("PASS", <excerpt>, {}).
 """
 
 from __future__ import annotations
@@ -362,44 +363,46 @@ def _suspended_persists(conditions) -> bool:
 def _eval_resume_gap(
     *, suspended_cleared: bool, susp_reason, pod_uid, old_uid, clear_window_s: int
 ) -> tuple[str, str, dict]:
-    """Gap-probe verdict for the resume leg. Pure function.
+    """Suspended-clear verdict for the resume leg. Pure function.
 
     Called ONLY after the resume lifecycle has completed (new Pod + Ready) — a
     lifecycle break is a REAL regression handled by the caller's timeout, not
-    routed here. Two-part gap signature — the gap is the lifecycle-OK-but-
-    Suspended-persists state:
+    routed here. Given lifecycle-OK, the Suspended condition is a STRICT gate
+    (re-keyed from the former known-gap pend once the upstream fix landed —
+    agent-sandbox#1150 added retry-to-convergence on the resume status write):
 
-      - Suspended CLEARED on resume → ("PASS", <excerpt>, {}). The gap is CLOSED
-        (upstream added retry-to-convergence on the resume status write). A
-        pending member newly PASSing is the cue to re-key this scenario to a
-        strict PASS gate.
-      - Suspended PERSISTS past the clear-window → ("pending", <excerpt>,
-        {"pending_reason": "upstream-blocked"}). The documented tracked gap; the
-        render page surfaces it as a known-gap, never a green PASS or a red
-        regression.
+      - Suspended CLEARED on resume → ("PASS", <excerpt>, {}). The contract-
+        satisfying outcome: the controller clears the stale Suspended condition.
+      - Suspended PERSISTS past the clear-window → ("FAIL", <excerpt>, {}). A
+        REGRESSION, not a tracked known-gap. The upstream Suspended-never-clears
+        gap was closed; a resumed, fully-operational Sandbox that still advertises
+        Suspended=True means the fix regressed. Fail LOUD — do NOT mask it as a
+        benign pending(upstream-blocked) cell (the #4420 trust-surface rule: a
+        transition that silently downgrades a closed gate back to a known-gap is
+        the failure this gate exists to catch).
     """
     if suspended_cleared:
         return (
             "PASS",
             f"{_SCENARIO}: resume lifecycle completed (new Pod uid={pod_uid} != "
             f"pre-suspend {old_uid}, Ready=True) AND the Suspended condition "
-            f"CLEARED on resume — the controller resume gap is CLOSED (it now "
-            f"clears Suspended / retries the resume status write to convergence). "
-            f"Re-key this scenario to a strict PASS gate.",
+            f"CLEARED on resume — the controller clears Suspended / retries the "
+            f"resume status write to convergence, satisfying the resume contract.",
             {},
         )
     return (
-        "pending",
-        f"resume lifecycle completed (new Pod uid={pod_uid} != pre-suspend "
-        f"{old_uid}, Ready=True/message {_MSG_RESUMED!r}) BUT the Suspended "
-        f"condition PERSISTS status=True/reason={susp_reason!r} past resume "
-        f"(still set after a {clear_window_s}s clear-window) — the controller "
-        f"recreates the Pod + marks Ready but never clears the stale Suspended "
-        f"condition (resume status write hits a resourceVersion conflict without "
-        f"retry-to-convergence). A resumed, fully-operational Sandbox perpetually "
-        f"advertises Suspended=True. Tracked upstream-blocked gap (fixable in the "
-        f"controller via retry-on-conflict / an explicit Suspended clear).",
-        {"pending_reason": "upstream-blocked"},
+        "FAIL",
+        f"{_SCENARIO}: resume lifecycle completed (new Pod uid={pod_uid} != "
+        f"pre-suspend {old_uid}, Ready=True/message {_MSG_RESUMED!r}) BUT the "
+        f"Suspended condition PERSISTS status=True/reason={susp_reason!r} past "
+        f"resume (still set after a {clear_window_s}s clear-window) — the "
+        f"controller recreates the Pod + marks Ready but never clears the stale "
+        f"Suspended condition, so a resumed, fully-operational Sandbox perpetually "
+        f"advertises Suspended=True. REGRESSION: the upstream Suspended-clear gap "
+        f"was closed (agent-sandbox#1150 added retry-to-convergence on the resume "
+        f"status write), so a re-appearance is a real controller failure, not the "
+        f"previously-tracked known gap.",
+        {},
     )
 
 
@@ -596,9 +599,9 @@ def _run_suspend_resume_cycle(custom, core_v1, *, sandbox_name, pre_uid):
         ))
     log.info("resume lifecycle OK: %s", resume_detail)
 
-    # Part 2: the Suspended-clear gap check. Poll a clear-window so a FIXED
-    # controller reads as the gap-closed PASS; persists past the window →
-    # tracked pending(upstream-blocked).
+    # Part 2: the Suspended-clear strict gate. Poll a clear-window so a healthy
+    # controller reads as PASS; persists past the window → FAIL (a regression of
+    # the closed #1150 gap, not a tracked pend).
     cleared = False
     susp_deadline = time.monotonic() + _RESUME_SUSPENDED_CLEAR_WINDOW_S
     while time.monotonic() < susp_deadline:
@@ -637,10 +640,11 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
     """Provision a bare Sandbox, suspend it, resume it; return the verdict.
 
     Returns a 3-tuple (outcome, excerpt, sla_metrics). Success → ("PASS",
-    excerpt, {}); the tracked resume gap (Suspended never cleared) → ("pending",
-    excerpt, {"pending_reason": "upstream-blocked"}); any other scenario-outcome
-    failure → ("FAIL", excerpt, {}). Infrastructure failures raise (crash-fail
-    cell). No latency metric for the MVP — this is a correctness cell.
+    excerpt, {}); a resume that recreates + goes Ready but leaves Suspended=True
+    (a regression of the closed #1150 gap) → ("FAIL", excerpt, {}); any other
+    scenario-outcome failure → ("FAIL", excerpt, {}). Infrastructure failures
+    raise (crash-fail cell). No latency metric for the MVP — this is a
+    correctness cell.
     """
     from kubernetes import client as k8s_client
 

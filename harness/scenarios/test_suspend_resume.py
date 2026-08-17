@@ -155,6 +155,38 @@ def test_pod_template_metadata_label_survives_pin():
                f"pod label preserved under runtime {value!r}")
 
 
+def test_eval_resume_gap_cleared_is_pass():
+    # Given lifecycle-OK, a Suspended condition that CLEARS on resume is the
+    # contract-satisfying outcome → PASS with an empty sla dict (no pending_reason).
+    verdict, excerpt, sla = cell._eval_resume_gap(
+        suspended_cleared=True, susp_reason=None,
+        pod_uid="new-uid", old_uid="old-uid", clear_window_s=30,
+    )
+    _check(verdict == "PASS", f"cleared → PASS (got {verdict!r})")
+    _check(sla == {}, f"PASS carries empty sla (got {sla!r})")
+    _check("pending_reason" not in sla, "PASS carries no pending_reason")
+    _check("CLEARED on resume" in excerpt, "PASS excerpt names the cleared gate")
+
+
+def test_eval_resume_gap_persists_is_fail_not_pending():
+    # #6913 re-key + #4420 trust-surface guard: after agent-sandbox#1150 closed the
+    # Suspended-never-clears gap, a resume that recreates + goes Ready but leaves
+    # Suspended=True is a REGRESSION → FAIL, NOT the former benign
+    # pending(upstream-blocked) known-gap. This is the whole point of the re-key:
+    # a silent downgrade of the closed gate back to a known-gap must fail loud.
+    verdict, excerpt, sla = cell._eval_resume_gap(
+        suspended_cleared=False, susp_reason="PodTerminated",
+        pod_uid="new-uid", old_uid="old-uid", clear_window_s=30,
+    )
+    _check(verdict == "FAIL", f"persists → FAIL (got {verdict!r})")
+    _check(verdict != "pending", "persists must NOT be masked as pending")
+    _check(sla == {}, f"FAIL carries empty sla (got {sla!r})")
+    _check(sla.get("pending_reason") is None,
+           "FAIL must NOT carry pending_reason=upstream-blocked (no silent downgrade)")
+    _check("REGRESSION" in excerpt, "FAIL excerpt names the regression")
+    _check("#1150" in excerpt, "FAIL excerpt cites the closed upstream gap")
+
+
 def _run_all():
     tests = [v for k, v in sorted(globals().items())
              if k.startswith("test_") and callable(v)]
