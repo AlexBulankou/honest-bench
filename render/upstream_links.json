@@ -1,7 +1,7 @@
 {
   "_meta": {
     "seeded_from": "UPSTREAM_BLOCKERS.md (active-asks-only rewrite)",
-    "last_verified": "2026-08-16",
+    "last_verified": "2026-08-17",
     "freshness": "Rides every UPSTREAM_BLOCKERS.md refresh PR; link states hand-verified against the public GitHub API at each refresh.",
     "fork_upstreams": {
       "sandbox": {
@@ -16,7 +16,7 @@
         "commits_behind": 201,
         "upstream_repo": "kubernetes-sigs/agent-sandbox",
         "upstream_branch": "main",
-        "checked_at": "2026-08-16"
+        "checked_at": "2026-08-17"
       }
     }
   },
