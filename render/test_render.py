@@ -7443,7 +7443,7 @@ def test_warmpool_separation_variance_caveat_inert_below_spread_threshold():
 
 
 def test_warmpool_separation_variance_caveat_fires_on_headline_incident():
-    # a4z1's #6890 own finding: same digest, 0.27x then 1.06x -- a 3.9x spread.
+    # #6890's own finding: same digest, 0.27x then 1.06x -- a 3.9x spread.
     rows = [
         _wp_row(0.27, "fire-1", generated_at="2026-08-17T15:23:36Z", outcome="FAIL"),
         _wp_row(1.06, "fire-2", generated_at="2026-08-17T18:20:45Z", outcome="PASS"),

@@ -3146,7 +3146,7 @@ def _warmpool_separation_variance_caveat(history_rows):
     _warmpool_separation_caveat above answers "is THIS fire's ratio bad?" from the single
     live-results snapshot. This is a different question that a single snapshot cannot even ask:
     "does the SAME build (same controller_digest) measure CONSISTENTLY across independent
-    fires?" a4z1's #6890 Fire A/B/C suspect-check found the SAME digest
+    fires?" The #6890 Fire A/B/C suspect-check found the SAME digest
     (sha256:f511a1ab3350...) fired twice produced 0.27x then 1.06x -- a 3.9x spread on
     byte-identical build inputs. That variance is invisible on the public page because
     results/latest.json is a single snapshot overwritten every fire; the append-only

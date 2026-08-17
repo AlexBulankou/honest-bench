@@ -408,7 +408,7 @@ def backfill_legacy_history_row(row):
     return {**row, "outcome": "PASS"}
 
 
-# Warm-pool separation-ratio measurement history (a4z1 #6890 decision item 3, 2026-08-17). The
+# Warm-pool separation-ratio measurement history (#6890 decision item 3, 2026-08-17). The
 # Fire A/B/C suspect-check surfaced a first-class honest-display finding: the SAME
 # controller_digest (sha256:f511a1ab3350...) fired twice produced warmpool_gate_separation_ratio
 # 0.27x then 1.06x — a >3x swing on byte-identical build inputs. The single-snapshot
@@ -490,7 +490,7 @@ TTFE_COMPARABILITY_MIN_N = 30
 # the ratio is emitted but never rendered, so surfacing it when it fails is a #4420 disclosure.
 WARMPOOL_SEPARATION_MIN_RATIO = 1.8
 
-# Same-build separation-ratio variance disclosure threshold (a4z1 #6890 decision item 3,
+# Same-build separation-ratio variance disclosure threshold (#6890 decision item 3,
 # 2026-08-17). The Fire A/B/C suspect-check found the SAME controller_digest
 # (sha256:f511a1ab3350...) fired twice at 0.27x then 1.06x -- a 3.9x spread on byte-identical
 # build inputs, well outside ordinary run-to-run sampling noise. WARMPOOL_SEPARATION_MIN_RATIO

@@ -1,6 +1,6 @@
 """Sole-writer accrual for the warmpool-separation-ratio measurement history (#6890 item 3).
 
-a4z1's #6890 decision (2026-08-17) surfaced a first-class honest-display finding: the SAME
+The #6890 decision (2026-08-17) surfaced a first-class honest-display finding: the SAME
 controller_digest (sha256:f511a1ab3350...) fired twice produced `warmpool_gate_separation_ratio`
 0.27x then 1.06x — a >3x swing on byte-identical build inputs. The per-product
 `results/latest.json` is a single snapshot — a re-fire overwrites it, so that variance is
