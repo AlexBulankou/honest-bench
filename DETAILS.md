@@ -20,6 +20,10 @@ _Clear as of the latest measured refresh — no warm-slower-than-cold inversion 
 
 > ⚠️ **Warm/cold separation below gate:** the warm-pool separation ratio (fastest cold start ÷ slowest warm-pool hit) is below the 1.8x gate for **Kata + microVM** (warm count=30): 0.661x (slowest warm bind 1.97997s vs fastest cold bind 1.30837s) — at ~1x the warm and cold populations overlap, so the published warm tier is not demonstrably faster than a unique-image cold start. The warm row clears the N=30 floor, so this is not a small-sample artifact. The cause is a supply-constrained pool draining under load, not cold-claim contamination (hb#450's provenance gate already excludes blends from the counted warm hits): **Kata + microVM** min readyReplicas=0 during the burst — remaining warm-tier binds queue behind the drain rather than being served pre-warmed. A later refresh whose ratio returns to the gate clears this.
 
+### Same-build separation-ratio variance
+
+> ⚠️ **Same-build separation-ratio variance:** the warm-pool separation ratio measured on the SAME controller build swings by 2x or more across independent fires for `sha256:f511a1ab3350…` (2 measurements): 0.272x – 1.06x (3.9x spread) — a byte-identical build should measure consistently, so this large a swing points at instability in the measurement (pool warm-up timing, node contention, or similar), not the build itself. The cause is not asserted here. A single-fire snapshot cannot show this: it is visible only because every fire's ratio is retained in warmpool-separation-history.jsonl rather than the latest fire overwriting the prior one. This entry persists for as long as the flagged digest's history rows do, even after a later build supersedes it in latest.json.
+
 ### Mixed rig within this run
 
 > ⚠️ **Mixed rig within this run:** this run's sections were not all measured on the same machine class — `e2-standard-16` (at-scale contention, concurrent burst); `n2-standard-16` (top-level provenance, cluster saturation, warm-pool acquisition). Cross-section comparisons on this page may reflect hardware differences, not workload differences, until every section re-measures on one rig.
