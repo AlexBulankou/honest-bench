@@ -12,8 +12,8 @@
     },
     "commit_distance": {
       "sandbox": {
-        "base_sha": "0be472b7",
-        "commits_behind": 201,
+        "base_sha": "dfb50895dfb1a61180b8fff790e6a3c3732f037a",
+        "commits_behind": 83,
         "upstream_repo": "kubernetes-sigs/agent-sandbox",
         "upstream_branch": "main",
         "checked_at": "2026-08-17"
