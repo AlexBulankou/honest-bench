@@ -48,7 +48,7 @@ sa_path() { case "$1" in */*) printf '%s' "$1";; *) printf 'projects/%s/serviceA
 CLOUDBUILD_SA="$(sa_path "$CLOUDBUILD_SA")"
 REFRESH_SA="$(sa_path "$REFRESH_SA")"
 
-echo "==> [1/5] unit-tests PR gate (fires on PRs targeting main; FAIL-CLOSED merge gate)"
+echo "==> [1/6] unit-tests PR gate (fires on PRs targeting main; FAIL-CLOSED merge gate)"
 # COMMENTS_DISABLED is REQUIRED — the `github` subcommand with --pull-request-pattern
 # silently defaults to COMMENTS_ENABLED, gating every build behind /gcbrun. The flag
 # is identical on create and update, so it survives the re-bake path below.
@@ -70,12 +70,12 @@ gcloud builds triggers create github --name=hb-unit-tests \
     --service-account="$CLOUDBUILD_SA" \
     --project="$PROJECT"
 
-echo "==> [2/5] north-star cross-lane PASS->FAIL flip gate (fires on PRs targeting main; FAIL-CLOSED merge gate)"
+echo "==> [2/6] north-star cross-lane PASS->FAIL flip gate (fires on PRs targeting main; FAIL-CLOSED merge gate)"
 # hb#623: blocks a PR whose latest.json flips the customer headline PASS->FAIL vs
 # main's currently-merged latest.json (the cross-lane overwrite render.py's own
 # delta caveat structurally can't see). Same offline CLOUDBUILD_SA as the unit
 # gate (no cluster, no token — a git fetch of main + a stdlib-only checker).
-# COMMENTS_DISABLED required (same /gcbrun default footgun as [1/5]). create-or-update
+# COMMENTS_DISABLED required (same /gcbrun default footgun as [1/6]). create-or-update
 # re-bakes the inline-config (trusted-ref boundary). No post-merge twin: on push to
 # main HEAD==origin/main, so the checker self-compares and can never see a flip — a
 # post-merge flip trigger would be a guaranteed no-op, so it is deliberately omitted.
@@ -94,7 +94,35 @@ gcloud builds triggers create github --name=hb-north-star-flip-gate \
     --service-account="$CLOUDBUILD_SA" \
     --project="$PROJECT"
 
-echo "==> [3/5] unit-tests post-merge gate (fires on push to main)"
+echo "==> [3/6] diagnostic-lineage merge gate (fires on PRs targeting main; FAIL-CLOSED merge gate)"
+# a#6915 / hb#646: blocks a PR whose latest.json carries a diagnostic-lineage
+# fork-build signature (fork_fix_count==0, or fork_sha==fork_base_upstream_sha —
+# the hb#643/#644 shape that silently overwrote the validated production pin
+# for ~1.9h). Unlike [2/6] this signature is intrinsically bad on the PR's own
+# terms, so no origin/main fetch is needed — same offline CLOUDBUILD_SA (no
+# cluster, no token — a stdlib-only checker on the PR's own tree). COMMENTS_DISABLED
+# required (same /gcbrun default footgun as [1/6]/[2/6]). create-or-update
+# re-bakes the inline-config (trusted-ref boundary). No post-merge twin, same
+# rationale as [2/6]: on push to main the PR IS main, so a self-compare (if it
+# needed one) or a self-check of an already-merged pin can never re-detect a
+# signature that already passed at merge time — a post-merge trigger would be a
+# guaranteed no-op.
+gcloud builds triggers create github --name=hb-diagnostic-lineage-gate \
+  --inline-config=cloudbuild-diagnostic-lineage-gate.yaml \
+  --repo-owner="$OWNER" --repo-name="$REPO" \
+  --pull-request-pattern='^main$' \
+  --comment-control=COMMENTS_DISABLED \
+  --service-account="$CLOUDBUILD_SA" \
+  --project="$PROJECT" \
+  || gcloud builds triggers update github hb-diagnostic-lineage-gate \
+    --inline-config=cloudbuild-diagnostic-lineage-gate.yaml \
+    --repo-owner="$OWNER" --repo-name="$REPO" \
+    --pull-request-pattern='^main$' \
+    --comment-control=COMMENTS_DISABLED \
+    --service-account="$CLOUDBUILD_SA" \
+    --project="$PROJECT"
+
+echo "==> [4/6] unit-tests post-merge gate (fires on push to main)"
 # Gates post-merge main so a bad merge is caught even if branch protection is not
 # (yet) wired to require the PR check. create-or-note-exists (idempotent re-run).
 gcloud builds triggers create github --name=hb-unit-tests-main \
@@ -105,7 +133,7 @@ gcloud builds triggers create github --name=hb-unit-tests-main \
   --project="$PROJECT" \
   || echo "   (already exists — re-run with: gcloud builds triggers update github hb-unit-tests-main --inline-config=cloudbuild-unit-tests.yaml ...)"
 
-echo "==> [4/5] gke-sandbox refresh (MANUAL only — no branch/PR/schedule; spend-gated by invocation)"
+echo "==> [5/6] gke-sandbox refresh (MANUAL only — no branch/PR/schedule; spend-gated by invocation)"
 # --branch is REQUIRED by gcloud whenever --repo is set on a manual trigger (API
 # contract, not optional) — it only pins which ref is checked out as build
 # context; the build STEPS still come from inline-config, so this is not a
@@ -129,15 +157,15 @@ gcloud builds triggers create manual --name=hb-refresh-gke-sandbox \
   --project="$PROJECT" \
   || echo "   (already exists — re-run with: PROJECT=$PROJECT bash scripts/rebake-manual-trigger.sh hb-refresh-gke-sandbox cloudbuild-refresh-gke-sandbox.yaml)"
 
-echo "==> [5/5] gke-kata cold true_ttfe refresh (MANUAL, ON-DEMAND — no branch/PR/schedule; spend-gated by invocation)"
-# Same MANUAL shape as [4/5] and the same dedicated REFRESH_SA — this refresh runs
+echo "==> [6/6] gke-kata cold true_ttfe refresh (MANUAL, ON-DEMAND — no branch/PR/schedule; spend-gated by invocation)"
+# Same MANUAL shape as [5/6] and the same dedicated REFRESH_SA — this refresh runs
 # against the PERSISTENT kata scenarios cluster (no ephemeral create/teardown), so
 # it needs no extra IAM beyond container.admin + serviceAccountUser + compute.viewer
 # + logging.logWriter + Secret Accessor already granted for the gVisor refresh. --branch pins only the
 # checked-out ref; steps come from inline-config. The internal kata cluster name is
 # NOT baked here — it is passed at fire time via the _CLUSTER substitution (kept out
 # of the public config). Re-bake with scripts/rebake-manual-trigger.sh, NOT the
-# broken `triggers update manual --inline-config` path (see [4/5] note).
+# broken `triggers update manual --inline-config` path (see [5/6] note).
 gcloud builds triggers create manual --name=hb-refresh-gke-kata \
   --inline-config=cloudbuild-refresh-gke-kata.yaml \
   --repo="https://github.com/${OWNER}/${REPO}" \
