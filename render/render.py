@@ -891,6 +891,44 @@ def render_trend(history_rows, latest_results=None):
     return "\n".join(lines)
 
 
+_TREND_BAR_WIDTH = 20
+
+
+def render_throughput_trend_chart(history_rows):
+    """Render the build-over-build throughput-COUNT trend as a Unicode block-bar chart (WS2
+    follow-up, epic #6669), or "" when INERT (no rows).
+
+    Visual companion to render_trend's table: same source (_clean_history), so the chart can
+    never show a build the table itself doesn't. One bar per distinct controller build, oldest
+    to newest (matching the table's own order), letting a reader see the build-over-build
+    trajectory at a glance instead of scanning a Δ column row by row.
+
+    A FAIL-outcome build still charts its real, measured COUNT (#546 discipline, same as the
+    table) — the bar is annotated with the outcome only when it is FAIL, so a clean run's label
+    stays uncluttered.
+
+    Plain code-block Unicode bars, not mermaid xychart-beta (same GitHub-support rationale as
+    render_density_bars/render_ttfe_bars/render_concurrent_burst_chart).
+    """
+    rows = _clean_history(history_rows)
+    if not rows:
+        return ""
+    max_count = max(r["sandboxes_ready_under_1s"] for r in rows)
+    if max_count <= 0:
+        return ""
+    label_width = max(len(r["generated_at"][:10]) for r in rows)
+    lines = ["```", "Throughput — build-over-build (sandboxes ready <1s)", ""]
+    for r in rows:
+        count = r["sandboxes_ready_under_1s"]
+        label = r["generated_at"][:10].ljust(label_width)
+        bar = "█" * max(1, round(count / max_count * _TREND_BAR_WIDTH))
+        suffix = " (FAIL)" if r["outcome"] == "FAIL" else ""
+        lines.append(f"{label} {bar} {_fmt_num(count)}{suffix}")
+    lines.append("```")
+    lines.append("")
+    return "\n".join(lines)
+
+
 # --- Goal 2.1: Core Benchmark Matrix render -----------------------------------------------
 # The customer-facing page is the doc's exact 9-column "Agent Sandbox Core Metrics Table":
 # rows are (runtime × activation-mode), columns are throughput@TTFE-threshold / TTFE p50,p95 /

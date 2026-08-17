@@ -199,6 +199,14 @@ _A FAIL Outcome means that build's burst did not clear the delivery-ratio SLA �
 
 _Density /vCPU (this build) is this single burst's own per-vCPU figure — a different, typically much smaller measurement than the Max Density table above (peak across scenarios), not a build-over-build regression._
 
+```
+Throughput — build-over-build (sandboxes ready <1s)
+
+2026-06-28 ██████████████████ 9
+2026-07-25 ████ 2 (FAIL)
+2026-08-16 ████████████████████ 10
+```
+
 ## Which storage class should you pick?
 
 Per-class results from a controlled storage-config fire (fixed workload). An unmeasured class renders `pending`; the per-row sample count is the trust gate.
