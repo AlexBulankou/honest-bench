@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Tests for the diagnostic-lineage merge guard (a#6915, hb#646 root-cause follow-up).
+"""Tests for the diagnostic-lineage merge guard (hb#646 root-cause follow-up).
 
 Dependency-free: `python3 scripts/test_check_diagnostic_lineage.py` (exit 0 = pass).
 Auto-discovered by the offline unit-tests gate (find . -name 'test_*.py').

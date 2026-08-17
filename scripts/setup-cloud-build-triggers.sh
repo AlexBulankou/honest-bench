@@ -95,7 +95,7 @@ gcloud builds triggers create github --name=hb-north-star-flip-gate \
     --project="$PROJECT"
 
 echo "==> [3/6] diagnostic-lineage merge gate (fires on PRs targeting main; FAIL-CLOSED merge gate)"
-# a#6915 / hb#646: blocks a PR whose latest.json carries a diagnostic-lineage
+# hb#646: blocks a PR whose latest.json carries a diagnostic-lineage
 # fork-build signature (fork_fix_count==0, or fork_sha==fork_base_upstream_sha —
 # the hb#643/#644 shape that silently overwrote the validated production pin
 # for ~1.9h). Unlike [2/6] this signature is intrinsically bad on the PR's own

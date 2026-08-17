@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Diagnostic-lineage merge guard (a#6915, hb#646 root-cause follow-up).
+"""Diagnostic-lineage merge guard (hb#646 root-cause follow-up).
 
 hb#643/#644 merged a deliberate zero-fix "clean-upstream" reproduction fire
 (fork_fix_count=0, fork_sha == fork_base_upstream_sha -- staged for the #6890
@@ -99,7 +99,7 @@ def check(pr_path):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(
-        description="Diagnostic-lineage merge guard (a#6915, hb#646 root-cause follow-up)"
+        description="Diagnostic-lineage merge guard (hb#646 root-cause follow-up)"
     )
     ap.add_argument("--pr", required=True, help="the PR head's latest.json for this product")
     ap.add_argument(

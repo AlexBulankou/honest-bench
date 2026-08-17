@@ -1,4 +1,4 @@
-# Diagnostic-lineage merge-gate — Cloud Build PR-trigger config (a#6915, hb#646
+# Diagnostic-lineage merge-gate — Cloud Build PR-trigger config (hb#646
 # root-cause follow-up).
 #
 # WHY THIS EXISTS. hb#643/#644 merged a deliberate zero-fix "clean-upstream"
