@@ -367,11 +367,13 @@ def _lift_like_run_py(sla_metrics: dict, name: str, outcome: str) -> dict:
 
 
 def test_single_sample_point_merge_preserves_pending_reason():
-    # The suspend_resume merge contract, validated offline: on the gap-persists
-    # path the scenario's sla_metrics carries {"pending_reason": "upstream-blocked"}
-    # and we merge the single-sample TTFE point onto it. run.py lifts n +
-    # pending_reason to the scenario top level; the rest must coerce cleanly and
-    # the reason must survive _coerce_scenario when outcome == pending.
+    # The generic pending-merge machinery, validated offline: a pending scenario's
+    # sla_metrics carries a {"pending_reason": ...} and we merge the single-sample
+    # TTFE point onto it. run.py lifts n + pending_reason to the scenario top level;
+    # the rest must coerce cleanly and the reason must survive _coerce_scenario when
+    # outcome == pending. (suspend_resume itself is re-keyed to a strict gate per
+    # #6913 and no longer pends — the name/reason here is an illustrative vehicle
+    # for the machinery every still-pending scenario relies on.)
     base = {"pending_reason": "upstream-blocked"}
     point = m.single_sample_ttfe_point(5000.0, True)
     merged = {**base, **point}
@@ -513,9 +515,11 @@ def test_multi_sample_no_kwargs_shape_unchanged():
 
 
 def test_multi_sample_merge_lifts_n_and_preserves_pending_reason():
-    # The N>1 suspend_resume merge contract, validated offline: gap-persists path
+    # The generic N>1 pending-merge machinery, validated offline: a pending outcome
     # carries pending_reason, we merge the N-sample TTFE point, run.py lifts n +
-    # pending_reason to the scenario top level, the rest coerces cleanly.
+    # pending_reason to the scenario top level, the rest coerces cleanly. (suspend_resume
+    # itself is re-keyed to a strict gate per #6913 and no longer pends — the
+    # name/reason here is an illustrative vehicle for the still-live N>1 merge path.)
     base = {"pending_reason": "upstream-blocked"}
     point = m.multi_sample_ttfe_point([4000.0, 6000.0, 8000.0], [True, True, True])
     merged = {**base, **point}
