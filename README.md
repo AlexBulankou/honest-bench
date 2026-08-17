@@ -33,6 +33,8 @@ pool — full recipe in [`recipe/REPRODUCE.md`](recipe/REPRODUCE.md), deep-dive 
 blocker — diagnosis plus file-ready patches and comments — is hand-maintained in
 [UPSTREAM_BLOCKERS.md](UPSTREAM_BLOCKERS.md).
 
+> ⚠️ **UPSTREAM DISTANCE UNVERIFIED** — this page cannot certify how far behind upstream HEAD these numbers' fork base is: **sandbox** (the distance stamp was measured against a different fork base). Treat them as potentially behind upstream; run `scripts/verify-upstream-freshness.py --update-stamp` to (re)establish the distance.
+
 ## Agent Sandbox — Core Metrics
 
 **Throughput is dual — `per-node · per-cluster`.** Per-cluster figures here are a MEASURED cluster rate at 5 nodes; see the legend below for how to read the pair. (This is a different `node_count` than the one printed in each build's provenance banner below the table — that one describes the per-node fire's shape, not this per-cluster measurement.)
@@ -40,9 +42,9 @@ blocker — diagnosis plus file-ready patches and comments — is hand-maintaine
 
 | Runtime | Activation Mode | Throughput @ <5s TTFE (sb/s — node · cluster) | Throughput @ <1s TTFE (sb/s — node · cluster) | TTFE p50 | TTFE p95 | Execution Success (Honesty Check) |
 |---|---|---|---|---|---|---|
-| gVisor | Warm-pool hit (Base image) ⚠️ FAIL | 1.572 /node · [pending (cluster-fire)](WORK_IN_PROGRESS.md#cluster-fire) | 0 /node · [pending (cluster-fire)](WORK_IN_PROGRESS.md#cluster-fire) | 4.744s (count=30) | 8.3228s (count=30) | 100% |
-| gVisor | Unique-image cold (RL reality) | 0 /node · 0 /cluster | 0 /node · 0 /cluster | 4.3255s (count=30) | 5.0644s (count=30) | 100% |
-| gVisor | Resume-from-suspend | 0 /node · 0 /cluster | 0 /node · 0 /cluster | 4.8569s (count=30) | 5.3869s (count=30) | 100% |
+| gVisor | Warm-pool hit (Base image) ⚠️ FAIL | 0 /node · [pending (cluster-fire)](WORK_IN_PROGRESS.md#cluster-fire) | 0 /node · [pending (cluster-fire)](WORK_IN_PROGRESS.md#cluster-fire) | 12.3742s (count=30) | 17.4061s (count=30) | 100% |
+| gVisor | Unique-image cold (RL reality) | [pending](WORK_IN_PROGRESS.md#not-yet-measured) | 0 /node · 0 /cluster | 3.7259s (count=30) | 4.3493s (count=30) | 100% |
+| gVisor | Resume-from-suspend | 0 /node · 0 /cluster | 0 /node · 0 /cluster | 4.8284s (count=30) | 5.0248s (count=30) | 100% |
 | Kata + microVM | Warm-pool hit (Base image) | 14.994 /node · 0.75 /cluster ⚠️ | 1 /node · [pending (cluster-fire)](WORK_IN_PROGRESS.md#cluster-fire) | 1.6668s (count=30) | 2.2426s (count=30) | 100% |
 | Kata + microVM | Unique-image cold (RL reality) | unk.***K | 0 /node · 0 /cluster | 3.1176s (count=30) | 3.3883s (count=30) | 100% |
 | Kata + microVM | Resume-from-suspend | [N/A](WORK_IN_PROGRESS.md#na-by-construction) | [N/A](WORK_IN_PROGRESS.md#na-by-construction) | [N/A](WORK_IN_PROGRESS.md#na-by-construction) | [N/A](WORK_IN_PROGRESS.md#na-by-construction) | [N/A](WORK_IN_PROGRESS.md#na-by-construction) |
@@ -73,14 +75,14 @@ Full cell-decoding key — TTFE basis, honest vs. measured zeros, the dual per-n
 
 _Kata + microVM rows are measured in a separate run on the kata node pool: cluster_substrate=gke-kata · node_count=1 · generated-at=2026-08-14T08:02:07Z._
 
-_build: cluster_substrate=gke-sandbox · controller_digest=sha256:f511a1ab33507772187ecfd086abdc79c1031b2f051c9b63849c76a929339110 · suite_git_sha=6bcbc7292086f995ae9c6cfec71c92edac9b440d · run_id=7381eec5a86f4f5296601219877a4de5 · node_count=1_
-_generated-at: 2026-08-17T18:20:45Z_
+_build: cluster_substrate=gke-sandbox · controller_digest=sha256:f511a1ab33507772187ecfd086abdc79c1031b2f051c9b63849c76a929339110 · suite_git_sha=6bcbc7292086f995ae9c6cfec71c92edac9b440d · run_id=784129fbc16a4f0ebf0b15e7d0fa616c · node_count=1_
+_generated-at: 2026-08-17T15:23:36Z_
 
-_**North Star** — warm-pool-hit TTFE p95 < 1s (the spec doc bar): gVisor 8.3228s (count=30) ❌ not met (7.3228s above the bar) ⚠️ **scenario FAIL**; Kata + microVM 2.2426s (count=30) ❌ not met (1.2426s above the bar). An honest ❌ prints the measured gap to the bar (tagged `within sampling noise` when the miss sits inside the sample spread — it stays a ❌, the tag never flips a miss to a pass); `pending` = unmeasured (never a guess); † marks a p95 over fewer than N=30 samples._
+_**North Star** — warm-pool-hit TTFE p95 < 1s (the spec doc bar): gVisor 17.4061s (count=30) ❌ not met (16.4061s above the bar) ⚠️ **scenario FAIL**; Kata + microVM 2.2426s (count=30) ❌ not met (1.2426s above the bar). An honest ❌ prints the measured gap to the bar (tagged `within sampling noise` when the miss sits inside the sample spread — it stays a ❌, the tag never flips a miss to a pass); `pending` = unmeasured (never a guess); † marks a p95 over fewer than N=30 samples._
 
-_**Stretch bar** — warm-pool-hit TTFE p95 < 0.5s (an aspiration above the North Star, not the North Star itself; the step-up curve grades sustained creation-rate against it — see [DETAILS.md](DETAILS.md)): gVisor 8.3228s (count=30) ❌ not met (7.8228s above the bar) ⚠️ **scenario FAIL**; Kata + microVM 2.2426s (count=30) ❌ not met (1.7426s above the bar)._
+_**Stretch bar** — warm-pool-hit TTFE p95 < 0.5s (an aspiration above the North Star, not the North Star itself; the step-up curve grades sustained creation-rate against it — see [DETAILS.md](DETAILS.md)): gVisor 17.4061s (count=30) ❌ not met (16.9061s above the bar) ⚠️ **scenario FAIL**; Kata + microVM 2.2426s (count=30) ❌ not met (1.7426s above the bar)._
 
-> ⚠️ **Refresh delta:** **gVisor** regressed by 4.3273s (3.9955s → 8.3228s, 2.1x). A swing this large, or a bar-crossing flip, between consecutive published runs is flagged for a second look before trusting it as a substrate signal — check for a machine-class change, a node-count change, a node-image change, a build-lineage change (controller/suite rebuild), a broken measurement, or a real regression/fix.
+> ⚠️ **Refresh delta:** **gVisor** regressed by 13.4106s (3.9955s → 17.4061s, 4.4x). A swing this large, or a bar-crossing flip, between consecutive published runs is flagged for a second look before trusting it as a substrate signal — check for a machine-class change, a node-count change, a node-image change, a build-lineage change (controller/suite rebuild), a broken measurement, or a real regression/fix.
 
 ### Known anomalies
 
@@ -104,7 +106,7 @@ Find the row closest to **your** load; the p50 is the wait to plan around. The *
 
 | Your load pattern | Wait to budget (p50) | Scope |
 |---|---|---|
-| Steady trickle — warm pool keeps up with demand ⚠️ FAIL | ~4.7s | full start → first result |
+| Steady trickle — warm pool keeps up with demand ⚠️ FAIL | ~12.4s | full start → first result |
 | Bursty — pool oversubscribed 2:1 (60 claims / 30 ready) | ~1.7s | full start → first result |
 | 300 sandboxes requested at once (1:1 pool) | ~6.9s | full start → first result |
 | Sustained 300/sec churn | ~2.9s | pool hand-off only (before exec) |
