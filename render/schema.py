@@ -408,6 +408,42 @@ def backfill_legacy_history_row(row):
     return {**row, "outcome": "PASS"}
 
 
+# Warm-pool separation-ratio measurement history (a4z1 #6890 decision item 3, 2026-08-17). The
+# Fire A/B/C suspect-check surfaced a first-class honest-display finding: the SAME
+# controller_digest (sha256:f511a1ab3350...) fired twice produced warmpool_gate_separation_ratio
+# 0.27x then 1.06x — a >3x swing on byte-identical build inputs. The single-snapshot
+# warmpool_cold_start cell in latest.json is overwritten every fire, so that variance is
+# invisible on the public page unless captured cross-fire.
+#
+# This is a SEPARATE store from HISTORY_FIELDS above, not an extension of it: that one tracks
+# burst_create's THROUGHPUT COUNT and is upserted ONE ROW PER DIGEST (latest measurement of a
+# build wins — see accrue_history.upsert). Copying that upsert-by-digest shape here would
+# silently overwrite the 0.27x row with the 1.06x row the moment the second fire landed, erasing
+# the exact anomaly this store exists to disclose. So this store is deliberately APPEND-ONLY,
+# keyed by run_id (never upserted-by-digest) — see accrue_warmpool_separation.append() — so
+# multiple measurements of the SAME digest all survive and a same-build variance stays visible.
+#
+# fork_sha / fork_base_upstream_sha are deliberately NOT in this schema (unlike PROVENANCE_FIELDS
+# above, which treats them as omit-when-absent): a pure-upstream fire (no fork build in play)
+# carries neither field at all, and controller_digest + suite_git_sha already anchor "same build"
+# without them — adding an optional-field carve-out here would be schema complexity this store
+# doesn't need. Same closed-schema discipline as HISTORY_FIELDS: only these field-names render,
+# each validated by its predicate; a row missing any field, or whose value fails its predicate,
+# is dropped entirely (graceful degrade — never a leak).
+WARMPOOL_SEPARATION_HISTORY_FIELDS = {
+    "generated_at": lambda v: isinstance(v, str) and bool(_ISO.match(v)),
+    "controller_digest": lambda v: isinstance(v, str) and bool(_SHA256.match(v)),
+    "suite_git_sha": lambda v: isinstance(v, str) and bool(_GITSHA.match(v)),
+    "run_id": lambda v: isinstance(v, str) and bool(_RUNID.match(v)),
+    "cluster_substrate": lambda v: v in CLUSTER_SUBSTRATES,
+    "n": lambda v: isinstance(v, int) and not isinstance(v, bool) and v >= 0,
+    "outcome": lambda v: v in ("PASS", "FAIL"),
+    "separation_ratio": lambda v: isinstance(v, (int, float))
+    and not isinstance(v, bool)
+    and v >= 0,
+}
+
+
 # --- Goal 2.1: Core Benchmark Matrix (alex "Agent Sandbox Core Metrics Table") -----------
 # The customer page is reframed from a per-scenario scorecard to the doc's exact 9-column
 # matrix: rows are (runtime × activation-mode), columns are the throughput/TTFE/density/
