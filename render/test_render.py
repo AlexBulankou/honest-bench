@@ -7497,6 +7497,136 @@ def test_known_anomalies_detail_warmpool_variance_section_reflects_state():
     assert "0.27" in out and "1.06" in out
 
 
+# ---------------------------------------------------------------------------
+# Variance-AWARE VERDICT layer (#6918): the sibling of the disclosure caveat
+# above. _warmpool_separation_caveat renders a raw single-fire pass/fail; this
+# layer REFUSES that verdict when the historical noise band is wider than the
+# ratio's margin to the gate. INDETERMINATE is fail-closed — a withheld verdict
+# is loud (⚠️ ACTIVE), never a silent collapse to the raw single-fire pass/fail.
+# ---------------------------------------------------------------------------
+
+def test_warmpool_separation_verdict_caveat_active_when_no_noise_floor():
+    # A clean-LOOKING 2.4x single fire (>= the 1.8x gate) is STILL refused when
+    # the history carries no same-build replication to estimate the noise floor
+    # from — the honest fail-closed result: no defensible single-fire verdict.
+    out = render._warmpool_separation_verdict_caveat(
+        _matrix_results(_separation_scenarios(2.4, warm_n=200),
+                        provenance={"runtime": "gvisor"}),
+        history_rows=None,
+    )
+    assert "Single-fire separation verdict withheld" in out
+    assert "gVisor" in out
+    assert "no same-build replication" in out
+    # fail-closed idiom: the surface names WHY it withheld, not a soft pass/fail.
+    assert "1.8x gate" in out
+
+
+def test_warmpool_separation_verdict_caveat_active_when_ci_straddles_gate():
+    # #6890's own flapping pair (0.27x/1.06x, same digest) yields a wide noise
+    # floor; a fresh fire sitting near the gate cannot be resolved — the CI
+    # straddles 1.8x, so the verdict is withheld and states the fires required.
+    flapping = [_wp_row(0.27, "f1"), _wp_row(1.06, "f2")]
+    out = render._warmpool_separation_verdict_caveat(
+        _matrix_results(_separation_scenarios(1.9, warm_n=200),
+                        provenance={"runtime": "gvisor"}),
+        history_rows=flapping,
+    )
+    assert "Single-fire separation verdict withheld" in out
+    assert "gVisor" in out
+    assert "σ(log)=" in out
+    assert "95% band" in out
+    assert "consistent fires would resolve this" in out
+
+
+def test_warmpool_separation_verdict_caveat_clear_when_resolvable():
+    # Tight same-build history (1.9x/2.1x -> small sigma) + a fire far above the
+    # gate (5x) resolves to a defensible PASS: the layer withholds nothing.
+    tight = [_wp_row(1.9, "t1"), _wp_row(2.1, "t2")]
+    out = render._warmpool_separation_verdict_caveat(
+        _matrix_results(_separation_scenarios(5.0, warm_n=200),
+                        provenance={"runtime": "gvisor"}),
+        history_rows=tight,
+    )
+    assert out == ""
+
+
+def test_warmpool_separation_verdict_caveat_clear_when_no_live_ratio():
+    # No warmpool_gate_separation_ratio emitted -> no live fire to judge -> the
+    # layer has nothing to withhold, even with a wide-variance history present.
+    flapping = [_wp_row(0.27, "f1"), _wp_row(1.06, "f2")]
+    out = render._warmpool_separation_verdict_caveat(
+        _matrix_results(_separation_scenarios(None, warm_n=200),
+                        provenance={"runtime": "gvisor"}),
+        history_rows=flapping,
+    )
+    assert out == ""
+
+
+def test_warmpool_separation_verdict_caveat_suppressed_when_low_n():
+    # A live ratio under the N=30 comparability floor is a sampling artifact, not
+    # a verdict input — the layer must not withhold on it (mirrors the disclosure
+    # caveat's low-N suppression).
+    tight = [_wp_row(1.9, "t1"), _wp_row(2.1, "t2")]
+    out = render._warmpool_separation_verdict_caveat(
+        _matrix_results(_separation_scenarios(1.02, warm_n=5),
+                        provenance={"runtime": "gvisor"}),
+        history_rows=tight,
+    )
+    assert out == ""
+
+
+def test_known_anomalies_table_warmpool_verdict_row_reflects_state():
+    # ACTIVE: a live 2.4x fire with no replication -> verdict withheld.
+    active = render.render_known_anomalies_table(
+        _matrix_results(_separation_scenarios(2.4, warm_n=200),
+                        provenance={"runtime": "gvisor"}),
+        history_rows=None,
+    )
+    assert ("| Single-fire separation verdict defensibility | "
+            "[⚠️ ACTIVE](DETAILS.md#single-fire-separation-verdict-defensibility) |") in active
+
+    # clear: tight history + far fire resolves.
+    tight = [_wp_row(1.9, "t1"), _wp_row(2.1, "t2")]
+    clear = render.render_known_anomalies_table(
+        _matrix_results(_separation_scenarios(5.0, warm_n=200),
+                        provenance={"runtime": "gvisor"}),
+        history_rows=tight,
+    )
+    assert ("| Single-fire separation verdict defensibility | "
+            "[✅ clear](DETAILS.md#single-fire-separation-verdict-defensibility) |") in clear
+
+
+def test_known_anomalies_detail_warmpool_verdict_section_reflects_state():
+    active = render.render_known_anomalies_detail(
+        _matrix_results(_separation_scenarios(2.4, warm_n=200),
+                        provenance={"runtime": "gvisor"}),
+        history_rows=None,
+    )
+    assert "### Single-fire separation verdict defensibility" in active
+    assert "Single-fire separation verdict withheld" in active
+
+    tight = [_wp_row(1.9, "t1"), _wp_row(2.1, "t2")]
+    clear = render.render_known_anomalies_detail(
+        _matrix_results(_separation_scenarios(5.0, warm_n=200),
+                        provenance={"runtime": "gvisor"}),
+        history_rows=tight,
+    )
+    assert "### Single-fire separation verdict defensibility" in clear
+    assert "no single-fire separation verdict as indefensible currently disclosed" in clear
+
+
+def test_warmpool_separation_verdict_caveat_leaks_no_agent_id():
+    # Public-repo safety: the rendered trust-surface text must never carry a
+    # fleet agent-id (a4<letter><digit>) or the whole PR trips gate-zero.
+    flapping = [_wp_row(0.27, "f1"), _wp_row(1.06, "f2")]
+    out = render._warmpool_separation_verdict_caveat(
+        _matrix_results(_separation_scenarios(1.9, warm_n=200),
+                        provenance={"runtime": "gvisor"}),
+        history_rows=flapping,
+    )
+    assert re.search(r"a4[a-z]\d", out) is None
+
+
 def _run_all():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:
