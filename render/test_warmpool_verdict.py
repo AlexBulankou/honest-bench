@@ -1,4 +1,4 @@
-"""Tests for the variance-aware warm-pool separation verdict (#6918).
+"""Tests for the variance-aware warm-pool separation verdict.
 Dependency-free: `python3 test_warmpool_verdict.py` (exit 0 = pass).
 
 These assert the verdict layer's contract: the noise floor is the pooled within-digest stdev
@@ -70,7 +70,7 @@ def test_sigma_skips_nonpositive_ratio():
 # --- refuse-single-fire (the DoD core) -----------------------------------------------------
 
 def test_single_fire_inside_noise_band_is_indeterminate():
-    # Empirical #6890 same-build pair -> a wide noise floor. A single fire near the 1.8x gate
+    # Empirical same-build pair -> a wide noise floor. A single fire near the 1.8x gate
     # must be refused, with an honest n_required.
     rows = _rows(("f", 0.2717607788232771), ("f", 1.05949977285474))
     r = wv.variance_aware_verdict(1.06, rows, threshold=1.8)

@@ -63,6 +63,7 @@ from schema import (
 from wip import NA_BY_CONSTRUCTION, build_work_in_progress, link_pending, wip_link
 from upstream_links import META as _UPSTREAM_META
 from upstream_links import upstream_cell_refs, upstream_prose_refs
+import warmpool_verdict
 
 # #4137: the sentence appended to the drained-regime warm caveat that NAMES the term driving
 # warm-hit TTFE growth with claim-count. Keyed by the schema WARM_SCALING_TERMS enum so the
@@ -3201,6 +3202,105 @@ def _warmpool_separation_variance_caveat(history_rows):
     )
 
 
+def _warmpool_separation_verdict_caveat(results, history_rows, kata_results=None):
+    """Loud disclosure when a single-fire separation PASS/FAIL is NOT statistically defensible.
+
+    _warmpool_separation_caveat above renders a single-fire PASS/FAIL against the fixed 1.8x
+    gate directly from this snapshot's ratio. _warmpool_separation_variance_caveat discloses that
+    the same build measures inconsistently. This caveat is the VERDICT layer that reconciles the
+    two: it takes the live single-fire ratio AND the historical noise floor and REFUSES to issue a
+    pass/fail when the noise band is wider than the ratio's margin to the gate — i.e. when a single
+    fire cannot tell a real regression from an unlucky draw. That refusal is the trust-surface
+    output; the arithmetic lives in warmpool_verdict.variance_aware_verdict and the full protocol
+    in WARMPOOL_SEPARATION_VERDICT_PROTOCOL.md.
+
+    All statistics are in log-space (multiplicative ratio noise → additive/symmetric). The noise
+    floor sigma is the pooled within-digest stdev of ln(separation_ratio) over the accrued history;
+    the verdict is INDETERMINATE (refused) when the confidence interval straddles the gate, or when
+    no same-build replication exists to estimate the noise floor at all. INDETERMINATE is
+    fail-closed by construction: with no defensible verdict the surface withholds one loudly rather
+    than silently emitting the raw single-fire pass/fail this layer exists to distrust.
+
+    Mirrors _warmpool_separation_caveat's runtime iteration to obtain the live ratio (same N floor,
+    same pending skip, same raw-emit read). Consumes the CLEANED history rows so the verdict module
+    sees only validated (controller_digest, positive separation_ratio) pairs. Returns "" when every
+    live ratio resolves to a defensible PASS/FAIL (or there is no live ratio to judge) so the caller
+    can append it unconditionally.
+    """
+    prov = _clean_provenance(results.get("provenance"))
+    measured_runtime = prov.get("runtime") or "gvisor"
+    raw_sources = {measured_runtime: results.get("scenarios")}
+    matrix_sources = {measured_runtime: _matrix_scenarios(results.get("scenarios"))}
+    if (
+        isinstance(kata_results, dict)
+        and kata_results.get("product") == "sandbox-kata"
+    ):
+        kp = _clean_provenance(kata_results.get("provenance"))
+        if kp.get("runtime") == "kata-microvm":
+            raw_sources["kata-microvm"] = kata_results.get("scenarios")
+            matrix_sources["kata-microvm"] = _matrix_scenarios(kata_results.get("scenarios"))
+
+    clean_history = _clean_warmpool_separation_history(history_rows or [])
+
+    refused = []  # (label, ratio, verdict_dict)
+    for rt in MATRIX_RUNTIMES:
+        rt_scen = matrix_sources.get(rt)
+        if rt_scen is None:
+            continue
+        warm = rt_scen.get("warmpool_cold_start")
+        if not warm:
+            continue
+        warm_n = warm.get("n")
+        if not isinstance(warm_n, int) or isinstance(warm_n, bool):
+            continue
+        if warm_n < TTFE_COMPARABILITY_MIN_N:
+            continue
+        if warm.get("outcome") == "pending":
+            continue
+        ratio = _raw_sla_p95(
+            raw_sources.get(rt), "warmpool_cold_start", "warmpool_gate_separation_ratio"
+        )
+        if ratio is None or ratio <= 0:
+            continue
+        verdict = warmpool_verdict.variance_aware_verdict(
+            [ratio], clean_history, threshold=WARMPOOL_SEPARATION_MIN_RATIO
+        )
+        if verdict["verdict"] == warmpool_verdict.INDETERMINATE:
+            refused.append((RUNTIME_LABELS[rt], ratio, verdict))
+    if not refused:
+        return ""
+
+    def _one(lbl, ratio, v):
+        if v["reason"] == "indeterminate-no-noise-floor":
+            return (
+                f"**{lbl}** — one fire measured {ratio:.3g}x, but the accrued history has no "
+                "same-build replication (no controller build with 2+ measurements), so the "
+                "measurement noise floor cannot be estimated and no single-fire pass/fail is "
+                "defensible."
+            )
+        return (
+            f"**{lbl}** — one fire measured {ratio:.3g}x; at the measured noise floor "
+            f"(σ(log)={v['sigma_log']:.2g}, {int(v['confidence'] * 100)}% band "
+            f"{v['ci_low']:.3g}x–{v['ci_high']:.3g}x) the interval straddles the "
+            f"{WARMPOOL_SEPARATION_MIN_RATIO:g}x gate, so this single fire cannot tell a real "
+            f"pass from an unlucky draw — {v['n_required']} consistent fires would resolve this "
+            "margin."
+        )
+
+    who = " ".join(_one(lbl, ratio, v) for lbl, ratio, v in refused)
+    return (
+        "> ⚠️ **Single-fire separation verdict withheld:** the raw gate issues a pass/fail from "
+        "ONE fire's separation ratio, but reconciling that ratio against the run-to-run noise "
+        "floor measured across the accrued same-build history shows the noise band is wider than "
+        f"the ratio's margin to the {WARMPOOL_SEPARATION_MIN_RATIO:g}x gate, so no single-fire "
+        f"verdict is defensible: {who} The verdict layer refuses to issue one and states the fires "
+        "required instead (fail-closed: it withholds the pass/fail rather than emitting the raw "
+        "single-fire one it cannot defend). See "
+        "[WARMPOOL_SEPARATION_VERDICT_PROTOCOL.md](WARMPOOL_SEPARATION_VERDICT_PROTOCOL.md). A "
+        "refresh with enough consistent fires to clear the noise band resolves this."
+    )
+
+
 def render_north_star_caption(results, kata_results=None):
     """One-line measured-verdict captions for the <1s North Star + 0.5s stretch bar.
 
@@ -3298,6 +3398,9 @@ def render_known_anomalies_table(results, kata_results=None, history_rows=None):
     separation_active = bool(_warmpool_separation_caveat(results, kata_results))
     mixed_rig_active = bool(_mixed_rig_confound_caveat(results))
     variance_active = bool(_warmpool_separation_variance_caveat(history_rows or []))
+    verdict_active = bool(
+        _warmpool_separation_verdict_caveat(results, history_rows or [], kata_results)
+    )
 
     def _cell(active, anchor):
         marker = "⚠️ ACTIVE" if active else "✅ clear"
@@ -3314,6 +3417,8 @@ def render_known_anomalies_table(results, kata_results=None, history_rows=None):
         f"{_cell(separation_active, 'warm-cold-separation-below-gate')} |",
         "| Same-build separation-ratio variance | "
         f"{_cell(variance_active, 'same-build-separation-ratio-variance')} |",
+        "| Single-fire separation verdict defensibility | "
+        f"{_cell(verdict_active, 'single-fire-separation-verdict-defensibility')} |",
         "| Mixed rig within this run | "
         f"{_cell(mixed_rig_active, 'mixed-rig-within-this-run')} |",
         "| Regime note | [ℹ️ standing note](DETAILS.md#regime-note) |",
@@ -3350,6 +3455,7 @@ def render_known_anomalies_detail(results, kata_results=None, history_rows=None)
     inversion_caveat = _warm_cold_inversion_caveat(results, kata_results)
     separation_caveat = _warmpool_separation_caveat(results, kata_results)
     variance_caveat = _warmpool_separation_variance_caveat(history_rows or [])
+    verdict_caveat = _warmpool_separation_verdict_caveat(results, history_rows or [], kata_results)
     mixed_rig_caveat = _mixed_rig_confound_caveat(results)
 
     def _clear(name):
@@ -3376,6 +3482,13 @@ def render_known_anomalies_detail(results, kata_results=None, history_rows=None)
     lines.append("")
     lines.append(
         variance_caveat if variance_caveat else _clear("same-build separation-ratio variance")
+    )
+    lines.append("")
+    lines.append("### Single-fire separation verdict defensibility")
+    lines.append("")
+    lines.append(
+        verdict_caveat if verdict_caveat
+        else _clear("single-fire separation verdict as indefensible")
     )
     lines.append("")
     lines.append("### Mixed rig within this run")

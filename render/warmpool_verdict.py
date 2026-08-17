@@ -1,19 +1,20 @@
-"""Variance-aware verdict layer for the warm-pool separation gate (#6918).
+"""Variance-aware verdict layer for the warm-pool separation gate.
 
 ## The finding this exists to fix
 
 The single-fire separation gate (`warmpool_cold_start._classify_latencies`) issues a
 PASS/FAIL verdict from ONE fire's `separation_observed = cold_p50 / warm_p50` against a
-fixed threshold (`WARMPOOL_SEPARATION_MIN_RATIO`, 1.8x). The #6890 Fire A/B/C suspect-check
+fixed threshold (`WARMPOOL_SEPARATION_MIN_RATIO`, 1.8x). A same-build suspect-check
 showed that verdict is not attributable: the SAME controller build digest, fired twice on
 byte-identical inputs, produced separation ratios 2.41x (PASS) then 0.35x (FAIL) — a ~6.9x
 swing — and a second digest independently swung 0.27x↔1.06x. The measurement's run-to-run
 noise floor dwarfs any commit-level signal, so a single-fire verdict cannot tell "this build
 regressed" from "this fire got an unlucky draw".
 
-a4s2's #6890-item-3 work (`render.accrue_warmpool_separation` + `render.render.
-_warmpool_separation_variance_caveat`) DISCLOSES that same-build variance on the public page.
-This module is the sibling VERDICT layer: it makes the *verdict itself* variance-aware, so the
+A sibling DISCLOSURE layer (`render.accrue_warmpool_separation` +
+`render.render._warmpool_separation_variance_caveat`) surfaces that same-build variance on the
+public page. This module is the sibling VERDICT layer: it makes the *verdict itself*
+variance-aware, so the
 gate refuses to issue a single-fire PASS/FAIL when the historical noise band is wider than the
 observed margin to the threshold.
 
@@ -72,7 +73,7 @@ _Z_BY_CONFIDENCE = {
 # soft FAIL: it says "the measurement cannot resolve which side of the threshold this build is
 # on at the fires collected so far". A trust surface that renders it must not collapse it to
 # either verdict (that would silently re-introduce the exact single-fire false-attribution this
-# layer exists to prevent — cf. the fail-closed-on-downgrade idiom, AGENTS.md #4420).
+# layer exists to prevent — a trust-surface downgrade must fail closed, never silently pick a side).
 PASS = "PASS"
 FAIL = "FAIL"
 INDETERMINATE = "INDETERMINATE"
