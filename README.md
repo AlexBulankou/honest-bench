@@ -144,6 +144,23 @@ _Measured 2026-06-30 — concurrent-burst TTFE (point-in-time)._
 
 > ⚠️ **Stale — no producer since rig change:** this concurrent-burst figure has no daily producer; it is carried forward unchanged from its last fire, measured on `e2-standard-16`. This run measured the rest of the page on `n2-standard-16`. Treat this section as a frozen snapshot from the prior rig, not a live signal for the current one, until a fresh fire republishes it on the current machine class.
 
+```
+Concurrent Burst — TTFE p50 vs p95 by concurrency (N)
+
+N=30 Warm pool       p50  █ 2.06969s
+                     p95  █ 2.9976s
+N=30 Cold provision  p50  ██ 12.3171s
+                     p95  ███ 13.1484s
+N=300 Warm pool      p50  █ 6.8743s
+                     p95  ██ 9.393s
+N=300 Cold provision p50  ███████████ 56.0294s
+                     p95  ████████████ 58.4124s
+N=500 Warm pool      p50  ██ 11.188s
+                     p95  ███ 15.374s
+N=500 Cold provision p50  ████████████████████ 97.3988s
+                     p95  ████████████████████ 99.8002s
+```
+
 ### Saturation — the whole-cluster warm-hand-out ceiling
 
 **Saturation** ceiling — a **1:1 all-warm** fire (**600** ready sandboxes, **600** simultaneous claims, **not** over-subscribed) across **40** nodes on **gVisor**. At this scale the "warm hit is <1s" claim from the Core Metrics matrix does **not** hold here. Cluster shape: `n2-standard-16`.

@@ -4816,6 +4816,53 @@ def _concurrent_burst_provenance_lines(cb):
     return lines
 
 
+def render_concurrent_burst_chart(results):
+    """Render the concurrent-burst N-vs-TTFE sweep as a Unicode block-bar chart (WS2, epic
+    #6669: "TTFE-vs-concurrency curve"), or "" when INERT (no legs).
+
+    Visual companion to render_concurrent_burst's table: same source (_clean_concurrent_burst),
+    so the chart can never show a leg the table itself doesn't. One (N, mode) leg becomes one
+    p50/p95 bar pair, letting a reader see the curve's shape — how TTFE grows with concurrency,
+    and the warm-vs-cold gap at each N — at a glance, the same way render_ttfe_bars turns the
+    Core Metrics matrix's per-runtime row into a bar pair.
+
+    Legs are sorted by (n, mode) — concurrency ascending, warm before cold within each N — not
+    left in fire order (the table's own order, which interleaves N=300/500/30 as legs landed).
+    A "curve" is only legible monotonic-in-N; the table beneath already carries the per-leg
+    dated/regime captions, so re-ordering the chart alone does not lose any disclosure the
+    table provides.
+
+    Plain code-block Unicode bars, not mermaid xychart-beta (same GitHub-support rationale as
+    render_density_bars/render_ttfe_bars: docs confirm pie/flow/sequence, not xychart-beta).
+    """
+    cb = _clean_concurrent_burst(results)
+    if not cb or not cb["legs"]:
+        return ""
+    legs = sorted(
+        cb["legs"],
+        key=lambda leg: (leg["n"], {"warm": 0, "cold": 1}.get(leg["mode"], 2)),
+    )
+    rows = [
+        (f"N={_fmt_num(leg['n'])} {_CONCURRENT_BURST_MODE_LABELS.get(leg['mode'], leg['mode'])}",
+         leg["ttfe_p50_ms"], leg["ttfe_p95_ms"])
+        for leg in legs
+    ]
+    label_width = max(len(label) for label, _, _ in rows)
+    max_val = max(max(p50, p95) for _, p50, p95 in rows)
+    if max_val <= 0:
+        return ""
+    lines = ["```", "Concurrent Burst — TTFE p50 vs p95 by concurrency (N)", ""]
+    for label, p50, p95 in rows:
+        row_label = label.ljust(label_width)
+        p50_bar = "█" * max(1, round(p50 / max_val * _TTFE_BAR_WIDTH))
+        p95_bar = "█" * max(1, round(p95 / max_val * _TTFE_BAR_WIDTH))
+        lines.append(f"{row_label} p50  {p50_bar} {_fmt_secs(p50)}")
+        lines.append(f"{' ' * label_width} p95  {p95_bar} {_fmt_secs(p95)}")
+    lines.append("```")
+    lines.append("")
+    return "\n".join(lines)
+
+
 def render_cluster_scale(results):
     """hb#134: the combined "Does it hold at cluster scale?" headline section.
 
@@ -4831,12 +4878,13 @@ def render_cluster_scale(results):
         results, heading="### Linearity — throughput and density hold flat as nodes grow")
     burst = render_concurrent_burst(
         results, heading="### Concurrent burst — TTFE at N simultaneous claims")
+    burst_chart = render_concurrent_burst_chart(results)
     saturation = render_cluster_saturation(
         results, heading="### Saturation — the whole-cluster warm-hand-out ceiling")
     contention = render_at_scale_contention(
         results, page_heading="### Where it breaks — an over-subscribed pool")
-    if (not scale.strip() and not burst.strip() and not saturation.strip()
-            and not contention.strip()):
+    if (not scale.strip() and not burst.strip() and not burst_chart.strip()
+            and not saturation.strip() and not contention.strip()):
         return ""
     lines = ["## Does it hold at cluster scale?", ""]
     lines.append(
@@ -4851,6 +4899,9 @@ def render_cluster_scale(results):
         lines.append("")
     if burst.strip():
         lines.append(burst.rstrip())
+        lines.append("")
+    if burst_chart.strip():
+        lines.append(burst_chart.rstrip())
         lines.append("")
     if saturation.strip():
         lines.append(saturation.rstrip())

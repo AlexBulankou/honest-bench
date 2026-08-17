@@ -4370,6 +4370,67 @@ def test_concurrent_burst_leg_cluster_regime_invalid_value_dropped():
     assert render.render_concurrent_burst(_matrix_results(_full_gvisor_scenarios(), concurrent_burst=cb)) == ""
 
 
+def test_concurrent_burst_chart_absent_renders_nothing():
+    # No concurrent_burst object ⇒ INERT, same absence discipline as the table.
+    assert render.render_concurrent_burst_chart(_matrix_results(_full_gvisor_scenarios())) == ""
+
+
+def test_concurrent_burst_chart_empty_legs_inert():
+    # An object with an empty/missing legs list ⇒ INERT (no partial-lie chart).
+    assert render.render_concurrent_burst_chart(
+        _matrix_results(_full_gvisor_scenarios(), concurrent_burst={"legs": []})) == ""
+
+
+def test_concurrent_burst_chart_bad_leg_inert():
+    # Same closed-schema discipline as the table: one malformed leg fails the whole block closed
+    # (_clean_concurrent_burst returns None), so the chart is INERT too, not a partial draw.
+    cb = _cb(legs=[
+        {"n": 300, "mode": "warm", "ttfe_p50_ms": 6874.3, "ttfe_p95_ms": 9393.0},
+        {"n": 300, "mode": "lukewarm", "ttfe_p50_ms": 100.0, "ttfe_p95_ms": 200.0},
+    ])
+    assert render.render_concurrent_burst_chart(
+        _matrix_results(_full_gvisor_scenarios(), concurrent_burst=cb)) == ""
+
+
+def test_concurrent_burst_chart_renders_bar_pair_per_leg():
+    out = render.render_concurrent_burst_chart(_matrix_results(_full_gvisor_scenarios(), concurrent_burst=_cb()))
+    assert "Concurrent Burst — TTFE p50 vs p95 by concurrency (N)" in out
+    assert "N=300 Warm pool" in out and "N=300 Cold provision" in out
+    lines = [l for l in out.splitlines() if "█" in l]
+    # 2 legs (warm, cold) x 2 rows (p50, p95) = 4 bar lines.
+    assert len(lines) == 4
+    # the far-larger cold p95 (58.4124s) draws a strictly longer bar than the warm p50 (6.8743s).
+    warm_p50_bar = len([c for c in lines[0] if c == "█"])
+    cold_p95_bar = len([c for c in lines[3] if c == "█"])
+    assert cold_p95_bar > warm_p50_bar
+    assert "6.8743s" in out and "58.4124s" in out
+
+
+def test_concurrent_burst_chart_sorts_n_ascending_warm_before_cold():
+    # Legs land in fire order in the source dict (300/warm, 300/cold) but a third N=30 leg must
+    # sort BEFORE both 300 legs, and within a shared N, warm sorts before cold.
+    cb = _cb()
+    cb["legs"].append(
+        {"n": 30, "mode": "cold", "ttfe_p50_ms": 500.0, "ttfe_p95_ms": 700.0})
+    cb["legs"].append(
+        {"n": 30, "mode": "warm", "ttfe_p50_ms": 100.0, "ttfe_p95_ms": 200.0})
+    out = render.render_concurrent_burst_chart(_matrix_results(_full_gvisor_scenarios(), concurrent_burst=cb))
+    labels = [l for l in out.splitlines() if "N=" in l and "p50" in l]
+    assert [l.split()[0] for l in labels] == ["N=30", "N=30", "N=300", "N=300"]
+    assert "Warm pool" in labels[0] and "Cold provision" in labels[1]
+
+
+def test_concurrent_burst_chart_single_leg_no_variance_still_renders():
+    # A single leg (max_val == its own p95) still renders both bars, no divide-by-zero.
+    cb = _cb(legs=[
+        {"n": 500, "mode": "warm", "ttfe_p50_ms": 11188.0, "ttfe_p95_ms": 15374.0},
+    ])
+    out = render.render_concurrent_burst_chart(_matrix_results(_full_gvisor_scenarios(), concurrent_burst=cb))
+    lines = [l for l in out.splitlines() if "█" in l]
+    assert len(lines) == 2
+    assert "11.188s" in out and "15.374s" in out
+
+
 def _scale_proof_obj():
     return {
         "scale_points": [
@@ -4411,6 +4472,23 @@ def test_cluster_scale_only_burst_renders_wrapper_without_linearity():
     assert "## Does it hold at cluster scale?" in out
     assert "### Concurrent burst — TTFE at N simultaneous claims" in out
     assert "### Linearity" not in out
+
+
+def test_cluster_scale_burst_chart_renders_after_burst_table():
+    # WS2: the chart is a visual companion appended right after the burst table, under the same
+    # ### heading (no separate heading of its own).
+    out = render.render_cluster_scale(
+        _matrix_results(_full_gvisor_scenarios(), concurrent_burst=_cb()))
+    table_idx = out.index("| 300 | Warm pool |")
+    chart_idx = out.index("Concurrent Burst — TTFE p50 vs p95 by concurrency (N)")
+    assert chart_idx > table_idx
+
+
+def test_cluster_scale_no_burst_no_chart_in_output():
+    # scale_proof-only render must not carry the chart's INERT "" as visible artifact/heading.
+    out = render.render_cluster_scale(
+        _matrix_results(_full_gvisor_scenarios(), scale_proof=_scale_proof_obj()))
+    assert "Concurrent Burst — TTFE p50 vs p95 by concurrency (N)" not in out
 
 
 def test_cluster_scale_only_linearity_renders_wrapper_without_burst():
