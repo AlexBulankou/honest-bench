@@ -490,6 +490,21 @@ TTFE_COMPARABILITY_MIN_N = 30
 # the ratio is emitted but never rendered, so surfacing it when it fails is a #4420 disclosure.
 WARMPOOL_SEPARATION_MIN_RATIO = 1.8
 
+# Same-build separation-ratio variance disclosure threshold (a4z1 #6890 decision item 3,
+# 2026-08-17). The Fire A/B/C suspect-check found the SAME controller_digest
+# (sha256:f511a1ab3350...) fired twice at 0.27x then 1.06x -- a 3.9x spread on byte-identical
+# build inputs, well outside ordinary run-to-run sampling noise. WARMPOOL_SEPARATION_MIN_RATIO
+# above answers "is THIS fire's ratio bad?"; this constant answers a different question -- "does
+# the SAME build measure inconsistently across fires?" -- which the single-snapshot gate check
+# cannot see at all (it only ever looks at the latest fire). Set at 2.0x (max/min ratio of
+# separation_ratio measurements sharing one controller_digest): comfortably below the observed
+# 3.9x incident so it would have caught it, comfortably above ordinary measurement jitter so it
+# does not fire on noise. Not a pass/fail gate on the build itself -- a build can be entirely
+# healthy (both measurements above WARMPOOL_SEPARATION_MIN_RATIO) and still trip this disclosure
+# if the two measurements disagree by more than this factor, because instability in the
+# MEASUREMENT is itself the thing worth disclosing.
+WARMPOOL_SEPARATION_VARIANCE_MIN_SPREAD = 2.0
+
 # Density is a per-RUNTIME property (holds across activation modes), not per-mode. The
 # renderer sources it from whichever of these scenarios carries density_per_vcpu, applies it
 # to the warm-pool + cold rows, and renders N/A on the resume row (matching the doc).

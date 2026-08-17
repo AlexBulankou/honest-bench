@@ -7393,6 +7393,110 @@ def test_known_anomalies_detail_mixed_rig_section_reflects_state():
     assert "e2-standard-16" in out and "n2-standard-16" in out
 
 
+def _wp_row(ratio, run_id, digest="sha256:" + "f" * 64, generated_at="2026-08-17T14:00:00Z",
+            outcome="PASS", n=30, suite_git_sha="c88d857", cluster_substrate="gke-sandbox"):
+    return {
+        "generated_at": generated_at,
+        "controller_digest": digest,
+        "suite_git_sha": suite_git_sha,
+        "run_id": run_id,
+        "cluster_substrate": cluster_substrate,
+        "n": n,
+        "outcome": outcome,
+        "separation_ratio": ratio,
+    }
+
+
+def test_clean_warmpool_separation_history_non_list_returns_empty():
+    assert render._clean_warmpool_separation_history(None) == []
+    assert render._clean_warmpool_separation_history({"not": "a list"}) == []
+
+
+def test_clean_warmpool_separation_history_drops_non_dict_and_bad_rows():
+    good = _wp_row(1.06, "run-a")
+    bad_field = _wp_row(1.06, "run-b", digest="sha256:NOT-HEX")
+    rows = render._clean_warmpool_separation_history(["not-a-dict", good, bad_field])
+    assert len(rows) == 1
+    assert rows[0]["run_id"] == "run-a"
+
+
+def test_clean_warmpool_separation_history_sorts_by_generated_at():
+    later = _wp_row(1.06, "run-b", generated_at="2026-08-17T18:00:00Z")
+    earlier = _wp_row(0.27, "run-a", generated_at="2026-08-17T10:00:00Z")
+    rows = render._clean_warmpool_separation_history([later, earlier])
+    assert [r["run_id"] for r in rows] == ["run-a", "run-b"]
+
+
+def test_warmpool_separation_variance_caveat_inert_when_empty_or_none():
+    assert render._warmpool_separation_variance_caveat([]) == ""
+    assert render._warmpool_separation_variance_caveat(None) == ""
+
+
+def test_warmpool_separation_variance_caveat_inert_when_single_measurement():
+    assert render._warmpool_separation_variance_caveat([_wp_row(0.27, "run-a")]) == ""
+
+
+def test_warmpool_separation_variance_caveat_inert_below_spread_threshold():
+    # 1.5x spread, below the 2.0x WARMPOOL_SEPARATION_VARIANCE_MIN_SPREAD threshold.
+    rows = [_wp_row(1.0, "run-a"), _wp_row(1.5, "run-b")]
+    assert render._warmpool_separation_variance_caveat(rows) == ""
+
+
+def test_warmpool_separation_variance_caveat_fires_on_headline_incident():
+    # a4z1's #6890 own finding: same digest, 0.27x then 1.06x -- a 3.9x spread.
+    rows = [
+        _wp_row(0.27, "fire-1", generated_at="2026-08-17T15:23:36Z", outcome="FAIL"),
+        _wp_row(1.06, "fire-2", generated_at="2026-08-17T18:20:45Z", outcome="PASS"),
+    ]
+    out = render._warmpool_separation_variance_caveat(rows)
+    assert "Same-build separation-ratio variance" in out
+    assert "0.27" in out and "1.06" in out
+    assert "3.9" in out
+    assert "sha256:ffffffffffff" in out  # truncated digest ([:19])
+    assert out.count("sha256:" + "f" * 64) == 0  # full digest never printed verbatim
+
+
+def test_warmpool_separation_variance_caveat_ignores_zero_or_negative_ratio():
+    rows = [_wp_row(0.0, "run-a"), _wp_row(5.0, "run-b")]
+    assert render._warmpool_separation_variance_caveat(rows) == ""
+
+
+def test_warmpool_separation_variance_caveat_multiple_digests_sorted_by_spread_desc():
+    digest_a = "sha256:" + "a" * 64
+    digest_b = "sha256:" + "b" * 64
+    rows = [
+        _wp_row(1.0, "run-a1", digest=digest_a), _wp_row(2.5, "run-a2", digest=digest_a),
+        _wp_row(1.0, "run-b1", digest=digest_b), _wp_row(9.0, "run-b2", digest=digest_b),
+    ]
+    out = render._warmpool_separation_variance_caveat(rows)
+    # digest_b's 9x spread must be named before digest_a's 2.5x spread.
+    assert out.index(digest_b[:19]) < out.index(digest_a[:19])
+
+
+def test_known_anomalies_table_warmpool_variance_row_reflects_state():
+    results = _matrix_results(_full_gvisor_scenarios(), provenance={"machine_type": "n2-standard-16"})
+    out = render.render_known_anomalies_table(results, history_rows=None)
+    assert ("| Same-build separation-ratio variance | "
+            "[✅ clear](DETAILS.md#same-build-separation-ratio-variance) |") in out
+
+    flapping = [_wp_row(0.27, "fire-1"), _wp_row(1.06, "fire-2")]
+    out = render.render_known_anomalies_table(results, history_rows=flapping)
+    assert ("| Same-build separation-ratio variance | "
+            "[⚠️ ACTIVE](DETAILS.md#same-build-separation-ratio-variance) |") in out
+
+
+def test_known_anomalies_detail_warmpool_variance_section_reflects_state():
+    results = _matrix_results(_full_gvisor_scenarios(), provenance={"machine_type": "n2-standard-16"})
+    out = render.render_known_anomalies_detail(results, history_rows=None)
+    assert "### Same-build separation-ratio variance" in out
+    assert "no same-build separation-ratio variance currently disclosed" in out
+
+    flapping = [_wp_row(0.27, "fire-1"), _wp_row(1.06, "fire-2")]
+    out = render.render_known_anomalies_detail(results, history_rows=flapping)
+    assert "Same-build separation-ratio variance" in out
+    assert "0.27" in out and "1.06" in out
+
+
 def _run_all():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:

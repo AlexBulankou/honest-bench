@@ -54,7 +54,9 @@ from schema import (
     WARM_BIND_FIELDS,
     WARM_POOL_ACQUISITION_FIELDS,
     WARM_VS_COLD_FIELDS,
+    WARMPOOL_SEPARATION_HISTORY_FIELDS,
     WARMPOOL_SEPARATION_MIN_RATIO,
+    WARMPOOL_SEPARATION_VARIANCE_MIN_SPREAD,
     _ISO,
     _SHA256,
 )
@@ -709,6 +711,43 @@ def _clean_history(rows):
         ok_all = True
         out = {}
         for key, ok in HISTORY_FIELDS.items():
+            if key not in r:
+                ok_all = False
+                break
+            try:
+                if not ok(r[key]):
+                    ok_all = False
+                    break
+            except (TypeError, ValueError):
+                ok_all = False
+                break
+            out[key] = r[key]
+        if ok_all:
+            clean.append(out)
+    clean.sort(key=lambda r: r["generated_at"])
+    return clean
+
+
+def _clean_warmpool_separation_history(rows):
+    """Closed-schema-validate warmpool-separation history rows, drop any that fail, sort by generated_at.
+
+    Sibling of _clean_history for the SEPARATE append-only warmpool-separation-history.jsonl
+    store (schema.WARMPOOL_SEPARATION_HISTORY_FIELDS, #6890 item 3) -- same discipline: a row
+    renders ONLY the closed-schema keys, each passing its predicate; a row missing a field or
+    failing a predicate is dropped entirely (a malformed history file degrades to fewer
+    disclosed measurements, never to a leak). Unlike _clean_history there is no legacy-backfill
+    step -- this store is new as of #6890, so every row it will ever contain already carries the
+    full schema.
+    """
+    clean = []
+    if not isinstance(rows, list):
+        return clean
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        ok_all = True
+        out = {}
+        for key, ok in WARMPOOL_SEPARATION_HISTORY_FIELDS.items():
             if key not in r:
                 ok_all = False
                 break
@@ -3101,6 +3140,67 @@ def _warmpool_separation_caveat(results, kata_results=None):
     )
 
 
+def _warmpool_separation_variance_caveat(history_rows):
+    """Loud disclosure when the SAME controller build measures wildly different separation ratios.
+
+    _warmpool_separation_caveat above answers "is THIS fire's ratio bad?" from the single
+    live-results snapshot. This is a different question that a single snapshot cannot even ask:
+    "does the SAME build (same controller_digest) measure CONSISTENTLY across independent
+    fires?" a4z1's #6890 Fire A/B/C suspect-check found the SAME digest
+    (sha256:f511a1ab3350...) fired twice produced 0.27x then 1.06x -- a 3.9x spread on
+    byte-identical build inputs. That variance is invisible on the public page because
+    results/latest.json is a single snapshot overwritten every fire; the append-only
+    warmpool-separation-history.jsonl store (schema.WARMPOOL_SEPARATION_HISTORY_FIELDS,
+    render.accrue_warmpool_separation) exists precisely to keep every fire's measurement so this
+    check can see it.
+
+    Groups clean history rows by controller_digest; for any digest with 2+ measurements, flags it
+    when max/min separation_ratio >= WARMPOOL_SEPARATION_VARIANCE_MIN_SPREAD (2.0x). This is
+    orthogonal to the gate check above -- a build can pass the gate on every measurement and still
+    trip this (instability in the MEASUREMENT is the thing being disclosed, not a bad ratio), and
+    a flagged digest need not be the one currently live in latest.json (a prior build's variance
+    stays disclosed here for as long as its history rows persist, since a resolved-then-reverted
+    regression is still a fact about that build). Returns "" when no digest exceeds the spread (or
+    fewer than 2 digests have 2+ measurements at all) so the caller can append it unconditionally.
+    """
+    rows = _clean_warmpool_separation_history(history_rows)
+    by_digest = {}
+    for r in rows:
+        by_digest.setdefault(r["controller_digest"], []).append(r)
+
+    flagged = []  # (digest, n_measurements, min_ratio, max_ratio, spread)
+    for digest, digest_rows in by_digest.items():
+        if len(digest_rows) < 2:
+            continue
+        ratios = [r["separation_ratio"] for r in digest_rows]
+        lo, hi = min(ratios), max(ratios)
+        if lo <= 0:
+            continue
+        spread = hi / lo
+        if spread < WARMPOOL_SEPARATION_VARIANCE_MIN_SPREAD:
+            continue
+        flagged.append((digest, len(digest_rows), lo, hi, spread))
+    if not flagged:
+        return ""
+
+    flagged.sort(key=lambda t: t[4], reverse=True)
+    who = "; ".join(
+        f"`{digest[:19]}…` ({n} measurements): {lo:.3g}x – {hi:.3g}x ({spread:.3g}x spread)"
+        for digest, n, lo, hi, spread in flagged
+    )
+    return (
+        "> ⚠️ **Same-build separation-ratio variance:** the warm-pool separation ratio measured "
+        f"on the SAME controller build swings by {WARMPOOL_SEPARATION_VARIANCE_MIN_SPREAD:g}x or "
+        f"more across independent fires for {who} — a byte-identical build should measure "
+        "consistently, so this large a swing points at instability in the measurement (pool "
+        "warm-up timing, node contention, or similar), not the build itself. The cause is not "
+        "asserted here. A single-fire snapshot cannot show this: it is visible only because every "
+        "fire's ratio is retained in warmpool-separation-history.jsonl rather than the latest "
+        "fire overwriting the prior one. This entry persists for as long as the flagged digest's "
+        "history rows do, even after a later build supersedes it in latest.json."
+    )
+
+
 def render_north_star_caption(results, kata_results=None):
     """One-line measured-verdict captions for the <1s North Star + 0.5s stretch bar.
 
@@ -3164,7 +3264,7 @@ def render_north_star_caption(results, kata_results=None):
     return out
 
 
-def render_known_anomalies_table(results, kata_results=None):
+def render_known_anomalies_table(results, kata_results=None, history_rows=None):
     """Compact "is anything currently wrong?" table (epic #6669 WS1) replacing the 6
     standalone banner blockquotes that used to render inline under the North Star caption.
 
@@ -3182,6 +3282,12 @@ def render_known_anomalies_table(results, kata_results=None):
     inside render_cluster_scale), so folding it into one Status cell would either hide
     multi-group detail or fabricate a single answer. It only appears when the harness
     emitted a closed-schema-clean top-level `concurrent_burst` object.
+
+    `history_rows` (raw, pre-validation rows from warmpool-separation-history.jsonl; None or []
+    are both treated as "no history available") feeds the Same-build separation variance row —
+    see _warmpool_separation_variance_caveat. Unlike the other rows this one is cross-fire
+    (spans every fire's history, not just this snapshot's `results`), so an absent/empty history
+    renders a clear cell rather than omitting the row — the row always names the check.
     """
     product = results.get("product")
     if product not in PRODUCTS:
@@ -3191,6 +3297,7 @@ def render_known_anomalies_table(results, kata_results=None):
     inversion_active = bool(_warm_cold_inversion_caveat(results, kata_results))
     separation_active = bool(_warmpool_separation_caveat(results, kata_results))
     mixed_rig_active = bool(_mixed_rig_confound_caveat(results))
+    variance_active = bool(_warmpool_separation_variance_caveat(history_rows or []))
 
     def _cell(active, anchor):
         marker = "⚠️ ACTIVE" if active else "✅ clear"
@@ -3205,6 +3312,8 @@ def render_known_anomalies_table(results, kata_results=None):
         f"| Warm-slower-than-cold | {_cell(inversion_active, 'warm-slower-than-cold')} |",
         "| Warm-cold separation below gate | "
         f"{_cell(separation_active, 'warm-cold-separation-below-gate')} |",
+        "| Same-build separation-ratio variance | "
+        f"{_cell(variance_active, 'same-build-separation-ratio-variance')} |",
         "| Mixed rig within this run | "
         f"{_cell(mixed_rig_active, 'mixed-rig-within-this-run')} |",
         "| Regime note | [ℹ️ standing note](DETAILS.md#regime-note) |",
@@ -3219,7 +3328,7 @@ def render_known_anomalies_table(results, kata_results=None):
     return "\n".join(lines)
 
 
-def render_known_anomalies_detail(results, kata_results=None):
+def render_known_anomalies_detail(results, kata_results=None, history_rows=None):
     """DETAILS.md counterpart to render_known_anomalies_table (epic #6669 WS1).
 
     One `### <heading>` per row, heading text chosen so GitHub's own slug algorithm
@@ -3230,6 +3339,8 @@ def render_known_anomalies_detail(results, kata_results=None):
     (empty) caveat text, naming the check without duplicating prose that has nothing to
     disclose. Regime note / Refresh cadence show their full static text unconditionally —
     they were never conditional in the first place.
+
+    `history_rows` — see render_known_anomalies_table's docstring; same absent/empty handling.
     """
     product = results.get("product")
     if product not in PRODUCTS:
@@ -3238,6 +3349,7 @@ def render_known_anomalies_detail(results, kata_results=None):
     fail_caveat = _north_star_fail_caveat(rows)
     inversion_caveat = _warm_cold_inversion_caveat(results, kata_results)
     separation_caveat = _warmpool_separation_caveat(results, kata_results)
+    variance_caveat = _warmpool_separation_variance_caveat(history_rows or [])
     mixed_rig_caveat = _mixed_rig_confound_caveat(results)
 
     def _clear(name):
@@ -3258,6 +3370,12 @@ def render_known_anomalies_detail(results, kata_results=None):
     lines.append("")
     lines.append(
         separation_caveat if separation_caveat else _clear("warm/cold separation shortfall")
+    )
+    lines.append("")
+    lines.append("### Same-build separation-ratio variance")
+    lines.append("")
+    lines.append(
+        variance_caveat if variance_caveat else _clear("same-build separation-ratio variance")
     )
     lines.append("")
     lines.append("### Mixed rig within this run")

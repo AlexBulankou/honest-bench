@@ -388,6 +388,17 @@ cat "$NODE_SAMPLE_LOG" 2>/dev/null || echo "(no samples captured)"
 echo "==> accruing build-over-build throughput history (hb#3918/hb#439)"
 python3 -m render.accrue_history sandbox
 
+# #6890 item 3: append-only, one row per fire (see accrue_warmpool_separation.py's docstring
+# for why this is NOT an upsert-by-digest store like history.jsonl above). Same two-outcome
+# non-write contract as accrue_history above:
+#   CASE 1 (exit 0, quiet) — latest.json's warmpool_cold_start cell never computed the gate
+#     metric, so there is genuinely nothing to chart; a scenario-less fire never pollutes.
+#   CASE 2 (exit 3, LOUD) — a ratio *was* measured but a provenance field can't anchor it to a
+#     build, so the row can't be trusted. Fails the step deliberately (the EXIT trap still tears
+#     the cluster down) rather than freezing the same-build-variance trend while the fire is green.
+echo "==> accruing warmpool separation-ratio measurement history (#6890 item 3)"
+python3 -m render.accrue_warmpool_separation sandbox
+
 echo "==> rendering README/DETAILS from results"
 python3 -m render.generate
 

@@ -117,6 +117,12 @@ def _env_flag(name):
 # degradation), so the page never half-renders.
 _HISTORY_REL = "sandbox/results/history.jsonl"
 
+# Same-build separation-ratio variance history (#6890 item 3), relative to the repo root. Sole
+# writer: render.accrue_warmpool_separation (append-only, one row per fire keyed by run_id — see
+# that module's docstring for why this is NOT an upsert-by-digest store like history.jsonl above).
+# Absent/empty ⇒ the variance check renders clear rather than a blank or a guess.
+_WARMPOOL_SEPARATION_HISTORY_REL = "sandbox/results/warmpool-separation-history.jsonl"
+
 # Product -> results path, relative to the repo root (parent of render/).
 # The PUBLIC customer page is SANDBOX-ONLY (alex 2026-06-28): substrate demotes from a
 # co-equal published table to an INTERNAL data-engine — its harness + schema-validated
@@ -255,6 +261,29 @@ def _load_history(root):
     return rows
 
 
+def _load_warmpool_separation_history(root):
+    """Read sandbox/results/warmpool-separation-history.jsonl into a list of dicts; [] if absent.
+
+    Parse-only, mirroring _load_history above: render._clean_warmpool_separation_history
+    re-validates every row through the closed schema, so a malformed line that survives JSON
+    parsing here is still dropped at render.
+    """
+    path = os.path.join(root, _WARMPOOL_SEPARATION_HISTORY_REL)
+    rows = []
+    if not os.path.exists(path):
+        return rows
+    with open(path) as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rows.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+    return rows
+
+
 def build_readme(root=None):
     """Return the full README text: preamble + 9-col Core Metrics matrix + TTFE corroboration + warm-vs-cold + Scale Proof.
 
@@ -271,6 +300,10 @@ def build_readme(root=None):
         with open(kata_path) as fh:
             kata_results = json.load(fh)
     sections = [_PREAMBLE.rstrip()]
+    # #6890 item 3: loaded once, before the per-product loop, and reused for every product's
+    # Known Anomalies table (same "load once, reuse" pattern as history_rows below) — the store
+    # is sandbox-wide, not per-product, so there is nothing to re-load per iteration.
+    warmpool_separation_history = _load_warmpool_separation_history(root)
     # WS3 (epic #6669): collect each published product's (name, results) so the page-level
     # freshness self-declaration (render_stale_banner) can be computed over ALL of them and
     # inserted at the top, after the loop knows the full published set.
@@ -300,7 +333,8 @@ def build_readme(root=None):
         # cold, warm/cold separation below gate, regime note, refresh cadence, concurrent-burst
         # regime) that used to render inline here now collapse into one compact "is anything
         # currently wrong?" table with live ⚠️/✅ markers linking to DETAILS.md for the prose.
-        known_anomalies = render_known_anomalies_table(results, kata_results=kr)
+        known_anomalies = render_known_anomalies_table(
+            results, kata_results=kr, history_rows=warmpool_separation_history)
         if known_anomalies.strip():
             sections.append(known_anomalies.rstrip())
         # hb#488 numbers-first slice-1 (alex 2026-07-26): the plain-English "What this means
@@ -400,6 +434,8 @@ def build_details(root=None):
         with open(kata_path) as fh:
             kata_results = json.load(fh)
     sections = [_DETAILS_PREAMBLE.rstrip()]
+    # #6890 item 3: same load-once-reuse pattern as build_readme above.
+    warmpool_separation_history = _load_warmpool_separation_history(root)
     for product, rel in _PRODUCTS:
         path = os.path.join(root, rel)
         if not os.path.exists(path):
@@ -411,7 +447,8 @@ def build_details(root=None):
         # placed first in the per-product detail sequence so the anchors it emits
         # (#scenario-fail, #warm-slower-than-cold, etc.) are near the top of the page the
         # README's table links into.
-        known_anomalies_detail = render_known_anomalies_detail(results, kata_results=kr)
+        known_anomalies_detail = render_known_anomalies_detail(
+            results, kata_results=kr, history_rows=warmpool_separation_history)
         if known_anomalies_detail.strip():
             sections.append(known_anomalies_detail.rstrip())
         for renderer in (
