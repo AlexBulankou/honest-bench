@@ -33,7 +33,7 @@ pool — full recipe in [`recipe/REPRODUCE.md`](recipe/REPRODUCE.md), deep-dive 
 blocker — diagnosis plus file-ready patches and comments — is hand-maintained in
 [UPSTREAM_BLOCKERS.md](UPSTREAM_BLOCKERS.md).
 
-> ⚠️ **STALE VS UPSTREAM** — the fork base these numbers were measured on is more than 25 commits behind the current upstream HEAD: **sandbox** (201 commits behind `kubernetes-sigs/agent-sandbox`@`main` as of 2026-08-17). The measured numbers may not reflect recent upstream changes; re-base the fork and re-fire, then re-run `scripts/verify-upstream-freshness.py --update-stamp` to refresh the distance.
+> ⚠️ **UPSTREAM DISTANCE UNVERIFIED** — this page cannot certify how far behind upstream HEAD these numbers' fork base is: **sandbox** (the distance stamp was measured against a different fork base). Treat them as potentially behind upstream; run `scripts/verify-upstream-freshness.py --update-stamp` to (re)establish the distance.
 
 ## Agent Sandbox — Core Metrics
 
@@ -42,12 +42,14 @@ blocker — diagnosis plus file-ready patches and comments — is hand-maintaine
 
 | Runtime | Activation Mode | Throughput @ <5s TTFE (sb/s — node · cluster) | Throughput @ <1s TTFE (sb/s — node · cluster) | TTFE p50 | TTFE p95 | Execution Success (Honesty Check) |
 |---|---|---|---|---|---|---|
-| gVisor | Warm-pool hit (Base image) | 7.785 /node · [pending (cluster-fire)](WORK_IN_PROGRESS.md#cluster-fire) | 0 /node · [pending (cluster-fire)](WORK_IN_PROGRESS.md#cluster-fire) | 3.1279s (count=30) | 3.9955s (count=30) | 100% |
-| gVisor | Unique-image cold (RL reality) | [pending](WORK_IN_PROGRESS.md#not-yet-measured) | 0 /node · 0 /cluster | 3.7285s (count=30) | 4.0308s (count=30) | 100% |
-| gVisor | Resume-from-suspend | [pending](WORK_IN_PROGRESS.md#not-yet-measured) | 0 /node · 0 /cluster | 4.2735s (count=30) | 4.4041s (count=30) | 100% |
+| gVisor | Warm-pool hit (Base image) ⚠️ FAIL | 0 /node · [pending (cluster-fire)](WORK_IN_PROGRESS.md#cluster-fire) | 0 /node · [pending (cluster-fire)](WORK_IN_PROGRESS.md#cluster-fire) | 12.3742s (count=30) | 17.4061s (count=30) | 100% |
+| gVisor | Unique-image cold (RL reality) | [pending](WORK_IN_PROGRESS.md#not-yet-measured) | 0 /node · 0 /cluster | 3.7259s (count=30) | 4.3493s (count=30) | 100% |
+| gVisor | Resume-from-suspend | 0 /node · 0 /cluster | 0 /node · 0 /cluster | 4.8284s (count=30) | 5.0248s (count=30) | 100% |
 | Kata + microVM | Warm-pool hit (Base image) | 14.994 /node · 0.75 /cluster ⚠️ | 1 /node · [pending (cluster-fire)](WORK_IN_PROGRESS.md#cluster-fire) | 1.6668s (count=30) | 2.2426s (count=30) | 100% |
 | Kata + microVM | Unique-image cold (RL reality) | unk.***K | 0 /node · 0 /cluster | 3.1176s (count=30) | 3.3883s (count=30) | 100% |
 | Kata + microVM | Resume-from-suspend | [N/A](WORK_IN_PROGRESS.md#na-by-construction) | [N/A](WORK_IN_PROGRESS.md#na-by-construction) | [N/A](WORK_IN_PROGRESS.md#na-by-construction) | [N/A](WORK_IN_PROGRESS.md#na-by-construction) | [N/A](WORK_IN_PROGRESS.md#na-by-construction) |
+
+_⚠️ **Scenario FAIL:** **gVisor** Warm-pool hit (Base image) — the row above carries a real measurement whose own scenario outcome is **FAIL** (SLA not met), not a passing warm hit. The numbers are honest data, disclosed as a miss rather than dropped or greened; a later refresh whose scenario returns to PASS clears this._
 
 ### Max Density (sandboxes per vCPU)
 
@@ -73,21 +75,21 @@ Full cell-decoding key — TTFE basis, honest vs. measured zeros, the dual per-n
 
 _Kata + microVM rows are measured in a separate run on the kata node pool: cluster_substrate=gke-kata · node_count=1 · generated-at=2026-08-14T08:02:07Z._
 
-_build: cluster_substrate=gke-sandbox · controller_digest=sha256:41c8c6bcabe4286b9aa10e488100e577ecf0bbf45e80da34729c5e8300361897 · suite_git_sha=39a2d4fe242653ac39ae01282f28544e71110598 · run_id=f71eac5dede24c11bf818053d3b5d0d8 · node_count=1 · source=fork@4c71c2cf9fa7 (+1 fixes over upstream@0be472b7)_
-_generated-at: 2026-08-16T02:10:20Z_
+_build: cluster_substrate=gke-sandbox · controller_digest=sha256:f511a1ab33507772187ecfd086abdc79c1031b2f051c9b63849c76a929339110 · suite_git_sha=6bcbc7292086f995ae9c6cfec71c92edac9b440d · run_id=784129fbc16a4f0ebf0b15e7d0fa616c · node_count=1_
+_generated-at: 2026-08-17T15:23:36Z_
 
-_**North Star** — warm-pool-hit TTFE p95 < 1s (the spec doc bar): gVisor 3.9955s (count=30) ❌ not met (2.9955s above the bar); Kata + microVM 2.2426s (count=30) ❌ not met (1.2426s above the bar). An honest ❌ prints the measured gap to the bar (tagged `within sampling noise` when the miss sits inside the sample spread — it stays a ❌, the tag never flips a miss to a pass); `pending` = unmeasured (never a guess); † marks a p95 over fewer than N=30 samples._
+_**North Star** — warm-pool-hit TTFE p95 < 1s (the spec doc bar): gVisor 17.4061s (count=30) ❌ not met (16.4061s above the bar) ⚠️ **scenario FAIL**; Kata + microVM 2.2426s (count=30) ❌ not met (1.2426s above the bar). An honest ❌ prints the measured gap to the bar (tagged `within sampling noise` when the miss sits inside the sample spread — it stays a ❌, the tag never flips a miss to a pass); `pending` = unmeasured (never a guess); † marks a p95 over fewer than N=30 samples._
 
-_**Stretch bar** — warm-pool-hit TTFE p95 < 0.5s (an aspiration above the North Star, not the North Star itself; the step-up curve grades sustained creation-rate against it — see [DETAILS.md](DETAILS.md)): gVisor 3.9955s (count=30) ❌ not met (3.4955s above the bar); Kata + microVM 2.2426s (count=30) ❌ not met (1.7426s above the bar)._
+_**Stretch bar** — warm-pool-hit TTFE p95 < 0.5s (an aspiration above the North Star, not the North Star itself; the step-up curve grades sustained creation-rate against it — see [DETAILS.md](DETAILS.md)): gVisor 17.4061s (count=30) ❌ not met (16.9061s above the bar) ⚠️ **scenario FAIL**; Kata + microVM 2.2426s (count=30) ❌ not met (1.7426s above the bar)._
 
-> ⚠️ **Refresh delta:** **gVisor** regressed by 2.6381s (1.3574s → 3.9955s, 2.9x). A swing this large, or a bar-crossing flip, between consecutive published runs is flagged for a second look before trusting it as a substrate signal — check for a machine-class change, a node-count change, a node-image change, a build-lineage change (controller/suite rebuild), a broken measurement, or a real regression/fix. Disposition (honest-bench#636): node-count cleared as a cause — a controlled single-variable re-fire held the controller build byte-identical across 1→2 nodes and saw the warm-tier separation improve, not worsen; build-lineage (fork@4c71c2cf vs. upstream) is the confirmed, reproducible residual driver. The exact prior controller_digest/suite_git_sha for this data point are not recoverable from sandbox/results/history.jsonl (it tracks an unrelated build metric, not per-scenario TTFE), so this note stands in for the automated build-lineage clause on this one refresh.
+> ⚠️ **Refresh delta:** **gVisor** regressed by 13.4106s (3.9955s → 17.4061s, 4.4x). A swing this large, or a bar-crossing flip, between consecutive published runs is flagged for a second look before trusting it as a substrate signal — check for a machine-class change, a node-count change, a node-image change, a build-lineage change (controller/suite rebuild), a broken measurement, or a real regression/fix.
 
 ### Known anomalies
 
 | Anomaly | Status |
 |---|---|
-| Scenario FAIL | [✅ clear](DETAILS.md#scenario-fail) |
-| Warm-slower-than-cold | [✅ clear](DETAILS.md#warm-slower-than-cold) |
+| Scenario FAIL | [⚠️ ACTIVE](DETAILS.md#scenario-fail) |
+| Warm-slower-than-cold | [⚠️ ACTIVE](DETAILS.md#warm-slower-than-cold) |
 | Warm-cold separation below gate | [⚠️ ACTIVE](DETAILS.md#warm-cold-separation-below-gate) |
 | Mixed rig within this run | [⚠️ ACTIVE](DETAILS.md#mixed-rig-within-this-run) |
 | Regime note | [ℹ️ standing note](DETAILS.md#regime-note) |
@@ -104,10 +106,12 @@ Find the row closest to **your** load; the p50 is the wait to plan around. The *
 
 | Your load pattern | Wait to budget (p50) | Scope |
 |---|---|---|
-| Steady trickle — warm pool keeps up with demand | ~3.1s | full start → first result |
+| Steady trickle — warm pool keeps up with demand ⚠️ FAIL | ~12.4s | full start → first result |
 | Bursty — pool oversubscribed 2:1 (60 claims / 30 ready) | ~1.7s | full start → first result |
 | 300 sandboxes requested at once (1:1 pool) | ~6.9s | full start → first result |
 | Sustained 300/sec churn | ~2.9s | pool hand-off only (before exec) |
+
+_⚠️ **Scenario FAIL:** **Steady trickle — warm pool keeps up with demand** — the row above carries a real measurement whose own scenario outcome is **FAIL** (SLA not met), not a passing warm hit. The wait is honest data, disclosed as a miss rather than dropped or hidden as `pending`; a later refresh whose scenario returns to PASS clears this._
 
 ## Does it hold at cluster scale?
 
@@ -192,6 +196,7 @@ COUNT vs the prior build; the first build is the baseline. Drive this COUNT up.
 | `sha256:6edaf7b6b22d…` | 2026-06-28 | 9 | — | 0.45 | 10 | PASS |
 | `sha256:4e36a61c6bdc…` | 2026-07-25 | 2 | -7 † | 0.0416667 | 10 | FAIL |
 | `sha256:41c8c6bcabe4…` | 2026-08-16 | 10 | +8 † | 0.208333 | 10 | PASS |
+| `sha256:f511a1ab3350…` | 2026-08-17 | 1 | -9 † | 0.0208333 | 10 | FAIL |
 
 _† Δ spans a build whose burst sampled fewer than N=30 claims — too few to rank build-over-build; the swing may be sampling noise, not a real move._
 
@@ -205,6 +210,7 @@ Throughput — build-over-build (sandboxes ready <1s)
 2026-06-28 ██████████████████ 9
 2026-07-25 ████ 2 (FAIL)
 2026-08-16 ████████████████████ 10
+2026-08-17 ██ 1 (FAIL)
 ```
 
 ## Which storage class should you pick?
