@@ -77,6 +77,7 @@ def _load_render():
         mod.render_measurement_path_diagram,
         mod.render_recipe,
         mod.render_trend,
+        mod.render_throughput_trend_chart,
         mod.check_render_downgrade,
         mod.render_stale_banner,
         mod.resolve_default_as_of,
@@ -99,6 +100,7 @@ def _load_render():
  render_ttfe_bars,
  render_vcpu_footprint,
  render_storage_config, render_measurement_path_diagram, render_recipe, render_trend,
+ render_throughput_trend_chart,
  check_render_downgrade,
  render_stale_banner, resolve_default_as_of,
  render_commit_distance_banner, resolve_commit_distance, resolve_fork_upstreams) = _load_render()
@@ -332,9 +334,16 @@ def build_readme(root=None):
         if os.path.exists(sandbox_latest_path):
             with open(sandbox_latest_path) as fh:
                 sandbox_latest = json.load(fh)
-    trend = render_trend(_load_history(root), latest_results=sandbox_latest)
+    history_rows = _load_history(root)
+    trend = render_trend(history_rows, latest_results=sandbox_latest)
     if trend.strip():
         sections.append(trend.rstrip())
+    # WS2 follow-up (epic #6669): the trend's Unicode-bar visual companion, same source
+    # (history_rows, reused rather than re-loaded) so the chart can never diverge from the
+    # table above it.
+    trend_chart = render_throughput_trend_chart(history_rows)
+    if trend_chart.strip():
+        sections.append(trend_chart.rstrip())
     # #4164 / hb#132: "Which storage class should you pick?" is a single sandbox-wide guidance
     # section (customer-facing storage-config axis), sourced from the newest
     # sandbox/records/storage-config-*.json — so it renders ONCE after the per-product loop, placed

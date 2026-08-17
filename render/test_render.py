@@ -1176,6 +1176,89 @@ def test_trend_empty_history_never_caveats_even_with_diverging_latest():
     assert render.render_trend([], latest_results=_latest(count=10, digest="")) == ""
 
 
+def test_throughput_trend_chart_empty_renders_nothing():
+    # WS2 follow-up (epic #6669): no history ⇒ no chart, same graceful degradation as the table.
+    assert render.render_throughput_trend_chart([]) == ""
+    assert render.render_throughput_trend_chart(None) == ""
+
+
+def test_throughput_trend_chart_all_zero_counts_inert():
+    # Every build measured COUNT==0 ⇒ no meaningful bar to draw (divide-by-zero guard), same
+    # INERT posture as render_concurrent_burst_chart's max_val<=0 case.
+    rows = [_hrow(sandboxes_ready_under_1s=0)]
+    assert render.render_throughput_trend_chart(rows) == ""
+
+
+def test_throughput_trend_chart_malformed_row_dropped():
+    # Same closed-schema discipline as the table: _clean_history drops a malformed row entirely,
+    # so the chart degrades to fewer bars, never a partial/fabricated one.
+    rows = [_hrow(), {"generated_at": "2026-06-29T00:00:00Z"}]
+    out = render.render_throughput_trend_chart(rows)
+    assert out.count("█") > 0
+    assert out.count("2026-06-28") == 1
+    assert "2026-06-29" not in out
+
+
+def test_throughput_trend_chart_renders_one_bar_per_build_oldest_first():
+    rows = [
+        _hrow(controller_digest="sha256:" + "a" * 64, generated_at="2026-06-27T10:00:00Z",
+              sandboxes_ready_under_1s=9, n=40),
+        _hrow(controller_digest="sha256:" + "b" * 64, generated_at="2026-06-28T10:00:00Z",
+              sandboxes_ready_under_1s=14, n=40),
+    ]
+    out = render.render_throughput_trend_chart(rows)
+    assert "Throughput — build-over-build" in out
+    lines = [l for l in out.splitlines() if "█" in l]
+    assert len(lines) == 2
+    # oldest (smaller COUNT) first, newest (larger COUNT, longer bar) second.
+    assert "2026-06-27" in lines[0] and "9" in lines[0]
+    assert "2026-06-28" in lines[1] and "14" in lines[1]
+    bar_len_1 = len([c for c in lines[0] if c == "█"])
+    bar_len_2 = len([c for c in lines[1] if c == "█"])
+    assert bar_len_2 > bar_len_1
+
+
+def test_throughput_trend_chart_orders_by_generated_at_regardless_of_input_order():
+    # Mirrors render_trend's own out-of-order-input test: chart order must match the table's
+    # oldest-to-newest order even when the input list itself is not pre-sorted.
+    rows = [
+        _hrow(controller_digest="sha256:" + "b" * 64, generated_at="2026-06-28T10:00:00Z",
+              sandboxes_ready_under_1s=14, n=40),
+        _hrow(controller_digest="sha256:" + "a" * 64, generated_at="2026-06-27T10:00:00Z",
+              sandboxes_ready_under_1s=9, n=40),
+    ]
+    out = render.render_throughput_trend_chart(rows)
+    lines = [l for l in out.splitlines() if "█" in l]
+    assert "2026-06-27" in lines[0]
+    assert "2026-06-28" in lines[1]
+
+
+def test_throughput_trend_chart_fail_outcome_annotated():
+    # #546 discipline: a FAIL build's real measured COUNT still charts, with an explicit
+    # annotation so a FAIL bar doesn't read as if it cleared the SLA.
+    rows = [
+        _hrow(controller_digest="sha256:" + "a" * 64, generated_at="2026-06-28T10:00:00Z",
+              sandboxes_ready_under_1s=2, outcome="FAIL"),
+    ]
+    out = render.render_throughput_trend_chart(rows)
+    assert "(FAIL)" in out
+
+
+def test_throughput_trend_chart_pass_outcome_not_annotated():
+    rows = [_hrow(outcome="PASS")]
+    out = render.render_throughput_trend_chart(rows)
+    assert "(FAIL)" not in out
+
+
+def test_throughput_trend_chart_single_build_no_variance_still_renders():
+    # A single build (max_count == its own count) still renders one bar, no divide-by-zero.
+    rows = [_hrow(sandboxes_ready_under_1s=10)]
+    out = render.render_throughput_trend_chart(rows)
+    lines = [l for l in out.splitlines() if "█" in l]
+    assert len(lines) == 1
+    assert "10" in lines[0]
+
+
 # --- Goal 2.1: Core Metrics matrix + Scale Proof render tests --------------------------------
 
 
