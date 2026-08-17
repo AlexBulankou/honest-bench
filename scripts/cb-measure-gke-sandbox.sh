@@ -233,6 +233,40 @@ if [ "${HB_FORK_BUILD:-}" = "1" ]; then
   : "${HB_FORK_BASE_UPSTREAM_SHA:?HB_FORK_BUILD=1 requires HB_FORK_BASE_UPSTREAM_SHA (upstream base sha the fork rebases on, for provenance)}"
   : "${HB_FORK_FIX_COUNT:?HB_FORK_BUILD=1 requires HB_FORK_FIX_COUNT (# staged fixes over the base, for provenance)}"
 
+  # Fire-time diagnostic-lineage guard (hb#648 follow-up, hb#650 incident).
+  # hb#648 added a PR-merge-time gate (scripts/check_diagnostic_lineage.py) that
+  # blocks a committed latest.json carrying a diagnostic-shaped fork-build
+  # signature (fork_fix_count==0 and/or fork_sha==fork_base_upstream_sha — a
+  # "clean-upstream" reproduction, not a validated fix pin). That gate only
+  # fires at merge time, on whatever PR happens to be open — it can't stop the
+  # underlying `gcloud builds triggers run hb-refresh-gke-sandbox
+  # --substitutions=...` dispatch from ever happening against the PRODUCTION
+  # trigger in the first place. hb#650 proved the gap live: a manual dispatch
+  # with fork_sha==fork_base_upstream_sha=="dfb50895..." and fork_fix_count=0
+  # ran straight through this same script and opened a real "auto-refresh
+  # headline" PR 7 minutes before the merge gate's trigger existed. Closing the
+  # gap at the SOURCE (refuse before any cluster spend, not just before merge)
+  # is the fail-closed half of the trust-surface idiom (#4420) the merge gate
+  # already covers the reopen-loudly half of.
+  #
+  # Override: HB_FORK_ALLOW_DIAGNOSTIC=1 — for a deliberate, reviewed
+  # diagnostic-reproduction fire (e.g. an #6890-style investigation rerun)
+  # where publishing the diagnostic shape as a real PR is intentional and will
+  # be caught/reviewed at merge time by the hb#648 gate as before.
+  if [ "$HB_FORK_SHA" = "$HB_FORK_BASE_UPSTREAM_SHA" ] || [ "$HB_FORK_FIX_COUNT" = "0" ]; then
+    if [ "${HB_FORK_ALLOW_DIAGNOSTIC:-}" != "1" ]; then
+      echo "ERROR: [fork-build] diagnostic-lineage signature on this dispatch:" >&2
+      [ "$HB_FORK_SHA" = "$HB_FORK_BASE_UPSTREAM_SHA" ] && \
+        echo "  fork_sha == fork_base_upstream_sha == '$HB_FORK_SHA' (self-referential, not a real fork)" >&2
+      [ "$HB_FORK_FIX_COUNT" = "0" ] && \
+        echo "  fork_fix_count == 0 (a clean-upstream reproduction, not a validated fix pin)" >&2
+      echo "  Refusing to dispatch against the production hb-refresh-gke-sandbox trigger." >&2
+      echo "  Set HB_FORK_ALLOW_DIAGNOSTIC=1 if this diagnostic fire is deliberate." >&2
+      exit 1
+    fi
+    echo "==> [fork-build] HB_FORK_ALLOW_DIAGNOSTIC=1 override — proceeding despite diagnostic-lineage signature"
+  fi
+
   # install-controller-from-main.sh reads these as env overrides (BUILD_MODE=source).
   export BUILD_MODE=source
   export UPSTREAM_REPO="$HB_FORK_UPSTREAM_REPO"
