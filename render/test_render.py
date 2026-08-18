@@ -7627,6 +7627,92 @@ def test_warmpool_separation_verdict_caveat_leaks_no_agent_id():
     assert re.search(r"a4[a-z]\d", out) is None
 
 
+def test_warmpool_separation_trend_chart_empty_renders_nothing():
+    # WS2 follow-up (epic #6669, #6890 item 3): no history ⇒ no chart, same graceful
+    # degradation as render_throughput_trend_chart.
+    assert render.render_warmpool_separation_trend_chart([]) == ""
+    assert render.render_warmpool_separation_trend_chart(None) == ""
+
+
+def test_warmpool_separation_trend_chart_all_zero_ratios_inert():
+    # Every fire measured ratio==0 ⇒ no meaningful bar to draw (divide-by-zero guard), same
+    # INERT posture as render_throughput_trend_chart's max_count<=0 case.
+    rows = [_wp_row(0.0, "run-a")]
+    assert render.render_warmpool_separation_trend_chart(rows) == ""
+
+
+def test_warmpool_separation_trend_chart_malformed_row_dropped():
+    # Same closed-schema discipline as the prose caveats: _clean_warmpool_separation_history
+    # drops a malformed row entirely, so the chart degrades to fewer bars, never a
+    # partial/fabricated one.
+    rows = [_wp_row(1.06, "run-a"), {"generated_at": "2026-08-17T18:00:00Z"}]
+    out = render.render_warmpool_separation_trend_chart(rows)
+    assert out.count("█") > 0
+    assert out.count("run-a") == 0  # run_id itself isn't rendered, but the row must survive
+    assert "1.06x" in out
+
+
+def test_warmpool_separation_trend_chart_renders_one_bar_per_fire_oldest_first():
+    rows = [
+        _wp_row(0.27, "run-a", digest="sha256:" + "a" * 64, generated_at="2026-08-17T10:00:00Z"),
+        _wp_row(1.06, "run-b", digest="sha256:" + "b" * 64, generated_at="2026-08-17T14:00:00Z"),
+    ]
+    out = render.render_warmpool_separation_trend_chart(rows)
+    assert "Warm/cold separation ratio" in out
+    lines = [l for l in out.splitlines() if "█" in l]
+    assert len(lines) == 2
+    # oldest (smaller ratio here) first, newest (larger ratio, longer bar) second.
+    assert "2026-08-17" in lines[0] and "0.27x" in lines[0] and "aaaaaaaa" in lines[0]
+    assert "1.06x" in lines[1] and "bbbbbbbb" in lines[1]
+    bar_len_1 = len([c for c in lines[0] if c == "█"])
+    bar_len_2 = len([c for c in lines[1] if c == "█"])
+    assert bar_len_2 > bar_len_1
+
+
+def test_warmpool_separation_trend_chart_orders_by_generated_at_regardless_of_input_order():
+    # Mirrors render_throughput_trend_chart's own out-of-order-input test.
+    rows = [
+        _wp_row(1.06, "run-b", generated_at="2026-08-17T14:00:00Z"),
+        _wp_row(0.27, "run-a", generated_at="2026-08-17T10:00:00Z"),
+    ]
+    out = render.render_warmpool_separation_trend_chart(rows)
+    lines = [l for l in out.splitlines() if "█" in l]
+    assert "0.27x" in lines[0]
+    assert "1.06x" in lines[1]
+
+
+def test_warmpool_separation_trend_chart_below_gate_annotated():
+    # Below WARMPOOL_SEPARATION_MIN_RATIO (1.8x) — the exact comparison
+    # _warmpool_separation_caveat uses (ratio < gate) — must be flagged so the chart's own
+    # flagging never drifts from the prose caveat's.
+    rows = [_wp_row(0.661, "run-a")]
+    out = render.render_warmpool_separation_trend_chart(rows)
+    assert "(below gate)" in out
+
+
+def test_warmpool_separation_trend_chart_at_or_above_gate_not_annotated():
+    rows = [_wp_row(1.9, "run-a")]
+    out = render.render_warmpool_separation_trend_chart(rows)
+    assert "(below gate)" not in out
+
+
+def test_warmpool_separation_trend_chart_single_fire_no_variance_still_renders():
+    # A single fire (max_ratio == its own ratio) still renders one bar, no divide-by-zero.
+    rows = [_wp_row(1.06, "run-a")]
+    out = render.render_warmpool_separation_trend_chart(rows)
+    lines = [l for l in out.splitlines() if "█" in l]
+    assert len(lines) == 1
+    assert "1.06x" in lines[0]
+
+
+def test_warmpool_separation_trend_chart_leaks_no_agent_id():
+    # Public-repo safety, same posture as test_warmpool_separation_verdict_caveat_leaks_no_agent_id:
+    # the rendered trust-surface text must never carry a fleet agent-id (a4<letter><digit>).
+    rows = [_wp_row(0.27, "run-a"), _wp_row(1.06, "run-b")]
+    out = render.render_warmpool_separation_trend_chart(rows)
+    assert re.search(r"a4[a-z]\d", out) is None
+
+
 def _run_all():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:

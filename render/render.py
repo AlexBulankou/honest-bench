@@ -3516,6 +3516,50 @@ def render_known_anomalies_detail(results, kata_results=None, history_rows=None)
     return "\n".join(lines).rstrip() + "\n"
 
 
+def render_warmpool_separation_trend_chart(history_rows):
+    """Render the warm/cold separation-ratio history as a Unicode block-bar chart (WS2 follow-up
+    to #6890, epic #6669), or "" when INERT (no rows).
+
+    Visual companion to the prose caveats in render_known_anomalies_detail
+    (_warmpool_separation_variance_caveat / _warmpool_separation_verdict_caveat): those disclose
+    the SAME-build cross-fire variance and the near-threshold-verdict defensibility in text; this
+    chart lets a reader see the ratio's fire-over-fire trajectory against the gate at a glance,
+    including WHICH builds moved it (a short controller_digest prefix per bar), rather than
+    scanning the JSONL by hand. Same source (_clean_warmpool_separation_history) as those
+    caveats, so the chart can never show a fire the prose disclosures don't already know about.
+
+    One bar per accrued fire (this store is append-only keyed by run_id, so re-fires of the same
+    build show as separate bars — that repetition IS the signal the #6890 store exists to
+    surface), oldest to newest. A bar below WARMPOOL_SEPARATION_MIN_RATIO is annotated
+    " (below gate)" using the exact comparison _warmpool_separation_caveat uses
+    (ratio < WARMPOOL_SEPARATION_MIN_RATIO) so the chart's flagging never drifts from the prose's.
+
+    Plain code-block Unicode bars, not mermaid xychart-beta (same GitHub-support rationale as
+    render_throughput_trend_chart / render_density_bars / render_ttfe_bars).
+    """
+    rows = _clean_warmpool_separation_history(history_rows)
+    if not rows:
+        return ""
+    max_ratio = max(r["separation_ratio"] for r in rows)
+    if max_ratio <= 0:
+        return ""
+    label_width = max(len(r["generated_at"][:10]) for r in rows)
+    lines = ["```", "Warm/cold separation ratio — fire-over-fire (gate: {:.1f}x)".format(
+        WARMPOOL_SEPARATION_MIN_RATIO
+    ), ""]
+    for r in rows:
+        ratio = r["separation_ratio"]
+        date_label = r["generated_at"][:10].ljust(label_width)
+        digest = r["controller_digest"]
+        digest_label = digest[7:15] if digest.startswith("sha256:") else digest[:8]
+        bar = "█" * max(1, round(ratio / max_ratio * _TREND_BAR_WIDTH))
+        suffix = " (below gate)" if ratio < WARMPOOL_SEPARATION_MIN_RATIO else ""
+        lines.append(f"{date_label} {digest_label} {bar} {ratio:.2f}x{suffix}")
+    lines.append("```")
+    lines.append("")
+    return "\n".join(lines)
+
+
 # --- hb#134: operating-envelope headline table -------------------------------------------
 # The single "given MY load, what wait do I budget?" table — the reader's only real question.
 # It does NOT re-measure anything: it reconciles the warm/wait numbers already measured across

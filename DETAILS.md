@@ -44,6 +44,15 @@ _Clear as of the latest measured refresh — no warm-slower-than-cold inversion 
 
 Per-fire measurement-regime disclosures for the concurrent-burst sweep render inline in [README.md](README.md#does-it-hold-at-cluster-scale) next to each burst — the disclosure can repeat once per date/regime group, so it is not summarized here.
 
+```
+Warm/cold separation ratio — fire-over-fire (gate: 1.8x)
+
+2026-08-16 ded4a8bb ████████ 1.42x (below gate)
+2026-08-16 41c8c6bc ████████████████████ 3.75x
+2026-08-17 f511a1ab █ 0.27x (below gate)
+2026-08-17 f511a1ab ██████ 1.06x (below gate)
+```
+
 ## Burst Create — TTFE Corroboration
 
 The headline burst count is **pod-Ready** — but a pod can report Ready before it can run your code. TTFE is the stronger claim: the sandbox *executed its first instruction and returned a result*. This block corroborates the two; the **gap** is sandboxes that reported Ready but had not yet run code.
