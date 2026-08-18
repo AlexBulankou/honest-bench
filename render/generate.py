@@ -78,6 +78,7 @@ def _load_render():
         mod.render_recipe,
         mod.render_trend,
         mod.render_throughput_trend_chart,
+        mod.render_warmpool_separation_trend_chart,
         mod.check_render_downgrade,
         mod.render_stale_banner,
         mod.resolve_default_as_of,
@@ -101,6 +102,7 @@ def _load_render():
  render_vcpu_footprint,
  render_storage_config, render_measurement_path_diagram, render_recipe, render_trend,
  render_throughput_trend_chart,
+ render_warmpool_separation_trend_chart,
  check_render_downgrade,
  render_stale_banner, resolve_default_as_of,
  render_commit_distance_banner, resolve_commit_distance, resolve_fork_upstreams) = _load_render()
@@ -451,6 +453,13 @@ def build_details(root=None):
             results, kata_results=kr, history_rows=warmpool_separation_history)
         if known_anomalies_detail.strip():
             sections.append(known_anomalies_detail.rstrip())
+        # WS2 (epic #6669): visual companion to the "Same-build separation-ratio variance" /
+        # "Single-fire separation verdict defensibility" prose above — same source
+        # (warmpool_separation_history, loaded once above the loop), same INERT-when-empty
+        # posture. Placed immediately after the anomalies detail section it visualizes.
+        separation_chart = render_warmpool_separation_trend_chart(warmpool_separation_history)
+        if separation_chart.strip():
+            sections.append(separation_chart.rstrip())
         for renderer in (
             render_burst_corroboration,
             render_warm_bind_decomposition,
