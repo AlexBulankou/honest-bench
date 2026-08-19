@@ -314,7 +314,31 @@ if [ "${HB_FORK_BUILD:-}" = "1" ]; then
 else
   echo "==> installing OSS controller from upstream main"
 fi
+
+# WS3 (epic #6669, "stamp-the-pin-per-fire"): capture the upstream sha the install
+# resolves so the NON-FORK path can stamp BENCH_UPSTREAM_REF from it. The fork path
+# already exports BENCH_UPSTREAM_REF (+BENCH_FORK_SHA) above; a plain upstream fire
+# otherwise omits the pin even though install-controller-from-main.sh resolves a real
+# sha. RESOLVED_SHA lives only inside that subprocess, so it hands the value back via
+# this file. Set unconditionally (harmless for the fork path, which ignores it).
+HB_RESOLVED_SHA_OUT="$(mktemp)"; export HB_RESOLVED_SHA_OUT
+
 bash recipe/install-controller-from-main.sh
+
+# Non-fork path only: stamp BENCH_UPSTREAM_REF from the captured sha. Shape-validate
+# as a git sha (schema render/schema.py _UPSTREAM_REF accepts a 40-hex sha) before
+# exporting; a missing/blank/malformed capture leaves the pin unset (omit-when-absent,
+# never guessed) rather than stamping garbage.
+if [ "${HB_FORK_BUILD:-}" != "1" ]; then
+  HB_RESOLVED_SHA="$(cat "$HB_RESOLVED_SHA_OUT" 2>/dev/null || true)"
+  if echo "$HB_RESOLVED_SHA" | grep -Eq '^[0-9a-f]{7,40}$'; then
+    export BENCH_UPSTREAM_REF="$HB_RESOLVED_SHA"
+    echo "==> upstream_ref pin: BENCH_UPSTREAM_REF=$BENCH_UPSTREAM_REF (resolved from upstream main)"
+  else
+    echo "==> upstream_ref pin: no shape-valid sha captured — leaving BENCH_UPSTREAM_REF unset (page renders no source= leg)"
+  fi
+fi
+rm -f "$HB_RESOLVED_SHA_OUT"
 
 # controller_digest provenance (hb#439, mirrors the node-image/runsc pattern
 # above): the resolved sha256 image digest of the LIVE controller container,
