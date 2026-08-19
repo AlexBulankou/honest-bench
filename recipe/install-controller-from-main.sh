@@ -96,6 +96,17 @@ SRC="$(find "$WORK" -maxdepth 1 -type d -name 'agent-sandbox-*' | head -1)"
 RESOLVED_SHA="${SRC##*-}"
 log "resolved tree: $(basename "$SRC")"
 
+# WS3 (epic #6669, "stamp-the-pin-per-fire"): if the caller sets HB_RESOLVED_SHA_OUT,
+# write the resolved upstream sha to that path so a parent process (e.g.
+# cb-measure-gke-sandbox.sh's non-fork path) can stamp BENCH_UPSTREAM_REF from it
+# — RESOLVED_SHA is resolved only inside this subprocess, so a bare export wouldn't
+# propagate. Additive + omit-when-absent: unset env is a no-op for existing callers.
+if [ -n "${HB_RESOLVED_SHA_OUT:-}" ]; then
+  printf '%s' "$RESOLVED_SHA" > "$HB_RESOLVED_SHA_OUT" \
+    && log "wrote resolved sha to HB_RESOLVED_SHA_OUT=${HB_RESOLVED_SHA_OUT}" \
+    || log "WARN: failed to write HB_RESOLVED_SHA_OUT=${HB_RESOLVED_SHA_OUT} (non-fatal)"
+fi
+
 # 2. resolve ko:// image placeholders to a real, pullable image --------------
 MANIFEST_DIR="${SRC}/k8s"
 if [ "$BUILD_MODE" = "source" ]; then
