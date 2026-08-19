@@ -182,17 +182,35 @@ def _stale_carry_forward_caveat(section, prov, *, label):
     quietly" failure the trust-surface idiom forbids: the section's own freshness has silently
     regressed (still-valid rig -> now-stale rig) with no loud reopen.
 
-    Returns "" (INERT) when either machine_type is absent or they match — nothing to disclose,
-    mirroring `_machine_class_caveat`'s fail-closed shape (no claim without two comparable,
-    validated values). Deliberately scoped to disclosure only: detecting an INTRA-run mixed-rig
-    confound (comparing a section against sibling sections, not the top-level run) is #608's
-    separate, still-open concern.
+    Returns "" (INERT) only when the CURRENT run's `machine_type` itself is absent — with no
+    current value there is nothing to compare against, mirroring `_machine_class_caveat`'s
+    fail-closed shape (no claim without a comparable, validated value). Deliberately scoped to
+    disclosure only: detecting an INTRA-run mixed-rig confound (comparing a section against
+    sibling sections, not the top-level run) is #608's separate, still-open concern.
+
+    hb#662 gap-2 end-state fix: when the CURRENT machine_type IS known but this section's own
+    `machine_type` is absent (the section predates provenance stamping, or its harness never
+    stamped one), the prior code returned "" here — silently rendering as if the section were
+    still fresh, exactly the "downgrades trust quietly" failure #4420 forbids. A missing
+    comparison value is not the same as a matching one; it must fail loud (rig-unattributed), not
+    silently agree — this mirrors `_machine_class_caveat`'s own guard-then-fill precedent for the
+    symmetric "sandbox run present, machine_type absent" case.
     """
     if not isinstance(section, dict) or not isinstance(prov, dict):
         return ""
-    section_mt = section.get("machine_type")
     current_mt = prov.get("machine_type")
-    if not section_mt or not current_mt or section_mt == current_mt:
+    if not current_mt:
+        return ""
+    section_mt = section.get("machine_type")
+    if not section_mt:
+        return (
+            f"> ⚠️ **Rig un-attributed:** this {label} figure has no daily producer and its last "
+            "fire never stamped `machine_type` (pre-provenance data or an unstamped harness run), "
+            f"so it cannot be compared against this run's `{current_mt}`. Treat this section as "
+            "unattributed — a rig change since its last fire cannot be ruled out — until a fresh "
+            "fire republishes it with a stamped machine_type."
+        )
+    if section_mt == current_mt:
         return ""
     return (
         f"> ⚠️ **Stale — no producer since rig change:** this {label} figure has no daily "
