@@ -187,6 +187,38 @@ def test_prior_node_count_bool_and_noninty_rejected():
     _check("prior_node_count" not in r2["provenance"], "string prior_node_count must be dropped, not coerced")
 
 
+def test_prior_fork_provenance_survives_build_results():
+    # hb#665 regression, same shape as test_fork_provenance_survives_build_results (#6682):
+    # build_provenance() stamps prior_fork_sha/prior_fork_fix_count into its local dict
+    # when this run's own fork_sha is present and the lineage differs from the prior
+    # published run, but that stamping only matters if PROVENANCE_FIELDS also allow-lists
+    # the two prior_* names — otherwise _coerce_provenance() silently drops them before
+    # render/schema.py's validator ever sees them, the exact #6828-class gap.
+    r = rs.build_results(
+        [],
+        _prov(fork_sha="dd63bb1bd77a6e6ac21a8b4d1e6e8b9a2c3d4e5f",
+              fork_fix_count=0,
+              prior_fork_sha="4c71c2cf9fa7c1039357d52701f80faa14971e81",
+              prior_fork_fix_count=1),
+        GEN_AT,
+    )
+    p = r["provenance"]
+    _check(p.get("prior_fork_sha") == "4c71c2cf9fa7c1039357d52701f80faa14971e81",
+           f"prior_fork_sha dropped: {p}")
+    _check(p.get("prior_fork_fix_count") == 1 and not isinstance(p.get("prior_fork_fix_count"), bool),
+           f"prior_fork_fix_count dropped or wrong type: {p}")
+
+
+def test_prior_fork_fix_count_bool_and_noninty_rejected():
+    # Mirrors fork_fix_count's isinstance(bool)-before-isinstance(int) guard shape.
+    r = rs.build_results([], _prov(prior_fork_fix_count=True), GEN_AT)
+    _check("prior_fork_fix_count" not in r["provenance"],
+           "bool prior_fork_fix_count must be dropped, not kept as 1")
+    r2 = rs.build_results([], _prov(prior_fork_fix_count="2"), GEN_AT)
+    _check("prior_fork_fix_count" not in r2["provenance"],
+           "string prior_fork_fix_count must be dropped, not coerced")
+
+
 def test_cluster_substrate_mandatory_and_closed():
     try:
         rs.build_results([], _prov(cluster_substrate=None), GEN_AT)

@@ -286,6 +286,16 @@ PROVENANCE_FIELDS = (
     "prior_node_image",
     "prior_controller_digest",
     "prior_suite_git_sha",
+    # Prior-run fork_sha / fork_fix_count (hb#665 lineage-confound clause, mirrors
+    # prior_controller_digest/prior_suite_git_sha's "only if it differs" gate):
+    # build_provenance() stamps these only when THIS run is itself a fork build
+    # (fork_sha present) and the lineage differs from the previously published run
+    # — the exact confound PR #661 hit (fork_fix_count 1->0, fork_sha
+    # 4c71c2cf->dd63bb1b alongside a 3.9x swing). prior_fork_sha is a generic string
+    # (falls through to the passthrough branch below, like fork_sha itself);
+    # prior_fork_fix_count is an int and needs its own coercion branch (see below).
+    "prior_fork_sha",
+    "prior_fork_fix_count",
 )
 SCENARIO_FIELDS = (
     "name",
@@ -1559,6 +1569,11 @@ def _coerce_provenance(raw: dict) -> dict:
         elif f == "fork_fix_count":
             # Numeric (int), not string — mirrors node_count's isinstance guard;
             # the generic string passthrough below never fires for this field.
+            if isinstance(v, bool) or not isinstance(v, int):
+                continue
+            out[f] = v
+        elif f == "prior_fork_fix_count":
+            # Numeric (int), not string — mirrors fork_fix_count's isinstance guard.
             if isinstance(v, bool) or not isinstance(v, int):
                 continue
             out[f] = v

@@ -2633,6 +2633,8 @@ def _north_star_delta_flag(
     current_machine_type=None, prior_machine_type=None,
     current_controller_digest=None, prior_controller_digest=None,
     current_suite_git_sha=None, prior_suite_git_sha=None,
+    current_fork_sha=None, prior_fork_sha=None,
+    current_fork_fix_count=None, prior_fork_fix_count=None,
 ):
     """One flagged-runtime line, or None if this runtime has nothing to flag.
 
@@ -2661,6 +2663,19 @@ def _north_star_delta_flag(
     is a confound on the TTFE swing. Same ride-ON-a-flagged-delta rule (a node-image
     change with no ttfe swing/flip is not a trust downgrade), and all three confound
     clauses compose — machine_type, node_count, and node_image can appear on one flag.
+
+    When the flagged delta ALSO spans a fork-lineage change — a different fork_sha
+    and/or fork_fix_count between the prior and current published run (hb#665, the
+    confound axis PR #661 hit: fork_fix_count 1→0, fork_sha 4c71c2cf→dd63bb1b alongside
+    a 3.9x swing) — a `· fork_sha X→Y` and/or `· fork_fix_count X→Y` clause is appended,
+    same ride-ON-a-flagged-delta rule and same two-independent-clauses shape as
+    controller_digest/suite_git_sha above (hb#665's issue text sketched a single combined
+    "lineage fork@X(+N) → upstream@Y(+M)" phrasing, but that bakes in a fix_count==0-means-
+    upstream naming convention that doesn't generalize — e.g. a fix_count of 2→1 is still a
+    fork on both sides, not an "upstream" swap — so this keeps the simpler, already-
+    established per-field style instead). fork_sha is shown truncated the same way
+    controller_digest is (a full 40-hex sha would dominate the line); fork_fix_count is a
+    small int, shown in full.
 
     When the flagged delta ALSO spans a build-lineage change — a different
     controller_digest and/or suite_git_sha between the prior and current published run
@@ -2734,6 +2749,22 @@ def _north_star_delta_flag(
         and current_suite_git_sha != prior_suite_git_sha
     ):
         flag += f" · suite_git_sha `{prior_suite_git_sha}`→`{current_suite_git_sha}`"
+    if (
+        isinstance(current_fork_sha, str)
+        and isinstance(prior_fork_sha, str)
+        and current_fork_sha.strip()
+        and prior_fork_sha.strip()
+        and current_fork_sha != prior_fork_sha
+    ):
+        flag += f" · fork_sha `{prior_fork_sha[:19]}…` → `{current_fork_sha[:19]}…`"
+    if (
+        isinstance(current_fork_fix_count, int)
+        and not isinstance(current_fork_fix_count, bool)
+        and isinstance(prior_fork_fix_count, int)
+        and not isinstance(prior_fork_fix_count, bool)
+        and current_fork_fix_count != prior_fork_fix_count
+    ):
+        flag += f" · fork_fix_count {prior_fork_fix_count}→{current_fork_fix_count}"
     return flag
 
 
@@ -2787,8 +2818,9 @@ def _north_star_delta_caveat(results, kata_results=None):
     harness/run.py's build_provenance, carried forward from the previously published
     run, same mechanism as _machine_class_caveat's prior_machine_type) and compares it
     to this run's measured p95 per runtime. Also reads the `prior_controller_digest` /
-    `prior_suite_git_sha` fields (#6828, same "only if it differs" stamping gate) so a
-    build-lineage confound self-disambiguates on-page alongside the existing
+    `prior_suite_git_sha` fields (#6828, same "only if it differs" stamping gate) and the
+    `prior_fork_sha` / `prior_fork_fix_count` fields (hb#665, same gate) so a build-lineage
+    or fork-lineage confound self-disambiguates on-page alongside the existing
     machine_type/node_count/node_image confound clauses. Pure function of (results,
     kata_results); returns "" when nothing to flag so callers can unconditionally
     append it.
@@ -2807,6 +2839,10 @@ def _north_star_delta_caveat(results, kata_results=None):
     current_cd_by_runtime = {}
     prior_sha_by_runtime = {}
     current_sha_by_runtime = {}
+    prior_fs_by_runtime = {}
+    current_fs_by_runtime = {}
+    prior_ffc_by_runtime = {}
+    current_ffc_by_runtime = {}
     prov = _clean_provenance(results.get("provenance"))
     measured_runtime = prov.get("runtime") or "gvisor"
     prior_p95 = prov.get("prior_warmpool_ttfe_p95_ms")
@@ -2832,6 +2868,18 @@ def _north_star_delta_caveat(results, kata_results=None):
         current_sha_by_runtime[measured_runtime] = prov["suite_git_sha"]
     if isinstance(prov.get("prior_suite_git_sha"), str):
         prior_sha_by_runtime[measured_runtime] = prov["prior_suite_git_sha"]
+    if isinstance(prov.get("fork_sha"), str):
+        current_fs_by_runtime[measured_runtime] = prov["fork_sha"]
+    if isinstance(prov.get("prior_fork_sha"), str):
+        prior_fs_by_runtime[measured_runtime] = prov["prior_fork_sha"]
+    if isinstance(prov.get("fork_fix_count"), int) and not isinstance(
+        prov.get("fork_fix_count"), bool
+    ):
+        current_ffc_by_runtime[measured_runtime] = prov["fork_fix_count"]
+    if isinstance(prov.get("prior_fork_fix_count"), int) and not isinstance(
+        prov.get("prior_fork_fix_count"), bool
+    ):
+        prior_ffc_by_runtime[measured_runtime] = prov["prior_fork_fix_count"]
     if isinstance(kata_results, dict):
         kp = _clean_provenance(kata_results.get("provenance"))
         if kp.get("runtime") == "kata-microvm":
@@ -2858,6 +2906,18 @@ def _north_star_delta_caveat(results, kata_results=None):
                 current_sha_by_runtime["kata-microvm"] = kp["suite_git_sha"]
             if isinstance(kp.get("prior_suite_git_sha"), str):
                 prior_sha_by_runtime["kata-microvm"] = kp["prior_suite_git_sha"]
+            if isinstance(kp.get("fork_sha"), str):
+                current_fs_by_runtime["kata-microvm"] = kp["fork_sha"]
+            if isinstance(kp.get("prior_fork_sha"), str):
+                prior_fs_by_runtime["kata-microvm"] = kp["prior_fork_sha"]
+            if isinstance(kp.get("fork_fix_count"), int) and not isinstance(
+                kp.get("fork_fix_count"), bool
+            ):
+                current_ffc_by_runtime["kata-microvm"] = kp["fork_fix_count"]
+            if isinstance(kp.get("prior_fork_fix_count"), int) and not isinstance(
+                kp.get("prior_fork_fix_count"), bool
+            ):
+                prior_ffc_by_runtime["kata-microvm"] = kp["prior_fork_fix_count"]
 
     flags = []
     for label, p95, _cell, _p50, _n, _outcome in rows:
@@ -2879,6 +2939,10 @@ def _north_star_delta_caveat(results, kata_results=None):
             prior_controller_digest=prior_cd_by_runtime.get(rt),
             current_suite_git_sha=current_sha_by_runtime.get(rt),
             prior_suite_git_sha=prior_sha_by_runtime.get(rt),
+            current_fork_sha=current_fs_by_runtime.get(rt),
+            prior_fork_sha=prior_fs_by_runtime.get(rt),
+            current_fork_fix_count=current_ffc_by_runtime.get(rt),
+            prior_fork_fix_count=prior_ffc_by_runtime.get(rt),
         )
         if flag:
             flags.append(flag)

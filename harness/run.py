@@ -413,6 +413,47 @@ def _read_prior_provenance_suite_git_sha(out_path: pathlib.Path) -> str | None:
     return sha.strip()
 
 
+def _read_prior_provenance_fork_sha(out_path: pathlib.Path) -> str | None:
+    """Read the existing results file's provenance.fork_sha (hb#665 lineage confound).
+
+    Best-effort, mirroring _read_prior_provenance_suite_git_sha: a missing/malformed
+    file or an absent/non-string fork_sha means there is nothing to compare against,
+    so return None (build_provenance then omits prior_fork_sha and no lineage clause
+    renders on the North Star delta caveat). A prebuilt-image (non-fork) prior run
+    stamps no fork_sha at all, so this correctly returns None for that case too.
+    """
+    try:
+        prior = json.loads(out_path.read_text())
+    except (FileNotFoundError, ValueError):
+        return None
+    prov = prior.get("provenance") if isinstance(prior, dict) else None
+    fs = prov.get("fork_sha") if isinstance(prov, dict) else None
+    if not isinstance(fs, str) or not fs.strip():
+        return None
+    return fs.strip()
+
+
+def _read_prior_provenance_fork_fix_count(out_path: pathlib.Path) -> int | None:
+    """Read the existing results file's provenance.fork_fix_count (hb#665 lineage confound).
+
+    Best-effort, mirroring _read_prior_provenance_fork_sha: a missing/malformed file
+    or an absent/non-int fork_fix_count means there is nothing to compare against, so
+    return None. bool is rejected (bool is an int subclass) so a stray True/False
+    can't alias a count. 0 is a valid fork_fix_count (a fork exactly at its upstream
+    base) and is not rejected here — only fork_sha's presence/absence gates whether
+    the lineage clause fires downstream.
+    """
+    try:
+        prior = json.loads(out_path.read_text())
+    except (FileNotFoundError, ValueError):
+        return None
+    prov = prior.get("provenance") if isinstance(prior, dict) else None
+    n = prov.get("fork_fix_count") if isinstance(prov, dict) else None
+    if isinstance(n, bool) or not isinstance(n, int):
+        return None
+    return n
+
+
 def _read_prior_warmpool_ttfe_p95(out_path: pathlib.Path) -> float | None:
     """Read the existing results file's warmpool_cold_start TTFE p95 (hb#5414).
 
@@ -1397,6 +1438,8 @@ def build_provenance(
     prior_node_image: str | None = None,
     prior_controller_digest: str | None = None,
     prior_suite_git_sha: str | None = None,
+    prior_fork_sha: str | None = None,
+    prior_fork_fix_count: int | None = None,
 ) -> dict:
     prov = {
         "cluster_substrate": substrate,
@@ -1486,6 +1529,23 @@ def build_provenance(
             prov["fork_fix_count"] = int(fork_fix_count)
         except ValueError:
             pass  # non-int env -> omit; the schema would drop it anyway
+    # Prior-run fork_sha / fork_fix_count (hb#665, mirrors prior_controller_digest's "only
+    # if it differs" gate): carry the PREVIOUSLY published lineage identifiers forward as
+    # their own fields so the renderer can data-key a lineage-change clause on the North
+    # Star refresh-delta caveat off two closed-schema-validated values — the exact confound
+    # PR #661 hit (fork_fix_count 1->0, fork_sha 4c71c2cf->dd63bb1b alongside a 3.9x swing).
+    # Gated on THIS run's own fork_sha being present: a prebuilt-image (non-fork) fire has
+    # no current lineage to compare against, so it never emits a spurious "prior was a fork,
+    # now it isn't" clause here — that class of confound is already covered by the
+    # controller_digest/suite_git_sha clauses above. A same-lineage refresh needs no clause,
+    # and a first-ever fork fire (no prior on record) never emits a spurious comparison.
+    if fork_sha:
+        if prior_fork_sha and prior_fork_sha != fork_sha:
+            prov["prior_fork_sha"] = prior_fork_sha
+        if prior_fork_fix_count is not None and prior_fork_fix_count != prov.get(
+            "fork_fix_count"
+        ):
+            prov["prior_fork_fix_count"] = prior_fork_fix_count
     # Matrix runtime column (#3942/#830): emitted only for sandbox-family products
     # so render flips that runtime's rows to measured and the other to pending.
     runtime = _matrix_runtime_for(product)
@@ -1611,6 +1671,8 @@ def main(argv=None) -> int:
     prior_node_image = _read_prior_provenance_node_image(out)
     prior_controller_digest = _read_prior_provenance_controller_digest(out)
     prior_suite_git_sha = _read_prior_provenance_suite_git_sha(out)
+    prior_fork_sha = _read_prior_provenance_fork_sha(out)
+    prior_fork_fix_count = _read_prior_provenance_fork_fix_count(out)
     raw = merge_seed_placeholders(raw, prior_scenarios)
     # Per-mode SLO cluster-rate legs (hb#132/#149): fresh env-armed sweep
     # derivations merge first (fresh wins), then prior committed triples carry
@@ -1741,6 +1803,8 @@ def main(argv=None) -> int:
             prior_node_image=prior_node_image,
             prior_controller_digest=prior_controller_digest,
             prior_suite_git_sha=prior_suite_git_sha,
+            prior_fork_sha=prior_fork_sha,
+            prior_fork_fix_count=prior_fork_fix_count,
         ),
         generated_at=generated_at, product=args.product,
         scale_proof=scale_proof, stepup=stepup, warm_vs_cold=warm_vs_cold_obj,
