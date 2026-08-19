@@ -189,7 +189,8 @@
         "node_count": 16
       }
     ],
-    "thpt_retention": 0.15
+    "thpt_retention": 0.15,
+    "machine_type": "e2-standard-16"
   },
   "scenarios": [
     {
