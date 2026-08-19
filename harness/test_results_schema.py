@@ -149,6 +149,44 @@ def test_fork_fix_count_bool_and_noninty_rejected():
     _check("fork_fix_count" not in r2["provenance"], "string fork_fix_count must be dropped, not coerced")
 
 
+def test_prior_provenance_survives_build_results():
+    # #6828 regression: build_provenance() (harness/run.py) stamps
+    # prior_node_count/prior_node_image/prior_controller_digest/prior_suite_git_sha
+    # into its local dict whenever a prior published value differs, and render.py's
+    # _north_star_delta_flag already reads all four back out of the persisted
+    # provenance dict — but this module's own PROVENANCE_FIELDS allow-list (the
+    # one _coerce_provenance actually filters against) never gained matching
+    # entries, so build_results() silently dropped all four before they ever
+    # reached results/latest.json. Same gap shape as #6682's fork-provenance miss
+    # above; this test closes the prior_* leg of it.
+    r = rs.build_results(
+        [],
+        _prov(prior_node_count=2,
+              prior_node_image="v1.31.1-gke.1846000",
+              prior_controller_digest="sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+              prior_suite_git_sha="def5678"),
+        GEN_AT,
+    )
+    p = r["provenance"]
+    _check(p.get("prior_node_count") == 2 and not isinstance(p.get("prior_node_count"), bool),
+           f"prior_node_count dropped or wrong type: {p}")
+    _check(p.get("prior_node_image") == "v1.31.1-gke.1846000", f"prior_node_image dropped: {p}")
+    _check(
+        p.get("prior_controller_digest")
+        == "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        f"prior_controller_digest dropped: {p}",
+    )
+    _check(p.get("prior_suite_git_sha") == "def5678", f"prior_suite_git_sha dropped: {p}")
+
+
+def test_prior_node_count_bool_and_noninty_rejected():
+    # Mirrors node_count's/fork_fix_count's isinstance(bool)-before-isinstance(int) guard shape.
+    r = rs.build_results([], _prov(prior_node_count=True), GEN_AT)
+    _check("prior_node_count" not in r["provenance"], "bool prior_node_count must be dropped, not kept as 1")
+    r2 = rs.build_results([], _prov(prior_node_count="2"), GEN_AT)
+    _check("prior_node_count" not in r2["provenance"], "string prior_node_count must be dropped, not coerced")
+
+
 def test_cluster_substrate_mandatory_and_closed():
     try:
         rs.build_results([], _prov(cluster_substrate=None), GEN_AT)

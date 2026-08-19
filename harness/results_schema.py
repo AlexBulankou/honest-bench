@@ -271,6 +271,21 @@ PROVENANCE_FIELDS = (
     "fork_sha",
     "fork_base_upstream_sha",
     "fork_fix_count",
+    # Prior-run node_count/node_image/controller_digest/suite_git_sha (#6828, same
+    # "only if it differs" stamping gate as prior_machine_type): build_provenance()
+    # in harness/run.py already populates these four keys, and render.py's
+    # _north_star_delta_flag already reads them back out of the persisted
+    # provenance dict — but neither joined a matching entry here, so
+    # _coerce_provenance() silently dropped all four before they ever reached
+    # results/latest.json (same gap shape as the #6682 fork-provenance miss
+    # above). prior_node_image/prior_controller_digest/prior_suite_git_sha are
+    # generic strings (fall through to the passthrough branch below);
+    # prior_node_count is an int and needs its own branch (see below), mirroring
+    # node_count's isinstance guard.
+    "prior_node_count",
+    "prior_node_image",
+    "prior_controller_digest",
+    "prior_suite_git_sha",
 )
 SCENARIO_FIELDS = (
     "name",
@@ -1532,6 +1547,12 @@ def _coerce_provenance(raw: dict) -> dict:
         if v is None:
             continue
         if f == "node_count":
+            if isinstance(v, bool) or not isinstance(v, int):
+                continue
+            out[f] = v
+        elif f == "prior_node_count":
+            # Numeric (int), not string — mirrors node_count's isinstance guard;
+            # the generic string passthrough below never fires for this field.
             if isinstance(v, bool) or not isinstance(v, int):
                 continue
             out[f] = v
