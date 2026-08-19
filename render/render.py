@@ -256,13 +256,25 @@ def _mixed_rig_confound_caveat(results):
     any single section's own value changed vs. its own prior fire (that axis is `_stale_carry_
     forward_caveat`'s); this check only asks whether the sections agree with each other RIGHT NOW.
 
-    Returns "" (INERT) when fewer than two distinct machine classes are present across every
-    section that stamped one — the common case where every section measured on the same rig, or
-    at most one section stamped `machine_type` at all — mirroring the sibling checks' fail-closed
-    shape (no claim without ≥2 comparable, validated values).
+    Returns "" (INERT) when there is nothing to compare — either every stamped section agrees, or
+    at most one section stamped `machine_type` at all with no other section present to contrast
+    against — mirroring the sibling checks' fail-closed shape (no claim without ≥2 comparable
+    data points, whether both are validated values or one is a validated value and the other a
+    confirmed-absent stamp).
+
+    hb#663 fix: a section that IS present (schema-validates) but never stamped its own
+    `machine_type` used to be silently `continue`d out of the count — dropped from consideration
+    exactly like a byte-absent section, indistinguishable from "this section agrees with
+    everyone else". That is the same absent-field-silent-skip failure hb#662 gap-2 fixed in
+    `_stale_carry_forward_caveat`: a missing comparison value is not the same as a matching one.
+    Present-but-unattributed sections are now tracked in their own bucket and folded into the
+    caveat text (mirroring that fix's "Rig un-attributed" language) whenever at least one OTHER
+    section (or top-level provenance) DID stamp a known class — so "known class X + unattributed
+    section Y" surfaces as loudly as "known class X + known class Z".
     """
     prov = _clean_provenance(results.get("provenance"))
     seen = {}
+    unattributed = []
     top_mt = prov.get("machine_type") if isinstance(prov, dict) else None
     if top_mt:
         seen.setdefault(top_mt, []).append("top-level provenance")
@@ -271,16 +283,27 @@ def _mixed_rig_confound_caveat(results):
         if not isinstance(section, dict):
             continue
         mt = section.get("machine_type")
-        if not mt:
-            continue
-        seen.setdefault(mt, []).append(label)
-    if len(seen) < 2:
+        if mt:
+            seen.setdefault(mt, []).append(label)
+        else:
+            unattributed.append(label)
+    if not seen or (len(seen) < 2 and not unattributed):
         return ""
-    parts = "; ".join(f"`{mt}` ({', '.join(labels)})" for mt, labels in sorted(seen.items()))
+    parts = [f"`{mt}` ({', '.join(labels)})" for mt, labels in sorted(seen.items())]
+    if unattributed:
+        parts.append(f"`unattributed` ({', '.join(unattributed)})")
+    parts_str = "; ".join(parts)
+    if len(seen) >= 2:
+        return (
+            "> ⚠️ **Mixed rig within this run:** this run's sections were not all measured on the "
+            f"same machine class — {parts_str}. Cross-section comparisons on this page may reflect "
+            "hardware differences, not workload differences, until every section re-measures on one rig."
+        )
     return (
-        "> ⚠️ **Mixed rig within this run:** this run's sections were not all measured on the "
-        f"same machine class — {parts}. Cross-section comparisons on this page may reflect "
-        "hardware differences, not workload differences, until every section re-measures on one rig."
+        "> ⚠️ **Mixed rig within this run (partially unattributed):** this run has a known "
+        f"machine class alongside sections that never stamped one — {parts_str}. The unattributed "
+        "sections cannot be ruled out as measured on a different rig; treat cross-section "
+        "comparisons as unverified until every section stamps a `machine_type`."
     )
 
 
