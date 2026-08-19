@@ -91,6 +91,10 @@ substitutions:
   # `fork@<sha> (+N fixes over upstream@<base>)` into results provenance:
   #   gcloud builds triggers run hb-refresh-gke-sandbox --project=<PROJECT> \
   #     --substitutions=_HB_FORK_BUILD=1,_HB_FORK_UPSTREAM_REPO=<owner/repo>,_HB_FORK_UPSTREAM_REF=<branch>,_HB_FORK_SHA=<sha>,_HB_FORK_BASE_UPSTREAM_SHA=<base-sha>,_HB_FORK_FIX_COUNT=<N>
+  # For a deliberate diagnostic bisection fire (testing one historical upstream
+  # commit with no fork fixes over it) also set _HB_FORK_ALLOW_DIAGNOSTIC=1,
+  # since _HB_FORK_SHA/_HB_FORK_BASE_UPSTREAM_SHA will be identical and
+  # _HB_FORK_FIX_COUNT will be 0 — the shape the guard below refuses by default.
   # Source-mode ko PUSHES the built image to the KO_DOCKER_REPO wired in the
   # measure step's env below, so the trigger SA needs roles/artifactregistry.writer
   # on that repo (prebuilt mode only pulls). Fail-closed: a requested fork build
@@ -102,6 +106,16 @@ substitutions:
   _HB_FORK_SHA: ""
   _HB_FORK_BASE_UPSTREAM_SHA: ""
   _HB_FORK_FIX_COUNT: ""
+  # hb#648/hb#650: cb-measure-gke-sandbox.sh refuses a fork-build dispatch whose
+  # SHA/count inputs are self-referential (_HB_FORK_SHA == _HB_FORK_BASE_UPSTREAM_SHA)
+  # or carry no staged fix (_HB_FORK_FIX_COUNT=0) — that shape is a bare
+  # clean-upstream reproduction, not a validated fix pin, and hb#650 showed it
+  # can open a real "auto-refresh headline" PR unreviewed. This override was
+  # previously unwired here (script-only), so a deliberate diagnostic bisection
+  # fire (e.g. testing a single historical upstream commit with no fork fixes)
+  # had no way to pass the guard. Default empty ⇒ inert, same fail-closed
+  # behavior as before this substitution existed.
+  _HB_FORK_ALLOW_DIAGNOSTIC: ""
   # #6762 / hb#615 follow-up: ephemeral-cluster node floor. Default 2 preserves
   # the #6743 min-nodes=2 pre-scale fix (the standing daily fire is unchanged).
   # Override at fire time for the S27 controlled re-fire that varies node-count
@@ -242,6 +256,7 @@ steps:
       - "HB_FORK_SHA=${_HB_FORK_SHA}"
       - "HB_FORK_BASE_UPSTREAM_SHA=${_HB_FORK_BASE_UPSTREAM_SHA}"
       - "HB_FORK_FIX_COUNT=${_HB_FORK_FIX_COUNT}"
+      - "HB_FORK_ALLOW_DIAGNOSTIC=${_HB_FORK_ALLOW_DIAGNOSTIC}"
     args:
       - scripts/cb-measure-gke-sandbox.sh
 
