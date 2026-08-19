@@ -983,6 +983,19 @@ _PENDING = "pending"
 # with "this row's N is too small to rank against another row".
 _LOW_N_MARK = "†"
 
+# a4z1 goal-2.1 display-vs-spec audit gap 1: flags a MEASURED per-node throughput rate that
+# renders alongside a row TTFE p95 sitting OVER that column's bar (e.g. a Kata warm cell's
+# `1 /node` next to a 2.2426s p95 under the 1s bar). Not the same condition as the derived-`0`
+# rule a few lines below in thpt_dual_cell() — that rule fires when NO throughput fire ran and
+# a `0` is derived FROM the over-bar p95; this marker fires when a throughput fire DID run and
+# its real rate is printed as-is. The two are different measured quantities (a threshold-
+# crossing RATE over the sample window vs. a latency PERCENTILE), so they can disagree without
+# either being wrong — but shown side-by-side with no disclosure they read as inconsistent.
+# Deliberately NOT reusing _STARSTAR_TAGS: that system is basis-driven (hb#230) and true_ttfe
+# is deliberately excluded from it by doctrine — this is an independent, additive disclosure,
+# not a reversal of that doctrine.
+_RATE_OVER_P95_MARK = "‡"
+
 # N/A-by-construction cell (distinct from `pending`, which awaits a measurement). Used for
 # the resume-from-suspend × Kata+microVM cell: CRIU checkpoint/restore does not transfer to
 # the Kata VM model, so that cell can never be measured — na-by-design, not not-yet-measured.
@@ -1743,6 +1756,14 @@ def _core_metrics_glossary_bullets():
         "that exceeds both bars at every rate — so no compliant operating point exists and the "
         "rate is a measured `0` (tagged `***Z`; see the cold-start floor zero note in the caveat "
         "block below).",
+        f"- **A per-node rate next to a p95 OVER that column's bar (`x /node{_RATE_OVER_P95_MARK}`)** "
+        "— the inverse of the case above, and likewise not a contradiction: the per-node figure "
+        "is a RATE (the fraction of the sample window's activations that cleared the bar), while "
+        "the row's TTFE p95 is a PERCENTILE (the 95th-worst single sample). The two are different "
+        "measured quantities, so a nonzero rate can coexist with an over-bar p95 honestly — e.g. "
+        "most samples clear the bar and a slow tail alone pulls the percentile over it. Tagged "
+        f"`{_RATE_OVER_P95_MARK}` so a reader knows to read this note instead of assuming a "
+        "render error or a stale figure.",
         f"- **{_LOW_N_MARK}** — measured over fewer than N={TTFE_COMPARABILITY_MIN_N} samples: "
         "read it as a single observation, not a distribution; do not rank it against a high-N row.",
         "- **⚠️** — a miss flag: on Execution Success it marks <100% (and prints the "
@@ -2241,6 +2262,20 @@ def render_matrix(results, kata_results=None, include_legend=True):
                         return f"{_PENDING} ({cell_reason})" + upstream_cell_refs(cell_reason)
                     return pending_tok
                 node_half = f"{_fmt_num(m[node_key])} /node"
+                # hb#(gap 1, a4z1 goal-2.1 display-vs-spec audit): this half prints a REAL
+                # measured rate with no cross-check against the row's own p95 — unlike the
+                # derived-`0` branch above, which explicitly gates on p95 vs. bar before
+                # rendering. Flag it when p95 IS measured and sits over this cell's bar, so a
+                # reader isn't left inferring on their own that a nonzero rate next to an
+                # over-bar p95 is a render bug rather than two different measured bases.
+                p95_ms = m.get("ttfe_p95_ms")
+                if (
+                    isinstance(p95_ms, (int, float))
+                    and not isinstance(p95_ms, bool)
+                    and p95_ms / 1000.0 > bar_s
+                    and m[node_key] > 0
+                ):
+                    node_half += f" {_RATE_OVER_P95_MARK}"
                 if cluster_key in m and _landed_cluster_x(m) is not None:
                     # hb#230 ask (a): a per-cluster figure from a certification-FLOOR basis
                     # is a LOWER BOUND on the true sustainable rate (trust-gate-capped, so
@@ -4592,11 +4627,17 @@ def _clean_scale_proof(results):
         measured_at = ma if SCALE_PROOF_FIELDS["measured_at"](ma) else None
     except (TypeError, ValueError):
         measured_at = None
+    mt = sp.get("machine_type")
+    try:
+        machine_type = mt if SCALE_PROOF_FIELDS["machine_type"](mt) else None
+    except (TypeError, ValueError):
+        machine_type = None
     return {
         "points": points,
         "density_retention": dens_ret,
         "thpt_retention": _ratio("thpt_retention"),
         "measured_at": measured_at,
+        "machine_type": machine_type,
     }
 
 
@@ -4661,6 +4702,15 @@ def render_scale_proof(results, heading="## Scale Proof (Linearity Check)"):
             f"_Measured {sp['measured_at'][:10]} — node-count linearity sweep "
             "(point-in-time; refreshed on the next multi-node sweep)._"
         )
+        lines.append("")
+    # hb#(gap-2, a4z1 goal-2.1 display-vs-spec audit): Scale Proof has no daily in-process
+    # producer (same shape as concurrent_burst/at_scale_contention/cluster_saturation, which
+    # already carry this banner) — a rig change since the last multi-node sweep must be
+    # disclosed the same way those sibling sections already disclose it.
+    stale_caveat = _stale_carry_forward_caveat(
+        sp, _clean_provenance(results.get("provenance")), label="scale-proof")
+    if stale_caveat:
+        lines.append(stale_caveat)
         lines.append("")
     return "\n".join(lines)
 

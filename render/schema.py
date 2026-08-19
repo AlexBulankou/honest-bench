@@ -712,6 +712,11 @@ SCALE_PROOF_FIELDS = {
     # across the daily refresh so a point-in-time block is honestly dated apart from
     # the daily-refreshed top-level generated_at. Non-empty string only.
     "measured_at": lambda v: isinstance(v, str) and bool(v),
+    # machine_type: carried-forward rig id for this point-in-time sweep. Optional; when
+    # present and it disagrees with the current run's top-level provenance machine_type,
+    # render_scale_proof() surfaces a stale-carry-forward banner (mirrors concurrent_burst /
+    # at_scale_contention / cluster_saturation, which all already carry this field).
+    "machine_type": lambda v: isinstance(v, str) and bool(_MACHINE_TYPE.match(v)),
 }
 
 # --- #3954 sibling: warm-vs-cold speedup block (TOP-LEVEL warm_vs_cold object) -----------
