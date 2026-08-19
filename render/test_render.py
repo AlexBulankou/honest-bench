@@ -1357,6 +1357,47 @@ def test_matrix_at_floor_n_not_marked():
     assert cells[5] == "1.56s (count=30)"
 
 
+def test_matrix_rate_over_p95_bar_is_marked():
+    # the goal-2.1 display-vs-spec audit gap 1: a MEASURED per-node throughput rate that
+    # renders next to a TTFE p95 sitting OVER that column's bar (the Kata-warm '1 /node' beside
+    # a 2.2426s p95 case) is a different measured basis than the derived-0 rule already applied
+    # elsewhere -- it needs its own inline disclosure so the two numbers don't read as a bug.
+    scen = _full_gvisor_scenarios()
+    scen[0]["sla_metrics"]["thpt_under_1s_per_node"] = 1
+    scen[0]["sla_metrics"]["ttfe_p95_ms"] = 2242.6  # over the 1s bar
+    out = render.render_matrix(_matrix_results(scen))
+    warm_line = [l for l in out.splitlines() if "Warm-pool hit" in l][0]
+    cells = [_unlink(c.strip()) for c in warm_line.strip("|").split("|")]
+    assert cells[3] == f"1 /node {render._RATE_OVER_P95_MARK} · pending ({render._CLUSTER_FIRE})"
+
+
+def test_matrix_rate_under_p95_bar_not_marked():
+    # baseline doc-target row: thpt_under_1s_per_node=4 and p95=900ms, well under the 1s bar --
+    # no marker, since there is no over-bar/nonzero-rate tension to disclose.
+    out = render.render_matrix(_matrix_results(_full_gvisor_scenarios()))
+    warm_line = [l for l in out.splitlines() if "Warm-pool hit" in l][0]
+    assert render._RATE_OVER_P95_MARK not in warm_line
+
+
+def test_matrix_rate_over_p95_bar_not_marked_when_p95_absent():
+    # no p95 measured at all -- can't compare against a bar that has nothing to compare to, so
+    # no marker (mirrors the derived-0 rule's own "p95 absent -> pending, not a derived 0" guard).
+    scen = _full_gvisor_scenarios()
+    scen[0]["sla_metrics"]["thpt_under_1s_per_node"] = 1
+    del scen[0]["sla_metrics"]["ttfe_p95_ms"]
+    out = render.render_matrix(_matrix_results(scen))
+    warm_line = [l for l in out.splitlines() if "Warm-pool hit" in l][0]
+    assert render._RATE_OVER_P95_MARK not in warm_line
+
+
+def test_matrix_rate_over_p95_bar_legend_bullet_present():
+    # static legend scaffolding -- present whenever the matrix renders, same posture as the
+    # low-N marker's own legend/footnote test above.
+    out = render.render_matrix(_matrix_results(_full_gvisor_scenarios()))
+    assert render._RATE_OVER_P95_MARK in out
+    assert "different measured quantities" in out
+
+
 def test_matrix_pending_ttfe_never_marked_even_low_n():
     # a low-N row whose TTFE metric is ABSENT renders `pending`, never `pending †` — the marker
     # qualifies a measurement, not a missing cell.
@@ -3299,6 +3340,88 @@ def test_scale_proof_measured_at_absent_no_subline():
 
 def test_scale_proof_absent_renders_nothing():
     assert render.render_scale_proof(_matrix_results(_full_gvisor_scenarios())) == ""
+
+
+def test_scale_proof_stale_caveat_on_rig_change():
+    # the goal-2.1 display-vs-spec audit gap 2: Linearity had no machine_type attribution
+    # and no stale-rig banner, unlike its sibling carried-forward sections (concurrent_burst /
+    # at_scale_contention / cluster_saturation), even though its own data is a carried-forward
+    # point-in-time sweep from before a rig change.
+    out = render.render_scale_proof(
+        _matrix_results(
+            _full_gvisor_scenarios(),
+            provenance={"machine_type": "n2-standard-16"},
+            scale_proof={
+                "scale_points": [
+                    {"node_count": 1, "density": 1.88},
+                    {"node_count": 4, "density": 1.85},
+                ],
+                "density_retention": 0.984,
+                "thpt_retention": 0.99,
+                "machine_type": "e2-standard-16",
+            },
+        )
+    )
+    assert "Stale — no producer since rig change" in out
+    assert "e2-standard-16" in out and "n2-standard-16" in out
+    assert "scale-proof" in out
+
+
+def test_scale_proof_no_stale_caveat_when_rig_matches_current():
+    out = render.render_scale_proof(
+        _matrix_results(
+            _full_gvisor_scenarios(),
+            provenance={"machine_type": "e2-standard-16"},
+            scale_proof={
+                "scale_points": [
+                    {"node_count": 1, "density": 1.88},
+                    {"node_count": 4, "density": 1.85},
+                ],
+                "density_retention": 0.984,
+                "thpt_retention": 0.99,
+                "machine_type": "e2-standard-16",
+            },
+        )
+    )
+    assert "Stale — no producer since rig change" not in out
+
+
+def test_scale_proof_no_stale_caveat_when_no_top_level_provenance():
+    out = render.render_scale_proof(
+        _matrix_results(
+            _full_gvisor_scenarios(),
+            scale_proof={
+                "scale_points": [
+                    {"node_count": 1, "density": 1.88},
+                    {"node_count": 4, "density": 1.85},
+                ],
+                "density_retention": 0.984,
+                "thpt_retention": 0.99,
+                "machine_type": "e2-standard-16",
+            },
+        )
+    )
+    assert "Stale — no producer since rig change" not in out
+
+
+def test_scale_proof_no_stale_caveat_when_machine_type_absent():
+    # Back-compat: pre-existing scale_proof blocks with no machine_type at all render clean,
+    # same posture as pre-#3952 blocks with no measured_at.
+    out = render.render_scale_proof(
+        _matrix_results(
+            _full_gvisor_scenarios(),
+            provenance={"machine_type": "n2-standard-16"},
+            scale_proof={
+                "scale_points": [
+                    {"node_count": 1, "density": 1.88},
+                    {"node_count": 4, "density": 1.85},
+                ],
+                "density_retention": 0.984,
+                "thpt_retention": 0.99,
+            },
+        )
+    )
+    assert "Stale — no producer since rig change" not in out
 
 
 def test_scale_proof_out_of_band_retention_flags_no():
