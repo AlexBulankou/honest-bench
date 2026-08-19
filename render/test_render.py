@@ -3404,9 +3404,9 @@ def test_scale_proof_no_stale_caveat_when_no_top_level_provenance():
     assert "Stale — no producer since rig change" not in out
 
 
-def test_scale_proof_no_stale_caveat_when_machine_type_absent():
-    # Back-compat: pre-existing scale_proof blocks with no machine_type at all render clean,
-    # same posture as pre-#3952 blocks with no measured_at.
+def test_scale_proof_rig_unattributed_caveat_when_machine_type_absent():
+    # hb#662 gap-2 end-state fix: CURRENT machine_type known but the section's own is
+    # absent must fail loud (rig-unattributed), not silently render clean (#4420 guard-then-fill).
     out = render.render_scale_proof(
         _matrix_results(
             _full_gvisor_scenarios(),
@@ -3421,7 +3421,8 @@ def test_scale_proof_no_stale_caveat_when_machine_type_absent():
             },
         )
     )
-    assert "Stale — no producer since rig change" not in out
+    assert "Rig un-attributed" in out
+    assert "n2-standard-16" in out
 
 
 def test_scale_proof_out_of_band_retention_flags_no():
