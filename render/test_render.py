@@ -1358,7 +1358,7 @@ def test_matrix_at_floor_n_not_marked():
 
 
 def test_matrix_rate_over_p95_bar_is_marked():
-    # a4z1 goal-2.1 display-vs-spec audit gap 1: a MEASURED per-node throughput rate that
+    # the goal-2.1 display-vs-spec audit gap 1: a MEASURED per-node throughput rate that
     # renders next to a TTFE p95 sitting OVER that column's bar (the Kata-warm '1 /node' beside
     # a 2.2426s p95 case) is a different measured basis than the derived-0 rule already applied
     # elsewhere -- it needs its own inline disclosure so the two numbers don't read as a bug.
@@ -3343,7 +3343,7 @@ def test_scale_proof_absent_renders_nothing():
 
 
 def test_scale_proof_stale_caveat_on_rig_change():
-    # a4z1 goal-2.1 display-vs-spec audit gap 2: Linearity had no machine_type attribution
+    # the goal-2.1 display-vs-spec audit gap 2: Linearity had no machine_type attribution
     # and no stale-rig banner, unlike its sibling carried-forward sections (concurrent_burst /
     # at_scale_contention / cluster_saturation), even though its own data is a carried-forward
     # point-in-time sweep from before a rig change.

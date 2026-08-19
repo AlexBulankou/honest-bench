@@ -983,7 +983,7 @@ _PENDING = "pending"
 # with "this row's N is too small to rank against another row".
 _LOW_N_MARK = "†"
 
-# a4z1 goal-2.1 display-vs-spec audit gap 1: flags a MEASURED per-node throughput rate that
+# the goal-2.1 display-vs-spec audit gap 1: flags a MEASURED per-node throughput rate that
 # renders alongside a row TTFE p95 sitting OVER that column's bar (e.g. a Kata warm cell's
 # `1 /node` next to a 2.2426s p95 under the 1s bar). Not the same condition as the derived-`0`
 # rule a few lines below in thpt_dual_cell() — that rule fires when NO throughput fire ran and
@@ -2262,7 +2262,7 @@ def render_matrix(results, kata_results=None, include_legend=True):
                         return f"{_PENDING} ({cell_reason})" + upstream_cell_refs(cell_reason)
                     return pending_tok
                 node_half = f"{_fmt_num(m[node_key])} /node"
-                # hb#(gap 1, a4z1 goal-2.1 display-vs-spec audit): this half prints a REAL
+                # hb#(gap 1, the goal-2.1 display-vs-spec audit): this half prints a REAL
                 # measured rate with no cross-check against the row's own p95 — unlike the
                 # derived-`0` branch above, which explicitly gates on p95 vs. bar before
                 # rendering. Flag it when p95 IS measured and sits over this cell's bar, so a
@@ -4703,7 +4703,7 @@ def render_scale_proof(results, heading="## Scale Proof (Linearity Check)"):
             "(point-in-time; refreshed on the next multi-node sweep)._"
         )
         lines.append("")
-    # hb#(gap-2, a4z1 goal-2.1 display-vs-spec audit): Scale Proof has no daily in-process
+    # hb#(gap-2, the goal-2.1 display-vs-spec audit): Scale Proof has no daily in-process
     # producer (same shape as concurrent_burst/at_scale_contention/cluster_saturation, which
     # already carry this banner) — a rig change since the last multi-node sweep must be
     # disclosed the same way those sibling sections already disclose it.
