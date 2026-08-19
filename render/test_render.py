@@ -7497,6 +7497,50 @@ def test_mixed_rig_confound_caveat_inert_when_only_one_section_stamps_machine_ty
     assert render._mixed_rig_confound_caveat(results) == ""
 
 
+# --- hb#663: present-but-unattributed sections must not be silently skipped ------------------
+
+
+def test_mixed_rig_confound_caveat_inert_when_only_section_present_is_unattributed():
+    # A present section with no machine_type of its own, and nothing else to compare it
+    # against -> still nothing to disagree with (mirrors the top-level-absent INERT case above).
+    results = _matrix_results(
+        _full_gvisor_scenarios(),
+        at_scale_contention=_asc(machine_type=None),
+    )
+    assert render._mixed_rig_confound_caveat(results) == ""
+
+
+def test_mixed_rig_confound_caveat_fires_partially_unattributed_on_one_known_plus_absent():
+    # One known class (top-level) + one present-but-unattributed section (at_scale_contention
+    # schema-validates but never stamped its own machine_type) -> must NOT silently drop the
+    # unattributed section from the count; it can't be ruled out as a different rig.
+    results = _matrix_results(
+        _full_gvisor_scenarios(),
+        provenance={"machine_type": "n2-standard-16"},
+        at_scale_contention=_asc(machine_type=None),
+    )
+    out = render._mixed_rig_confound_caveat(results)
+    assert "Mixed rig within this run (partially unattributed)" in out
+    assert "n2-standard-16" in out
+    assert "`unattributed`" in out and "at-scale contention" in out
+
+
+def test_mixed_rig_confound_caveat_folds_unattributed_bucket_into_confirmed_split():
+    # A confirmed two-way split (top-level vs. at_scale_contention) PLUS a third,
+    # present-but-unattributed section (concurrent_burst) -> the confirmed-mixed message still
+    # fires, but the unattributed section is named too, not dropped from the tally.
+    results = _matrix_results(
+        _full_gvisor_scenarios(),
+        provenance={"machine_type": "n2-standard-16"},
+        at_scale_contention=_asc(machine_type="e2-standard-16"),
+        concurrent_burst=_cb(machine_type=None),
+    )
+    out = render._mixed_rig_confound_caveat(results)
+    assert "Mixed rig within this run:" in out
+    assert "n2-standard-16" in out and "e2-standard-16" in out
+    assert "`unattributed`" in out and "concurrent burst" in out
+
+
 def test_known_anomalies_table_mixed_rig_row_reflects_state():
     clean = _matrix_results(_full_gvisor_scenarios(), provenance={"machine_type": "n2-standard-16"})
     out = render.render_known_anomalies_table(clean)
