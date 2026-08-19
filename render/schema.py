@@ -287,6 +287,18 @@ PROVENANCE_FIELDS = {
     "fork_sha": lambda v: isinstance(v, str) and bool(_GITSHA.match(v)),
     "fork_base_upstream_sha": lambda v: isinstance(v, str) and bool(_GITSHA.match(v)),
     "fork_fix_count": lambda v: isinstance(v, int) and not isinstance(v, bool) and 0 < v < 1000,
+    # Prior-run fork_sha / fork_fix_count (hb#665 lineage-confound clause, mirrors
+    # prior_controller_digest/prior_suite_git_sha's "only if it differs" gate above):
+    # stamped by build_provenance only when THIS run is itself a fork build and the
+    # lineage differs from the previously published run — drives the lineage clause
+    # on the North Star refresh-delta caveat, so a swing driven by a fork rebase/rebuild
+    # between fires (the exact PR #661 confound: fork_fix_count 1->0, fork_sha
+    # 4c71c2cf->dd63bb1b alongside a 3.9x swing) self-disambiguates on-page. Same shape
+    # regexes/bounds as the current-run fields.
+    "prior_fork_sha": lambda v: isinstance(v, str) and bool(_GITSHA.match(v)),
+    "prior_fork_fix_count": lambda v: isinstance(v, int)
+    and not isinstance(v, bool)
+    and 0 < v < 1000,
 }
 
 # scenario internal-name -> public display label. A scenario whose name is not in this

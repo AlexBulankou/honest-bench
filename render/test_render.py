@@ -6266,6 +6266,84 @@ def test_north_star_delta_flag_no_suite_git_sha_clause_when_unchanged_or_absent(
     ) == base
 
 
+def test_north_star_delta_flag_fork_sha_clause_on_flagged_delta():
+    # A flagged delta that ALSO spans a fork_sha change carries the fork-lineage clause
+    # (hb#665, the confound axis PR #661 hit). fork_sha is truncated to 19 chars the same
+    # way controller_digest is (a full 40-hex sha would dominate the line).
+    flag = render._north_star_delta_flag(
+        "gVisor", 1800, 900,
+        current_fork_sha="dd63bb1bd77a6e6ac21a8b4d1e6e8b9a2c3d4e5f",
+        prior_fork_sha="4c71c2cf9fa7c1039357d52701f80faa14971e81",
+    )
+    assert flag == (
+        "**gVisor** regressed by 0.9s (0.9s → 1.8s, 2.0x) · verdict flip ✅→❌ "
+        "· fork_sha `4c71c2cf9fa7c103935…` → `dd63bb1bd77a6e6ac21…`"
+    )
+
+
+def test_north_star_delta_flag_no_fork_sha_clause_when_unchanged_or_absent():
+    # Same fork_sha on both sides -> no clause; missing either side -> no clause;
+    # an empty/whitespace string must never render a "→" with a blank endpoint.
+    base = "**gVisor** regressed by 0.9s (0.9s → 1.8s, 2.0x) · verdict flip ✅→❌"
+    same = "dd63bb1bd77a6e6ac21a8b4d1e6e8b9a2c3d4e5f"
+    assert render._north_star_delta_flag(
+        "gVisor", 1800, 900, current_fork_sha=same, prior_fork_sha=same
+    ) == base
+    assert render._north_star_delta_flag(
+        "gVisor", 1800, 900, current_fork_sha=same, prior_fork_sha=None
+    ) == base
+    assert render._north_star_delta_flag(
+        "gVisor", 1800, 900, current_fork_sha=None, prior_fork_sha=same
+    ) == base
+    assert render._north_star_delta_flag(
+        "gVisor", 1800, 900, current_fork_sha="   ", prior_fork_sha=same
+    ) == base
+
+
+def test_north_star_delta_flag_fork_sha_clause_absent_when_no_delta():
+    # fork_sha differs but the ttfe is within threshold and no flip -> no flag at all
+    # (the clause rides ON a flagged delta; a bare fork rebase is not itself a trust
+    # downgrade).
+    assert render._north_star_delta_flag(
+        "gVisor", 900, 950,
+        current_fork_sha="dd63bb1bd77a6e6ac21a8b4d1e6e8b9a2c3d4e5f",
+        prior_fork_sha="4c71c2cf9fa7c1039357d52701f80faa14971e81",
+    ) is None
+
+
+def test_north_star_delta_flag_fork_fix_count_clause_on_flagged_delta():
+    # A flagged delta that ALSO spans a fork_fix_count change carries the clause too
+    # (hb#665); fork_fix_count is a small int, shown in full (no truncation).
+    flag = render._north_star_delta_flag(
+        "gVisor", 1800, 900,
+        current_fork_fix_count=0, prior_fork_fix_count=1,
+    )
+    assert flag == (
+        "**gVisor** regressed by 0.9s (0.9s → 1.8s, 2.0x) · verdict flip ✅→❌ "
+        "· fork_fix_count 1→0"
+    )
+
+
+def test_north_star_delta_flag_no_fork_fix_count_clause_when_unchanged_or_absent():
+    base = "**gVisor** regressed by 0.9s (0.9s → 1.8s, 2.0x) · verdict flip ✅→❌"
+    assert render._north_star_delta_flag(
+        "gVisor", 1800, 900, current_fork_fix_count=1, prior_fork_fix_count=1
+    ) == base
+    assert render._north_star_delta_flag(
+        "gVisor", 1800, 900, current_fork_fix_count=1, prior_fork_fix_count=None
+    ) == base
+    assert render._north_star_delta_flag(
+        "gVisor", 1800, 900, current_fork_fix_count=None, prior_fork_fix_count=1
+    ) == base
+    # bool must never be accepted as an int (isinstance(True, int) is True in Python).
+    assert render._north_star_delta_flag(
+        "gVisor", 1800, 900, current_fork_fix_count=True, prior_fork_fix_count=1
+    ) == base
+    assert render._north_star_delta_flag(
+        "gVisor", 1800, 900, current_fork_fix_count=0, prior_fork_fix_count=False
+    ) == base
+
+
 def test_north_star_delta_flag_build_lineage_clauses_compose_after_other_confounds():
     # All four confounds present on one flagged delta -> all clauses appear in definition
     # order: machine_type, node_count, node_image, then controller_digest, then
@@ -6336,6 +6414,64 @@ def test_north_star_delta_caveat_no_controller_digest_clause_without_prior_contr
     )
     assert "**Kata + microVM** regressed" in out
     assert "· controller_digest" not in out
+
+
+def test_north_star_delta_caveat_surfaces_fork_lineage_confound_end_to_end():
+    # End-to-end: a kata flip that also swapped the fork lineage renders the fork_sha
+    # and fork_fix_count clauses inline on the flagged delta (hb#665, the confound axis
+    # PR #661 hit). Also proves fork_sha/fork_fix_count/prior_fork_sha/prior_fork_fix_count
+    # survive _clean_provenance (schema round-trip).
+    kata_scen = [{
+        "name": "warmpool_cold_start", "outcome": "FAIL", "n": 30,
+        "sla_metrics": {"ttfe_p95_ms": 3079},
+    }]
+    out = render.render_north_star_caption(
+        _matrix_results(_full_gvisor_scenarios(), provenance={"runtime": "gvisor"}),
+        kata_results=_kata_results(
+            scenarios=kata_scen,
+            provenance={
+                "runtime": "kata-microvm",
+                "prior_warmpool_ttfe_p95_ms": 963.0,
+                "fork_sha": "dd63bb1bd77a6e6ac21a8b4d1e6e8b9a2c3d4e5f",
+                "prior_fork_sha": "4c71c2cf9fa7c1039357d52701f80faa14971e81",
+                # fork_fix_count must be > 0 to survive _clean_provenance's schema
+                # validator (render/schema.py's PROVENANCE_FIELDS bounds it to
+                # 0 < v < 1000, same as the non-prior sibling field) — 1->2 exercises
+                # the clause end-to-end without tripping that filter.
+                "fork_fix_count": 2,
+                "prior_fork_fix_count": 1,
+            },
+        ),
+    )
+    assert "**Kata + microVM** regressed" in out
+    assert "· fork_sha `4c71c2cf9fa7c103935…` → `dd63bb1bd77a6e6ac21…`" in out
+    assert "· fork_fix_count 1→2" in out
+    assert "a build-lineage change" in out
+
+
+def test_north_star_delta_caveat_no_fork_lineage_clause_without_prior_fork_fields():
+    # prior_fork_sha/prior_fork_fix_count absent (first stamped run / unchanged lineage)
+    # -> flagged delta renders WITHOUT either fork-lineage clause, even though fork_sha/
+    # fork_fix_count themselves are present.
+    kata_scen = [{
+        "name": "warmpool_cold_start", "outcome": "FAIL", "n": 30,
+        "sla_metrics": {"ttfe_p95_ms": 3079},
+    }]
+    out = render.render_north_star_caption(
+        _matrix_results(_full_gvisor_scenarios(), provenance={"runtime": "gvisor"}),
+        kata_results=_kata_results(
+            scenarios=kata_scen,
+            provenance={
+                "runtime": "kata-microvm",
+                "prior_warmpool_ttfe_p95_ms": 963.0,
+                "fork_sha": "dd63bb1bd77a6e6ac21a8b4d1e6e8b9a2c3d4e5f",
+                "fork_fix_count": 2,
+            },
+        ),
+    )
+    assert "**Kata + microVM** regressed" in out
+    assert "· fork_sha" not in out
+    assert "· fork_fix_count" not in out
 
 
 def test_hb621_swing_disposition_addendum_present_for_known_run_id():
