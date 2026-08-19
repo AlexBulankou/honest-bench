@@ -304,7 +304,14 @@ steps:
         # new/refreshed row with README/DETAILS otherwise unchanged (e.g. the COUNT is
         # identical to the prior build but the digest/date differ) — without it here that
         # accrual would silently never publish.
-        if git diff --quiet -- sandbox/results/latest.json sandbox/results/history.jsonl README.md DETAILS.md render/upstream_links.json; then
+        # warmpool-separation-history.jsonl (#6890 item 3) included for the identical
+        # reason as history.jsonl above: the measure step's `accrue_warmpool_separation`
+        # call appends a row here, and generate.py bakes that row into DETAILS.md's
+        # "Same-build separation-ratio variance" sparkline BEFORE this commit — omitting
+        # it from this list let the rendered sparkline diverge from a reproducible
+        # `python3 -m render.generate` (render/test_readme_fresh.py caught it: a PR's
+        # committed DETAILS.md carried a row this file never got the chance to commit).
+        if git diff --quiet -- sandbox/results/latest.json sandbox/results/history.jsonl sandbox/results/warmpool-separation-history.jsonl README.md DETAILS.md render/upstream_links.json; then
           echo "No benchmark diff to publish — skipping PR."
           exit 0
         fi
@@ -336,7 +343,7 @@ steps:
           FLAVOR="latest-upstream"
         fi
         git checkout -B "$$BRANCH"
-        git add sandbox/results/latest.json sandbox/results/history.jsonl README.md DETAILS.md render/upstream_links.json
+        git add sandbox/results/latest.json sandbox/results/history.jsonl sandbox/results/warmpool-separation-history.jsonl README.md DETAILS.md render/upstream_links.json
         git commit -m "data: auto-refresh benchmark results (substrate=gke-sandbox, gVisor, $$FLAVOR)"
 
         # A fresh CB clone fetches only main, so it has no remote-tracking ref for
