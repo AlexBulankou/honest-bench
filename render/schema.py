@@ -502,6 +502,20 @@ TTFE_COMPARABILITY_MIN_N = 30
 # the ratio is emitted but never rendered, so surfacing it when it fails is a #4420 disclosure.
 WARMPOOL_SEPARATION_MIN_RATIO = 1.8
 
+# Minimum fires the PUBLISHED separation verdict adjudicates over before it will issue a
+# PASS/FAIL (hb#659). WARMPOOL_SEPARATION_MIN_RATIO above is the raw per-fire gate; a single
+# Cloud Build fire's separation ratio is noise-dominated at that bar (a same controller_digest
+# fired twice spanned 0.27x..1.06x; an N=5 remeasure spanned 0.31x..4.05x with 2/5 inverted), so
+# a single draw must never flip the published upstream-vs-fork verdict. The adjudicated verdict
+# instead takes the median of the most recent >=N same-substrate fires accrued in the committed
+# history (warmpool-separation-history.jsonl) and refuses to issue a side (INDETERMINATE = HELD,
+# no flip) until it has >=N fires AND the noise-band CI clears the gate. Set at 3 (the DoD's
+# "N>=3 median"): the smallest N whose median is robust to one wild draw. Below this the verdict
+# HOLDS the prior conservative posture rather than flipping on thin evidence. This is a
+# methodology change over already-accrued rows, not a new fire (no spend): as routine crons
+# accrue more rows the verdict resolves on its own.
+WARMPOOL_ADJUDICATION_MIN_N = 3
+
 # Same-build separation-ratio variance disclosure threshold (#6890 decision item 3,
 # 2026-08-17). The Fire A/B/C suspect-check found the SAME controller_digest
 # (sha256:f511a1ab3350...) fired twice at 0.27x then 1.06x -- a 3.9x spread on byte-identical

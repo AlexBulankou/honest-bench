@@ -1,7 +1,9 @@
 # Warm-pool separation — variance-aware verdict protocol
 
 Status: adopted (verdict layer landed in `render/warmpool_verdict.py`, tests in
-`render/test_warmpool_verdict.py`).
+`render/test_warmpool_verdict.py`). Promoted to the **published, authoritative** verdict
+(hb#659): the public page now adjudicates upstream-vs-fork over the **median of N≥3 accrued
+fires**, not a single fire — see [Adjudication (median-of-N)](#adjudication-median-of-n--the-published-verdict).
 
 ## The finding this protocol exists to fix
 
@@ -88,12 +90,55 @@ Two ways a verdict lands INDETERMINATE:
 - **`indeterminate-ci-straddles-threshold`** — the CI straddles the threshold at N fires.
   `n_required` reports the fires that would resolve the observed margin.
 
+## Adjudication (median-of-N): the published verdict
+
+The verdict layer above defines *how* a variance-aware verdict is computed. This section
+defines *which input* the **published** upstream-vs-fork verdict feeds it — the change hb#659
+requires.
+
+The failure hb#659 targets is a single Cloud Build draw flipping the published verdict. At the
+1.8x bar that single draw is noise-dominated: the same controller build fired twice spanned
+0.27x–1.06x, and an N=5 remeasure of identical bits spanned 0.31x–4.05x with **2 of 5 draws
+inverted** (warm measured slower than cold — physically impossible as a real signal). A verdict
+that flips on one such draw is not measuring the build.
+
+The published verdict therefore adjudicates over the **median of the most recent N≥3
+same-`cluster_substrate` fires** accrued in the committed history
+(`sandbox/results/warmpool-separation-history.jsonl`), fed to `variance_aware_verdict`:
+
+- **N < 3 accrued fires** for a substrate → **HELD** (no flip). Too few fires to adjudicate;
+  the prior conservative posture (fork retained, `HB_FORK_BUILD=1`) is kept until enough fires
+  accrue. `WARMPOOL_ADJUDICATION_MIN_N` (schema) sets the floor.
+- **N ≥ 3** → the median is the point estimate and the pooled within-build noise floor gives
+  the CI. A side (PASS/FAIL) is issued **only** when that CI clears the gate; otherwise the
+  verdict is **HELD** (INDETERMINATE — no flip), stating the fires that would resolve the
+  margin. INDETERMINATE never collapses to a side (the fail-closed idiom above).
+
+Two properties make this **no-spend**:
+
+1. It consumes rows already committed to the history JSONL — it is a *methodology change over
+   accrued data*, not a new benchmark fire. No cluster is spun up to adjudicate.
+2. It is **pure over the accrued history and deliberately does not read the live fire** — the
+   live single ratio is exactly the noise-dominated input this layer exists to refuse. As
+   routine accrual crons append rows, a thin/straddling history resolves to a defensible
+   PASS/FAIL on its own.
+
+On the history that motivated this work (4 gke-sandbox rows) the adjudicated verdict is
+median-of-4 = 1.24x with a 95% band that straddles the gate → **HELD (no flip)**, ~26
+consistent fires needed to resolve — i.e. the fork is retained, matching the conservative prior
+exactly, with no verdict fabricated from thin data.
+
+Rendered on the public page as the *Adjudicated separation verdict (median-of-N)* subsection
+(`render.render._warmpool_separation_adjudicated_verdict`), closed-vocabulary output only.
+
 ## What this does NOT change
 
 The in-cluster harness gate (`_classify_latencies`) is **untouched**. It must keep emitting its
 raw per-fire ratio — that raw measurement is the input this verdict layer consumes. This is an
 **additive** layer on top of the measurement, not a modification of the live gate, so its blast
-radius is a pure-function module plus its tests.
+radius is a pure-function module plus its tests. The adjudication above changes only *which
+published surface is authoritative* (median-of-N, not the raw single-fire caveat); the raw
+per-fire gate and its disclosure caveat remain exactly as before.
 
 ## API
 
