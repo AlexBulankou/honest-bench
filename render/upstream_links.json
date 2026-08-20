@@ -1,7 +1,7 @@
 {
   "_meta": {
     "seeded_from": "UPSTREAM_BLOCKERS.md (active-asks-only rewrite)",
-    "last_verified": "2026-08-18",
+    "last_verified": "2026-08-20",
     "freshness": "Rides every UPSTREAM_BLOCKERS.md refresh PR; link states hand-verified against the public GitHub API at each refresh.",
     "fork_upstreams": {
       "sandbox": {
@@ -13,10 +13,10 @@
     "commit_distance": {
       "sandbox": {
         "base_sha": "0be472b7",
-        "commits_behind": 201,
+        "commits_behind": 223,
         "upstream_repo": "kubernetes-sigs/agent-sandbox",
         "upstream_branch": "main",
-        "checked_at": "2026-08-17"
+        "checked_at": "2026-08-20"
       }
     }
   },
@@ -45,8 +45,8 @@
           "number": 356,
           "kind": "pr",
           "role": "fix-in-flight",
-          "status": "open",
-          "note": "ateredis-specific durable fix: binary-protobuf record encoding on the redis backend. Open since 2026-07-02; maintainer asked the author to resolve conflicts 2026-07-24 (mergeable_state=dirty), unmoved since 2026-07-27. Superseded if #940 lands (which deletes ateredis.go entirely). A surgical DiscardUnknown decode-tolerance lever was staged + fork-validated as a redis-side bridge (build/vet/tests/gofmt clean + a falsifiable regression test) but NOT carried on the fork -- it patches the exact file #940 deletes, so it is churn on a doomed file."
+          "status": "closed",
+          "note": "ateredis-specific durable fix: binary-protobuf record encoding on the redis backend. Open since 2026-07-02; maintainer asked the author to resolve conflicts 2026-07-24 (mergeable_state=dirty), unmoved since 2026-07-27. CLOSED unmerged by 2026-08-19T17:27:40Z -- moot regardless, since it patches the exact file #940 deletes (ateredis.go). A surgical DiscardUnknown decode-tolerance lever was staged + fork-validated as a redis-side bridge (build/vet/tests/gofmt clean + a falsifiable regression test) but NOT carried on the fork for the same reason -- churn on a doomed file."
         }
       ]
     },
