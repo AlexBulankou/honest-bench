@@ -7941,6 +7941,131 @@ def test_warmpool_separation_verdict_caveat_leaks_no_agent_id():
     assert re.search(r"a4[a-z]\d", out) is None
 
 
+# ---------------------------------------------------------------------------
+# ADJUDICATED separation verdict (hb#659 / #7098): the PUBLISHED verdict is
+# now the median-of-N over accrued history, not a single fire. A single Cloud
+# Build draw is noise-dominated at the 1.8x bar (same digest fired twice spanned
+# 0.27x..1.06x; an N=5 remeasure spanned 0.31x..4.05x with 2 of 5 inverted), so
+# it must never flip upstream-vs-fork. A side is issued only when the noise-band
+# CI clears the gate; otherwise HELD (no flip = prior conservative posture kept).
+# No spend: methodology over already-committed rows, not a new fire.
+# ---------------------------------------------------------------------------
+
+def test_warmpool_adjudicated_verdict_empty_history_returns_empty():
+    assert render._warmpool_separation_adjudicated_verdict([]) == ""
+    assert render._warmpool_separation_adjudicated_verdict(None) == ""
+
+
+def test_warmpool_adjudicated_verdict_held_below_min_n():
+    # Fewer than WARMPOOL_ADJUDICATION_MIN_N (3) accrued fires -> cannot adjudicate;
+    # HELD (no flip), prior conservative posture retained. This is the current
+    # committed-history posture: too thin to resolve, so the fork stays.
+    rows = [_wp_row(1.42, "r1"), _wp_row(3.75, "r2")]
+    out = render._warmpool_separation_adjudicated_verdict(rows)
+    assert "**gke-sandbox** — **HELD** (no flip)" in out
+    assert "only 2 accrued fires" in out
+    assert "below the 3-fire minimum" in out
+    assert "median of the most recent" in out  # header always present
+
+
+def test_warmpool_adjudicated_verdict_pass_when_tight_and_far_above_gate():
+    # >=3 same-build fires, all ~5x with tiny spread -> median clears 1.8x and the
+    # noise band is far from the gate -> defensible PASS, not a single-fire draw.
+    digest = "sha256:" + "a" * 64
+    rows = [
+        _wp_row(5.0, "p1", digest=digest, outcome="PASS"),
+        _wp_row(5.1, "p2", digest=digest, outcome="PASS"),
+        _wp_row(4.9, "p3", digest=digest, outcome="PASS"),
+    ]
+    out = render._warmpool_separation_adjudicated_verdict(rows)
+    assert "**gke-sandbox** — **PASS**" in out
+    assert "median-of-3" in out
+    assert "clears the 1.8x gate" in out
+
+
+def test_warmpool_adjudicated_verdict_fail_when_tight_and_below_gate():
+    # >=3 same-build fires, all ~1.0x with tiny spread -> median below 1.8x and the
+    # noise band is well below the gate -> defensible FAIL, not a single-fire draw.
+    digest = "sha256:" + "b" * 64
+    rows = [
+        _wp_row(0.95, "f1", digest=digest, outcome="FAIL"),
+        _wp_row(1.0, "f2", digest=digest, outcome="FAIL"),
+        _wp_row(1.05, "f3", digest=digest, outcome="FAIL"),
+    ]
+    out = render._warmpool_separation_adjudicated_verdict(rows)
+    assert "**gke-sandbox** — **FAIL**" in out
+    assert "median-of-3" in out
+    assert "below the 1.8x gate" in out
+
+
+def test_warmpool_adjudicated_verdict_held_when_ci_straddles_gate():
+    # >=3 same-build fires with a wide spread (0.27x/1.06x/3.9x) -> the noise band
+    # straddles 1.8x, so the median does NOT resolve which side of the gate the
+    # build is on. INDETERMINATE must never collapse to PASS/FAIL: HELD (no flip),
+    # and it must state the fires that WOULD resolve the margin.
+    digest = "sha256:" + "c" * 64
+    rows = [
+        _wp_row(0.27, "s1", digest=digest, outcome="FAIL"),
+        _wp_row(1.06, "s2", digest=digest, outcome="FAIL"),
+        _wp_row(3.9, "s3", digest=digest, outcome="PASS"),
+    ]
+    out = render._warmpool_separation_adjudicated_verdict(rows)
+    assert "**gke-sandbox** — **HELD** (no flip)" in out
+    assert "straddles the 1.8x gate" in out
+    assert "consistent fires would resolve this" in out
+    # first-class INDETERMINATE: never silently collapses to a side.
+    assert "**PASS**" not in out and "**FAIL**" not in out
+
+
+def test_warmpool_adjudicated_verdict_held_when_no_noise_floor():
+    # >=3 fires but every one a DIFFERENT controller build -> no same-build
+    # replication to estimate the measurement noise floor from -> no verdict is
+    # defensible. HELD (no flip), naming the missing replication.
+    rows = [
+        _wp_row(5.0, "n1", digest="sha256:" + "1" * 64),
+        _wp_row(4.9, "n2", digest="sha256:" + "2" * 64),
+        _wp_row(5.1, "n3", digest="sha256:" + "3" * 64),
+    ]
+    out = render._warmpool_separation_adjudicated_verdict(rows)
+    assert "**gke-sandbox** — **HELD** (no flip)" in out
+    assert "no same-build replication" in out
+
+
+def test_warmpool_adjudicated_verdict_leaks_no_agent_id():
+    # Public-repo safety: the rendered trust-surface text must never carry a fleet
+    # agent-id (a4<letter><digit>) or the whole PR trips gate-zero. Exercise the
+    # straddle path, which emits the most free-form-looking numbers.
+    digest = "sha256:" + "c" * 64
+    rows = [
+        _wp_row(0.27, "s1", digest=digest),
+        _wp_row(1.06, "s2", digest=digest),
+        _wp_row(3.9, "s3", digest=digest),
+    ]
+    out = render._warmpool_separation_adjudicated_verdict(rows)
+    assert re.search(r"a4[a-z]\d", out) is None
+
+
+def test_known_anomalies_detail_adjudicated_verdict_section_reflects_state():
+    results = _matrix_results(_separation_scenarios(2.4, warm_n=200),
+                              provenance={"runtime": "gvisor"})
+    # No accrued history -> the fork-posture-held fallback, not a fabricated side.
+    out = render.render_known_anomalies_detail(results, history_rows=None)
+    assert "### Adjudicated separation verdict (median-of-N)" in out
+    assert "no accrued history yet — fork posture held" in out
+
+    # >=3 tight same-build fires far above the gate -> the PASS adjudication shows.
+    digest = "sha256:" + "a" * 64
+    rows = [
+        _wp_row(5.0, "p1", digest=digest),
+        _wp_row(5.1, "p2", digest=digest),
+        _wp_row(4.9, "p3", digest=digest),
+    ]
+    out = render.render_known_anomalies_detail(results, history_rows=rows)
+    assert "### Adjudicated separation verdict (median-of-N)" in out
+    assert "**gke-sandbox** — **PASS**" in out
+    assert "median-of-3" in out
+
+
 def test_warmpool_separation_trend_chart_empty_renders_nothing():
     # WS2 follow-up (epic #6669, #6890 item 3): no history ⇒ no chart, same graceful
     # degradation as render_throughput_trend_chart.

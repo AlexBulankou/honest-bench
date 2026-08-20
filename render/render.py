@@ -54,6 +54,7 @@ from schema import (
     WARM_BIND_FIELDS,
     WARM_POOL_ACQUISITION_FIELDS,
     WARM_VS_COLD_FIELDS,
+    WARMPOOL_ADJUDICATION_MIN_N,
     WARMPOOL_SEPARATION_HISTORY_FIELDS,
     WARMPOOL_SEPARATION_MIN_RATIO,
     WARMPOOL_SEPARATION_VARIANCE_MIN_SPREAD,
@@ -3441,6 +3442,97 @@ def _warmpool_separation_verdict_caveat(results, history_rows, kata_results=None
     )
 
 
+def _warmpool_separation_adjudicated_verdict(history_rows, *, min_n=WARMPOOL_ADJUDICATION_MIN_N):
+    """The PUBLISHED, authoritative warm/cold separation verdict — median-of-N over accrued history.
+
+    hb#659 / #7098. The raw per-fire gate (the in-cluster `_classify_latencies`, mirrored on the
+    page by `_warmpool_separation_caveat`) issues PASS/FAIL from ONE fire's separation ratio. At
+    the 1.8x bar that single draw is noise-dominated — a same controller build fired twice spanned
+    0.27x..1.06x, an N=5 remeasure spanned 0.31x..4.05x with 2 of 5 draws inverted — so a single
+    fire cannot be allowed to flip the published upstream-vs-fork verdict. This surface replaces
+    the single-fire flip with an adjudication over the MEDIAN of the most recent >=N
+    same-`cluster_substrate` fires accrued in the committed history: it issues PASS/FAIL only when
+    the noise-band confidence interval clears the gate, and otherwise HOLDS (INDETERMINATE = no
+    flip, the conservative prior posture retained).
+
+    It is pure over the accrued history and deliberately does NOT read the live fire: the live
+    single ratio is exactly the noise-dominated input this layer exists to refuse to adjudicate on.
+    Consuming already-committed rows means this is a methodology change, not a new fire (no spend);
+    as routine crons append rows the verdict resolves on its own. `variance_aware_verdict` does the
+    log-space arithmetic (median point estimate, pooled within-build noise floor, CI-vs-threshold);
+    this function only selects the per-substrate window and formats the closed-vocabulary result —
+    no free text that could leak. Returns "" only when there is no usable history at all (the
+    caller renders a HELD fallback), so it can be appended unconditionally.
+    """
+    clean = _clean_warmpool_separation_history(history_rows or [])
+    if not clean:
+        return ""
+
+    by_sub = {}
+    for r in clean:
+        by_sub.setdefault(r["cluster_substrate"], []).append(r)
+
+    def _one(sub):
+        ratios = [
+            r["separation_ratio"]
+            for r in by_sub[sub]
+            if isinstance(r["separation_ratio"], (int, float)) and r["separation_ratio"] > 0
+        ]
+        n = len(ratios)
+        if n < min_n:
+            return (
+                f"**{sub}** — **HELD** (no flip): only {n} accrued fire"
+                f"{'s' if n != 1 else ''}, below the {min_n}-fire minimum to adjudicate. The "
+                "prior conservative posture is retained until enough fires accrue."
+            )
+        v = warmpool_verdict.variance_aware_verdict(
+            ratios, clean, threshold=WARMPOOL_SEPARATION_MIN_RATIO
+        )
+        pt = v["point_ratio"]
+        conf = int(v["confidence"] * 100)
+        if v["verdict"] == warmpool_verdict.PASS:
+            return (
+                f"**{sub}** — **PASS**: median-of-{n} = {pt:.3g}x clears the "
+                f"{WARMPOOL_SEPARATION_MIN_RATIO:g}x gate ({conf}% band "
+                f"{v['ci_low']:.3g}x–{v['ci_high']:.3g}x); the separation is statistically "
+                "defensible, not a single-fire draw."
+            )
+        if v["verdict"] == warmpool_verdict.FAIL:
+            return (
+                f"**{sub}** — **FAIL**: median-of-{n} = {pt:.3g}x is below the "
+                f"{WARMPOOL_SEPARATION_MIN_RATIO:g}x gate ({conf}% band "
+                f"{v['ci_low']:.3g}x–{v['ci_high']:.3g}x); the shortfall is statistically "
+                "defensible, not a single-fire draw."
+            )
+        # INDETERMINATE — never collapse to a side.
+        if v["reason"] == "indeterminate-no-noise-floor":
+            return (
+                f"**{sub}** — **HELD** (no flip): median-of-{n} = {pt:.3g}x, but the accrued "
+                "history has no same-build replication (no controller build with 2+ "
+                "measurements) to estimate the measurement noise floor, so no verdict is "
+                "defensible. The prior conservative posture is retained."
+            )
+        return (
+            f"**{sub}** — **HELD** (no flip): median-of-{n} = {pt:.3g}x, but at the measured "
+            f"noise floor (σ(log)={v['sigma_log']:.2g}, {conf}% band {v['ci_low']:.3g}x–"
+            f"{v['ci_high']:.3g}x) the interval straddles the {WARMPOOL_SEPARATION_MIN_RATIO:g}x "
+            f"gate, so the median does not resolve which side of the gate the build is on — "
+            f"{v['n_required']} consistent fires would resolve this margin. The prior "
+            "conservative posture is retained rather than flipping on an unresolved margin."
+        )
+
+    who = " ".join(_one(sub) for sub in sorted(by_sub))
+    return (
+        f"The published separation verdict adjudicates over the **median of the most recent "
+        f">={min_n} accrued fires** per substrate, not a single fire — a single Cloud Build draw "
+        f"is noise-dominated at the {WARMPOOL_SEPARATION_MIN_RATIO:g}x bar and must not flip the "
+        f"verdict. A side (PASS/FAIL) is issued only when the noise-band interval clears the gate; "
+        f"otherwise the verdict is **HELD** (no flip) and states the fires needed to resolve it. "
+        f"{who} See "
+        "[WARMPOOL_SEPARATION_VERDICT_PROTOCOL.md](WARMPOOL_SEPARATION_VERDICT_PROTOCOL.md)."
+    )
+
+
 def render_north_star_caption(results, kata_results=None):
     """One-line measured-verdict captions for the <1s North Star + 0.5s stretch bar.
 
@@ -3596,6 +3688,7 @@ def render_known_anomalies_detail(results, kata_results=None, history_rows=None)
     separation_caveat = _warmpool_separation_caveat(results, kata_results)
     variance_caveat = _warmpool_separation_variance_caveat(history_rows or [])
     verdict_caveat = _warmpool_separation_verdict_caveat(results, history_rows or [], kata_results)
+    adjudicated_verdict = _warmpool_separation_adjudicated_verdict(history_rows or [])
     mixed_rig_caveat = _mixed_rig_confound_caveat(results)
 
     def _clear(name):
@@ -3629,6 +3722,13 @@ def render_known_anomalies_detail(results, kata_results=None, history_rows=None)
     lines.append(
         verdict_caveat if verdict_caveat
         else _clear("single-fire separation verdict as indefensible")
+    )
+    lines.append("")
+    lines.append("### Adjudicated separation verdict (median-of-N)")
+    lines.append("")
+    lines.append(
+        adjudicated_verdict if adjudicated_verdict
+        else _clear("adjudicated separation verdict (no accrued history yet — fork posture held)")
     )
     lines.append("")
     lines.append("### Mixed rig within this run")
