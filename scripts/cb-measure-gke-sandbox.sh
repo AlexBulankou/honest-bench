@@ -194,14 +194,35 @@ export BENCH_NODE_IMAGE=$(kubectl get node "$gvisor_node" \
 # filesystem (GKE ships it at /home/kubernetes/bin/runsc). `kubectl debug
 # node/...` is the standard no-SSH way to chroot into a node's root fs;
 # the debug pod it creates is torn down along with the whole ephemeral
-# cluster by this step's EXIT trap. Best-effort: a failure here must
-# never fail the measure step over a nice-to-have provenance field
-# (fail open, not fail closed — this is metadata, not a benchmark
-# result). NOTE: the exact chroot path may need adjustment on the first
-# live fire (hb#311's "fire-as-linter" cost applies here too).
-export BENCH_RUNSC_VERSION=$(kubectl debug "node/$gvisor_node" \
-  --image=busybox -q -- chroot /host /home/kubernetes/bin/runsc --version \
-  2>/dev/null | head -1 | awk '{print $NF}' || echo "")
+# cluster by this step's EXIT trap (plus an explicit best-effort delete
+# below). Best-effort throughout: a failure at any step here must never
+# fail the measure step over a nice-to-have provenance field (fail open,
+# not fail closed — this is metadata, not a benchmark result).
+#
+# hb#672: `kubectl debug`'s `--attach` flag defaults to FALSE unless
+# `-i`/`-it` is passed, and neither was passed here — so the prior
+# `$(kubectl debug ... -q -- ...)` form never streamed the container's
+# stdout to the capture at all; it captured kubectl's OWN (here,
+# -q-suppressed) status output, which is empty. That's why
+# BENCH_RUNSC_VERSION was blank on 11/11 observed fires, not a flake.
+# Fix: create the pod un-attached (the default), recover its
+# kubectl-generated name from kubectl's own creation message (so `-q`
+# must NOT be passed here), wait for it to reach a terminal phase, then
+# pull the real command output via `kubectl logs`.
+runsc_debug_create_out=$(kubectl debug "node/$gvisor_node" \
+  --image=busybox -- chroot /host /home/kubernetes/bin/runsc --version \
+  2>/dev/null || echo "")
+runsc_debug_pod=$(echo "$runsc_debug_create_out" \
+  | awk '/^Creating debugging pod/ {print $4}')
+if [[ -n "$runsc_debug_pod" ]]; then
+  kubectl wait --for=jsonpath='{.status.phase}'=Succeeded \
+    "pod/$runsc_debug_pod" --timeout=60s >/dev/null 2>&1 || true
+  export BENCH_RUNSC_VERSION=$(kubectl logs "$runsc_debug_pod" 2>/dev/null \
+    | head -1 | awk '{print $NF}' || echo "")
+  kubectl delete pod "$runsc_debug_pod" --ignore-not-found >/dev/null 2>&1 || true
+else
+  export BENCH_RUNSC_VERSION=""
+fi
 echo "==> node_image=$BENCH_NODE_IMAGE runsc_version=$BENCH_RUNSC_VERSION"
 
 # --- controller install: prebuilt-upstream (default) or fork-source (opt-in) ---
