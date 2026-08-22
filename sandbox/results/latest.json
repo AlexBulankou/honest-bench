@@ -93,7 +93,7 @@
     "measured_at": "2026-06-30",
     "node_count": 20
   },
-  "generated_at": "2026-08-22T22:58:36Z",
+  "generated_at": "2026-08-22T23:26:05Z",
   "kata_activation": {
     "cold_ready": [
       {
@@ -127,12 +127,12 @@
     "machine_type": "n2-standard-16",
     "node_count": 2,
     "node_image": "v1.36.2-gke.2064000",
-    "prior_suite_git_sha": "5ebff0bb0176e911388aee8a83b897a93fb49e51",
-    "prior_warmpool_ttfe_p95_ms": 7993.2,
-    "run_id": "c4067404a696423db65f9d8566991735",
+    "prior_suite_git_sha": "6a3939f15ae09c2a8af307d0ff2d7ab81f5e2e88",
+    "prior_warmpool_ttfe_p95_ms": 4967.2,
+    "run_id": "dc5c3ab33f9e46c3b1b3b4c53ba8e88d",
     "runsc_version": "directory",
     "runtime": "gvisor",
-    "suite_git_sha": "6a3939f15ae09c2a8af307d0ff2d7ab81f5e2e88"
+    "suite_git_sha": "1affea48b59480560f733f6380033a1d00adf441"
   },
   "provisioning_rate_sweep": {
     "ceiling_high_per_s": 150.0,
@@ -194,12 +194,12 @@
     {
       "n": 10,
       "name": "burst_create",
-      "outcome": "PASS",
+      "outcome": "FAIL",
       "sla_metrics": {
-        "density_per_vcpu": 0.15625,
+        "density_per_vcpu": 0.0625,
         "exec_success_rate": 1.0,
-        "sandboxes_exec_under_1s": 4.0,
-        "sandboxes_ready_under_1s": 10.0
+        "sandboxes_exec_under_1s": 1.0,
+        "sandboxes_ready_under_1s": 4.0
       }
     },
     {
@@ -207,21 +207,21 @@
       "name": "warmpool_cold_start",
       "outcome": "PASS",
       "sla_metrics": {
-        "bind_p50_ms": 2950.8,
-        "bind_p95_ms": 3902.9,
-        "exec_p50_ms": 499.9,
-        "exec_p95_ms": 1490.5,
+        "bind_p50_ms": 2591.7,
+        "bind_p95_ms": 3533.0,
+        "exec_p50_ms": 890.6,
+        "exec_p95_ms": 1292.7,
         "exec_success_rate": 1.0,
         "thpt_under_1s_per_node": 0.0,
-        "thpt_under_5s_per_node": 2.838,
-        "ttfe_p50_ms": 3621.8,
-        "ttfe_p95_ms": 4967.2,
-        "warmpool_gate_cold_min_ms": 1397.1263750000844,
-        "warmpool_gate_cold_p50_ms": 5385.44145849994,
-        "warmpool_gate_min_ready_during_burst": 4.0,
-        "warmpool_gate_separation_ratio": 1.8250921827845874,
-        "warmpool_gate_warm_max_ms": 4432.109255,
-        "warmpool_gate_warm_p50_ms": 2950.777779500015
+        "thpt_under_5s_per_node": 2.833,
+        "ttfe_p50_ms": 3303.7,
+        "ttfe_p95_ms": 4543.5,
+        "warmpool_gate_cold_min_ms": 3929.8246450000534,
+        "warmpool_gate_cold_p50_ms": 5072.103276000007,
+        "warmpool_gate_min_ready_during_burst": 1.0,
+        "warmpool_gate_separation_ratio": 1.9570576322126028,
+        "warmpool_gate_warm_max_ms": 4057.2197000001324,
+        "warmpool_gate_warm_p50_ms": 2591.6984725000702
       }
     },
     {
@@ -229,13 +229,13 @@
       "name": "native_digest_cold",
       "outcome": "PASS",
       "sla_metrics": {
-        "bind_p50_ms": 3675.7,
-        "bind_p95_ms": 4005.2,
-        "exec_p50_ms": 484.6,
-        "exec_p95_ms": 542.6,
+        "bind_p50_ms": 3398.8,
+        "bind_p95_ms": 3654.7,
+        "exec_p50_ms": 500.9,
+        "exec_p95_ms": 666.8,
         "exec_success_rate": 1.0,
-        "ttfe_p50_ms": 4172.1,
-        "ttfe_p95_ms": 4500.7
+        "ttfe_p50_ms": 3891.3,
+        "ttfe_p95_ms": 4359.9
       }
     },
     {
@@ -244,10 +244,10 @@
       "outcome": "PASS",
       "sla_metrics": {
         "exec_success_rate": 1.0,
-        "suspend_latency_ms": 2263.1,
-        "suspend_p90_ms": 2298.9,
-        "ttfe_p50_ms": 4725.1,
-        "ttfe_p95_ms": 4822.7
+        "suspend_latency_ms": 2250.2,
+        "suspend_p90_ms": 2272.8,
+        "ttfe_p50_ms": 4679.2,
+        "ttfe_p95_ms": 4850.5
       }
     },
     {
@@ -255,8 +255,8 @@
       "name": "session_turnover",
       "outcome": "PASS",
       "sla_metrics": {
-        "refill_latency_ms": 1230.409441999882,
-        "refill_p90_ms": 1425.3309100001843
+        "refill_latency_ms": 1196.1178039998686,
+        "refill_p90_ms": 1250.0880590000634
       }
     },
     {
@@ -295,12 +295,12 @@
     "warmpool_size": 600
   },
   "warm_vs_cold": {
-    "cold_ms": 4172.1,
-    "measured_at": "2026-08-22T22:58:36Z",
+    "cold_ms": 3891.3,
+    "measured_at": "2026-08-22T23:26:05Z",
     "n_warm": 10,
     "runtime_class": "gvisor",
     "semantic": "ttfe",
-    "speedup": 3.992,
-    "warm_p50_ms": 1045.0
+    "speedup": 2.344,
+    "warm_p50_ms": 1660.1
   }
 }
