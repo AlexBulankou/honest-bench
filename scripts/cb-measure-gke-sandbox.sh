@@ -344,6 +344,20 @@ fi
 # this file. Set unconditionally (harmless for the fork path, which ignores it).
 HB_RESOLVED_SHA_OUT="$(mktemp)"; export HB_RESOLVED_SHA_OUT
 
+# hb#678: opt-in digest pin for a deliberate same-digest replicate-fire batch — pins the
+# controller image install-controller-from-main.sh pulls BY DIGEST instead of the floating
+# :latest-main tag, so repeat fires install a byte-identical image regardless of what upstream
+# republishes in between. Only meaningful on the non-fork (BUILD_MODE=prebuilt) path — a fork
+# build always ko-builds a fresh image from source, so there is no floating tag to pin.
+if [ -n "${HB_PIN_CONTROLLER_DIGEST:-}" ]; then
+  if [ "${HB_FORK_BUILD:-}" = "1" ]; then
+    echo "ERROR: HB_PIN_CONTROLLER_DIGEST is not compatible with HB_FORK_BUILD=1 (fork builds always build a fresh image from source, there is no floating tag to pin)" >&2
+    exit 1
+  fi
+  export PIN_IMAGE_DIGEST="$HB_PIN_CONTROLLER_DIGEST"
+  echo "==> [hb#678] pinning controller image to digest: $PIN_IMAGE_DIGEST"
+fi
+
 bash recipe/install-controller-from-main.sh
 
 # Non-fork path only: stamp BENCH_UPSTREAM_REF from the captured sha. Shape-validate
