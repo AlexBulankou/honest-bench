@@ -126,6 +126,15 @@ substitutions:
   # pin it so a clean single-variable fire holds max constant across both floors.
   _NUM_NODES: "2"
   _MAX_NODES: ""
+  # hb#678: opt-in controller-image digest pin, for a deliberate batch of same-digest
+  # replicate fires (tightening the warmpool-separation-verdict noise-floor estimate,
+  # hb#675, without paying for N distinct-digest fires). Default empty ⇒ INERT — the
+  # standing daily fire installs upstream's floating :latest-main tag exactly as before.
+  # Not compatible with _HB_FORK_BUILD=1 (a fork build always builds a fresh image from
+  # source; see scripts/cb-measure-gke-sandbox.sh's guard). Usage:
+  #   gcloud builds triggers run hb-refresh-gke-sandbox --project=<PROJECT> \
+  #     --substitutions=_HB_PIN_CONTROLLER_DIGEST=sha256:<64-hex>
+  _HB_PIN_CONTROLLER_DIGEST: ""
 
 steps:
   # PRE-FIRE FUNCTIONAL PROBE: a policy READ (`gcloud projects get-iam-policy`)
@@ -257,6 +266,7 @@ steps:
       - "HB_FORK_BASE_UPSTREAM_SHA=${_HB_FORK_BASE_UPSTREAM_SHA}"
       - "HB_FORK_FIX_COUNT=${_HB_FORK_FIX_COUNT}"
       - "HB_FORK_ALLOW_DIAGNOSTIC=${_HB_FORK_ALLOW_DIAGNOSTIC}"
+      - "HB_PIN_CONTROLLER_DIGEST=${_HB_PIN_CONTROLLER_DIGEST}"
     args:
       - scripts/cb-measure-gke-sandbox.sh
 

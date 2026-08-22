@@ -26,6 +26,12 @@
 #     BUILD_MODE=source KO_DOCKER_REPO=us-central1-docker.pkg.dev/<project>/<repo> \
 #     recipe/install-controller-from-main.sh
 #
+#   # digest-pin path (hb#678): pin the prebuilt controller image by digest instead of the
+#   # floating :latest-main tag, so a deliberate batch of replicate fires installs a
+#   # byte-identical image every time (BUILD_MODE=prebuilt only; not compatible with
+#   # BUILD_MODE=source, which always builds a fresh image from source):
+#   PIN_IMAGE_DIGEST=sha256:<64-hex> recipe/install-controller-from-main.sh
+#
 # The caller owns the kubectl context. For the portable suite that is a local kind cluster:
 #   kind create cluster
 #   recipe/install-controller-from-main.sh
@@ -47,6 +53,18 @@ STAGING_PREFIX="${STAGING_PREFIX:-us-central1-docker.pkg.dev/k8s-staging-images/
 # matching commit SHA for a reproducible install.
 UPSTREAM_REF="${UPSTREAM_REF:-main}"
 IMAGE_TAG="${IMAGE_TAG:-latest-main}"
+# hb#678: IMAGE_TAG (above) and RESOLVED_SHA (the source-tarball SHA, resolved below) are two
+# independent reads of two different upstream systems — the k8s staging Artifact Registry's
+# own CI-published `:latest-main` tag vs. GitHub's archive/codeload service — with no code
+# linking them. Two fires sharing an identical RESOLVED_SHA/suite_git_sha can therefore install
+# different controller images, because IMAGE_TAG can float between them independent of
+# UPSTREAM_REF. PIN_IMAGE_DIGEST closes that gap for a deliberate replicate fire: when set (to
+# a `sha256:<64-hex>` digest, no repo/tag prefix), the image is pinned BY DIGEST instead of by
+# the floating tag, so repeat installs pull a byte-identical controller image regardless of
+# what upstream republishes under :latest-main in between. Only consulted in BUILD_MODE=prebuilt
+# — BUILD_MODE=source always ko-builds a fresh image from the resolved source tree, so "pin the
+# pulled tag" doesn't apply there (setting both is a usage error, guarded below).
+PIN_IMAGE_DIGEST="${PIN_IMAGE_DIGEST:-}"
 # "prebuilt" (default): pull the already-published upstream staging image — no toolchain
 # needed. "source": ko-build the controller from the fetched UPSTREAM_REPO@UPSTREAM_REF tree
 # and push to KO_DOCKER_REPO — the fork-validation path (WS4(b)), for fixes staged in a fork
@@ -56,6 +74,13 @@ case "$BUILD_MODE" in
   prebuilt|source) ;;
   *) echo "[install-controller-from-main] ERROR: BUILD_MODE must be 'prebuilt' or 'source' (got: ${BUILD_MODE})" >&2; exit 2 ;;
 esac
+if [ -n "$PIN_IMAGE_DIGEST" ]; then
+  if [[ ! "$PIN_IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+    echo "[install-controller-from-main] ERROR: PIN_IMAGE_DIGEST must be sha256:<64 lowercase hex chars> (got: ${PIN_IMAGE_DIGEST})" >&2
+    exit 2
+  fi
+  [ "$BUILD_MODE" = "prebuilt" ] || { echo "[install-controller-from-main] ERROR: PIN_IMAGE_DIGEST is only meaningful with BUILD_MODE=prebuilt (pins the pulled tag) — BUILD_MODE=source always builds a fresh image from source, there is no tag to pin" >&2; exit 2; }
+fi
 
 MODE="apply"
 case "${1:-}" in
@@ -147,11 +172,21 @@ if [ "$BUILD_MODE" = "source" ]; then
   grep -rh 'image:[[:space:]]*'"${KO_DOCKER_REPO}" "$MANIFEST_DIR" | sed 's/^[[:space:]]*/    /' | sort -u || true
 else
   # ko names the image after the cmd basename; the staging registry publishes under the same
-  # basename. Generic map: ko://<anything>/cmd/<name> -> <STAGING_PREFIX>/<name>:<IMAGE_TAG>.
-  log "substituting ko:// -> ${STAGING_PREFIX}/<cmd>:${IMAGE_TAG}"
-  while IFS= read -r -d '' f; do
-    sed -i -E "s#ko://[^[:space:]\"']*/cmd/([A-Za-z0-9._-]+)#${STAGING_PREFIX//#/\\#}/\1:${IMAGE_TAG}#g" "$f"
-  done < <(find "$MANIFEST_DIR" -name '*.yaml' -print0)
+  # basename. Generic map: ko://<anything>/cmd/<name> -> <STAGING_PREFIX>/<name>:<IMAGE_TAG>, or
+  # -> <STAGING_PREFIX>/<name>@<PIN_IMAGE_DIGEST> when a digest pin is set (hb#678) — a digest
+  # pin replaces the whole `:${IMAGE_TAG}` floating-tag suffix, since a manifest reference is
+  # either tag-addressed or digest-addressed, never both.
+  if [ -n "$PIN_IMAGE_DIGEST" ]; then
+    log "substituting ko:// -> ${STAGING_PREFIX}/<cmd>@${PIN_IMAGE_DIGEST} (pinned, hb#678)"
+    while IFS= read -r -d '' f; do
+      sed -i -E "s#ko://[^[:space:]\"']*/cmd/([A-Za-z0-9._-]+)#${STAGING_PREFIX//#/\\#}/\1@${PIN_IMAGE_DIGEST}#g" "$f"
+    done < <(find "$MANIFEST_DIR" -name '*.yaml' -print0)
+  else
+    log "substituting ko:// -> ${STAGING_PREFIX}/<cmd>:${IMAGE_TAG}"
+    while IFS= read -r -d '' f; do
+      sed -i -E "s#ko://[^[:space:]\"']*/cmd/([A-Za-z0-9._-]+)#${STAGING_PREFIX//#/\\#}/\1:${IMAGE_TAG}#g" "$f"
+    done < <(find "$MANIFEST_DIR" -name '*.yaml' -print0)
+  fi
   log "controller image(s) after substitution:"
   grep -rh 'image:[[:space:]]*'"${STAGING_PREFIX}" "$MANIFEST_DIR" | sed 's/^[[:space:]]*/    /' | sort -u || true
 fi
@@ -217,6 +252,8 @@ esac
 
 if [ "$BUILD_MODE" = "source" ]; then
   log "installed agent-sandbox controller built from ${UPSTREAM_REPO}@${UPSTREAM_REF} (sha ${RESOLVED_SHA}, pushed to ${KO_DOCKER_REPO})"
+elif [ -n "$PIN_IMAGE_DIGEST" ]; then
+  log "installed agent-sandbox controller from upstream ${UPSTREAM_REF} (image pinned digest ${PIN_IMAGE_DIGEST}, sha ${RESOLVED_SHA})"
 else
   log "installed agent-sandbox controller from upstream ${UPSTREAM_REF} (image tag ${IMAGE_TAG}, sha ${RESOLVED_SHA})"
 fi
@@ -224,5 +261,8 @@ fi
 # needs to stamp `fork@<sha> (+N fixes over upstream@<sha>)`; the "+N fixes" delta itself needs
 # a repo-compare call against a known upstream baseline, which is a rendering-time concern (it
 # has nothing to do with installing the controller) and is left to the consumer of this line.
-log "provenance: mode=${BUILD_MODE} repo=${UPSTREAM_REPO} ref=${UPSTREAM_REF} sha=${RESOLVED_SHA}"
+# image_pin (hb#678): "none" for a normal floating-tag fire, else the pinned sha256 digest —
+# a downstream replicate-fire consumer needs this to confirm two fires actually pulled a
+# byte-identical controller image, not just an identical suite_git_sha.
+log "provenance: mode=${BUILD_MODE} repo=${UPSTREAM_REPO} ref=${UPSTREAM_REF} sha=${RESOLVED_SHA} image_pin=${PIN_IMAGE_DIGEST:-none}"
 log "next: python3 -m harness.run   # run the portable suite (substrate=kind)"
