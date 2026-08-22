@@ -8,7 +8,7 @@ Active upstream blockers that need action now, ordered **substrate-first** (subs
 
 **Engagement model:** upstream approvers are engaged through existing maintainer relationships. We do not open new issues/PRs upstream; reference patches are staged on integration forks, validated from fork builds, and offered only if a maintainer asks.
 
-_Link states last verified live against the public GitHub API: **2026-08-18**._
+_Link states last verified live against the public GitHub API: **2026-08-22**._
 
 ## Substrate (primary product — GA-critical)
 
