@@ -42,12 +42,14 @@ blocker — diagnosis plus file-ready patches and comments — is hand-maintaine
 
 | Runtime | Activation Mode | Throughput @ <5s TTFE (sb/s — node · cluster) | Throughput @ <1s TTFE (sb/s — node · cluster) | TTFE p50 | TTFE p95 | Execution Success (Honesty Check) |
 |---|---|---|---|---|---|---|
-| gVisor | Warm-pool hit (Base image) | 0 /node · [pending (cluster-fire)](WORK_IN_PROGRESS.md#cluster-fire) | 0 /node · [pending (cluster-fire)](WORK_IN_PROGRESS.md#cluster-fire) | 10.6319s (count=30) | 22.6206s (count=30) | 100% |
-| gVisor | Unique-image cold (RL reality) | [pending](WORK_IN_PROGRESS.md#not-yet-measured) | 0 /node · 0 /cluster | 3.9298s (count=30) | 4.9528s (count=30) | 100% |
-| gVisor | Resume-from-suspend | [pending](WORK_IN_PROGRESS.md#not-yet-measured) | 0 /node · 0 /cluster | 4.8287s (count=30) | 4.9499s (count=30) | 100% |
+| gVisor | Warm-pool hit (Base image) ⚠️ FAIL | 0.335 /node ‡ · [pending (cluster-fire)](WORK_IN_PROGRESS.md#cluster-fire) | 0 /node · [pending (cluster-fire)](WORK_IN_PROGRESS.md#cluster-fire) | 6.3911s (count=30) | 7.9932s (count=30) | 100% |
+| gVisor | Unique-image cold (RL reality) | 0 /node · 0 /cluster | 0 /node · 0 /cluster | 4.1238s (count=30) | 5.0278s (count=30) | 100% |
+| gVisor | Resume-from-suspend | 0 /node · 0 /cluster | 0 /node · 0 /cluster | 4.7922s (count=30) | 5.2935s (count=30) | 100% |
 | Kata + microVM | Warm-pool hit (Base image) | 14.994 /node · 0.75 /cluster ⚠️ | 1 /node ‡ · [pending (cluster-fire)](WORK_IN_PROGRESS.md#cluster-fire) | 1.6668s (count=30) | 2.2426s (count=30) | 100% |
 | Kata + microVM | Unique-image cold (RL reality) | unk.***K | 0 /node · 0 /cluster | 3.1176s (count=30) | 3.3883s (count=30) | 100% |
 | Kata + microVM | Resume-from-suspend | [N/A](WORK_IN_PROGRESS.md#na-by-construction) | [N/A](WORK_IN_PROGRESS.md#na-by-construction) | [N/A](WORK_IN_PROGRESS.md#na-by-construction) | [N/A](WORK_IN_PROGRESS.md#na-by-construction) | [N/A](WORK_IN_PROGRESS.md#na-by-construction) |
+
+_⚠️ **Scenario FAIL:** **gVisor** Warm-pool hit (Base image) — the row above carries a real measurement whose own scenario outcome is **FAIL** (SLA not met), not a passing warm hit. The numbers are honest data, disclosed as a miss rather than dropped or greened; a later refresh whose scenario returns to PASS clears this._
 
 ### Max Density (sandboxes per vCPU)
 
@@ -73,20 +75,20 @@ Full cell-decoding key — TTFE basis, honest vs. measured zeros, the dual per-n
 
 _Kata + microVM rows are measured in a separate run on the kata node pool: cluster_substrate=gke-kata · node_count=1 · generated-at=2026-08-14T08:02:07Z._
 
-_build: cluster_substrate=gke-sandbox · controller_digest=sha256:1c884bd5d9d704634ac9c37de52240fd91db9370d0e877ac8bfec86cf6f82551 · suite_git_sha=da9ccf3cb3587cdb40b812b7d187dc301673724a · run_id=7b73a35b531d4e93839954c77088de01 · node_count=2_
-_generated-at: 2026-08-22T21:13:18Z_
+_build: cluster_substrate=gke-sandbox · controller_digest=sha256:1c884bd5d9d704634ac9c37de52240fd91db9370d0e877ac8bfec86cf6f82551 · suite_git_sha=5ebff0bb0176e911388aee8a83b897a93fb49e51 · run_id=c1353b83aa9d4e2593cb209288bce4e9 · node_count=2_
+_generated-at: 2026-08-22T22:29:36Z_
 
-_**North Star** — warm-pool-hit TTFE p95 < 1s (the spec doc bar): gVisor 22.6206s (count=30) ❌ not met (21.6206s above the bar); Kata + microVM 2.2426s (count=30) ❌ not met (1.2426s above the bar). An honest ❌ prints the measured gap to the bar (tagged `within sampling noise` when the miss sits inside the sample spread — it stays a ❌, the tag never flips a miss to a pass); `pending` = unmeasured (never a guess); † marks a p95 over fewer than N=30 samples._
+_**North Star** — warm-pool-hit TTFE p95 < 1s (the spec doc bar): gVisor 7.9932s (count=30) ❌ not met (6.9932s above the bar) ⚠️ **scenario FAIL**; Kata + microVM 2.2426s (count=30) ❌ not met (1.2426s above the bar). An honest ❌ prints the measured gap to the bar (tagged `within sampling noise` when the miss sits inside the sample spread — it stays a ❌, the tag never flips a miss to a pass); `pending` = unmeasured (never a guess); † marks a p95 over fewer than N=30 samples._
 
-_**Stretch bar** — warm-pool-hit TTFE p95 < 0.5s (an aspiration above the North Star, not the North Star itself; the step-up curve grades sustained creation-rate against it — see [DETAILS.md](DETAILS.md)): gVisor 22.6206s (count=30) ❌ not met (22.1206s above the bar); Kata + microVM 2.2426s (count=30) ❌ not met (1.7426s above the bar)._
+_**Stretch bar** — warm-pool-hit TTFE p95 < 0.5s (an aspiration above the North Star, not the North Star itself; the step-up curve grades sustained creation-rate against it — see [DETAILS.md](DETAILS.md)): gVisor 7.9932s (count=30) ❌ not met (7.4932s above the bar) ⚠️ **scenario FAIL**; Kata + microVM 2.2426s (count=30) ❌ not met (1.7426s above the bar)._
 
-> ⚠️ **Refresh delta:** **gVisor** regressed by 17.8859s (4.7347s → 22.6206s, 4.8x) · suite_git_sha `a21c0bedc1ac41bb0d505e355bf4bf5715df5787`→`da9ccf3cb3587cdb40b812b7d187dc301673724a`. A swing this large, or a bar-crossing flip, between consecutive published runs is flagged for a second look before trusting it as a substrate signal — check for a machine-class change, a node-count change, a node-image change, a build-lineage change (controller/suite rebuild), a broken measurement, or a real regression/fix.
+> ⚠️ **Refresh delta:** **gVisor** improved by 14.6274s (22.6206s → 7.9932s, 0.4x) · suite_git_sha `da9ccf3cb3587cdb40b812b7d187dc301673724a`→`5ebff0bb0176e911388aee8a83b897a93fb49e51`. A swing this large, or a bar-crossing flip, between consecutive published runs is flagged for a second look before trusting it as a substrate signal — check for a machine-class change, a node-count change, a node-image change, a build-lineage change (controller/suite rebuild), a broken measurement, or a real regression/fix.
 
 ### Known anomalies
 
 | Anomaly | Status |
 |---|---|
-| Scenario FAIL | [✅ clear](DETAILS.md#scenario-fail) |
+| Scenario FAIL | [⚠️ ACTIVE](DETAILS.md#scenario-fail) |
 | Warm-slower-than-cold | [⚠️ ACTIVE](DETAILS.md#warm-slower-than-cold) |
 | Warm-cold separation below gate | [⚠️ ACTIVE](DETAILS.md#warm-cold-separation-below-gate) |
 | Same-build separation-ratio variance | [⚠️ ACTIVE](DETAILS.md#same-build-separation-ratio-variance) |
@@ -106,10 +108,12 @@ Find the row closest to **your** load; the p50 is the wait to plan around. The *
 
 | Your load pattern | Wait to budget (p50) | Scope |
 |---|---|---|
-| Steady trickle — warm pool keeps up with demand | ~10.6s | full start → first result |
+| Steady trickle — warm pool keeps up with demand ⚠️ FAIL | ~6.4s | full start → first result |
 | Bursty — pool oversubscribed 2:1 (60 claims / 30 ready) | ~1.7s | full start → first result |
 | 300 sandboxes requested at once (1:1 pool) | ~6.9s | full start → first result |
 | Sustained 300/sec churn | ~2.9s | pool hand-off only (before exec) |
+
+_⚠️ **Scenario FAIL:** **Steady trickle — warm pool keeps up with demand** — the row above carries a real measurement whose own scenario outcome is **FAIL** (SLA not met), not a passing warm hit. The wait is honest data, disclosed as a miss rather than dropped or hidden as `pending`; a later refresh whose scenario returns to PASS clears this._
 
 ## Does it hold at cluster scale?
 
@@ -196,7 +200,7 @@ COUNT vs the prior build; the first build is the baseline. Drive this COUNT up.
 | `sha256:6edaf7b6b22d…` | 2026-06-28 | 9 | — | 0.45 | 10 | PASS |
 | `sha256:4e36a61c6bdc…` | 2026-07-25 | 2 | -7 † | 0.0416667 | 10 | FAIL |
 | `sha256:41c8c6bcabe4…` | 2026-08-16 | 10 | +8 † | 0.208333 | 10 | PASS |
-| `sha256:1c884bd5d9d7…` | 2026-08-22 | 1 | -9 † | 0.015625 | 10 | FAIL |
+| `sha256:1c884bd5d9d7…` | 2026-08-22 | 3 | -7 † | 0.046875 | 10 | FAIL |
 
 _† Δ spans a build whose burst sampled fewer than N=30 claims — too few to rank build-over-build; the swing may be sampling noise, not a real move._
 
@@ -210,7 +214,7 @@ Throughput — build-over-build (sandboxes ready <1s)
 2026-06-28 ██████████████████ 9
 2026-07-25 ████ 2 (FAIL)
 2026-08-16 ████████████████████ 10
-2026-08-22 ██ 1 (FAIL)
+2026-08-22 ██████ 3 (FAIL)
 ```
 
 ## Which storage class should you pick?
