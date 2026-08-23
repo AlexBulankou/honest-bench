@@ -424,6 +424,57 @@ steps:
         echo "$pr_response"
         echo "$pr_response" | python3 -c 'import sys,json; print(json.load(sys.stdin)["html_url"])' > /workspace/pr_url.txt
 
+  # hb#690: the upstream lane's per-fire-unique-branch fix (hb#682/#688) is
+  # correct on its own terms -- a shared mutable branch was silently erasing
+  # unmerged rows -- but the trade-off is these per-fire branches never get
+  # cleaned up once their PR merges (repo has delete_branch_on_merge: false),
+  # so they accumulate as op-noise. This step is the cleanup half of that
+  # trade-off: it sweeps ONLY the unique-per-fire naming pattern
+  # (auto/refresh-gke-sandbox-upstream-*) and deletes a branch iff GitHub
+  # confirms an associated PR has actually MERGED -- an open or
+  # closed-without-merging PR is left alone. The fork lane's persistent
+  # shared branch (auto/refresh-gke-sandbox, no "-upstream-" suffix) can
+  # never match this prefix, so this step structurally cannot touch it --
+  # deleting that branch would break the "keep ONE stable branch across
+  # fires" design the fork lane exists for (WS4 PR #594 continuity).
+  # Best-effort / never fails the build: this is hygiene, not correctness --
+  # a missed sweep this fire just means the branch waits for the next one.
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    id: cleanup-merged-branches
+    waitFor: ['open-pr']
+    entrypoint: bash
+    secretEnv: ['GITHUB_TOKEN']
+    args:
+      - -c
+      - |
+        set -uo pipefail
+        api="https://api.github.com/repos/AlexBulankou/honest-bench"
+        prefix="auto/refresh-gke-sandbox-upstream-"
+
+        branches=$(curl -sS -H "Authorization: Bearer $${GITHUB_TOKEN}" \
+          "$api/branches?per_page=100" \
+          | python3 -c 'import sys,json; [print(b["name"]) for b in json.load(sys.stdin) if b["name"].startswith(sys.argv[1])]' "$prefix")
+
+        if [ -z "$branches" ]; then
+          echo "No $${prefix}* branches found -- nothing to sweep."
+          exit 0
+        fi
+
+        while IFS= read -r branch; do
+          [ -z "$branch" ] && continue
+          closed=$(curl -sS -H "Authorization: Bearer $${GITHUB_TOKEN}" \
+            "$api/pulls?head=AlexBulankou:$branch&state=closed")
+          merged=$(echo "$closed" | python3 -c 'import sys,json; d=json.load(sys.stdin); print("1" if d and d[0].get("merged") else "0")')
+          if [ "$merged" = "1" ]; then
+            del_status=$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE \
+              -H "Authorization: Bearer $${GITHUB_TOKEN}" \
+              "$api/git/refs/heads/$branch")
+            echo "deleted merged branch $branch (HTTP $del_status)"
+          else
+            echo "skipping $branch -- no merged PR found (still open or unmerged)"
+          fi
+        done <<< "$branches"
+
   # hb#346 added the in-page "Refresh delta" caveat (_north_star_delta_caveat in
   # render/render.py) but that's passive — someone has to open the README to see it.
   # This step pushes the SAME flag proactively to a Google Chat room at publish time,
