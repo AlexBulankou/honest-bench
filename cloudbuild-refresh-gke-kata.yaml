@@ -233,19 +233,27 @@ steps:
         git config --global user.name "honest-bench-refresh"
         git config --global user.email "refresh@localhost"
 
-        BRANCH="auto/refresh-gke-kata"
-        git checkout -B "$$BRANCH"
+        # hb#689 fix (mirrors hb#682/#688 on the gke-sandbox refresh): a shared
+        # static branch rebuilt from a fresh `main` clone every fire, combined
+        # with `checkout -B` + force-with-lease, silently erases a
+        # predecessor's still-unmerged commit if a later fire outpaces review.
+        # kata's refresh is on-demand/human-gated (lower fire frequency than
+        # the standing daily gke-sandbox lane #682 targeted) but the defect
+        # shape is identical, so it gets the identical fix: a unique branch
+        # per fire ($BUILD_ID-suffixed) + a plain push. No force-with-lease
+        # needed — a fresh per-fire branch has no existing remote ref to
+        # collide with, and a force flag here would only ever mask a real bug.
+        BRANCH="auto/refresh-gke-kata-$BUILD_ID"
+        git checkout -b "$$BRANCH"
         git add sandbox-kata/results/latest.json README.md DETAILS.md
         git commit -m "data: auto-refresh benchmark results (substrate=gke-kata, cold true_ttfe)"
-
-        # A fresh CB clone fetches only main, so it has no remote-tracking ref for
-        # origin/BRANCH — establish it first so --force-with-lease has an accurate
-        # baseline (tolerated no-op on the very first refresh).
-        git fetch origin "+$$BRANCH:refs/remotes/origin/$$BRANCH" 2>/dev/null || true
-        git push --force-with-lease origin "$$BRANCH"
+        git push origin "$$BRANCH"
 
         BODY="Automated gke-kata (Kata Containers / microVM) cold true_ttfe benchmark refresh from a manual Cloud Build dispatch. substrate: gke-kata (persistent scenarios cluster, scale-to-zero kata pool — cold-honesty guard confirmed 0 resident kata nodes before firing); cold step-up sweep assembled the true_ttfe pareto and the full n=30 graduation suite merged it into the warmpool_cold_start cell; results regenerated from sandbox-kata/results/latest.json; public-safety scanner passed (fail-closed gate before this PR opened). Review the headline change before merge."
         api="https://api.github.com/repos/AlexBulankou/honest-bench/pulls"
+        # BRANCH is unique per fire, so this lookup is expected to always come
+        # back empty; kept as a cheap, harmless defensive no-op (mirrors the
+        # gke-sandbox upstream lane's identical shape post-#688).
         existing=$(curl -sS -H "Authorization: Bearer $${GITHUB_TOKEN}" \
           "$api?head=AlexBulankou:$$BRANCH&state=open")
         existing_url=$(echo "$existing" | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d[0]["html_url"] if d else "")')
