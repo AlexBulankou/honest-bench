@@ -4,8 +4,9 @@
 honest-bench renders the live customer-facing headline from a SINGLE per-product
 `latest.json`, so the README shows only the LAST-merged fire. Two auto-refresh
 lanes write the same target: the fork lane (`auto/refresh-gke-sandbox`) and the
-upstream lane (`auto/refresh-gke-sandbox-upstream`). They keep SEPARATE provenance
-chains, so the existing refresh-over-refresh delta caveat (`_north_star_delta_flag`
+upstream lane (`auto/refresh-gke-sandbox-upstream-<build-id>`, a unique branch
+per fire since hb#682). They keep SEPARATE provenance chains, so the existing
+refresh-over-refresh delta caveat (`_north_star_delta_flag`
 in render/render.py) compares each lane only against its OWN carried-forward prior
 fire -- it structurally cannot see a CROSS-lane overwrite. Merging an upstream-lane
 FAIL after a fork-lane PASS therefore silently flips the live headline PASS->FAIL
