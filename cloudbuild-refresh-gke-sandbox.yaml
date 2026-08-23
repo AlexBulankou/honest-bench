@@ -451,9 +451,19 @@ steps:
         api="https://api.github.com/repos/AlexBulankou/honest-bench"
         prefix="auto/refresh-gke-sandbox-upstream-"
 
-        branches=$(curl -sS -H "Authorization: Bearer $${GITHUB_TOKEN}" \
-          "$api/branches?per_page=100" \
-          | python3 -c 'import sys,json; [print(b["name"]) for b in json.load(sys.stdin) if b["name"].startswith(sys.argv[1])]' "$prefix")
+        # The repo has grown past 100 branches, so a single per_page=100 page
+        # can silently miss matches sorted onto page 2+ (hb#690 live-fire
+        # bug: the two live auto/refresh-gke-sandbox-upstream-* branches both
+        # sorted onto page 2 while page 1 filled with 100 alphabetically
+        # earlier branches). Page through every branch before filtering.
+        branches=$(page=1; while :; do
+          resp=$(curl -sS -H "Authorization: Bearer $${GITHUB_TOKEN}" \
+            "$api/branches?per_page=100&page=$${page}")
+          names=$(echo "$resp" | python3 -c 'import sys,json; d=json.load(sys.stdin); [print(b["name"]) for b in d]')
+          [ -z "$names" ] && break
+          echo "$names"
+          page=$((page + 1))
+        done | grep "^$${prefix}" || true)
 
         if [ -z "$branches" ]; then
           echo "No $${prefix}* branches found -- nothing to sweep."
@@ -464,7 +474,11 @@ steps:
           [ -z "$branch" ] && continue
           closed=$(curl -sS -H "Authorization: Bearer $${GITHUB_TOKEN}" \
             "$api/pulls?head=AlexBulankou:$branch&state=closed")
-          merged=$(echo "$closed" | python3 -c 'import sys,json; d=json.load(sys.stdin); print("1" if d and d[0].get("merged") else "0")')
+          # List-pulls items carry merged_at (null until merged), NOT the
+          # boolean `merged` field -- that only exists on the single-PR GET.
+          # `d[0].get("merged")` is always None here, so the sweep was
+          # deterministically inert (hb#690 live-fire finding).
+          merged=$(echo "$closed" | python3 -c 'import sys,json; d=json.load(sys.stdin); print("1" if d and d[0].get("merged_at") else "0")')
           if [ "$merged" = "1" ]; then
             del_status=$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE \
               -H "Authorization: Bearer $${GITHUB_TOKEN}" \
