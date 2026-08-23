@@ -33,8 +33,6 @@ pool — full recipe in [`recipe/REPRODUCE.md`](recipe/REPRODUCE.md), deep-dive 
 blocker — diagnosis plus file-ready patches and comments — is hand-maintained in
 [UPSTREAM_BLOCKERS.md](UPSTREAM_BLOCKERS.md).
 
-> ⚠️ **UPSTREAM DISTANCE UNVERIFIED** — this page cannot certify how far behind upstream HEAD these numbers' fork base is: **sandbox** (the product's current fork base is missing). Treat them as potentially behind upstream; run `scripts/verify-upstream-freshness.py --update-stamp` to (re)establish the distance.
-
 ## Agent Sandbox — Core Metrics
 
 **Throughput is dual — `per-node · per-cluster`.** Per-cluster figures here are a MEASURED cluster rate at 5 nodes; see the legend below for how to read the pair. (This is a different `node_count` than the one printed in each build's provenance banner below the table — that one describes the per-node fire's shape, not this per-cluster measurement.)
