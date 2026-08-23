@@ -676,16 +676,22 @@ def test_commit_distance_mixed_behind_and_unverified_renders_both():
 
 def test_resolve_commit_distance_and_fork_upstreams_read_committed_meta():
     # The live committed upstream_links.json _meta must expose both maps so build_readme can
-    # feed the pure renderer without a network round-trip.
+    # feed the pure renderer without a network round-trip. Sandbox was de-listed:
+    # post-#646 revert, sandbox fires are latest-upstream and never stamp
+    # fork_base_upstream_sha, so declaring it here produced a permanently-false "UPSTREAM
+    # DISTANCE UNVERIFIED" banner. No product is currently tracked as a fork -- this asserts
+    # the maps load as dicts and stay mutually consistent for whatever IS listed, without
+    # hardcoding a specific product.
     fu = render.resolve_fork_upstreams()
     cd = render.resolve_commit_distance()
-    assert isinstance(fu, dict) and "sandbox" in fu
-    assert isinstance(cd, dict) and "sandbox" in cd
+    assert isinstance(fu, dict)
+    assert isinstance(cd, dict)
     # The committed distance stamp must be measured against the SAME upstream repo/branch the
     # fork_upstreams config names, else the renderer's cross-check is meaningless.
-    assert cd["sandbox"]["upstream_repo"] == fu["sandbox"]["repo"]
-    assert cd["sandbox"]["upstream_branch"] == fu["sandbox"]["branch"]
-    assert isinstance(cd["sandbox"]["commits_behind"], int)
+    for name, stamp in cd.items():
+        assert stamp["upstream_repo"] == fu[name]["repo"]
+        assert stamp["upstream_branch"] == fu[name]["branch"]
+        assert isinstance(stamp["commits_behind"], int)
 
 
 def test_badge_scope_suffixes_isolation_pass_cell():
