@@ -346,30 +346,66 @@ steps:
         # discipline the GITHUB_TOKEN comment above describes applies to secrets,
         # not to this plain flag).
         if [ -n "${_HB_FORK_BUILD}" ]; then
+          # Fork lane: keep ONE stable branch across fires on purpose, so
+          # iterative WS4 fixes (epic #6669) land as updates to the SAME
+          # in-flight PR (#594) instead of each fire opening a new one. This
+          # lane still needs the force-with-lease dance below because it IS
+          # meant to overwrite its own prior push.
           BRANCH="auto/refresh-gke-sandbox"
           FLAVOR="fork-build"
+          PUSH_FORCE="1"
         else
-          BRANCH="auto/refresh-gke-sandbox-upstream"
+          # hb#682 fix: the standing daily upstream lane gets a UNIQUE branch
+          # per fire (suffixed with the Cloud Build id) instead of the old
+          # shared "auto/refresh-gke-sandbox-upstream" branch. The prior
+          # scheme rebuilt that branch from a fresh clone of `main` on EVERY
+          # fire, then force-pushed over whatever it already held — a fresh
+          # clone never round-trips through a still-open PR, so a fire that
+          # outpaced review silently erased a predecessor's still-unmerged
+          # row (history.jsonl / warmpool-separation-history.jsonl are both
+          # append-only stores in the file list below). Per-fire branches
+          # remove the shared mutable push target entirely: no fire's branch
+          # is ever the destination of a LATER fire's push, so a
+          # predecessor's unmerged PR is untouched no matter how many fires
+          # land before it gets reviewed. The tradeoff — multiple open
+          # refresh PRs can pile up if review lags, and a late one may hit a
+          # real merge conflict against an earlier one — is the CORRECT
+          # failure mode here: a loud, visible merge conflict beats a silent
+          # drop (the fleet's trust-surface fail-closed idiom). $BUILD_ID is
+          # a Cloud Build built-in substitution, unescaped like $PROJECT_ID
+          # elsewhere in this file, resolved at submit time.
+          BRANCH="auto/refresh-gke-sandbox-upstream-$BUILD_ID"
           FLAVOR="latest-upstream"
+          PUSH_FORCE=""
         fi
-        git checkout -B "$$BRANCH"
+        git checkout -b "$$BRANCH"
         git add sandbox/results/latest.json sandbox/results/history.jsonl sandbox/results/warmpool-separation-history.jsonl README.md DETAILS.md render/upstream_links.json
         git commit -m "data: auto-refresh benchmark results (substrate=gke-sandbox, gVisor, $$FLAVOR)"
 
-        # A fresh CB clone fetches only main, so it has no remote-tracking ref for
-        # origin/BRANCH — and `--force-with-lease` with no explicit expected value
-        # uses refs/remotes/origin/BRANCH as its lease baseline. Without it, the 2nd
-        # refresh onward is rejected ("stale info") because git has no baseline to
-        # compare. Establish the ref first: force-update the remote-tracking ref to the
-        # current remote tip so the lease is accurate. Tolerated no-op on the very first
-        # refresh (branch does not yet exist remotely). Preserves the force-with-lease
-        # safety semantics (still refuses to clobber an unseen concurrent update).
-        git fetch origin "+$$BRANCH:refs/remotes/origin/$$BRANCH" 2>/dev/null || true
-        git push --force-with-lease origin "$$BRANCH"
+        if [ -n "$$PUSH_FORCE" ]; then
+          # A fresh CB clone fetches only main, so it has no remote-tracking ref for
+          # origin/BRANCH — and `--force-with-lease` with no explicit expected value
+          # uses refs/remotes/origin/BRANCH as its lease baseline. Without it, the 2nd
+          # refresh onward is rejected ("stale info") because git has no baseline to
+          # compare. Establish the ref first: force-update the remote-tracking ref to the
+          # current remote tip so the lease is accurate. Tolerated no-op on the very first
+          # refresh (branch does not yet exist remotely). Preserves the force-with-lease
+          # safety semantics (still refuses to clobber an unseen concurrent update).
+          git fetch origin "+$$BRANCH:refs/remotes/origin/$$BRANCH" 2>/dev/null || true
+          git push --force-with-lease origin "$$BRANCH"
+        else
+          # BRANCH is unique to this fire — there is no existing remote ref to
+          # clobber, so a plain push is correct (and a force flag here would
+          # only ever mask a real bug, never legitimately fire).
+          git push origin "$$BRANCH"
+        fi
 
-        # Open the PR (idempotent: if one is already open for this head, the push
-        # above updated it; skip re-creating). Body kept single-line to avoid JSON
-        # newline handling in the shell.
+        # Open the PR. For the fork lane (shared branch, PUSH_FORCE=1) an
+        # existing open PR on that branch already got the push above folded
+        # into it — detect that and skip re-creating. For the upstream lane
+        # BRANCH is unique per fire, so this lookup is expected to always
+        # come back empty; kept as a cheap, harmless defensive no-op. Body
+        # kept single-line to avoid JSON newline handling in the shell.
         BODY="Automated gke-sandbox (gVisor) benchmark refresh from a manual Cloud Build dispatch. substrate: gke-sandbox (fresh ephemeral node pool with --sandbox type=gvisor); burst fired under runtimeClassName=gvisor (burst-create read-back guard confirmed every backing pod landed on the gvisor RuntimeClass); results regenerated from sandbox/results/latest.json; public-safety scanner passed (fail-closed gate before this PR opened). Review the headline change before merge."
         api="https://api.github.com/repos/AlexBulankou/honest-bench/pulls"
         existing=$(curl -sS -H "Authorization: Bearer $${GITHUB_TOKEN}" \
