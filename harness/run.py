@@ -1253,6 +1253,17 @@ def carry_prior_density(raw: list, prior_scenarios) -> None:
     env-stamped fire) is never overwritten. The prior must be a measured
     (non-pending) row holding a finite non-negative real density — a pending
     placeholder or malformed value carries nothing.
+
+    A genuinely EMPTY fresh sla_metrics (`{}`) is skipped, not backfilled
+    (hb#700 Arm B fire #3 recovery incident). `{}` is a scenario's own
+    honest-zero-measurement sentinel (e.g. burst_create's zero-delivery burst,
+    #546) — distinct from a non-empty row that merely omits density because its
+    canonical-fire env stamp was absent. Carrying density onto a `{}` row
+    fabricates a partial reading that mixes this fire's "nothing measured" with
+    a prior fire's number, which is exactly the "mix two fires in one row"
+    outcome the docstring above says the honesty spine forbids — and it broke
+    accrue_history.py downstream (a non-empty-but-count-less sla_metrics is not
+    the same as a properly-empty one; see render/accrue_history.py CASE 1 vs 2).
     """
     if not isinstance(prior_scenarios, list):
         return
@@ -1263,7 +1274,7 @@ def carry_prior_density(raw: list, prior_scenarios) -> None:
         if not isinstance(cell, dict):
             continue
         m = cell.get("sla_metrics")
-        if not isinstance(m, dict) or "density_per_vcpu" in m:
+        if not isinstance(m, dict) or not m or "density_per_vcpu" in m:
             continue
         prior = prior_by_name.get(cell.get("name"))
         if not isinstance(prior, dict):
