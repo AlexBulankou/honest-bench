@@ -135,6 +135,22 @@ substitutions:
   #   gcloud builds triggers run hb-refresh-gke-sandbox --project=<PROJECT> \
   #     --substitutions=_HB_PIN_CONTROLLER_DIGEST=sha256:<64-hex>
   _HB_PIN_CONTROLLER_DIGEST: ""
+  # hb#700: opt-in escape hatch for harness/run.py's check_cell_downgrade() trust-surface
+  # guard. That guard fail-closes the WHOLE atomic latest.json write (every cell in the
+  # fire, not just the regressed one) when a fresh measurement would downgrade a prior
+  # GENUINE (non-pending) row — e.g. losing an sla_metrics key or a real outcome
+  # regression. It fired correctly on hb#700's S29 Arm-B (n=4) fire #1: burst_create
+  # measured 0/10 sub-1s TTFI claims at n=4 vs. a committed 3/10 at n=2 — a real,
+  # non-buggy rig-shape effect, not a bug — and blocked publish of the unrelated
+  # warmpool_gate_separation_ratio cell the fire actually needed. Default empty ⇒
+  # INERT — the standing daily fire keeps today's fail-closed behavior exactly as
+  # before this substitution existed. Override ONLY for a deliberate, understood,
+  # documented republish (the rig-shape change is self-disclosing via run.py's existing
+  # node_count/prior_node_count provenance stamp, so this is not a silent downgrade —
+  # see hb#700 comments for the specific fire's root-cause writeup before setting this).
+  # Usage:
+  #     --substitutions=_ALLOW_CELL_DOWNGRADE=1
+  _ALLOW_CELL_DOWNGRADE: ""
 
 steps:
   # PRE-FIRE FUNCTIONAL PROBE: a policy READ (`gcloud projects get-iam-policy`)
@@ -267,6 +283,13 @@ steps:
       - "HB_FORK_FIX_COUNT=${_HB_FORK_FIX_COUNT}"
       - "HB_FORK_ALLOW_DIAGNOSTIC=${_HB_FORK_ALLOW_DIAGNOSTIC}"
       - "HB_PIN_CONTROLLER_DIGEST=${_HB_PIN_CONTROLLER_DIGEST}"
+      # hb#700: direct pass-through, no script-side translation needed — harness/run.py
+      # reads BENCH_ALLOW_CELL_DOWNGRADE from the environment by this exact name (see
+      # the _ALLOW_CELL_DOWNGRADE substitution comment above for the guard/rationale),
+      # and this CB step's env: already exports straight into the container that runs
+      # `python3 -m harness.run` below — same mechanism the other BENCH_* passthroughs
+      # (e.g. BENCH_NODE_COUNT, set later in cb-measure-gke-sandbox.sh itself) rely on.
+      - "BENCH_ALLOW_CELL_DOWNGRADE=${_ALLOW_CELL_DOWNGRADE}"
     args:
       - scripts/cb-measure-gke-sandbox.sh
 
