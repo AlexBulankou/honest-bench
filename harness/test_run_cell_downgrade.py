@@ -186,6 +186,25 @@ def test_density_malformed_inputs_tolerated():
            "malformed prior sla_metrics must carry nothing")
 
 
+def test_density_not_carried_onto_empty_zero_delivery_sla():
+    # hb#700 Arm B fire #3 recovery incident: burst_create's zero-delivery
+    # burst emits sla_metrics={} (its own honest-zero-measurement sentinel,
+    # #546) — a genuinely empty dict must stay empty, never get seeded with a
+    # prior fire's density_per_vcpu. The carry logic keyed only on "does the
+    # fresh dict already have density_per_vcpu", so a valid measured prior
+    # would silently turn {} into {"density_per_vcpu": <stale value>} — a
+    # non-empty-but-count-less sla_metrics that downstream accrue_history.py
+    # cannot distinguish from a real (partial) measurement, and crashed on.
+    prior = [{"name": "burst_create", "outcome": "PASS",
+              "sla_metrics": {"density_per_vcpu": 5.98,
+                               "sandboxes_ready_under_1s": 4, "n": 10}}]
+    raw = [{"name": "burst_create", "outcome": "PASS", "sla_metrics": {}}]
+    carry_prior_density(raw, prior)
+    _check(raw[0]["sla_metrics"] == {},
+           f"empty zero-delivery sla_metrics must stay empty: "
+           f"{raw[0]['sla_metrics']!r}")
+
+
 def main() -> int:
     tests = [
         test_key_loss_detected,
@@ -201,6 +220,7 @@ def main() -> int:
         test_density_pending_prior_not_carried,
         test_density_invalid_values_not_carried,
         test_density_malformed_inputs_tolerated,
+        test_density_not_carried_onto_empty_zero_delivery_sla,
     ]
     failed = 0
     for t in tests:
