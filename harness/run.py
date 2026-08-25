@@ -267,6 +267,16 @@ def check_cell_downgrade(raw: list, prior_scenarios) -> list[str]:
     Returns human-readable downgrade lines; empty means clean. The caller
     decides the posture (main() fails closed unless BENCH_ALLOW_CELL_DOWNGRADE
     is set).
+
+    Leg 2 is a pure key-SET comparison — it cannot tell "this key's value
+    changed" from "this key vanished", by design (value changes never gate).
+    That property is exactly what made hb#709 possible to fix upstream instead
+    of here: burst_create's zero-delivery `{}` looked identical to real key
+    loss to this leg, guard-blocking ~60% of n=4 fires and atomically
+    discarding clean same-fire data from OTHER scenarios. The fix was to make
+    burst_create always emit real (possibly-zero) keys instead of `{}` — this
+    function needed no change, since a present zero-valued key was never a
+    "key lost" case to begin with.
     """
     fresh_by_name = {
         r["name"]: r for r in raw
@@ -1256,14 +1266,18 @@ def carry_prior_density(raw: list, prior_scenarios) -> None:
 
     A genuinely EMPTY fresh sla_metrics (`{}`) is skipped, not backfilled
     (hb#700 Arm B fire #3 recovery incident). `{}` is a scenario's own
-    honest-zero-measurement sentinel (e.g. burst_create's zero-delivery burst,
-    #546) — distinct from a non-empty row that merely omits density because its
-    canonical-fire env stamp was absent. Carrying density onto a `{}` row
-    fabricates a partial reading that mixes this fire's "nothing measured" with
-    a prior fire's number, which is exactly the "mix two fires in one row"
-    outcome the docstring above says the honesty spine forbids — and it broke
-    accrue_history.py downstream (a non-empty-but-count-less sla_metrics is not
-    the same as a properly-empty one; see render/accrue_history.py CASE 1 vs 2).
+    honest-zero-measurement sentinel (e.g. session_turnover's/warmpool_cold_start's
+    never-computed-gate-metric case) — distinct from a non-empty row that merely
+    omits density because its canonical-fire env stamp was absent. Carrying
+    density onto a `{}` row fabricates a partial reading that mixes this fire's
+    "nothing measured" with a prior fire's number, which is exactly the "mix two
+    fires in one row" outcome the docstring above says the honesty spine forbids.
+
+    As of hb#709, burst_create no longer uses `{}` as its zero-delivery sentinel
+    — it always emits real (possibly-zero) keys including `density_per_vcpu`, so
+    a fresh burst_create row hits the `"density_per_vcpu" in m` skip above
+    instead of the `not m` skip, with the same outcome: fresh legitimately-zero
+    density is never overwritten by a prior fire's number.
     """
     if not isinstance(prior_scenarios, list):
         return

@@ -813,9 +813,10 @@ def _latest_measured_count(latest_results):
 
     Mirrors render.accrue_history._burst_count_row: the trend's headline COUNT is
     `sla_metrics.sandboxes_ready_under_1s` on ANY burst_create cell that measured one — NOT
-    gated on outcome == "PASS" (#546). The scenario's own contract surfaces the COUNT on both
-    PASS and FAIL; only a genuine all-cold burst (count==0) emits an empty sla_metrics, which
-    is the true CASE-1 benign "nothing to reconcile" case. `digest_or_empty` is the provenance
+    gated on outcome == "PASS" (#546). The scenario's own contract ALWAYS surfaces the COUNT on
+    both PASS and FAIL (hb#709): a genuine all-cold burst (count==0) emits explicit zero-valued
+    keys, never an empty sla_metrics — only a malformed/absent cell hits the `not m` skip below,
+    the true CASE-1 benign "nothing to reconcile" case. `digest_or_empty` is the provenance
     controller_digest AS PUBLISHED — the emitter drops the key when empty, so an un-anchorable
     fire yields "" here; `date` is generated_at[:10].
     """

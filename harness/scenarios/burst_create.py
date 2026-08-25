@@ -515,9 +515,15 @@ def _classify_burst(
       - sandboxes_ready_under_1s = count of claims with TTFI < ttfi_ceiling_s
       - density_per_vcpu = that count / total_vcpu (0.0 if vcpu unknown)
       - passed iff count >= ceil(claim_count * min_qualified_ratio)
-    sla_metrics is emitted whenever count > 0 (a real measurement, surfaced even
-    on FAIL like warmpool_cold_start surfaces warm_max); count == 0 emits {} so a
-    zero-delivery burst publishes no fabricated number.
+    sla_metrics is ALWAYS emitted (hb#709) — count == 0 is a real, honest
+    measurement ("not fast enough" per the spec doc), not an absence. Prior
+    behavior emitted {} on zero-delivery as a "no fabricated number" sentinel,
+    but that made a genuine zero indistinguishable from actual key loss to
+    check_cell_downgrade()'s pure key-set comparison, guard-blocking ~60% of
+    n=4 fires and atomically discarding clean same-fire data from OTHER
+    scenarios (hb#709). Zero is now a present VALUE like any other measurement
+    (surfaced on both PASS and FAIL, same as a nonzero count) — absence of a
+    key remains the only signal of real loss.
     """
     measured = [v for v in ttfis.values() if v is not None]
     count_under = sum(1 for v in measured if v < ttfi_ceiling_s)
@@ -539,14 +545,11 @@ def _classify_burst(
         "all_ttfi_s": sorted(measured),
     }
 
-    if count_under > 0:
-        sla_metrics = {
-            _KEY_COUNT: float(count_under),
-            _KEY_DENSITY: density,
-            "n": claim_count,
-        }
-    else:
-        sla_metrics = {}
+    sla_metrics = {
+        _KEY_COUNT: float(count_under),
+        _KEY_DENSITY: density,
+        "n": claim_count,
+    }
 
     return passed, breakdown, sla_metrics
 
@@ -609,7 +612,9 @@ def _classify_exec_corroboration(
     corroborate, so no fabricated number. When there WAS at least one attempt the
     dict is always returned, even if the exec count is 0 (a real measurement:
     "Ready but none usable under 1s"), so the caller emits it whenever the
-    headline emitted a non-empty sla.
+    headline measured at least one Ready+bound delivery (count_under > 0; see
+    the NOTE at the call site — hb#709 made sla_metrics always non-empty, so
+    the caller no longer gates on sla truthiness).
     """
     if not exec_oks:
         return {}
@@ -732,12 +737,12 @@ def _cleanup(
 def run(scenario_name: str) -> tuple[str, str, dict]:
     """Provision pool, fire K claims, count sub-1s binds, classify PASS/FAIL.
 
-    Returns a 3-tuple (outcome, excerpt, sla_metrics). `sla_metrics` carries
-    sandboxes_ready_under_1s + density_per_vcpu + the reserved "n" (= claims
-    fired) when at least one claim cleared the sub-1s bar; an all-cold burst
-    emits {} (no fabricated number). The metric is surfaced on PASS and FAIL so a
-    pool that delivers some-but-not-enough sub-1s slots still publishes the real
-    count it achieved.
+    Returns a 3-tuple (outcome, excerpt, sla_metrics). `sla_metrics` ALWAYS
+    carries sandboxes_ready_under_1s + density_per_vcpu + the reserved "n"
+    (= claims fired) — hb#709: an all-cold burst emits explicit zero-valued
+    keys, never {} (zero is a real measurement, not an absence). The metric
+    is surfaced on PASS and FAIL so a pool that delivers some-but-not-enough
+    sub-1s slots still publishes the real count it achieved.
     """
     from kubernetes import client as k8s_client
 
@@ -860,11 +865,14 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
         # ADDITIVE literal-TTFE corroboration (#3954). The Ready+bound count above
         # stays the SOLE published headline — these fields ride ALONGSIDE it,
         # never replace it. Emit only when (a) TTFE was enabled, AND (b) the
-        # headline emitted a non-empty sla (count_under > 0): an exec count of 0
-        # is then a REAL measurement ("Ready but none usable under 1s"), so it is
-        # honest to publish. When the headline is empty ({} — zero delivery) there
-        # is nothing to corroborate, so the page stays byte-unchanged.
-        if _TTFE_EXEC and sla_metrics:
+        # headline measured at least one Ready+bound delivery (count_under > 0):
+        # an exec count of 0 is then a REAL measurement ("Ready but none usable
+        # under 1s"), so it is honest to publish. On a genuine zero-delivery
+        # burst there is nothing to corroborate, so the page stays byte-unchanged.
+        # NOTE: gate on breakdown["count_under"], not sla_metrics truthiness —
+        # sla_metrics is now ALWAYS a non-empty dict (hb#709, zero is a value),
+        # so a bare `and sla_metrics` check would no longer distinguish this case.
+        if _TTFE_EXEC and breakdown["count_under"] > 0:
             ttfe_ms_samples, exec_oks = _assemble_probe_results(
                 claim_names, ttfe_results,
             )

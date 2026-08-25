@@ -108,15 +108,17 @@ def test_density_zero_when_vcpu_unknown():
 
 # ---- sla_metrics emission posture ----
 
-def test_zero_under_emits_empty_metrics():
-    # an all-cold burst publishes NO fabricated number (mirrors warm_max posture).
+def test_zero_under_emits_explicit_zero_metrics():
+    # hb#709: an all-cold burst is a REAL zero measurement, not an absence — it
+    # publishes explicit zero-valued keys (never {}), so check_cell_downgrade()'s
+    # key-set comparison can't mistake this honest zero for genuine key loss.
     passed, bd, sla = cell._classify_burst(
         _ttfis(5.0, 6.0, None),
         claim_count=3, ttfi_ceiling_s=1.0, total_vcpu=2.0, min_qualified_ratio=0.8,
     )
     assert passed is False
     assert bd["count_under"] == 0
-    assert sla == {}
+    assert sla == {_KC: 0.0, _KD: 0.0, "n": 3}
 
 
 def test_partial_delivery_fails_but_surfaces_real_count():

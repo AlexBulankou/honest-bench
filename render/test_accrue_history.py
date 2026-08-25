@@ -16,8 +16,10 @@ import accrue_history
 
 def _latest(count=9, density=0.45, n=10, digest="sha256:" + "a" * 64,
             generated_at="2026-06-28T14:42:40Z", outcome="PASS"):
-    # count=None mirrors a genuine all-cold burst: the scenario itself emits an EMPTY
-    # sla_metrics (no fabricated number), independent of outcome — the true CASE-1 honest-skip.
+    # count=None models a malformed/absent sla_metrics cell (the true CASE-1 honest-skip) —
+    # NOT a genuine all-cold burst. As of hb#709 a real all-cold burst emits explicit
+    # zero-valued keys (never {}), so it charts; this fixture is exercising accrue_history's
+    # own defensive handling of an empty dict, independent of what burst_create actually emits.
     metrics = {} if count is None else {"sandboxes_ready_under_1s": count, "density_per_vcpu": density}
     return {
         "product": "sandbox",
@@ -47,9 +49,11 @@ def test_extract_row_happy_path():
     assert row["controller_digest"] == "sha256:" + "a" * 64
 
 
-def test_extract_row_honest_skip_when_all_cold():
-    # A genuine all-cold burst (count==0, sla_metrics=={}) carries no measurable COUNT — no
-    # row (you cannot chart a COUNT that was not measured). This is NOT an outcome check.
+def test_extract_row_honest_skip_when_no_sla_metrics():
+    # A malformed/absent sla_metrics cell carries no measurable COUNT — no row (you cannot
+    # chart a COUNT that was not measured). This is NOT an outcome check. Note: a genuine
+    # all-cold burst (count==0) is NOT this case as of hb#709 — see test_burst_create.py's
+    # test_zero_under_emits_explicit_zero_metrics.
     assert accrue_history.extract_row(_latest(count=None)) is None
 
 
@@ -74,7 +78,7 @@ def test_extract_row_skip_on_bad_required_field():
 
 
 def test_candidate_row_none_when_no_count():
-    # CASE 1: an all-cold burst_create carries no measurable COUNT ⇒ no candidate at all.
+    # CASE 1: a malformed/absent sla_metrics cell carries no measurable COUNT ⇒ no candidate.
     assert accrue_history._candidate_row(_latest(count=None)) is None
 
 

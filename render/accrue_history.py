@@ -15,13 +15,16 @@ Contract (mirrors the fleet's other accrual stores):
     (latest measurement of a build wins) rather than appending a duplicate, so the file is
     exactly one row per distinct build, ordered by generated_at.
   - Honest-skip vs loud-fail (two distinct None-cases — do not conflate):
-      CASE 1 (benign) — a latest.json whose burst_create cell carries no sla_metrics (the
-        scenario itself emits {} only for a genuine all-cold burst, count==0) produces NO row —
-        you cannot chart a COUNT that was not measured. Exit 0, no write. Note this is NOT an
-        outcome check: the scenario's own contract (harness/scenarios/burst_create.py) surfaces
-        the COUNT on BOTH PASS and FAIL — a pool that delivers some-but-not-enough sub-1s slots
-        still publishes the real count it achieved (#546), so a FAIL cell with sla_metrics IS
-        measurable and DOES chart.
+      CASE 1 (benign) — a latest.json whose burst_create cell carries no sla_metrics at all (the
+        scenario is absent from the run, or emits a malformed/empty dict) produces NO row — you
+        cannot chart a COUNT that was not measured. Exit 0, no write. Note this is NOT an outcome
+        check: the scenario's own contract (harness/scenarios/burst_create.py) surfaces the COUNT
+        on BOTH PASS and FAIL — a pool that delivers some-but-not-enough sub-1s slots still
+        publishes the real count it achieved (#546), so a FAIL cell with sla_metrics IS measurable
+        and DOES chart. As of hb#709, a genuine all-cold burst (count==0) is ALSO measurable — the
+        scenario now emits explicit zero-valued keys (never {}) because a real zero is a value,
+        not an absence — so it charts too, showing the throughput trend truthfully dropping to 0
+        instead of silently freezing at the last nonzero build.
       CASE 2 (defect) — a COUNT *was* measured but a provenance field cannot anchor it to a
         build (e.g. controller_digest empty because BENCH_CONTROLLER_DIGEST capture flaked).
         Skipping this silently freezes the throughput trend while the fire reports success, so
@@ -59,11 +62,13 @@ def _burst_count_row(results):
     """Return (count, density, n, outcome) from a MEASURED burst_create cell, or None.
 
     "Measurable" means sla_metrics is a non-empty dict — NOT outcome == "PASS". The scenario's
-    own contract (harness/scenarios/burst_create.py) emits sla_metrics whenever count_under > 0,
-    regardless of PASS/FAIL ("surfaced on PASS and FAIL so a pool that delivers
-    some-but-not-enough sub-1s slots still publishes the real count it achieved"); only a
-    genuine all-cold burst (count == 0) emits {}. Gating on outcome instead of on sla_metrics
-    was #546: it silently discarded real FAIL-outcome counts, freezing the trend.
+    own contract (harness/scenarios/burst_create.py) ALWAYS emits sla_metrics (hb#709) — a
+    genuine all-cold burst emits explicit zero-valued keys rather than {}, since a real zero is
+    a value, not an absence — regardless of PASS/FAIL ("surfaced on PASS and FAIL so a pool that
+    delivers some-but-not-enough sub-1s slots still publishes the real count it achieved"). The
+    `not m` branch below is now defensive (malformed/absent cell) rather than the live all-cold
+    path. Gating on outcome instead of on sla_metrics was #546: it silently discarded real
+    FAIL-outcome counts, freezing the trend.
     """
     if not isinstance(results, dict):
         return None
@@ -221,10 +226,11 @@ def main(argv=None):
 
     candidate = _candidate_row(results)
     if candidate is None:
-        # CASE 1: genuinely no measurable COUNT (burst_create absent, or its burst was
-        # all-cold — count==0, sla_metrics=={}). A COUNT that was never measured cannot be
-        # charted — benign honest-skip, exit 0. NOT an outcome check: a FAIL cell that DID
-        # measure a count (sla_metrics non-empty) is measurable and does not hit this branch.
+        # CASE 1: genuinely no measurable COUNT (burst_create absent from the run, or its cell
+        # is malformed/empty). A COUNT that was never measured cannot be charted — benign
+        # honest-skip, exit 0. As of hb#709 a genuine all-cold burst (count==0) is NOT this case
+        # — it emits explicit zero-valued sla_metrics and DOES chart. NOT an outcome check: a
+        # FAIL cell that DID measure a count (sla_metrics non-empty) is measurable too.
         sys.stderr.write("accrue_history: latest.json has no measurable burst_create COUNT — skip\n")
         return 0
 
