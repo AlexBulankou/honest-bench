@@ -478,6 +478,28 @@ headline without a local cluster and read the build log to see every command:
   gcloud builds triggers run hb-refresh-gke-sandbox --project=<PROJECT> \
     --substitutions=_POOL_REPLICAS=10,_MACHINE_TYPE=n2-standard-16,_REGION=us-central1
   ```
+
+  The published graduation shape's other two N-bearing knobs — `NATIVE_DIGEST_COLD_SAMPLES`
+  and `SUSPEND_RESUME_CYCLE_COUNT` (see "Refreshing published cells" above) — are
+  also fire-time substitutions on this trigger (`_NATIVE_DIGEST_COLD_SAMPLES` /
+  `_SUSPEND_RESUME_CYCLE_COUNT`, both default `"30"`, byte-identical to the
+  committed shape), alongside `_NUM_NODES`/`_MAX_NODES` (node-pool sizing — gVisor
+  pool pods are CPU/mem-tiny, so the real ceiling at high pool/claim counts is
+  GKE's default max-pods-per-node, not resources) and `_BUILD_TIMEOUT` (default
+  `"3600s"`, caps the whole create→measure→render→PR→teardown lifecycle). Example
+  raising warm pool to 200 with matching node headroom:
+
+  ```bash
+  gcloud builds triggers run hb-refresh-gke-sandbox --project=<PROJECT> \
+    --substitutions=_WARMPOOL_POOL_REPLICAS=200,_WARMPOOL_CLAIM_COUNT=266,_NUM_NODES=5,_MAX_NODES=7
+  ```
+
+  Cold samples are cheap (~4s each) so a large `_NATIVE_DIGEST_COLD_SAMPLES` fire
+  costs only minutes of extra wall-clock. Resume cycles are not: `suspend_resume.py`'s
+  loop is strictly sequential with no checkpointing (each cycle chains off the
+  prior cycle's resumed Pod, results only finalize after the full loop), so a large
+  `_SUSPEND_RESUME_CYCLE_COUNT` fire needs a correspondingly larger `_BUILD_TIMEOUT`
+  and accepts that a mid-run failure loses every accumulated sample.
 - **gke-kata (Kata + microVM) path** — [`cloudbuild-refresh-gke-kata.yaml`](../cloudbuild-refresh-gke-kata.yaml).
   Same shape, `kata-clh` RuntimeClass, scoped to the Kata scenarios. Fire it:
 

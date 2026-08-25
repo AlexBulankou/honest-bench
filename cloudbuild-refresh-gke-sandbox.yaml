@@ -18,6 +18,21 @@
 # intend to publish the downgraded cell; a pure capacity-sweep fire is not
 # expected to publish and can let that refusal stop it short of the PR step.
 #
+# a#7263 (a4z1 N-floor question): the cold and resume sample counts are ALSO
+# fire-time substitutions now — _NATIVE_DIGEST_COLD_SAMPLES / _SUSPEND_RESUME_
+# CYCLE_COUNT, both default "30" (byte-identical to the committed shape). A
+# large warmpool fire also needs more scheduling headroom than the default
+# 2-node cluster: gVisor pool pods are tiny (10m CPU / 16Mi mem each — CPU/mem
+# is never the ceiling) but GKE's default max-pods-per-node (110) is, so pass
+# _NUM_NODES/_MAX_NODES too once pool+claims approach ~200. _BUILD_TIMEOUT
+# (default "3600s") caps the whole create->measure->render->PR->teardown
+# lifecycle — raise it for a large resume-cycle fire (see the resume-cost
+# warning at _SUSPEND_RESUME_CYCLE_COUNT's definition below: that loop is
+# strictly sequential with no checkpointing, so cost scales ~linearly with N
+# and a mid-run failure loses every accumulated sample). Example large fire:
+#   gcloud builds triggers run hb-refresh-gke-sandbox --project=<PROJECT> \
+#     --substitutions=_WARMPOOL_POOL_REPLICAS=200,_WARMPOOL_CLAIM_COUNT=266,_NUM_NODES=5,_MAX_NODES=7
+#
 # DEBUG ITERATION (hb#311): a `measure`-stage bug found via this trigger costs
 # a full ~25min create+teardown fire per layer peeled (a prior 4-bug chain
 # was 4 such fires — "fire-as-linter"). Set _KEEP_CLUSTER_ON_FAILURE=1 to skip
@@ -82,6 +97,29 @@ substitutions:
   # diagnostics in the build log are the point of the sweep, not the published cell).
   _WARMPOOL_POOL_REPLICAS: "30"
   _WARMPOOL_CLAIM_COUNT: "40"
+  # a#7263/a4z1: the cold and resume sample counts were the two graduation-shape
+  # knobs left hardcoded in the measure-step env below instead of following the
+  # warmpool pattern above — a fire wanting a bigger N had to edit this file.
+  # Default "30" is byte-identical to the committed published shape; overridable
+  # at fire time the same way as the warmpool knobs, e.g.:
+  #   gcloud builds triggers run hb-refresh-gke-sandbox --project=<PROJECT> \
+  #     --substitutions=_NATIVE_DIGEST_COLD_SAMPLES=200
+  # Cold samples are cheap (~4s each measured 2026-08-25 — 200 samples costs
+  # ~13min beyond baseline, well inside the default _BUILD_TIMEOUT below).
+  # Resume cycles are NOT cheap the same way: suspend_resume.py's loop is
+  # strictly sequential with each cycle chaining off the prior cycle's resumed
+  # Pod, and results only finalize after the full loop completes (no
+  # checkpointing) — a large _SUSPEND_RESUME_CYCLE_COUNT fire (e.g. the
+  # 1376-class spec shape) needs a correspondingly larger _BUILD_TIMEOUT AND
+  # accepts the risk that a mid-run failure loses every accumulated sample.
+  # A below-30 value on either knob will trip check_n_regression on publish,
+  # same as the warmpool knobs above.
+  _NATIVE_DIGEST_COLD_SAMPLES: "30"
+  _SUSPEND_RESUME_CYCLE_COUNT: "30"
+  # Overridable ceiling for the overall create->measure->render->PR->teardown
+  # lifecycle (hb#379 warmpool sweeps and the default 30/40/30/30 shape fit
+  # comfortably inside 3600s; a large-N cold or resume sweep needs headroom).
+  _BUILD_TIMEOUT: "3600s"
   # epic #6669 WS4: opt-in fork-source controller build. Default empty ⇒ the
   # measure step's fork block (scripts/cb-measure-gke-sandbox.sh) is INERT and
   # the standing daily fire installs the upstream prebuilt controller exactly as
@@ -217,9 +255,11 @@ steps:
       # here — a refresh without it fires the scenario at its default n=1
       # (SUSPEND_RESUME_CYCLE_COUNT, harness/scenarios/suspend_resume.py) and the
       # all-or-nothing latest.json write reds on check_n_regression (hb#592).
-      - "SUSPEND_RESUME_CYCLE_COUNT=30"
+      # a#7263: now substitution-backed (see _SUSPEND_RESUME_CYCLE_COUNT above)
+      # so a larger-N fire no longer needs to edit this file.
+      - "SUSPEND_RESUME_CYCLE_COUNT=${_SUSPEND_RESUME_CYCLE_COUNT}"
       - "NATIVE_DIGEST_COLD_RUNTIME_CLASS=gvisor"
-      - "NATIVE_DIGEST_COLD_SAMPLES=30"
+      - "NATIVE_DIGEST_COLD_SAMPLES=${_NATIVE_DIGEST_COLD_SAMPLES}"
       - "BENCH_TTFE_EXEC=1"
       # NetworkPolicy data-plane probe (#3950/#3907): arm the in-Pod on-the-wire
       # enforcement probe so the two isolation cells (cross_tenant_network_isolation,
@@ -617,4 +657,4 @@ options:
 # gVisor node pool create (~5-8 min) + burst measure + the n=30 graduation-shape
 # warm/cold cells (#198: 30-member pool warmup + 40 claims + 30 serial cold
 # samples, ~8-10 min extra) + teardown fits under 60 min.
-timeout: 3600s
+timeout: ${_BUILD_TIMEOUT}
