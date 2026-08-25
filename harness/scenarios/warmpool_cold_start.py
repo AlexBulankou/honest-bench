@@ -1318,6 +1318,15 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
             all_lat_str=all_lat_str,
         )
         if under is not None:
+            # hb#723: stamp the same env-knob self-report on the under-delivery
+            # FAIL as on every other exit — an under-delivery FAIL is still a
+            # measured (non-pending) row and can itself become the committed
+            # baseline a later fire is compared against, so it needs the same
+            # actionable provenance.
+            under[2]["measured_with"] = {
+                "WARMPOOL_COLD_START_POOL_REPLICAS": _POOL_REPLICAS,
+                "WARMPOOL_COLD_START_CLAIM_COUNT": _CLAIM_COUNT,
+            }
             return under
         # Emit-key assembly. Two paths, gated by BENCH_TTFE_EXEC:
         #
@@ -1433,6 +1442,15 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
             )
             if min_ready is not None:
                 sla_metrics["warmpool_gate_min_ready_during_burst"] = min_ready
+        # hb#723: self-report the env knobs that gate which sla_metrics keys
+        # this fire emits (pool size flips cold-baseline vs warm-tier mode
+        # entirely, changing the key set) so check_cell_downgrade's remediation
+        # can name concrete envs instead of pointing at nothing. Shared across
+        # all three return branches below (cold-baseline / warm PASS / warm FAIL).
+        sla_metrics["measured_with"] = {
+            "WARMPOOL_COLD_START_POOL_REPLICAS": _POOL_REPLICAS,
+            "WARMPOOL_COLD_START_CLAIM_COUNT": _CLAIM_COUNT,
+        }
         sep = breakdown["separation_observed"]
         sep_str = f"{sep:.2f}x" if sep is not None else "<no-cold-tier>"
         clause = (

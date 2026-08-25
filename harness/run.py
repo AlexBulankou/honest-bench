@@ -136,6 +136,26 @@ def _run_one(cell, substrate: str) -> dict:
         warm = sla_metrics.pop("warm_ttfe_samples_ms", None)
         if isinstance(warm, list):
             raw["warm_ttfe_samples_ms"] = warm
+        # A scenario may self-report the env knobs that gated which sla_metrics
+        # keys it emitted under the reserved "measured_with" key inside
+        # sla_metrics (hb#723). check_cell_downgrade's fail-closed refusal tells
+        # an operator to "re-fire carrying the envs the committed cells were
+        # measured with", but without this no row records what those envs
+        # actually were — only top-level provenance exists, and it does not
+        # carry scenario-specific knobs (NATIVE_DIGEST_COLD_SAMPLES,
+        # WARMPOOL_COLD_START_POOL_REPLICAS, etc). Pop it here so a stray
+        # non-metric-shaped dict never reaches _coerce_sla_metrics; keep only
+        # scalar (str/int/float/bool) values — anything else is a malformed
+        # self-report and is dropped key-by-key rather than failing the whole
+        # cell (this channel is provenance, not a correctness gate).
+        mw = sla_metrics.pop("measured_with", None)
+        if isinstance(mw, dict):
+            clean_mw = {
+                k: v for k, v in mw.items()
+                if isinstance(k, str) and isinstance(v, (str, int, float, bool))
+            }
+            if clean_mw:
+                raw["measured_with"] = clean_mw
     raw["sla_metrics"] = sla_metrics
     # badge_scope (#3905) is a static per-scenario property — inject the Cell's value
     # onto the outcome so a PASS carries its scope qualifier BY CONSTRUCTION (#3948),
@@ -292,17 +312,29 @@ def check_cell_downgrade(raw: list, prior_scenarios) -> list[str]:
         p_out = prior.get("outcome")
         if not isinstance(p_out, str) or p_out.lower() == "pending":
             continue
+        # hb#723: surface the committed row's self-reported env knobs (when it
+        # carried any) as a suffix on every downgrade line for this cell, so the
+        # caller's "re-fire carrying the envs the committed cells were measured
+        # with" remediation names concrete envs instead of pointing at nothing.
+        # Absent for cells with no such knobs (most cells) — the suffix is empty
+        # then, leaving the line unchanged.
+        mw = prior.get("measured_with")
+        mw_suffix = (
+            f" (committed row measured_with: {mw})"
+            if isinstance(mw, dict) and mw else ""
+        )
         fresh = fresh_by_name.get(name)
         if fresh is None:
             downgrades.append(
-                f"{name}: measured row (outcome={p_out}) dropped entirely from fresh set"
+                f"{name}: measured row (outcome={p_out}) dropped entirely from "
+                f"fresh set{mw_suffix}"
             )
             continue
         f_out = fresh.get("outcome")
         if not isinstance(f_out, str) or f_out.lower() == "pending":
             downgrades.append(
                 f"{name}: outcome would downgrade {p_out} -> "
-                f"{f_out if isinstance(f_out, str) else 'missing'}"
+                f"{f_out if isinstance(f_out, str) else 'missing'}{mw_suffix}"
             )
         pm = prior.get("sla_metrics")
         fm = fresh.get("sla_metrics")
@@ -311,7 +343,8 @@ def check_cell_downgrade(raw: list, prior_scenarios) -> list[str]:
             lost = sorted(k for k in pm if k not in fm_keys)
             if lost:
                 downgrades.append(
-                    f"{name}: sla_metrics key(s) lost vs committed row: {', '.join(lost)}"
+                    f"{name}: sla_metrics key(s) lost vs committed row: "
+                    f"{', '.join(lost)}{mw_suffix}"
                 )
     return downgrades
 

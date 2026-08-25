@@ -113,6 +113,61 @@ def test_multiple_legs_reported_together():
     _check(len(lines) == 3, f"expected 3 downgrade lines, got {lines!r}")
 
 
+def test_measured_with_suffixes_key_loss_line():
+    # hb#723: a committed row carrying measured_with makes the key-loss line
+    # name the concrete envs that gated the lost key.
+    prior = [{
+        "name": "warmpool_cold_start", "outcome": "PASS", "n": 30,
+        "sla_metrics": {"ttfe_p50_ms": 755.6, "density_per_vcpu": 5.98},
+        "measured_with": {"WARMPOOL_COLD_START_POOL_REPLICAS": 5,
+                           "WARMPOOL_COLD_START_CLAIM_COUNT": 10},
+    }]
+    raw = [{
+        "name": "warmpool_cold_start", "outcome": "PASS", "n": 30,
+        "sla_metrics": {"ttfe_p50_ms": 741.2},
+    }]
+    lines = check_cell_downgrade(raw, prior)
+    _check(len(lines) == 1, f"expected 1 downgrade, got {lines!r}")
+    _check("WARMPOOL_COLD_START_POOL_REPLICAS" in lines[0],
+           f"measured_with not surfaced: {lines[0]!r}")
+
+
+def test_measured_with_suffixes_outcome_downgrade_line():
+    prior = [{"name": "native_digest_cold", "outcome": "PASS",
+              "sla_metrics": {"cold_start_ms": 1.0},
+              "measured_with": {"NATIVE_DIGEST_COLD_SAMPLES": 5}}]
+    raw = [{"name": "native_digest_cold", "outcome": "pending",
+            "sla_metrics": {"cold_start_ms": 1.0}}]
+    lines = check_cell_downgrade(raw, prior)
+    _check(len(lines) == 1, f"expected 1 downgrade, got {lines!r}")
+    _check("NATIVE_DIGEST_COLD_SAMPLES" in lines[0],
+           f"measured_with not surfaced: {lines[0]!r}")
+
+
+def test_measured_with_suffixes_row_drop_line():
+    prior = [{"name": "gvisor_canary", "outcome": "PASS",
+              "sla_metrics": {"ttfe_p50_ms": 1.0},
+              "measured_with": {"NATIVE_DIGEST_COLD_SAMPLES": 3}}]
+    raw = [{"name": "burst_create", "outcome": "PASS", "sla_metrics": {}}]
+    lines = check_cell_downgrade(raw, prior)
+    _check(len(lines) == 1, f"expected 1 downgrade, got {lines!r}")
+    _check("NATIVE_DIGEST_COLD_SAMPLES" in lines[0],
+           f"measured_with not surfaced: {lines[0]!r}")
+
+
+def test_no_measured_with_leaves_line_unchanged():
+    # Cells with no env knobs (the common case) must render exactly as before —
+    # no empty/None suffix noise.
+    prior = [{"name": "warmpool_cold_start", "outcome": "PASS",
+              "sla_metrics": {"ttfe_p50_ms": 755.6, "density_per_vcpu": 5.98}}]
+    raw = [{"name": "warmpool_cold_start", "outcome": "PASS",
+            "sla_metrics": {"ttfe_p50_ms": 741.2}}]
+    lines = check_cell_downgrade(raw, prior)
+    _check(len(lines) == 1, f"expected 1 downgrade, got {lines!r}")
+    _check("measured_with" not in lines[0],
+           f"unexpected measured_with suffix with no knobs: {lines[0]!r}")
+
+
 def test_malformed_inputs_tolerated():
     _check(check_cell_downgrade([{"name": "x"}], []) == [],
            "empty prior must be a no-op")
@@ -214,6 +269,10 @@ def main() -> int:
         test_prior_pending_never_gates,
         test_fail_to_pass_is_not_a_downgrade,
         test_multiple_legs_reported_together,
+        test_measured_with_suffixes_key_loss_line,
+        test_measured_with_suffixes_outcome_downgrade_line,
+        test_measured_with_suffixes_row_drop_line,
+        test_no_measured_with_leaves_line_unchanged,
         test_malformed_inputs_tolerated,
         test_density_carried_onto_fresh_row,
         test_density_fresh_wins,

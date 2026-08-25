@@ -317,6 +317,68 @@ def test_sla_unsafe_keys_and_values_dropped():
            f"only safe numeric sla kept (underscore + hyphen), got {sla}")
 
 
+def test_measured_with_scalar_dict_survives():
+    # hb#723: a scenario's self-reported env-knob dict survives when every
+    # value is a plain scalar.
+    r = rs.build_results(
+        [{"name": "native_digest_cold", "outcome": "pass",
+          "sla_metrics": {"cold_start_ms": 1.0},
+          "measured_with": {"NATIVE_DIGEST_COLD_SAMPLES": 5,
+                             "BENCH_NATIVE_DIGEST_COLD_MODE": "cold-provision"}}],
+        _prov(), GEN_AT,
+    )
+    mw = r["scenarios"][0]["measured_with"]
+    _check(mw == {"NATIVE_DIGEST_COLD_SAMPLES": 5,
+                  "BENCH_NATIVE_DIGEST_COLD_MODE": "cold-provision"},
+           f"scalar measured_with kept verbatim, got {mw}")
+
+
+def test_measured_with_absent_emits_no_key():
+    r = rs.build_results(
+        [{"name": "x", "outcome": "pass", "sla_metrics": {}}], _prov(), GEN_AT,
+    )
+    _check("measured_with" not in r["scenarios"][0], "absent measured_with emits no key")
+
+
+def test_measured_with_non_dict_dropped():
+    # A malformed self-report (wrong shape entirely) must never raise — this
+    # channel is provenance, not a correctness gate (fail-open).
+    r = rs.build_results(
+        [{"name": "x", "outcome": "pass", "sla_metrics": {},
+          "measured_with": "not-a-dict"}],
+        _prov(), GEN_AT,
+    )
+    _check("measured_with" not in r["scenarios"][0], "non-dict measured_with dropped whole")
+
+
+def test_measured_with_malformed_values_dropped_key_by_key():
+    r = rs.build_results(
+        [{"name": "x", "outcome": "pass", "sla_metrics": {},
+          "measured_with": {
+              "GOOD_INT": 5,
+              "GOOD_STR": "cold",
+              "BAD_LIST": [1, 2],
+              "BAD_DICT": {"nested": 1},
+              "BAD_NONE": None,
+              123: "non-string-key-dropped",
+          }}],
+        _prov(), GEN_AT,
+    )
+    mw = r["scenarios"][0]["measured_with"]
+    _check(mw == {"GOOD_INT": 5, "GOOD_STR": "cold"},
+           f"only scalar-valued string keys survive, got {mw}")
+
+
+def test_measured_with_empty_after_filtering_omits_key():
+    r = rs.build_results(
+        [{"name": "x", "outcome": "pass", "sla_metrics": {},
+          "measured_with": {"BAD": [1, 2]}}],
+        _prov(), GEN_AT,
+    )
+    _check("measured_with" not in r["scenarios"][0],
+           "measured_with key omitted entirely once filtering empties it")
+
+
 def test_cold_start_mode_enum_only():
     # #3885: cold_start_mode is a CLOSED enum in provenance. A valid value is
     # kept; an out-of-set value fails closed (a mislabeled cold-start must never
