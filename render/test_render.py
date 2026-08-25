@@ -7714,8 +7714,9 @@ def test_known_anomalies_detail_mixed_rig_section_reflects_state():
 
 
 def _wp_row(ratio, run_id, digest="sha256:" + "f" * 64, generated_at="2026-08-17T14:00:00Z",
-            outcome="PASS", n=30, suite_git_sha="c88d857", cluster_substrate="gke-sandbox"):
-    return {
+            outcome="PASS", n=30, suite_git_sha="c88d857", cluster_substrate="gke-sandbox",
+            node_count=None):
+    row = {
         "generated_at": generated_at,
         "controller_digest": digest,
         "suite_git_sha": suite_git_sha,
@@ -7725,6 +7726,9 @@ def _wp_row(ratio, run_id, digest="sha256:" + "f" * 64, generated_at="2026-08-17
         "outcome": outcome,
         "separation_ratio": ratio,
     }
+    if node_count is not None:
+        row["node_count"] = node_count
+    return row
 
 
 def test_clean_warmpool_separation_history_non_list_returns_empty():
@@ -7791,6 +7795,22 @@ def test_warmpool_separation_variance_caveat_multiple_digests_sorted_by_spread_d
     out = render._warmpool_separation_variance_caveat(rows)
     # digest_b's 9x spread must be named before digest_a's 2.5x spread.
     assert out.index(digest_b[:19]) < out.index(digest_a[:19])
+
+
+def test_warmpool_separation_variance_caveat_cites_700_ab_outcome():
+    # hb#700 item 3c: the flag's closing sentence names the #700 A/B outcome
+    # (rig shape tested as a candidate cause, inconclusive) so the flag doesn't
+    # read as an open question with no record anyone investigated it.
+    rows = [_wp_row(0.27, "fire-1"), _wp_row(1.06, "fire-2")]
+    out = render._warmpool_separation_variance_caveat(rows)
+    assert "hb#700" in out
+    assert "rig shape" in out
+    assert "P(B>A)=72%" in out
+    assert "1.373" in out and "0.837" in out
+    # flag, don't verdict: rig shape is named as unconfirmed, not concluded.
+    assert "untested-out, unconfirmed candidate" in out
+    assert "unresolved" in out
+    assert re.search(r"a4[a-z]\d", out) is None
 
 
 def test_known_anomalies_table_warmpool_variance_row_reflects_state():
@@ -8046,6 +8066,66 @@ def test_warmpool_adjudicated_verdict_leaks_no_agent_id():
         _wp_row(0.27, "s1", digest=digest),
         _wp_row(1.06, "s2", digest=digest),
         _wp_row(3.9, "s3", digest=digest),
+    ]
+    out = render._warmpool_separation_adjudicated_verdict(rows)
+    assert re.search(r"a4[a-z]\d", out) is None
+
+
+# ---------------------------------------------------------------------------
+# hb#700 item 3a: rig-stratified disclosure alongside the pooled median-of-N.
+# Disclosure-only ("flag, don't verdict" applied to the gate cell itself, per
+# #700's closing disposition) -- it never issues a separate PASS/FAIL/HELD per rig.
+# ---------------------------------------------------------------------------
+
+def test_warmpool_adjudicated_verdict_rig_stratified_disclosure_two_rigs():
+    digest = "sha256:" + "d" * 64
+    rows = [
+        _wp_row(0.9, "r1", digest=digest, node_count=2),
+        _wp_row(0.95, "r2", digest=digest, node_count=2),
+        _wp_row(1.4, "r3", digest=digest, node_count=4),
+        _wp_row(1.3, "r4", digest=digest, node_count=4),
+    ]
+    out = render._warmpool_separation_adjudicated_verdict(rows)
+    assert "rig-stratified" in out
+    assert "n=2: median-of-2=0.925x" in out
+    assert "n=4: median-of-4" not in out  # only 2 rows tagged node_count=4
+    assert "n=4: median-of-2=1.35x" in out
+
+
+def test_warmpool_adjudicated_verdict_rig_stratified_disclosure_absent_single_rig():
+    # Only one distinct known node_count -> nothing to stratify against; no
+    # rig-stratified disclosure clause at all (not even an empty one).
+    digest = "sha256:" + "e" * 64
+    rows = [
+        _wp_row(5.0, "p1", digest=digest, node_count=2),
+        _wp_row(5.1, "p2", digest=digest, node_count=2),
+        _wp_row(4.9, "p3", digest=digest, node_count=2),
+    ]
+    out = render._warmpool_separation_adjudicated_verdict(rows)
+    assert "rig-stratified" not in out
+
+
+def test_warmpool_adjudicated_verdict_rig_stratified_disclosure_unset_node_count_excluded():
+    # node_count=None (rig shape not recorded, e.g. a pre-hb#700 legacy row) is
+    # excluded from the per-rig breakdown but still counted in the pooled
+    # median-of-N -- an unknown rig tag is not the same claim as an unknown ratio.
+    digest = "sha256:" + "6" * 64
+    rows = [
+        _wp_row(5.0, "u1", digest=digest, node_count=None),
+        _wp_row(5.0, "u2", digest=digest, node_count=2),
+        _wp_row(5.0, "u3", digest=digest, node_count=4),
+    ]
+    out = render._warmpool_separation_adjudicated_verdict(rows)
+    assert "median-of-3" in out  # pooled count includes the untagged row
+    assert "n=2: median-of-1" in out
+    assert "n=4: median-of-1" in out
+
+
+def test_warmpool_adjudicated_verdict_rig_stratified_disclosure_leaks_no_agent_id():
+    digest = "sha256:" + "7" * 64
+    rows = [
+        _wp_row(0.9, "l1", digest=digest, node_count=2),
+        _wp_row(1.4, "l2", digest=digest, node_count=4),
     ]
     out = render._warmpool_separation_adjudicated_verdict(rows)
     assert re.search(r"a4[a-z]\d", out) is None

@@ -453,7 +453,32 @@ WARMPOOL_SEPARATION_HISTORY_FIELDS = {
     "separation_ratio": lambda v: isinstance(v, (int, float))
     and not isinstance(v, bool)
     and v >= 0,
+    # Rig-shape metadata for hb#700's rig-stratified disclosure (closing disposition, 2026-08-25):
+    # None is the honest "rig shape not recorded" sentinel for rows predating this field, NOT a
+    # guessed default — see backfill_legacy_warmpool_separation_row() below. A real value is
+    # always a positive node count.
+    "node_count": lambda v: v is None or (isinstance(v, int) and not isinstance(v, bool) and v >= 1),
 }
+
+
+def backfill_legacy_warmpool_separation_row(row):
+    """Back-fill `node_count` on a pre-hb#700 warmpool-separation row (#700 disposition item 3b).
+
+    `node_count` became a required WARMPOOL_SEPARATION_HISTORY_FIELDS key when hb#700's rig-
+    stratified disclosure landed. Every row's raw `latest.json` always carried
+    `provenance.node_count` -- this was a pure accrual-extraction gap (accrue_warmpool_separation
+    never read the field), not a data-availability gap. Rows written before the extraction fix
+    landed genuinely never captured it, though, so unlike backfill_legacy_history_row's
+    provably-correct "PASS" fill, there is no provably-correct node_count to fill here -- back-
+    fill to None (the honest "rig shape not recorded" sentinel) so a pre-fix checkout's legacy
+    rows survive the closed-schema loader (and append()'s rewrite-from-survivors) instead of
+    being silently and permanently erased, without fabricating a rig shape we don't know. A row
+    that DOES carry a (possibly invalid) `node_count` value is left untouched -- validation still
+    drops an invalid one; this only ever fills a genuinely ABSENT key.
+    """
+    if not isinstance(row, dict) or "node_count" in row:
+        return row
+    return {**row, "node_count": None}
 
 
 # --- Goal 2.1: Core Benchmark Matrix (alex "Agent Sandbox Core Metrics Table") -----------

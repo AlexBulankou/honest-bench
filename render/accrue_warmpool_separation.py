@@ -60,7 +60,11 @@ import sys
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, _HERE)
 
-from schema import WARMPOOL_SEPARATION_HISTORY_FIELDS  # noqa: E402
+from schema import (  # noqa: E402
+    backfill_legacy_warmpool_separation_row,
+    WARMPOOL_SEPARATION_HISTORY_FIELDS,
+)
+from warmpool_verdict import rig_stratified_comparison  # noqa: E402
 
 
 def _repo_root():
@@ -115,6 +119,12 @@ def _candidate_row(results):
         "n": n,
         "outcome": outcome,
         "separation_ratio": ratio,
+        # hb#700 rig-stratified disclosure (closing disposition, 2026-08-25): rig shape rides in
+        # provenance.node_count on every fire already -- not gated by CASE-1/CASE-2 above, since
+        # those gate count-measurability/build-anchoring specifically, and a missing node_count
+        # is rig-shape metadata, not a correctness-critical measurement. Absent -> None (honest
+        # "not recorded"), never guessed.
+        "node_count": prov.get("node_count"),
     }
 
 
@@ -160,9 +170,10 @@ def load_history(path):
 
     Malformed lines (bad JSON, or a row failing WARMPOOL_SEPARATION_HISTORY_FIELDS validation)
     are dropped rather than raising — a corrupt line degrades the store to fewer trend rows,
-    never to a crash or a leak. Unlike accrue_history.load_history there is no legacy-backfill
-    step: this store is new as of #6890, so every row it will ever contain already carries the
-    full schema.
+    never to a crash or a leak. `node_count` became a required key in hb#700; a pre-hb#700 row is
+    back-filled to node_count=None (mirroring accrue_history.load_history's
+    backfill_legacy_history_row call) so those rows survive rather than being silently and
+    permanently erased on the next append()'s rewrite-from-survivors.
     """
     rows = []
     if not os.path.exists(path):
@@ -176,6 +187,7 @@ def load_history(path):
                 obj = json.loads(line)
             except json.JSONDecodeError:
                 continue
+            obj = backfill_legacy_warmpool_separation_row(obj)
             clean = {}
             ok_all = True
             for key, ok in WARMPOOL_SEPARATION_HISTORY_FIELDS.items():
@@ -268,6 +280,27 @@ def main(argv=None):
         f"digest={row['controller_digest']} ratio={row['separation_ratio']} "
         f"outcome={row['outcome']} -> {history} ({len(rows)} total rows)\n"
     )
+
+    # hb#700 item 3b (closing disposition, 2026-08-25): standing rig-stratified bootstrap,
+    # recomputed fresh from the full accrued history on every accrual run. Advisory only
+    # ("flag, don't verdict") -- never affects this script's exit code or the fire's outcome,
+    # and never moves WARMPOOL_SEPARATION_MIN_RATIO or any other threshold. A flagged result is
+    # surfaced loudly (stderr) so it's visible in fire logs without gating anything; an
+    # unflagged or insufficient-data result stays quiet (nothing yet worth a human's attention).
+    comparison = rig_stratified_comparison(rows)
+    if comparison["reason"] == "flagged":
+        sys.stderr.write(
+            "accrue_warmpool_separation: RIG-STRATIFIED FLAG (hb#700 item 3b, advisory only) -- "
+            f"{comparison['group_field']}={comparison['group_a']} median="
+            f"{comparison['median_a']:.3f} (n={comparison['n_a']}) vs "
+            f"{comparison['group_field']}={comparison['group_b']} median="
+            f"{comparison['median_b']:.3f} (n={comparison['n_b']}): "
+            f"P(B>A)={comparison['p_b_gt_a']:.3f}, "
+            f"{int(comparison['confidence'] * 100)}% CI=[{comparison['ci_low']:.3f}, "
+            f"{comparison['ci_high']:.3f}] -- names a candidate worth a human's attention, does "
+            "not itself conclude causation or move any threshold\n"
+        )
+
     return 0
 
 
