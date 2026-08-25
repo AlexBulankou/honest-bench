@@ -296,6 +296,7 @@ _DEFAULT_RIG_BOOTSTRAP_SEED = 1337
 def rig_stratified_comparison(
     history_rows,
     *,
+    metric_field="separation_ratio",
     group_field="node_count",
     group_a=2,
     group_b=4,
@@ -304,21 +305,27 @@ def rig_stratified_comparison(
     seed=_DEFAULT_RIG_BOOTSTRAP_SEED,
     min_n_per_group=2,
 ):
-    """Standing bootstrap comparison of two rig shapes' separation-ratio medians (hb#700 3b).
+    """Standing bootstrap comparison of two rig shapes' `metric_field` medians (hb#700 3b).
 
     `history_rows` are validated rows (as produced by `accrue_warmpool_separation.load_history`,
     which now carries `node_count` per hb#700's schema fix). Splits into two groups by
     `history_rows[i][group_field] == group_a` / `== group_b` (default: node_count 2 vs 4, the
-    hb#700 A/B's own rig shapes), keeping only rows with a positive `separation_ratio`. This is
+    hb#700 A/B's own rig shapes), keeping only rows with a positive `metric_field` value. This is
     recomputed FRESH from the FULL accrued history on every call — as more same-build fires land
     at each rig shape over time, the two groups grow independently of the original 4-fires-per-arm
     A/B snapshot, so the comparison firms up (or doesn't) as real data accrues, per #700's
     closing disposition's "keep the B-vs-A bootstrap updated as daily fires accrue" instruction.
 
+    `metric_field` defaults to `separation_ratio` (the original hb#700 3b metric) but the same
+    stratified-bootstrap machinery generalizes to any positive-valued numeric row field — e.g.
+    `ttfe_p95_ms`, added in the hb#727 follow-up so a raw warm-hit-latency delta banner can be
+    contextualized by rig-shape-stratified history the same way a bare separation-ratio delta
+    already is, rather than being read against a single unstratified before/after point.
+
     Requires >= `min_n_per_group` usable rows in EACH group; below that, returns immediately with
     `reason="insufficient-data"` and no bootstrap performed (there is nothing yet to compare).
 
-    The point estimate is `median(group_b) - median(group_a)` (raw ratio-space, not log-space —
+    The point estimate is `median(group_b) - median(group_a)` (raw value-space, not log-space —
     this matches the #700 closing analysis's own method, which this function generalizes into a
     standing check). The percentile bootstrap resamples each group with replacement
     `n_bootstrap` times, recomputing the median-of-resample difference each draw, to build:
@@ -330,12 +337,15 @@ def rig_stratified_comparison(
     excludes zero (`ci_low > 0` or `ci_high < 0`) — #700's closing disposition (item 3b) verbatim.
     A flag is advisory ("flag, don't verdict"): it names groups worth a human's attention, it
     never itself asserts causation and never moves any threshold in this module or
-    WARMPOOL_SEPARATION_MIN_RATIO.
+    WARMPOOL_SEPARATION_MIN_RATIO. (For a "higher is worse" metric like `ttfe_p95_ms`, a
+    positive `diff_median`/flagged-toward-group_b still means "group_b measured higher", not
+    "group_b is better" — direction is left to the caller/reader, this function only reports
+    the arithmetic sign.)
 
     Returns a stable, JSON-serializable dict (never free text, so a caller can render or log it
     directly):
       {
-        "group_field": str, "group_a": value, "group_b": value,
+        "metric_field": str, "group_field": str, "group_a": value, "group_b": value,
         "n_a": int, "n_b": int,
         "median_a": float | None, "median_b": float | None, "diff_median": float | None,
         "confidence": float, "n_bootstrap": int,
@@ -345,21 +355,22 @@ def rig_stratified_comparison(
       }
     """
     ratios_a = [
-        r["separation_ratio"]
+        r[metric_field]
         for r in history_rows
         if r.get(group_field) == group_a
-        and isinstance(r.get("separation_ratio"), (int, float))
-        and r["separation_ratio"] > 0
+        and isinstance(r.get(metric_field), (int, float))
+        and r[metric_field] > 0
     ]
     ratios_b = [
-        r["separation_ratio"]
+        r[metric_field]
         for r in history_rows
         if r.get(group_field) == group_b
-        and isinstance(r.get("separation_ratio"), (int, float))
-        and r["separation_ratio"] > 0
+        and isinstance(r.get(metric_field), (int, float))
+        and r[metric_field] > 0
     ]
 
     result = {
+        "metric_field": metric_field,
         "group_field": group_field,
         "group_a": group_a,
         "group_b": group_b,

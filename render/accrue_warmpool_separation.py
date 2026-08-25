@@ -72,13 +72,17 @@ def _repo_root():
 
 
 def _warmpool_separation_cell(results):
-    """Return (ratio, n, outcome) from a MEASURED warmpool_cold_start cell, or None.
+    """Return (ratio, n, outcome, ttfe_p95_ms) from a MEASURED warmpool_cold_start cell, or None.
 
     "Measurable" means sla_metrics carries warmpool_gate_separation_ratio — NOT
     outcome == "PASS". The scenario surfaces the ratio on BOTH PASS and FAIL (a below-gate ratio
     is exactly what FAILs the scenario and exactly the signal this store exists to chart); only a
     scenario run that never computed the gate metric at all (sla_metrics absent/empty, or present
     without the key) emits nothing to chart.
+
+    hb#727 follow-up: ttfe_p95_ms is read from the SAME cell, on a best-effort basis — its
+    absence never suppresses the row (the ratio is still the required, gating measurement); a
+    fire that measured the ratio but not ttfe_p95_ms just carries ttfe_p95_ms=None downstream.
     """
     if not isinstance(results, dict):
         return None
@@ -91,7 +95,8 @@ def _warmpool_separation_cell(results):
         ratio = m.get("warmpool_gate_separation_ratio")
         n = s.get("n")
         outcome = s.get("outcome")
-        return ratio, n, outcome
+        ttfe_p95_ms = m.get("ttfe_p95_ms")
+        return ratio, n, outcome, ttfe_p95_ms
     return None
 
 
@@ -107,7 +112,7 @@ def _candidate_row(results):
     measured = _warmpool_separation_cell(results)
     if measured is None:
         return None
-    ratio, n, outcome = measured
+    ratio, n, outcome, ttfe_p95_ms = measured
     prov = results.get("provenance") if isinstance(results, dict) else None
     prov = prov if isinstance(prov, dict) else {}
     return {
@@ -125,6 +130,14 @@ def _candidate_row(results):
         # is rig-shape metadata, not a correctness-critical measurement. Absent -> None (honest
         # "not recorded"), never guessed.
         "node_count": prov.get("node_count"),
+        # hb#727 follow-up (a4z1's rig-confound question, 2026-08-25): extend the same
+        # rig-stratified pattern to the raw warm-hit TTFE, so a headline delta banner like
+        # hb#727's (6.80s -> 15.79s across a node_count 4->2 + node_image float) is automatically
+        # contextualized by node-count-stratified history instead of a single unstratified
+        # before/after point. Both new fields are non-gating metadata (like node_count): absent
+        # -> None, never guessed, never blocks the row on a missing value.
+        "ttfe_p95_ms": ttfe_p95_ms,
+        "node_image": prov.get("node_image"),
     }
 
 
@@ -287,19 +300,29 @@ def main(argv=None):
     # and never moves WARMPOOL_SEPARATION_MIN_RATIO or any other threshold. A flagged result is
     # surfaced loudly (stderr) so it's visible in fire logs without gating anything; an
     # unflagged or insufficient-data result stays quiet (nothing yet worth a human's attention).
-    comparison = rig_stratified_comparison(rows)
-    if comparison["reason"] == "flagged":
-        sys.stderr.write(
-            "accrue_warmpool_separation: RIG-STRATIFIED FLAG (hb#700 item 3b, advisory only) -- "
-            f"{comparison['group_field']}={comparison['group_a']} median="
-            f"{comparison['median_a']:.3f} (n={comparison['n_a']}) vs "
-            f"{comparison['group_field']}={comparison['group_b']} median="
-            f"{comparison['median_b']:.3f} (n={comparison['n_b']}): "
-            f"P(B>A)={comparison['p_b_gt_a']:.3f}, "
-            f"{int(comparison['confidence'] * 100)}% CI=[{comparison['ci_low']:.3f}, "
-            f"{comparison['ci_high']:.3f}] -- names a candidate worth a human's attention, does "
-            "not itself conclude causation or move any threshold\n"
-        )
+    #
+    # hb#727 follow-up (a4z1's rig-confound question, 2026-08-25): the SAME stratified-bootstrap
+    # machinery is run a SECOND time against `ttfe_p95_ms` -- a headline warm-hit TTFE delta
+    # banner (like hb#727's 6.80s -> 15.79s) is exactly as confounded by rig shape as a bare
+    # separation_ratio delta was pre-hb#700, so it gets the identical treatment rather than
+    # staying a single unstratified before/after point.
+    for comparison in (
+        rig_stratified_comparison(rows),
+        rig_stratified_comparison(rows, metric_field="ttfe_p95_ms"),
+    ):
+        if comparison["reason"] == "flagged":
+            sys.stderr.write(
+                "accrue_warmpool_separation: RIG-STRATIFIED FLAG (hb#700 item 3b, advisory only) -- "
+                f"metric={comparison['metric_field']} "
+                f"{comparison['group_field']}={comparison['group_a']} median="
+                f"{comparison['median_a']:.3f} (n={comparison['n_a']}) vs "
+                f"{comparison['group_field']}={comparison['group_b']} median="
+                f"{comparison['median_b']:.3f} (n={comparison['n_b']}): "
+                f"P(B>A)={comparison['p_b_gt_a']:.3f}, "
+                f"{int(comparison['confidence'] * 100)}% CI=[{comparison['ci_low']:.3f}, "
+                f"{comparison['ci_high']:.3f}] -- names a candidate worth a human's attention, does "
+                "not itself conclude causation or move any threshold\n"
+            )
 
     return 0
 
