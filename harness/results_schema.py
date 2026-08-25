@@ -541,6 +541,26 @@ def _coerce_scenario(raw: dict) -> dict:
     if sla:
         out["sla_metrics"] = sla
 
+    # measured_with (hb#723): the env-var knobs a scenario self-reports as having
+    # gated which sla_metrics keys it emitted this fire (e.g.
+    # NATIVE_DIGEST_COLD_SAMPLES, WARMPOOL_COLD_START_POOL_REPLICAS). Optional and
+    # per-scenario — most cells carry no such knobs and emit none. Allow-list by
+    # construction: only a dict of string keys -> scalar (str/int/float/bool)
+    # values survives; anything else is dropped key-by-key rather than failing the
+    # whole scenario (fail-open, like resume_probe_ceiling_ms — this is provenance,
+    # not a correctness gate). check_cell_downgrade reads it off a prior committed
+    # row to make its "re-fire carrying the envs..." remediation concretely
+    # actionable instead of a dead end.
+    mw = raw.get("measured_with")
+    if isinstance(mw, dict):
+        clean_mw = {
+            k: v for k, v in mw.items()
+            if isinstance(k, str) and k
+            and isinstance(v, (str, int, float, bool))
+        }
+        if clean_mw:
+            out["measured_with"] = clean_mw
+
     return out
 
 

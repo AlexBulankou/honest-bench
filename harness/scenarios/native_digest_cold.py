@@ -510,4 +510,12 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
                 f"mode={_COLD_MODE}): create->Ready p50={p50:.0f}ms "
                 f"p95={p95:.0f}ms (n={n_samples})."
             )
+    # hb#723: self-report the env knobs that gated which sla_metrics keys this
+    # fire emitted (sample count above all — n_samples==1 vs >1 changes the key
+    # set entirely), so check_cell_downgrade's remediation can name concrete
+    # envs instead of pointing at nothing.
+    sla_metrics["measured_with"] = {
+        "NATIVE_DIGEST_COLD_SAMPLES": _SAMPLES,
+        "BENCH_NATIVE_DIGEST_COLD_MODE": _COLD_MODE,
+    }
     return ("PASS", excerpt, sla_metrics)
