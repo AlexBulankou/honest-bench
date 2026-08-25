@@ -296,6 +296,46 @@ def test_rig_comparison_custom_group_field_and_values():
     assert r["flagged"] is True
 
 
+def test_rig_comparison_result_carries_metric_field():
+    # Default metric_field is "separation_ratio" and rides in the result dict for a caller that
+    # runs the comparison for multiple metrics to tell the results apart.
+    rows = _rig_rows(2, 0.85, 0.9, 0.95, 1.0) + _rig_rows(4, 1.4, 1.45, 1.5, 1.55)
+    r = wv.rig_stratified_comparison(rows)
+    assert r["metric_field"] == "separation_ratio"
+
+
+def test_rig_comparison_metric_field_generalizes_to_ttfe_p95():
+    # hb#727 follow-up: the same stratified-bootstrap machinery must work unchanged against
+    # ttfe_p95_ms (or any other positive-valued numeric row field), not just separation_ratio.
+    rows = [
+        {"node_count": 2, "ttfe_p95_ms": 6800.0, "run_id": "a-1"},
+        {"node_count": 2, "ttfe_p95_ms": 6900.0, "run_id": "a-2"},
+        {"node_count": 2, "ttfe_p95_ms": 7100.0, "run_id": "a-3"},
+        {"node_count": 2, "ttfe_p95_ms": 6950.0, "run_id": "a-4"},
+        {"node_count": 4, "ttfe_p95_ms": 15790.0, "run_id": "b-1"},
+        {"node_count": 4, "ttfe_p95_ms": 15600.0, "run_id": "b-2"},
+        {"node_count": 4, "ttfe_p95_ms": 16100.0, "run_id": "b-3"},
+        {"node_count": 4, "ttfe_p95_ms": 15950.0, "run_id": "b-4"},
+    ]
+    r = wv.rig_stratified_comparison(rows, metric_field="ttfe_p95_ms")
+    assert r["metric_field"] == "ttfe_p95_ms"
+    assert r["reason"] == "flagged"
+    assert r["n_a"] == 4 and r["n_b"] == 4
+    assert _approx(r["median_a"], 6925.0)
+    assert _approx(r["median_b"], 15870.0)
+    assert r["diff_median"] > 0
+    assert r["p_b_gt_a"] >= 0.95
+
+
+def test_rig_comparison_metric_field_ignores_unrelated_fields():
+    # A row missing the requested metric_field (but carrying separation_ratio) must be excluded
+    # from a ttfe_p95_ms-scoped comparison, not fall back to a different field.
+    rows = _rig_rows(2, 0.9, 1.0) + _rig_rows(4, 1.4, 1.5)  # separation_ratio only, no ttfe
+    r = wv.rig_stratified_comparison(rows, metric_field="ttfe_p95_ms")
+    assert r["n_a"] == 0 and r["n_b"] == 0
+    assert r["reason"] == "insufficient-data"
+
+
 def test_rig_comparison_deterministic_across_repeat_calls():
     # Fixed default seed -> identical result on unchanged input, so the standing flag doesn't
     # flap between calls on RNG noise alone.

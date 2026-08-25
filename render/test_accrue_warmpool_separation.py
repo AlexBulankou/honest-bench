@@ -19,11 +19,13 @@ import accrue_warmpool_separation
 
 def _latest(ratio=1.06, n=30, digest="sha256:" + "a" * 64,
             generated_at="2026-08-17T14:42:40Z", outcome="PASS", run_id="run-a",
-            node_count=None):
+            node_count=None, ttfe_p95_ms=None, node_image=None):
     # ratio=None mirrors a warmpool_cold_start cell that never computed the gate metric at all
     # (sla_metrics=={}) — the true CASE-1 honest-skip. This is NOT an outcome check: the scenario
     # surfaces the ratio on BOTH PASS and FAIL, so a measured ratio on either outcome DOES chart.
     metrics = {} if ratio is None else {"warmpool_gate_separation_ratio": ratio}
+    if ratio is not None and ttfe_p95_ms is not None:
+        metrics["ttfe_p95_ms"] = ttfe_p95_ms
     return {
         "product": "sandbox",
         "generated_at": generated_at,
@@ -33,6 +35,7 @@ def _latest(ratio=1.06, n=30, digest="sha256:" + "a" * 64,
             "suite_git_sha": "c88d857",
             "run_id": run_id,
             "node_count": node_count,
+            "node_image": node_image,
         },
         "scenarios": [
             {
@@ -66,6 +69,22 @@ def test_extract_row_charts_fail_outcome_with_measured_ratio():
     assert row is not None
     assert row["separation_ratio"] == 0.27
     assert row["outcome"] == "FAIL"
+
+
+def test_extract_row_captures_ttfe_p95_ms_and_node_image():
+    # hb#727 follow-up: both new fields ride the same extraction path as node_count, non-gating.
+    row = accrue_warmpool_separation.extract_row(
+        _latest(ttfe_p95_ms=6800.0, node_image="v1.36.2-gke.1234000"))
+    assert row["ttfe_p95_ms"] == 6800.0
+    assert row["node_image"] == "v1.36.2-gke.1234000"
+
+
+def test_extract_row_ttfe_p95_ms_and_node_image_default_none():
+    # Absent in the source latest.json -> None, never guessed, and never suppresses the row.
+    row = accrue_warmpool_separation.extract_row(_latest())
+    assert row is not None
+    assert row["ttfe_p95_ms"] is None
+    assert row["node_image"] is None
 
 
 def test_extract_row_skip_when_no_warmpool_cold_start():
@@ -236,6 +255,25 @@ def test_main_writes_and_is_idempotent():
         assert len(rows) == 1  # same run_id re-run ⇒ still one row
 
 
+def test_load_history_backfills_legacy_row_missing_ttfe_and_node_image():
+    # hb#727 follow-up: a row written before ttfe_p95_ms/node_image were extracted (or before
+    # node_count in hb#700's case) must survive load_history, backfilled to None rather than
+    # dropped -- mirrors the existing node_count legacy-backfill contract.
+    with tempfile.TemporaryDirectory() as d:
+        h = os.path.join(d, "history.jsonl")
+        legacy = accrue_warmpool_separation.extract_row(_latest())
+        del legacy["ttfe_p95_ms"]
+        del legacy["node_image"]
+        del legacy["node_count"]
+        with open(h, "w") as fh:
+            fh.write(json.dumps(legacy) + "\n")
+        rows = accrue_warmpool_separation.load_history(h)
+        assert len(rows) == 1
+        assert rows[0]["ttfe_p95_ms"] is None
+        assert rows[0]["node_image"] is None
+        assert rows[0]["node_count"] is None
+
+
 def test_main_no_latest_json_returns_zero():
     with tempfile.TemporaryDirectory() as d:
         latest = os.path.join(d, "latest.json")  # never created
@@ -250,6 +288,17 @@ def _seed_rig_rows(history, seeds):
         accrue_warmpool_separation.append(
             accrue_warmpool_separation.extract_row(
                 _latest(ratio=ratio, run_id=run_id, generated_at=gen, node_count=node_count)
+            ),
+            history,
+        )
+
+
+def _seed_rig_rows_with_ttfe(history, seeds):
+    for node_count, ratio, ttfe_p95_ms, run_id, gen in seeds:
+        accrue_warmpool_separation.append(
+            accrue_warmpool_separation.extract_row(
+                _latest(ratio=ratio, ttfe_p95_ms=ttfe_p95_ms, run_id=run_id,
+                        generated_at=gen, node_count=node_count)
             ),
             history,
         )
@@ -289,6 +338,39 @@ def test_main_surfaces_rig_flag_when_clearly_separated():
         assert "hb#700 item 3b" in err
         rows = _read(history)
         assert len(rows) == 7  # the new fire's row was still appended normally
+
+
+def test_main_surfaces_ttfe_p95_ms_rig_flag_independently_of_ratio():
+    # hb#727 follow-up: the ttfe_p95_ms-scoped comparison must surface its OWN flag line, tagged
+    # with metric=ttfe_p95_ms, even when the ratios happen to overlap (the two metrics are
+    # independent axes and must not share a single pass/fail verdict).
+    with tempfile.TemporaryDirectory() as d:
+        history = os.path.join(d, "warmpool-separation-history.jsonl")
+        _seed_rig_rows_with_ttfe(history, [
+            (2, 1.00, 6800.0, "seed-a1", "2026-08-01T00:00:00Z"),
+            (2, 1.00, 6900.0, "seed-a2", "2026-08-02T00:00:00Z"),
+            (2, 1.00, 7100.0, "seed-a3", "2026-08-03T00:00:00Z"),
+            (4, 1.00, 15600.0, "seed-b1", "2026-08-01T01:00:00Z"),
+            (4, 1.00, 15790.0, "seed-b2", "2026-08-02T01:00:00Z"),
+            (4, 1.00, 15950.0, "seed-b3", "2026-08-03T01:00:00Z"),
+        ])
+        latest = os.path.join(d, "latest.json")
+        with open(latest, "w") as fh:
+            json.dump(
+                _latest(ratio=1.00, ttfe_p95_ms=16100.0, run_id="fire-new",
+                        generated_at="2026-08-04T00:00:00Z", node_count=4),
+                fh,
+            )
+        buf = io.StringIO()
+        with contextlib.redirect_stderr(buf):
+            rc = accrue_warmpool_separation.main(
+                ["sandbox", "--latest", latest, "--history", history]
+            )
+        assert rc == 0
+        err = buf.getvalue()
+        assert "RIG-STRATIFIED FLAG" in err
+        assert "metric=ttfe_p95_ms" in err
+        assert "metric=separation_ratio" not in err  # ratios overlap -> no flag on that axis
 
 
 def test_main_quiet_when_no_node_count_history():

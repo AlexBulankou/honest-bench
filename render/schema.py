@@ -458,27 +458,46 @@ WARMPOOL_SEPARATION_HISTORY_FIELDS = {
     # guessed default — see backfill_legacy_warmpool_separation_row() below. A real value is
     # always a positive node count.
     "node_count": lambda v: v is None or (isinstance(v, int) and not isinstance(v, bool) and v >= 1),
+    # hb#727 follow-up (rig-confound question, 2026-08-25): the rig-stratified mechanism
+    # above covers separation_ratio only. The SAME rig-shape confound applies to raw warm-hit
+    # ttfe_p95_ms — a 4-node vs 2-node rig can shift absolute latency the same way it shifts the
+    # separation ratio, so a bare ttfe_p95 delta banner is exactly as confounded as a bare ratio
+    # delta was pre-hb#700. Same "None when not recorded, never guessed" contract as node_count.
+    "ttfe_p95_ms": lambda v: v is None or (isinstance(v, (int, float)) and not isinstance(v, bool) and v >= 0),
+    # node_image (GKE kubeletVersion string, e.g. "v1.36.3-gke.1537000") rides in provenance on
+    # every fire already, same as node_count -- a RAPID-channel node-image float is a second,
+    # independent rig-shape confound (hb#727's banner disclosed both simultaneously). Reuses the
+    # same _NODE_IMAGE pattern PROVENANCE_FIELDS already validates node_image/prior_node_image
+    # against, so a malformed value degrades to the honest "not recorded" None rather than being
+    # silently accepted or crashing.
+    "node_image": lambda v: v is None or (isinstance(v, str) and bool(_NODE_IMAGE.match(v))),
 }
 
 
 def backfill_legacy_warmpool_separation_row(row):
-    """Back-fill `node_count` on a pre-hb#700 warmpool-separation row (#700 disposition item 3b).
+    """Back-fill `node_count`/`ttfe_p95_ms`/`node_image` on a pre-existing warmpool-separation row.
 
-    `node_count` became a required WARMPOOL_SEPARATION_HISTORY_FIELDS key when hb#700's rig-
-    stratified disclosure landed. Every row's raw `latest.json` always carried
-    `provenance.node_count` -- this was a pure accrual-extraction gap (accrue_warmpool_separation
-    never read the field), not a data-availability gap. Rows written before the extraction fix
-    landed genuinely never captured it, though, so unlike backfill_legacy_history_row's
-    provably-correct "PASS" fill, there is no provably-correct node_count to fill here -- back-
-    fill to None (the honest "rig shape not recorded" sentinel) so a pre-fix checkout's legacy
-    rows survive the closed-schema loader (and append()'s rewrite-from-survivors) instead of
-    being silently and permanently erased, without fabricating a rig shape we don't know. A row
-    that DOES carry a (possibly invalid) `node_count` value is left untouched -- validation still
-    drops an invalid one; this only ever fills a genuinely ABSENT key.
+    Each of these three became a required WARMPOOL_SEPARATION_HISTORY_FIELDS key after rows were
+    already being written (`node_count` in hb#700; `ttfe_p95_ms`/`node_image` in the hb#727
+    follow-up). Every row's raw `latest.json` always carried the corresponding
+    `provenance`/`sla_metrics` value -- this is a pure accrual-extraction gap (the extractor
+    didn't read the field yet at write time), not a data-availability gap. Rows written before
+    the relevant extraction fix landed genuinely never captured it, though, so unlike
+    backfill_legacy_history_row's provably-correct "PASS" fill, there is no provably-correct
+    value to fill here -- back-fill each absent key to None (the honest "not recorded" sentinel)
+    so a pre-fix checkout's legacy rows survive the closed-schema loader (and append()'s
+    rewrite-from-survivors) instead of being silently and permanently erased, without fabricating
+    a value we don't know. A row that DOES carry a (possibly invalid) value for a given key is
+    left untouched for that key -- validation still drops an invalid one; this only ever fills a
+    genuinely ABSENT key.
     """
-    if not isinstance(row, dict) or "node_count" in row:
+    if not isinstance(row, dict):
         return row
-    return {**row, "node_count": None}
+    out = row
+    for key in ("node_count", "ttfe_p95_ms", "node_image"):
+        if key not in out:
+            out = {**out, key: None}
+    return out
 
 
 # --- Goal 2.1: Core Benchmark Matrix (alex "Agent Sandbox Core Metrics Table") -----------
