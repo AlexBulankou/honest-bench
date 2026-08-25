@@ -2,8 +2,4 @@
 # stdlib python; only the scenario bodies talk to the cluster via the official
 # Kubernetes client. The pure seam (results_schema, scenario_map) needs nothing
 # here and its tests run on bare python3.
-# Upper-bounded: the scenario bodies use pre-v31 client API surface
-# (call_api response_type/_return_http_data_only, generated-method
-# _preload_content) that the v31 major release removed. See #714 — the
-# follow-up there migrates the call sites so this can float forward again.
-kubernetes>=29.0.0,<31
+kubernetes>=29.0.0
