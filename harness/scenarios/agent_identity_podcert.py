@@ -172,7 +172,18 @@ def parse_signer_bundles(ctb_list: dict) -> dict:
 
 
 def _fetch_api_surface(api_client) -> dict:
-    """Raw GET of /apis/<group>/<beta>; return the APIResourceList dict ({} on 404)."""
+    """Raw GET of /apis/<group>/<beta>; return the APIResourceList dict ({} on 404).
+
+    Uses `_preload_content=False` + manual `json.loads` rather than `call_api`'s
+    `response_type=`/`_return_http_data_only=` deserialization path: the kwarg for
+    that path was renamed `response_types_map` (a status-code-keyed dict) in
+    kubernetes-client 36.0.0, while `_preload_content` has been stable across the
+    whole 29-36+ range. Decoding the raw bytes ourselves — the same pattern
+    density_probe.py's `_raw_json` helper already uses — sidesteps the rename
+    instead of chasing it.
+    """
+    import json
+
     from kubernetes.client.exceptions import ApiException
 
     try:
@@ -180,10 +191,9 @@ def _fetch_api_surface(api_client) -> dict:
             f"/apis/{API_GROUP}/{API_VERSION_BETA}",
             "GET",
             auth_settings=["BearerToken"],
-            response_type="object",
-            _return_http_data_only=True,
+            _preload_content=False,
         )
-        return resp or {}
+        return json.loads(resp.data) or {}
     except ApiException as e:
         if e.status == 404:
             # Group/version not served at all — model as an empty resource list so
