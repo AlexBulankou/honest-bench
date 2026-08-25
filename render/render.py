@@ -2955,12 +2955,34 @@ def _north_star_delta_caveat(results, kata_results=None):
 
     if not flags:
         return ""
+    joined = "; ".join(flags)
+    # Specific-disposition: when a flagged swing ALREADY discloses a build-lineage confound
+    # inline (the `· suite_git_sha X→Y` / `· controller_digest X→Y` clause), the trailing
+    # hunt-list must NOT still send the reader off to "check for a build-lineage change" the
+    # line already surfaced. Drop that candidate and point AT the disclosed delta as the
+    # leading confound — otherwise the banner holds the evidence yet reads as if it were unfound.
+    build_lineage_disclosed = (
+        "· suite_git_sha " in joined or "· controller_digest " in joined
+    )
+    if build_lineage_disclosed:
+        tail = (
+            ". A swing this large, or a bar-crossing flip, between consecutive published runs "
+            "is flagged for a second look before trusting it as a substrate signal — check for "
+            "a machine-class change, a node-count change, a node-image change, a broken "
+            "measurement, or a real regression/fix. Note: a build-lineage change "
+            "(controller/suite rebuild) is already disclosed inline above — weigh that rebuild "
+            "as the leading confound before reading this swing as a substrate regression."
+        )
+    else:
+        tail = (
+            ". A swing this large, or a bar-crossing flip, between consecutive published runs "
+            "is flagged for a second look before trusting it as a substrate signal — check for "
+            "a machine-class change, a node-count change, a node-image change, a build-lineage "
+            "change (controller/suite rebuild), a broken measurement, or a real regression/fix."
+        )
     return (
-        "> ⚠️ **Refresh delta:** " + "; ".join(flags) + ". A swing this large, or a bar-crossing "
-        "flip, between consecutive published runs is flagged for a second look before trusting it "
-        "as a substrate signal — check for a machine-class change, a node-count change, a "
-        "node-image change, a build-lineage change (controller/suite rebuild), a broken "
-        "measurement, or a real regression/fix." + _hb621_swing_disposition_addendum(prov)
+        "> ⚠️ **Refresh delta:** " + joined + tail
+        + _hb621_swing_disposition_addendum(prov)
     )
 
 
