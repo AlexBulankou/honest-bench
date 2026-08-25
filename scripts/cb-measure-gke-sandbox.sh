@@ -478,8 +478,15 @@ fi
 if [ "${HB_DENSITY_PROBE:-}" = "1" ]; then
   echo "==> hb#730: running gVisor Max Density saturation probe (hb-gvisor-pool)"
   DENSITY_PROBE_STDOUT="$(mktemp)"
+  # density_probe.py's main() prints ONLY the JSON report to stdout and sends all
+  # logging.info/error output to stderr (basicConfig's default StreamHandler) — the
+  # split is deliberate so stdout stays pure-JSON. Capture stdout ALONE to the
+  # tempfile below; let stderr stream straight to the build log unredirected (both
+  # for live visibility and so a 2>&1 merge never corrupts the JSON we're about to
+  # parse — a merged stream broke json.load() even on a genuine saturated verdict,
+  # silently leaving BENCH_DENSITY_* unset every time (caught in hb#731 review).
   if DENSITY_PROBE_RUNTIME_CLASS=gvisor python3 -m harness.scenarios.density_probe \
-      >"$DENSITY_PROBE_STDOUT" 2>&1; then
+      >"$DENSITY_PROBE_STDOUT"; then
     DENSITY_ENV="$(python3 -c '
 import json, sys
 try:
@@ -501,7 +508,7 @@ except Exception:
       echo "==> WARNING: density probe exited 0 but no canonical_fire_env parsed — leaving BENCH_DENSITY_* unset (no fabricated density)" >&2
     fi
   else
-    echo "==> WARNING: density probe did not saturate or failed — leaving BENCH_DENSITY_* unset (no density measured this fire). Probe output:" >&2
+    echo "==> WARNING: density probe did not saturate or failed — leaving BENCH_DENSITY_* unset (no density measured this fire). Probe stdout (JSON report; stderr/logs already streamed above):" >&2
     cat "$DENSITY_PROBE_STDOUT" >&2 || true
   fi
 fi
