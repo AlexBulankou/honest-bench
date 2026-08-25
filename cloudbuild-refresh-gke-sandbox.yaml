@@ -193,6 +193,19 @@ substitutions:
   # Usage:
   #     --substitutions=_ALLOW_CELL_DOWNGRADE=1
   _ALLOW_CELL_DOWNGRADE: ""
+  # hb#730: opt-in gVisor Max Density re-measure. Runs harness/scenarios/density_probe.py
+  # against the already-provisioned hb-gvisor-pool (this fire's OWN ephemeral cluster,
+  # created and torn down entirely within this trigger — not a shared standing cluster)
+  # BEFORE the warmpool_cold_start burst below, so a saturated verdict's two env exports
+  # (BENCH_DENSITY_MAX_CONCURRENT / BENCH_DENSITY_ALLOCATABLE_VCPU_PER_NODE) ride into
+  # the same fire that publishes
+  # density_per_vcpu. The probe hostname-pins to an EXISTING node (no autoscaler
+  # scale-out possible) and self-cleans in a `finally` block regardless of verdict —
+  # see scripts/cb-measure-gke-sandbox.sh's insertion comment for the full bounded-cost
+  # rationale. Default empty ⇒ INERT — the standing daily fire is unaffected. Usage:
+  #   gcloud builds triggers run hb-refresh-gke-sandbox --project=<PROJECT> \
+  #     --substitutions=_HB_DENSITY_PROBE=1
+  _HB_DENSITY_PROBE: ""
 
 steps:
   # PRE-FIRE FUNCTIONAL PROBE: a policy READ (`gcloud projects get-iam-policy`)
@@ -334,6 +347,11 @@ steps:
       # `python3 -m harness.run` below — same mechanism the other BENCH_* passthroughs
       # (e.g. BENCH_NODE_COUNT, set later in cb-measure-gke-sandbox.sh itself) rely on.
       - "BENCH_ALLOW_CELL_DOWNGRADE=${_ALLOW_CELL_DOWNGRADE}"
+      # hb#730: same direct pass-through shape as BENCH_ALLOW_CELL_DOWNGRADE above —
+      # cb-measure-gke-sandbox.sh reads HB_DENSITY_PROBE from the environment by this
+      # exact name to opt into the gVisor Max Density saturation probe (see the
+      # _HB_DENSITY_PROBE substitution comment above for the bounded-cost rationale).
+      - "HB_DENSITY_PROBE=${_HB_DENSITY_PROBE}"
     args:
       - scripts/cb-measure-gke-sandbox.sh
 

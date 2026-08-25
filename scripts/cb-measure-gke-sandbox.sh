@@ -461,6 +461,51 @@ else
   unset BENCH_NODE_COUNT
 fi
 
+# gVisor Max Density re-measure (hb#730, opt-in via _HB_DENSITY_PROBE substitution
+# / HB_DENSITY_PROBE env, default empty = INERT — same "diagnostic add-on, standing
+# fire unaffected" shape as _HB_PIN_CONTROLLER_DIGEST / _ALLOW_CELL_DOWNGRADE above).
+# harness/scenarios/density_probe.py packs ONE already-provisioned hb-gvisor-pool
+# node to plateau via a hostname-pinned SandboxWarmPool — it cannot trigger
+# cluster-autoscaler scale-out (the pin names an existing node; a new node can never
+# satisfy it) and self-cleans in a `finally` block regardless of verdict. Runs here,
+# sequentially BEFORE the warmpool_cold_start burst below, so its pool is fully
+# torn down (no node contention) before the burst fire claims capacity on the same
+# node. On anything other than a clean "saturated" verdict, leave the two
+# BENCH_DENSITY_* envs unset (same non-fabrication posture as the BENCH_NODE_COUNT
+# guard above) — the harness/render path already treats a fire with no fresh
+# density_per_vcpu as a normal, honest non-measurement (WORK_IN_PROGRESS.md
+# "not-yet-measured"), never a downgrade of a value that was never produced here.
+if [ "${HB_DENSITY_PROBE:-}" = "1" ]; then
+  echo "==> hb#730: running gVisor Max Density saturation probe (hb-gvisor-pool)"
+  DENSITY_PROBE_STDOUT="$(mktemp)"
+  if DENSITY_PROBE_RUNTIME_CLASS=gvisor python3 -m harness.scenarios.density_probe \
+      >"$DENSITY_PROBE_STDOUT" 2>&1; then
+    DENSITY_ENV="$(python3 -c '
+import json, sys
+try:
+    report = json.load(open(sys.argv[1]))
+    env = report.get("canonical_fire_env") or {}
+    mc = env.get("BENCH_DENSITY_MAX_CONCURRENT")
+    vpn = env.get("BENCH_DENSITY_ALLOCATABLE_VCPU_PER_NODE")
+    if mc and vpn:
+        print(f"{mc}\t{vpn}")
+except Exception:
+    pass
+' "$DENSITY_PROBE_STDOUT" || true)"
+    if [ -n "$DENSITY_ENV" ]; then
+      BENCH_DENSITY_MAX_CONCURRENT="$(echo "$DENSITY_ENV" | cut -f1)"
+      BENCH_DENSITY_ALLOCATABLE_VCPU_PER_NODE="$(echo "$DENSITY_ENV" | cut -f2)"
+      export BENCH_DENSITY_MAX_CONCURRENT BENCH_DENSITY_ALLOCATABLE_VCPU_PER_NODE
+      echo "==> density probe saturated: BENCH_DENSITY_MAX_CONCURRENT=$BENCH_DENSITY_MAX_CONCURRENT BENCH_DENSITY_ALLOCATABLE_VCPU_PER_NODE=$BENCH_DENSITY_ALLOCATABLE_VCPU_PER_NODE"
+    else
+      echo "==> WARNING: density probe exited 0 but no canonical_fire_env parsed — leaving BENCH_DENSITY_* unset (no fabricated density)" >&2
+    fi
+  else
+    echo "==> WARNING: density probe did not saturate or failed — leaving BENCH_DENSITY_* unset (no density measured this fire). Probe output:" >&2
+    cat "$DENSITY_PROBE_STDOUT" >&2 || true
+  fi
+fi
+
 echo "==> running sandbox harness (gke-sandbox / gVisor)"
 python3 -m harness.run --product sandbox
 
