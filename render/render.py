@@ -13,12 +13,14 @@ import argparse
 import datetime
 import json
 import math
+import statistics
 import sys
 
 from schema import (
     ACTIVATION_MODE_ROWS,
     AT_SCALE_CONTENTION_FIELDS,
     backfill_legacy_history_row,
+    backfill_legacy_warmpool_separation_row,
     BADGE_CONSTRUCTIONS,
     BADGE_SCOPES,
     BURST_CORROBORATION_FIELDS,
@@ -778,9 +780,10 @@ def _clean_warmpool_separation_history(rows):
     store (schema.WARMPOOL_SEPARATION_HISTORY_FIELDS, #6890 item 3) -- same discipline: a row
     renders ONLY the closed-schema keys, each passing its predicate; a row missing a field or
     failing a predicate is dropped entirely (a malformed history file degrades to fewer
-    disclosed measurements, never to a leak). Unlike _clean_history there is no legacy-backfill
-    step -- this store is new as of #6890, so every row it will ever contain already carries the
-    full schema.
+    disclosed measurements, never to a leak). `node_count` became a required key in hb#700 --
+    a pre-hb#700 row is back-filled to node_count=None (rig shape not recorded), mirroring
+    _clean_history's backfill_legacy_history_row call, so those rows survive rather than being
+    silently dropped.
     """
     clean = []
     if not isinstance(rows, list):
@@ -788,6 +791,7 @@ def _clean_warmpool_separation_history(rows):
     for r in rows:
         if not isinstance(r, dict):
             continue
+        r = backfill_legacy_warmpool_separation_row(r)
         ok_all = True
         out = {}
         for key, ok in WARMPOOL_SEPARATION_HISTORY_FIELDS.items():
@@ -3305,6 +3309,15 @@ def _warmpool_separation_variance_caveat(history_rows):
     stays disclosed here for as long as its history rows persist, since a resolved-then-reverted
     regression is still a fact about that build). Returns "" when no digest exceeds the spread (or
     fewer than 2 digests have 2+ measurements at all) so the caller can append it unconditionally.
+
+    hb#700 item 3c (closing disposition, 2026-08-25): the flagged output always closes with a
+    citation of the #700 A/B outcome (rig shape tested as a candidate cause, P(B>A)=72%,
+    inconclusive) so this flag doesn't read as an open question forever with no record that anyone
+    looked. It is a fixed closing sentence, not per-digest -- it is one fact about the fleet's
+    investigation into swings of this shape in general, not a claim that the flagged digest(s)
+    above were themselves part of that A/B. Per #700's own closing framing this stays a flag, not
+    a verdict: rig shape is named as an untested-out, unconfirmed candidate, and the swing itself
+    is explicitly left unresolved.
     """
     rows = _clean_warmpool_separation_history(history_rows)
     by_digest = {}
@@ -3340,7 +3353,12 @@ def _warmpool_separation_variance_caveat(history_rows):
         "asserted here. A single-fire snapshot cannot show this: it is visible only because every "
         "fire's ratio is retained in warmpool-separation-history.jsonl rather than the latest "
         "fire overwriting the prior one. This entry persists for as long as the flagged digest's "
-        "history rows do, even after a later build supersedes it in latest.json."
+        "history rows do, even after a later build supersedes it in latest.json. hb#700 tested "
+        "one candidate cause — rig shape — with a controlled A/B on this same controller build "
+        "(4 fires at 2 nodes vs. 4 fires at 4 nodes): the n=4 rig measured a higher median "
+        "(1.373x) than the n=2 rig (0.837x), P(B>A)=72%, but that falls well short of the "
+        "confidence needed to attribute the swing to rig shape or move the gate — rig shape "
+        "remains an untested-out, unconfirmed candidate, and the swing itself stays unresolved."
     )
 
 
@@ -3464,6 +3482,16 @@ def _warmpool_separation_adjudicated_verdict(history_rows, *, min_n=WARMPOOL_ADJ
     this function only selects the per-substrate window and formats the closed-vocabulary result —
     no free text that could leak. Returns "" only when there is no usable history at all (the
     caller renders a HELD fallback), so it can be appended unconditionally.
+
+    hb#700 item 3a (closing disposition, 2026-08-25): the #700 A/B (n=2 vs n=4 rig, same
+    controller build) found P(B>A)=71.9% — not confident enough to move the pooled gate or
+    `min_n`, but not nothing either. `_rig_stratified_disclosure` appends a disclosure-only
+    per-node_count median breakdown (pooled median-of-N alongside n=2/n=4/... medians) — "flag,
+    don't verdict" applied to the gate cell itself, per #700's own closing framing. It never
+    computes a separate verdict per rig and never feeds `variance_aware_verdict`; see (b)'s
+    standing bootstrap
+    (`warmpool_verdict.rig_stratified_comparison`) for the one surface that DOES statistically
+    compare rigs.
     """
     clean = _clean_warmpool_separation_history(history_rows or [])
     if not clean:
@@ -3473,18 +3501,50 @@ def _warmpool_separation_adjudicated_verdict(history_rows, *, min_n=WARMPOOL_ADJ
     for r in clean:
         by_sub.setdefault(r["cluster_substrate"], []).append(r)
 
+    def _rig_stratified_disclosure(rows):
+        """Per-node_count median disclosure alongside the pooled median-of-N (hb#700 item 3a).
+
+        #700's closing disposition: the A/B on #700 (n=2 vs n=4 rig) left P(B>A)=71.9% — not
+        confident enough to change the gate or the pooled verdict, but the rig-shape split should
+        not stay invisible either. This is disclosure only ("flag, don't verdict" applied to the
+        gate cell itself) — it renders per-node_count medians, it never issues a
+        separate PASS/FAIL/HELD per rig and never feeds `variance_aware_verdict`. Rows with
+        node_count=None (rig shape not recorded — pre-hb#700 legacy rows, see
+        backfill_legacy_warmpool_separation_row) are excluded from this breakdown but still
+        counted in the pooled median above; an unknown rig tag is not the same claim as an
+        unknown ratio. Returns "" when fewer than 2 distinct known node_counts are present —
+        a single rig shape has nothing to stratify against.
+        """
+        by_rig = {}
+        for r in rows:
+            nc = r.get("node_count")
+            ratio = r["separation_ratio"]
+            if nc is None or not isinstance(ratio, (int, float)) or ratio <= 0:
+                continue
+            by_rig.setdefault(nc, []).append(ratio)
+        if len(by_rig) < 2:
+            return ""
+        parts = [
+            f"n={nc}: median-of-{len(by_rig[nc])}={statistics.median(by_rig[nc]):.3g}x"
+            for nc in sorted(by_rig)
+        ]
+        return "rig-stratified — " + " · ".join(parts) + "."
+
     def _one(sub):
+        rows = by_sub[sub]
         ratios = [
             r["separation_ratio"]
-            for r in by_sub[sub]
+            for r in rows
             if isinstance(r["separation_ratio"], (int, float)) and r["separation_ratio"] > 0
         ]
         n = len(ratios)
+        rig_note = _rig_stratified_disclosure(rows)
+        rig_suffix = f" _{rig_note}_" if rig_note else ""
         if n < min_n:
             return (
                 f"**{sub}** — **HELD** (no flip): only {n} accrued fire"
                 f"{'s' if n != 1 else ''}, below the {min_n}-fire minimum to adjudicate. The "
-                "prior conservative posture is retained until enough fires accrue."
+                f"prior conservative posture is retained until enough fires accrue.{rig_suffix}"
             )
         v = warmpool_verdict.variance_aware_verdict(
             ratios, clean, threshold=WARMPOOL_SEPARATION_MIN_RATIO
@@ -3496,14 +3556,14 @@ def _warmpool_separation_adjudicated_verdict(history_rows, *, min_n=WARMPOOL_ADJ
                 f"**{sub}** — **PASS**: median-of-{n} = {pt:.3g}x clears the "
                 f"{WARMPOOL_SEPARATION_MIN_RATIO:g}x gate ({conf}% band "
                 f"{v['ci_low']:.3g}x–{v['ci_high']:.3g}x); the separation is statistically "
-                "defensible, not a single-fire draw."
+                f"defensible, not a single-fire draw.{rig_suffix}"
             )
         if v["verdict"] == warmpool_verdict.FAIL:
             return (
                 f"**{sub}** — **FAIL**: median-of-{n} = {pt:.3g}x is below the "
                 f"{WARMPOOL_SEPARATION_MIN_RATIO:g}x gate ({conf}% band "
                 f"{v['ci_low']:.3g}x–{v['ci_high']:.3g}x); the shortfall is statistically "
-                "defensible, not a single-fire draw."
+                f"defensible, not a single-fire draw.{rig_suffix}"
             )
         # INDETERMINATE — never collapse to a side.
         if v["reason"] == "indeterminate-no-noise-floor":
@@ -3511,7 +3571,7 @@ def _warmpool_separation_adjudicated_verdict(history_rows, *, min_n=WARMPOOL_ADJ
                 f"**{sub}** — **HELD** (no flip): median-of-{n} = {pt:.3g}x, but the accrued "
                 "history has no same-build replication (no controller build with 2+ "
                 "measurements) to estimate the measurement noise floor, so no verdict is "
-                "defensible. The prior conservative posture is retained."
+                f"defensible. The prior conservative posture is retained.{rig_suffix}"
             )
         return (
             f"**{sub}** — **HELD** (no flip): median-of-{n} = {pt:.3g}x, but at the measured "
@@ -3519,7 +3579,8 @@ def _warmpool_separation_adjudicated_verdict(history_rows, *, min_n=WARMPOOL_ADJ
             f"{v['ci_high']:.3g}x) the interval straddles the {WARMPOOL_SEPARATION_MIN_RATIO:g}x "
             f"gate, so the median does not resolve which side of the gate the build is on — "
             f"{v['n_required']} consistent fires would resolve this margin. The prior "
-            "conservative posture is retained rather than flipping on an unresolved margin."
+            f"conservative posture is retained rather than flipping on an unresolved margin."
+            f"{rig_suffix}"
         )
 
     who = " ".join(_one(sub) for sub in sorted(by_sub))

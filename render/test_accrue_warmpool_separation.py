@@ -8,6 +8,8 @@ computed, closed-schema on the way in (only WARMPOOL_SEPARATION_HISTORY_FIELDS r
 and ordering by generated_at so the file reads as a timeline.
 """
 
+import contextlib
+import io
 import json
 import os
 import tempfile
@@ -16,7 +18,8 @@ import accrue_warmpool_separation
 
 
 def _latest(ratio=1.06, n=30, digest="sha256:" + "a" * 64,
-            generated_at="2026-08-17T14:42:40Z", outcome="PASS", run_id="run-a"):
+            generated_at="2026-08-17T14:42:40Z", outcome="PASS", run_id="run-a",
+            node_count=None):
     # ratio=None mirrors a warmpool_cold_start cell that never computed the gate metric at all
     # (sla_metrics=={}) — the true CASE-1 honest-skip. This is NOT an outcome check: the scenario
     # surfaces the ratio on BOTH PASS and FAIL, so a measured ratio on either outcome DOES chart.
@@ -29,6 +32,7 @@ def _latest(ratio=1.06, n=30, digest="sha256:" + "a" * 64,
             "controller_digest": digest,
             "suite_git_sha": "c88d857",
             "run_id": run_id,
+            "node_count": node_count,
         },
         "scenarios": [
             {
@@ -239,6 +243,93 @@ def test_main_no_latest_json_returns_zero():
         rc = accrue_warmpool_separation.main(["sandbox", "--latest", latest, "--history", history])
         assert rc == 0
         assert not os.path.exists(history)
+
+
+def _seed_rig_rows(history, seeds):
+    for node_count, ratio, run_id, gen in seeds:
+        accrue_warmpool_separation.append(
+            accrue_warmpool_separation.extract_row(
+                _latest(ratio=ratio, run_id=run_id, generated_at=gen, node_count=node_count)
+            ),
+            history,
+        )
+
+
+def test_main_surfaces_rig_flag_when_clearly_separated():
+    # hb#700 item 3b: once enough same-build history accrues at each rig shape and the groups
+    # clearly separate, main() surfaces a loud advisory FLAG line -- but still exits 0 (the flag
+    # is advisory, never a fire failure) and still writes the new row normally.
+    with tempfile.TemporaryDirectory() as d:
+        history = os.path.join(d, "warmpool-separation-history.jsonl")
+        _seed_rig_rows(history, [
+            (2, 0.85, "seed-a1", "2026-08-01T00:00:00Z"),
+            (2, 0.90, "seed-a2", "2026-08-02T00:00:00Z"),
+            (2, 0.95, "seed-a3", "2026-08-03T00:00:00Z"),
+            (4, 1.40, "seed-b1", "2026-08-01T01:00:00Z"),
+            (4, 1.45, "seed-b2", "2026-08-02T01:00:00Z"),
+            (4, 1.50, "seed-b3", "2026-08-03T01:00:00Z"),
+        ])
+
+        latest = os.path.join(d, "latest.json")
+        with open(latest, "w") as fh:
+            json.dump(
+                _latest(ratio=1.55, run_id="fire-new",
+                        generated_at="2026-08-04T00:00:00Z", node_count=4),
+                fh,
+            )
+
+        buf = io.StringIO()
+        with contextlib.redirect_stderr(buf):
+            rc = accrue_warmpool_separation.main(
+                ["sandbox", "--latest", latest, "--history", history]
+            )
+        assert rc == 0  # advisory flag never changes the exit code
+        err = buf.getvalue()
+        assert "RIG-STRATIFIED FLAG" in err
+        assert "hb#700 item 3b" in err
+        rows = _read(history)
+        assert len(rows) == 7  # the new fire's row was still appended normally
+
+
+def test_main_quiet_when_no_node_count_history():
+    # All rows carry node_count=None (pre-hb#700 legacy shape) -> insufficient-data, no FLAG line.
+    with tempfile.TemporaryDirectory() as d:
+        latest = os.path.join(d, "latest.json")
+        history = os.path.join(d, "warmpool-separation-history.jsonl")
+        with open(latest, "w") as fh:
+            json.dump(_latest(), fh)
+        buf = io.StringIO()
+        with contextlib.redirect_stderr(buf):
+            rc = accrue_warmpool_separation.main(
+                ["sandbox", "--latest", latest, "--history", history]
+            )
+        assert rc == 0
+        assert "RIG-STRATIFIED FLAG" not in buf.getvalue()
+
+
+def test_main_quiet_when_rig_groups_overlap():
+    # Enough same-build history at each rig shape to compare, but no real separation -> the
+    # comparison resolves to resolved-no-flag, and main() stays quiet (nothing to surface).
+    with tempfile.TemporaryDirectory() as d:
+        history = os.path.join(d, "warmpool-separation-history.jsonl")
+        _seed_rig_rows(history, [
+            (2, 1.00, "seed-a1", "2026-08-01T00:00:00Z"),
+            (4, 1.00, "seed-b1", "2026-08-01T01:00:00Z"),
+        ])
+        latest = os.path.join(d, "latest.json")
+        with open(latest, "w") as fh:
+            json.dump(
+                _latest(ratio=1.00, run_id="fire-new",
+                        generated_at="2026-08-02T00:00:00Z", node_count=4),
+                fh,
+            )
+        buf = io.StringIO()
+        with contextlib.redirect_stderr(buf):
+            rc = accrue_warmpool_separation.main(
+                ["sandbox", "--latest", latest, "--history", history]
+            )
+        assert rc == 0
+        assert "RIG-STRATIFIED FLAG" not in buf.getvalue()
 
 
 def _run_all():

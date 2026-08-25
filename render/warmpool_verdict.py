@@ -49,9 +49,29 @@ already-accrued history rows and a fire's observed ratio(s), and never touches t
 Kubernetes, or the network. It does NOT modify the in-cluster harness gate — that gate must
 keep emitting its raw per-fire ratio (the raw measurement is the input this layer needs);
 this is an additive verdict layer on top of that measurement.
+
+## Rig-stratified comparison (hb#700 item 3b)
+
+`rig_stratified_comparison` is a SIBLING statistic, not a replacement for the protocol above: it
+never feeds `variance_aware_verdict` and never moves `WARMPOOL_SEPARATION_MIN_RATIO` or
+`WARMPOOL_ADJUDICATION_MIN_N`. It answers a narrower, standing question the hb#700 A/B first
+asked once as a one-shot experiment (n=2-node rig vs n=4-node rig, same controller build,
+4 fires per arm, closing result: median 0.837x vs 1.373x, P(B>A)=71.9%, bootstrap diff-CI
+[-1.240, +1.966] straddling zero — not confident enough to act on, per #700's closing disposition)
+and this module keeps asking as an ongoing accrual-layer signal: "as MORE same-build fires land
+at each rig shape, does the gap between rig shapes stay noise, or does it firm up into something
+worth a human's attention?" It uses a nonparametric percentile bootstrap on the RAW
+ratio-space median difference (median(group_b) - median(group_a)), matching the #700 closing
+analysis's own method exactly (not the log-space approach above, which answers a different
+question — "is a single fire's PASS/FAIL defensible" — from this one — "do rig shapes differ").
+Auto-flags (closed-vocabulary `reason`, never free text) when P(B>A) >= 0.95 OR the
+bootstrap diff-CI excludes zero, per #700's closing disposition (item 3b) verbatim. A flag here is
+advisory only — it names a candidate worth a human's attention, it does not itself conclude
+causation or move any threshold ("flag, don't verdict").
 """
 
 import math
+import random
 import statistics
 
 
@@ -262,4 +282,133 @@ def variance_aware_verdict(
     else:
         result["verdict"] = FAIL
         result["reason"] = "resolved-fail"
+    return result
+
+
+# Fixed by default so the standing comparison is reproducible run-to-run on unchanged history —
+# an accrual-layer signal that flaps between "flagged" and "not flagged" on RNG noise alone
+# (rather than on new data landing) would be worse than no signal. A caller doing its own
+# sensitivity analysis can still pass a different seed or n_bootstrap.
+_DEFAULT_RIG_BOOTSTRAP_N = 10000
+_DEFAULT_RIG_BOOTSTRAP_SEED = 1337
+
+
+def rig_stratified_comparison(
+    history_rows,
+    *,
+    group_field="node_count",
+    group_a=2,
+    group_b=4,
+    confidence=0.95,
+    n_bootstrap=_DEFAULT_RIG_BOOTSTRAP_N,
+    seed=_DEFAULT_RIG_BOOTSTRAP_SEED,
+    min_n_per_group=2,
+):
+    """Standing bootstrap comparison of two rig shapes' separation-ratio medians (hb#700 3b).
+
+    `history_rows` are validated rows (as produced by `accrue_warmpool_separation.load_history`,
+    which now carries `node_count` per hb#700's schema fix). Splits into two groups by
+    `history_rows[i][group_field] == group_a` / `== group_b` (default: node_count 2 vs 4, the
+    hb#700 A/B's own rig shapes), keeping only rows with a positive `separation_ratio`. This is
+    recomputed FRESH from the FULL accrued history on every call — as more same-build fires land
+    at each rig shape over time, the two groups grow independently of the original 4-fires-per-arm
+    A/B snapshot, so the comparison firms up (or doesn't) as real data accrues, per #700's
+    closing disposition's "keep the B-vs-A bootstrap updated as daily fires accrue" instruction.
+
+    Requires >= `min_n_per_group` usable rows in EACH group; below that, returns immediately with
+    `reason="insufficient-data"` and no bootstrap performed (there is nothing yet to compare).
+
+    The point estimate is `median(group_b) - median(group_a)` (raw ratio-space, not log-space —
+    this matches the #700 closing analysis's own method, which this function generalizes into a
+    standing check). The percentile bootstrap resamples each group with replacement
+    `n_bootstrap` times, recomputing the median-of-resample difference each draw, to build:
+      - `p_b_gt_a`: fraction of bootstrap draws where group_b's resampled median exceeds
+        group_a's — the probability the true ordering favors group_b.
+      - `ci_low`/`ci_high`: the `confidence`-level percentile interval on the diff.
+
+    `flagged` is True (closed-vocabulary `reason="flagged"`) when `p_b_gt_a >= 0.95` OR the CI
+    excludes zero (`ci_low > 0` or `ci_high < 0`) — #700's closing disposition (item 3b) verbatim.
+    A flag is advisory ("flag, don't verdict"): it names groups worth a human's attention, it
+    never itself asserts causation and never moves any threshold in this module or
+    WARMPOOL_SEPARATION_MIN_RATIO.
+
+    Returns a stable, JSON-serializable dict (never free text, so a caller can render or log it
+    directly):
+      {
+        "group_field": str, "group_a": value, "group_b": value,
+        "n_a": int, "n_b": int,
+        "median_a": float | None, "median_b": float | None, "diff_median": float | None,
+        "confidence": float, "n_bootstrap": int,
+        "ci_low": float | None, "ci_high": float | None, "p_b_gt_a": float | None,
+        "flagged": bool,
+        "reason": "insufficient-data" | "flagged" | "resolved-no-flag",
+      }
+    """
+    ratios_a = [
+        r["separation_ratio"]
+        for r in history_rows
+        if r.get(group_field) == group_a
+        and isinstance(r.get("separation_ratio"), (int, float))
+        and r["separation_ratio"] > 0
+    ]
+    ratios_b = [
+        r["separation_ratio"]
+        for r in history_rows
+        if r.get(group_field) == group_b
+        and isinstance(r.get("separation_ratio"), (int, float))
+        and r["separation_ratio"] > 0
+    ]
+
+    result = {
+        "group_field": group_field,
+        "group_a": group_a,
+        "group_b": group_b,
+        "n_a": len(ratios_a),
+        "n_b": len(ratios_b),
+        "median_a": statistics.median(ratios_a) if ratios_a else None,
+        "median_b": statistics.median(ratios_b) if ratios_b else None,
+        "diff_median": None,
+        "confidence": confidence,
+        "n_bootstrap": n_bootstrap,
+        "ci_low": None,
+        "ci_high": None,
+        "p_b_gt_a": None,
+        "flagged": False,
+        "reason": "insufficient-data",
+    }
+    if len(ratios_a) < min_n_per_group or len(ratios_b) < min_n_per_group:
+        return result
+
+    result["diff_median"] = result["median_b"] - result["median_a"]
+
+    rng = random.Random(seed)
+    diffs = []
+    n_gt = 0
+    for _ in range(n_bootstrap):
+        resample_a = [rng.choice(ratios_a) for _ in range(len(ratios_a))]
+        resample_b = [rng.choice(ratios_b) for _ in range(len(ratios_b))]
+        d = statistics.median(resample_b) - statistics.median(resample_a)
+        diffs.append(d)
+        if d > 0:
+            n_gt += 1
+    diffs.sort()
+
+    alpha = 1.0 - confidence
+    lo_idx = max(0, int((alpha / 2) * n_bootstrap))
+    hi_idx = min(n_bootstrap - 1, int((1 - alpha / 2) * n_bootstrap) - 1)
+    ci_low = diffs[lo_idx]
+    ci_high = diffs[hi_idx]
+    p_b_gt_a = n_gt / n_bootstrap
+    ci_excludes_zero = ci_low > 0 or ci_high < 0
+    flagged = p_b_gt_a >= 0.95 or ci_excludes_zero
+
+    result.update(
+        {
+            "ci_low": ci_low,
+            "ci_high": ci_high,
+            "p_b_gt_a": p_b_gt_a,
+            "flagged": flagged,
+            "reason": "flagged" if flagged else "resolved-no-flag",
+        }
+    )
     return result
