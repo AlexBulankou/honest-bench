@@ -18,9 +18,9 @@
 # intend to publish the downgraded cell; a pure capacity-sweep fire is not
 # expected to publish and can let that refusal stop it short of the PR step.
 #
-# a#7263 (a4z1 N-floor question): the cold and resume sample counts are ALSO
-# fire-time substitutions now — _NATIVE_DIGEST_COLD_SAMPLES / _SUSPEND_RESUME_
-# CYCLE_COUNT, both default "30" (byte-identical to the committed shape). A
+# The cold and resume sample counts are ALSO fire-time substitutions now —
+# _NATIVE_DIGEST_COLD_SAMPLES / _SUSPEND_RESUME_CYCLE_COUNT, both default "30"
+# (byte-identical to the committed shape). A
 # large warmpool fire also needs more scheduling headroom than the default
 # 2-node cluster: gVisor pool pods are tiny (10m CPU / 16Mi mem each — CPU/mem
 # is never the ceiling) but GKE's default max-pods-per-node (110) is, so pass
@@ -97,9 +97,9 @@ substitutions:
   # diagnostics in the build log are the point of the sweep, not the published cell).
   _WARMPOOL_POOL_REPLICAS: "30"
   _WARMPOOL_CLAIM_COUNT: "40"
-  # a#7263/a4z1: the cold and resume sample counts were the two graduation-shape
-  # knobs left hardcoded in the measure-step env below instead of following the
-  # warmpool pattern above — a fire wanting a bigger N had to edit this file.
+  # The cold and resume sample counts were the two graduation-shape knobs left
+  # hardcoded in the measure-step env below instead of following the warmpool
+  # pattern above — a fire wanting a bigger N had to edit this file.
   # Default "30" is byte-identical to the committed published shape; overridable
   # at fire time the same way as the warmpool knobs, e.g.:
   #   gcloud builds triggers run hb-refresh-gke-sandbox --project=<PROJECT> \
@@ -255,8 +255,8 @@ steps:
       # here — a refresh without it fires the scenario at its default n=1
       # (SUSPEND_RESUME_CYCLE_COUNT, harness/scenarios/suspend_resume.py) and the
       # all-or-nothing latest.json write reds on check_n_regression (hb#592).
-      # a#7263: now substitution-backed (see _SUSPEND_RESUME_CYCLE_COUNT above)
-      # so a larger-N fire no longer needs to edit this file.
+      # Now substitution-backed (see _SUSPEND_RESUME_CYCLE_COUNT above) so a
+      # larger-N fire no longer needs to edit this file.
       - "SUSPEND_RESUME_CYCLE_COUNT=${_SUSPEND_RESUME_CYCLE_COUNT}"
       - "NATIVE_DIGEST_COLD_RUNTIME_CLASS=gvisor"
       - "NATIVE_DIGEST_COLD_SAMPLES=${_NATIVE_DIGEST_COLD_SAMPLES}"
