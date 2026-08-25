@@ -22,9 +22,9 @@
           "repo": "agent-substrate/substrate",
           "number": 940,
           "kind": "pr",
-          "role": "fix-in-flight",
-          "status": "open",
-          "note": "Replace ateredis with atepg: removes ateredis.go wholesale (status=removed, -1587) and strips the redis backend from cmd/ateapi/main.go (-126), retiring the strict-protojson decode path that bricks ListActors on rename. OPEN, CONFLICTING, mergeStateStatus=DIRTY (drifted CLEAN->DIRTY 2026-08-14, needs a rebase before it can merge), +268/-92485 across 312 files, author supreme-gg-gg, created 2026-08-13, updated 2026-08-14. Follow-up to the merged #640. Once merged, the vulnerable redis path no longer exists and #356 is moot."
+          "role": "fix-partial-merged",
+          "status": "merged",
+          "note": "Replace ateredis with atepg: removes ateredis.go wholesale and strips the redis backend from cmd/ateapi/main.go, retiring the strict-protojson decode path that bricks ListActors on a proto field rename. MERGED 2026-08-25 (was OPEN + CONFLICTING/DIRTY through 2026-08-14; rebased and landed). Completes the #640 backend migration -- with ateredis removed from upstream main the vulnerable redis path no longer exists upstream, and #356 (the ateredis-specific durable fix) is moot. Marked fix-partial-merged, not fully-closed, because the standing benchmark loop pins the redis backend deliberately (dual-lane honest-RED), so the RED lane holds on that pinned build until it opts into the postgres backend; #940 is the durable upstream close, not a change to the pinned deployment."
         },
         {
           "repo": "agent-substrate/substrate",
@@ -107,8 +107,8 @@
           "number": 948,
           "kind": "pr",
           "role": "fix-in-flight",
-          "status": "open",
-          "note": "Checkpoint-side classification fix (the S2 'missing piece'): probes the runsc pause-container state on the checkpoint failure path and reports a gone-sandbox checkpoint as DataLoss + actor-crash directive, plus checkpoint idempotency so a replayed checkpoint never re-drives runsc against destroyed state. Fires the existing #353/#475 crash->worker-release recovery on the suspend/pause leg. Maintainer-authored, opened + verified live 2026-08-14; OPEN + DRAFT. Distinct from the restore-side gVisor-sentry leg (#790). A fork adopt-anew of this classification was explored 2026-08-14 and stood down as a dup of this PR (its runsc-state probe is more robust than an exit-code heuristic); adopt-on-merge."
+          "status": "closed",
+          "note": "Checkpoint-side classification fix (the S2 'missing piece'): probed the runsc pause-container state on the checkpoint failure path and reported a gone-sandbox checkpoint as DataLoss + actor-crash directive, plus checkpoint idempotency so a replayed checkpoint never re-drives runsc against destroyed state. Fires the existing #353/#475 crash->worker-release recovery on the suspend/pause leg. Maintainer-authored; CLOSED unmerged 2026-08-25 (mergeStateStatus=DIRTY). Since the adopt-on-merge path is now gone, the S2 checkpoint-side residual is NOT landed upstream -- a fork adopt-anew of the runsc-state-probe classification (explored 2026-08-14, more robust than an exit-code heuristic) is the remaining path if the residual needs closing. Distinct from the restore-side gVisor-sentry leg (#790, still open)."
         }
       ]
     },
