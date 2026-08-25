@@ -5836,6 +5836,66 @@ def test_north_star_delta_caveat_flags_big_regression():
     ) in out
 
 
+def test_north_star_delta_caveat_suite_git_sha_disclosed_specific_disposition():
+    # Specific-disposition: a gVisor swing whose flag ALREADY reports
+    # `suite_git_sha ee956082→ea3c1b14` inline. The trailing guidance must NOT still list
+    # "a build-lineage change (controller/suite rebuild)" as an unfound candidate to go hunt
+    # — the line is holding that evidence. It points AT the disclosed delta as the leading
+    # confound instead.
+    scen = [{
+        "name": "warmpool_cold_start", "outcome": "PASS", "n": 200,
+        "sla_metrics": {"ttfe_p95_ms": 1800},
+    }]
+    out = render.render_north_star_caption(_matrix_results(
+        scen, provenance={
+            "runtime": "gvisor",
+            "prior_warmpool_ttfe_p95_ms": 900.0,
+            "suite_git_sha": "ea3c1b14",
+            "prior_suite_git_sha": "ee956082",
+        },
+    ))
+    # confound disclosed inline on the flagged delta (schema round-trip through _clean_provenance)
+    assert "· suite_git_sha `ee956082`→`ea3c1b14`" in out
+    # trailing guidance no longer sends the reader hunting for a build-lineage change it surfaced
+    assert "a build-lineage change (controller/suite rebuild), a broken" not in out
+    # instead it acknowledges the disclosed delta as the leading confound (specific disposition)
+    assert (
+        "a build-lineage change (controller/suite rebuild) is already disclosed inline above "
+        "— weigh that rebuild as the leading confound before reading this swing as a "
+        "substrate regression."
+    ) in out
+    # the non-build-lineage candidates are still enumerated for the reader
+    assert "a machine-class change" in out
+    assert "a real regression/fix" in out
+
+
+def test_north_star_delta_caveat_controller_digest_disclosed_specific_disposition():
+    # Same specific-disposition path via the OTHER build-lineage clause (controller_digest) —
+    # guards the second arm of the disclosed-confound condition, not just suite_git_sha.
+    kata_scen = [{
+        "name": "warmpool_cold_start", "outcome": "FAIL", "n": 30,
+        "sla_metrics": {"ttfe_p95_ms": 3079},
+    }]
+    out = render.render_north_star_caption(
+        _matrix_results(_full_gvisor_scenarios(), provenance={"runtime": "gvisor"}),
+        kata_results=_kata_results(
+            scenarios=kata_scen,
+            provenance={
+                "runtime": "kata-microvm",
+                "prior_warmpool_ttfe_p95_ms": 963.0,
+                "controller_digest": "sha256:" + "a" * 64,
+                "prior_controller_digest": "sha256:" + "b" * 64,
+            },
+        ),
+    )
+    assert "· controller_digest `sha256:bbbbbbbbbbbb…` → `sha256:aaaaaaaaaaaa…`" in out
+    assert "a build-lineage change (controller/suite rebuild), a broken" not in out
+    assert (
+        "a build-lineage change (controller/suite rebuild) is already disclosed inline above"
+        in out
+    )
+
+
 def test_north_star_delta_caveat_flags_kata_independently_gvisor_clean():
     # gVisor has no prior stamped (not flagged); kata's own prior swings 2x -> only kata flags.
     kata_scen = [{
