@@ -458,7 +458,7 @@ WARMPOOL_SEPARATION_HISTORY_FIELDS = {
     # guessed default — see backfill_legacy_warmpool_separation_row() below. A real value is
     # always a positive node count.
     "node_count": lambda v: v is None or (isinstance(v, int) and not isinstance(v, bool) and v >= 1),
-    # hb#727 follow-up (a4z1's rig-confound question, 2026-08-25): the rig-stratified mechanism
+    # hb#727 follow-up (rig-confound question, 2026-08-25): the rig-stratified mechanism
     # above covers separation_ratio only. The SAME rig-shape confound applies to raw warm-hit
     # ttfe_p95_ms — a 4-node vs 2-node rig can shift absolute latency the same way it shifts the
     # separation ratio, so a bare ttfe_p95 delta banner is exactly as confounded as a bare ratio

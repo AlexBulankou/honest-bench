@@ -130,7 +130,7 @@ def _candidate_row(results):
         # is rig-shape metadata, not a correctness-critical measurement. Absent -> None (honest
         # "not recorded"), never guessed.
         "node_count": prov.get("node_count"),
-        # hb#727 follow-up (a4z1's rig-confound question, 2026-08-25): extend the same
+        # hb#727 follow-up (rig-confound question, 2026-08-25): extend the same
         # rig-stratified pattern to the raw warm-hit TTFE, so a headline delta banner like
         # hb#727's (6.80s -> 15.79s across a node_count 4->2 + node_image float) is automatically
         # contextualized by node-count-stratified history instead of a single unstratified
@@ -301,7 +301,7 @@ def main(argv=None):
     # surfaced loudly (stderr) so it's visible in fire logs without gating anything; an
     # unflagged or insufficient-data result stays quiet (nothing yet worth a human's attention).
     #
-    # hb#727 follow-up (a4z1's rig-confound question, 2026-08-25): the SAME stratified-bootstrap
+    # hb#727 follow-up (rig-confound question, 2026-08-25): the SAME stratified-bootstrap
     # machinery is run a SECOND time against `ttfe_p95_ms` -- a headline warm-hit TTFE delta
     # banner (like hb#727's 6.80s -> 15.79s) is exactly as confounded by rig shape as a bare
     # separation_ratio delta was pre-hb#700, so it gets the identical treatment rather than
