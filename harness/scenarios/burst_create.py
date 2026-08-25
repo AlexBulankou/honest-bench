@@ -890,6 +890,15 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
             # pair against native_digest_cold's single cold TTFE sample.
             sla_metrics["warm_ttfe_samples_ms"] = sorted(ttfe_ms_samples)
 
+        # hb#723/hb#726: self-report the env knob that gates which sla_metrics
+        # keys this fire emits — BENCH_TTFE_EXEC flips whether the exec-
+        # corroboration keys (sandboxes_exec_under_1s, exec_success_rate) exist
+        # at all, the same "changes the key set, not just a value" shape as
+        # native_digest_cold's sample count — so check_cell_downgrade's
+        # remediation can name a concrete env to re-fire with. Shared across
+        # both the PASS and FAIL return branches below.
+        sla_metrics["measured_with"] = {"BENCH_TTFE_EXEC": _TTFE_EXEC}
+
         all_ttfi_str = ", ".join(f"{x:.3f}" for x in breakdown["all_ttfi_s"])
         density = breakdown["density_per_vcpu"]
         common = (
