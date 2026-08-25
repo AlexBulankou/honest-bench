@@ -1,25 +1,28 @@
 {
+  "generated_at": "2026-08-25T15:34:00Z",
   "product": "substrate",
-  "generated_at": "2026-06-28T03:00:00Z",
-  "provenance": {},
+  "provenance": {
+    "cluster_substrate": "gke",
+    "cold_start_mode": "cold-provision",
+    "node_count": 1,
+    "run_id": "e7290fefddd44bc38aef57690af277d2"
+  },
   "scenarios": [
     {
+      "name": "agent_identity_podcert",
+      "outcome": "PASS"
+    },
+    {
+      "n": 0,
       "name": "cold_reconcile",
       "outcome": "pending",
-      "pending_reason": "not-yet-measured",
-      "n": 0
+      "pending_reason": "not-yet-measured"
     },
     {
+      "n": 0,
       "name": "suspend_resume_carryover",
       "outcome": "pending",
-      "pending_reason": "not-yet-measured",
-      "n": 0
-    },
-    {
-      "name": "agent_identity_podcert",
-      "outcome": "pending",
-      "pending_reason": "not-yet-measured",
-      "n": 0
+      "pending_reason": "not-yet-measured"
     }
   ]
 }
