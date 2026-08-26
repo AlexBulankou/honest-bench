@@ -108,7 +108,15 @@
           "kind": "pr",
           "role": "fix-in-flight",
           "status": "closed",
-          "note": "Checkpoint-side classification fix (the S2 'missing piece'): probed the runsc pause-container state on the checkpoint failure path and reported a gone-sandbox checkpoint as DataLoss + actor-crash directive, plus checkpoint idempotency so a replayed checkpoint never re-drives runsc against destroyed state. Fires the existing #353/#475 crash->worker-release recovery on the suspend/pause leg. Maintainer-authored; CLOSED unmerged 2026-08-25 (mergeStateStatus=DIRTY). Since the adopt-on-merge path is now gone, the S2 checkpoint-side residual is NOT landed upstream -- a fork adopt-anew of the runsc-state-probe classification (explored 2026-08-14, more robust than an exit-code heuristic) is the remaining path if the residual needs closing. Distinct from the restore-side gVisor-sentry leg (#790, still open)."
+          "note": "Checkpoint-side classification fix (the S2 'missing piece'): probed the runsc pause-container state on the checkpoint failure path and reported a gone-sandbox checkpoint as DataLoss + actor-crash directive, plus checkpoint idempotency so a replayed checkpoint never re-drives runsc against destroyed state. Fires the existing #353/#475 crash->worker-release recovery on the suspend/pause leg. Maintainer-authored monolithic draft; CLOSED unmerged 2026-08-25 -- NOT abandoned but SUPERSEDED: the maintainer split it into a ready-for-review stack (all 'Towards #372'). The checkpoint-side leg continues at #1139 below, so the S2 adopt-on-merge path is intact, not gone. Distinct from the restore-side gVisor-sentry leg (#790, still open)."
+        },
+        {
+          "repo": "agent-substrate/substrate",
+          "number": 1139,
+          "kind": "pr",
+          "role": "fix-in-flight",
+          "status": "open",
+          "note": "Ready-for-review (non-draft) successor to the closed monolithic #948, opened 2026-08-21. 'atelet: checkpoint idempotency' -- makes checkpoint idempotent across atelet+ateom via destination fast-forward + local marker replay, plus failure classification that distinguishes transient errors from unrecoverable guest crashes so the control plane can retry safely (the S2 checkpoint-side terminal-classification leg). This is the live adopt-on-merge target for S2's checkpoint side. Supporting stack (also open, ready-for-review, all 'Towards #372'): #1137 (atelet: serialize node-local operations per actor) and #1136 (microvm: find a restored actor's CH api-socket without ateom's record); #1138 (ateom: replay a completed checkpoint) CLOSED unmerged as part of the same reshuffle. Distinct from the restore-side gVisor-sentry leg (#790, still open)."
         }
       ]
     },
