@@ -467,10 +467,17 @@ fi
 # harness/scenarios/density_probe.py packs ONE already-provisioned hb-gvisor-pool
 # node to plateau via a hostname-pinned SandboxWarmPool — it cannot trigger
 # cluster-autoscaler scale-out (the pin names an existing node; a new node can never
-# satisfy it) and self-cleans in a `finally` block regardless of verdict. Runs here,
-# sequentially BEFORE the warmpool_cold_start burst below, so its pool is fully
-# torn down (no node contention) before the burst fire claims capacity on the same
-# node. On anything other than a clean "saturated" verdict, leave the two
+# satisfy it) and self-cleans in a `finally` block regardless of verdict — which now
+# also WAITS (DENSITY_PROBE_TEARDOWN_WAIT_S, default 180s) for the cascade-deleted
+# probe pods to actually leave the target node before returning, not just for the
+# delete calls to be issued (hb#731 fix: an issued-but-not-yet-terminated delete let
+# burst_create's own WarmPool race dozens of still-terminating probe pods for the
+# same node, degrading its claim-binding latency past the 1.0s TTFI ceiling and
+# tripping the cell-downgrade guard on exec_success_rate/sandboxes_exec_under_1s —
+# see honest-bench#730). Runs here, sequentially BEFORE the warmpool_cold_start
+# burst below, so its pool is fully torn down (no node contention) before the burst
+# fire claims capacity on the same node. On anything other than a clean "saturated"
+# verdict, leave the two
 # BENCH_DENSITY_* envs unset (same non-fabrication posture as the BENCH_NODE_COUNT
 # guard above) — the harness/render path already treats a fire with no fresh
 # density_per_vcpu as a normal, honest non-measurement (WORK_IN_PROGRESS.md

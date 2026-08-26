@@ -287,6 +287,60 @@ def test_count_target_pods_running_not_ready_is_other():
 
 
 # ---------------------------------------------------------------------------
+# _wait_for_target_clear (hb#731 teardown-race fix)
+# ---------------------------------------------------------------------------
+
+class _FakeListPodsResp:
+    def __init__(self, items):
+        import json as _json
+        self.data = _json.dumps({"items": items}).encode()
+
+
+class _FakeCoreV1:
+    """Returns one queued pod-list snapshot per list_namespaced_pod() call;
+    holds on the last snapshot once the queue is exhausted."""
+
+    def __init__(self, snapshots):
+        self._snapshots = list(snapshots)
+        self.calls = 0
+
+    def list_namespaced_pod(self, namespace, _preload_content=False):
+        self.calls += 1
+        pods = self._snapshots.pop(0) if len(self._snapshots) > 1 else self._snapshots[0]
+        return _FakeListPodsResp(pods)
+
+
+def test_wait_for_target_clear_true_when_already_empty():
+    fake = _FakeCoreV1([[]])
+    assert dp._wait_for_target_clear(
+        fake, node_name="node-a", timeout_s=5, poll_s=0,
+    ) is True
+    assert fake.calls == 1
+
+
+def test_wait_for_target_clear_polls_until_pods_gone():
+    fake = _FakeCoreV1([[_pod()], [_pod()], []])
+    assert dp._wait_for_target_clear(
+        fake, node_name="node-a", timeout_s=5, poll_s=0,
+    ) is True
+    assert fake.calls == 3
+
+
+def test_wait_for_target_clear_ignores_foreign_pods():
+    fake = _FakeCoreV1([[_pod(labeled=False, node_name="node-b")]])
+    assert dp._wait_for_target_clear(
+        fake, node_name="node-a", timeout_s=5, poll_s=0,
+    ) is True
+
+
+def test_wait_for_target_clear_times_out_false():
+    fake = _FakeCoreV1([[_pod()]])
+    assert dp._wait_for_target_clear(
+        fake, node_name="node-a", timeout_s=0, poll_s=0,
+    ) is False
+
+
+# ---------------------------------------------------------------------------
 # classify_binding_constraints
 # ---------------------------------------------------------------------------
 
