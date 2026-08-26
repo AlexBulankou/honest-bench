@@ -86,6 +86,24 @@ substitutions:
   # the PR step).
   _WARMPOOL_POOL_REPLICAS: "30"
   _WARMPOOL_CLAIM_COUNT: "40"
+  # hb#700 (mirrored from cloudbuild-refresh-gke-sandbox.yaml): the check_cell_downgrade
+  # guard. That guard fail-closes the WHOLE atomic latest.json write (every cell in the
+  # fire, not just the affected one) when a fresh measurement would downgrade a prior
+  # GENUINE (non-pending) row — e.g. losing an sla_metrics key or a real outcome
+  # regression. It fires correctly and BY DESIGN when a fresh sweep-derived cell earns
+  # its own whole-triple thpt_slo_basis stamp (e.g. "true_ttfe") superseding an older
+  # per-bar hb#230 caveat key (thpt_slo_basis_5s/_1s) of a DIFFERENT convention —
+  # carry_prior_basis_caveats() correctly refuses to carry the old caveat forward once
+  # the fresh cell has its own basis of a different shape (see
+  # test_fresh_own_basis_blocks_caveat_carry in harness/test_run_slo_sweep.py), and
+  # check_cell_downgrade's pure key-SET comparison then (also by design) reads the old
+  # caveat key's disappearance as a "loss." Default empty ⇒ INERT — the standing refresh
+  # keeps today's fail-closed behavior exactly as before this substitution existed.
+  # Override ONLY for a deliberate, understood, documented republish where the fresh
+  # triple is verified corroborated (e.g. true_ttfe_webhook_stamped_claims >= 1 in the
+  # build log) — i.e. a genuine information UPGRADE, not a silent downgrade. Usage:
+  #     --substitutions=_ALLOW_CELL_DOWNGRADE=1
+  _ALLOW_CELL_DOWNGRADE: ""
 
 steps:
   # Single orchestration step: auth -> preconditions -> cold-honesty guard ->
@@ -122,6 +140,13 @@ steps:
       # share this one shell.
       - "KATA_UNIQUE_IMAGE_SWEEP_OUT=/workspace/kata-unique-image-cold-ttfe-sweep.json"
       - "BENCH_SLO_SWEEP_NATIVE_DIGEST_COLD=/workspace/kata-unique-image-cold-ttfe-sweep.json"
+      # hb#700: direct pass-through, no script-side translation needed — harness/run.py
+      # reads BENCH_ALLOW_CELL_DOWNGRADE from the environment by this exact name (see
+      # the _ALLOW_CELL_DOWNGRADE substitution comment above for the guard/rationale),
+      # and this step's env: already exports straight into the shell that runs
+      # `python3 -m harness.run` below — same mechanism as the sweep-output env vars
+      # above.
+      - "BENCH_ALLOW_CELL_DOWNGRADE=${_ALLOW_CELL_DOWNGRADE}"
     args:
       - -c
       - |
