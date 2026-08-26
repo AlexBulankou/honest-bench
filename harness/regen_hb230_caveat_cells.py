@@ -36,7 +36,11 @@ The five conversions (see hb#230 rulings):
   4. Kata warm    (warmpool_cold_start, sandbox-kata/) — acq-p95-uncorroborated
      both bars (Class A ***), from the Kata warm leg.
   5. Kata cold    (native_digest_cold, sandbox-kata/)  — 5s bar bracketed
-     (unresolved-bounds ***); 1s stays render-derived-0.
+     (unresolved-bounds ***); 1s stays render-derived-0. RETIRED as of
+     2026-08-26 (a#7281's kata cold true_ttfe fire): the cell graduated to a
+     genuine whole-triple measurement, so ``convert_kata_cold`` is now a
+     documented no-op guarded on the precondition it used to unconditionally
+     assume (see its docstring) — it never overwrites a real measurement.
 """
 from __future__ import annotations
 
@@ -204,10 +208,23 @@ def convert_kata_warm(results: dict) -> None:
 
 
 def convert_kata_cold(results: dict) -> None:
-    """5s bar bracketed (unresolved-bounds ***); 1s stays render-derived-0."""
+    """5s bar bracketed (unresolved-bounds ***); 1s stays render-derived-0.
+
+    No-op once the cell has genuinely graduated to a real ``true_ttfe``
+    measurement (a#7281's kata cold fire) — the bracketed-caveat placeholder
+    this stamps is now stale and must never overwrite a real measurement.
+    """
     sc = _scenario(results, "native_digest_cold")
+    sla = sc["sla_metrics"]
+    if "thpt_under_5s_pend_reason" not in sla:
+        # Already graduated (or never was in the pending-placeholder state) —
+        # nothing to convert. Applying the drop/add set here would stamp a
+        # stale bracketed basis (thpt_slo_basis_5s) alongside the real
+        # whole-triple basis (thpt_slo_basis), which the fail-closed guard
+        # correctly rejects as a mixed-convention record.
+        return
     sc["sla_metrics"] = _apply(
-        sc["sla_metrics"],
+        sla,
         drop=("thpt_under_5s_pend_reason",),
         add={"thpt_slo_basis_5s": SLO_BASIS_UNRESOLVED_BOUNDS},
     )

@@ -132,9 +132,22 @@ def test_kata_warm_acq_both_bars_with_node_count():
 
 
 # --- 5. Kata cold: 5s bar unresolved-bounds; 1s stays render-derived-0 -----
+# RETIRED conversion (2026-08-26, a#7281's kata cold true_ttfe fire): the
+# committed record may now already carry a real whole-triple measurement, in
+# which case convert_kata_cold must no-op rather than stamp a stale per-bar
+# caveat on top of it. This test asserts whichever shape the committed record
+# is actually in, so it stays valid both pre- and post-graduation.
 def test_kata_cold_unresolved_5s():
     out = _cells()
     sla = _sc(out, regen.KATA_LATEST, "native_digest_cold")["sla_metrics"]
+    if sla.get("thpt_slo_basis") is not None:
+        # Already graduated to a real whole-triple measurement — the no-op
+        # guard must have left it untouched, no stale per-bar basis added.
+        _check("thpt_slo_basis_5s" not in sla,
+               "graduated Kata cold record must not gain a stale per-bar basis")
+        _check("thpt_under_5s_pend_reason" not in sla,
+               "graduated Kata cold record must not carry a pend_reason")
+        return
     _check(sla["thpt_slo_basis_5s"] == SLO_BASIS_UNRESOLVED_BOUNDS,
            "Kata cold 5s basis must be unresolved-bounds")
     _check("thpt_under_5s_pend_reason" not in sla,
