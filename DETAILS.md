@@ -14,7 +14,7 @@ come here when you want the guidance or to see the working.
 
 ### Warm-slower-than-cold
 
-> ⚠️ **Warm-slower-than-cold:** the warm-pool-hit path is SLOWER than the unique-image cold-start path for **Kata + microVM** (warm count=30, cold count=30): bind warm 3.7541s > cold 3.1418s, TTFE warm 4.6972s > cold 3.6659s — a backwards result (warm is meant to be the fast path). Both rows clear the N=30 comparability floor, so this is not a small-sample inversion. The per-leg breakdown localizes it: the **bind** leg (pod-bind latency) is where warm-pool under-delivery shows up — a real warm hit binds an already-running pod ~instantly, so an inverted bind p95 means the warm population is blended with genuinely-cold claims; the **TTFE** leg is total latency (bind + exec), so a TTFE-only inversion with a clean bind leg points instead at the exec phase, not the pool. The cause is not asserted here (candidates: the warm fire not gating on pool-Ready before probing, a silent image-pull on the warm hit, or a real tail regression); a later refresh whose warm legs return below cold clears this.
+> ⚠️ **Warm-slower-than-cold:** the warm-pool-hit path is SLOWER than the unique-image cold-start path for **gVisor** (warm count=30, cold count=200): bind warm 4.2567s > cold 3.8058s, TTFE warm 4.7405s > cold 4.3764s; **Kata + microVM** (warm count=30, cold count=30): bind warm 3.7541s > cold 3.1418s, TTFE warm 4.6972s > cold 3.6659s — a backwards result (warm is meant to be the fast path). Both rows clear the N=30 comparability floor, so this is not a small-sample inversion. The per-leg breakdown localizes it: the **bind** leg (pod-bind latency) is where warm-pool under-delivery shows up — a real warm hit binds an already-running pod ~instantly, so an inverted bind p95 means the warm population is blended with genuinely-cold claims; the **TTFE** leg is total latency (bind + exec), so a TTFE-only inversion with a clean bind leg points instead at the exec phase, not the pool. The cause is not asserted here (candidates: the warm fire not gating on pool-Ready before probing, a silent image-pull on the warm hit, or a real tail regression); a later refresh whose warm legs return below cold clears this.
 
 ### Warm-cold separation below gate
 
@@ -26,11 +26,11 @@ come here when you want the guidance or to see the working.
 
 ### Single-fire separation verdict defensibility
 
-> ⚠️ **Single-fire separation verdict withheld:** the raw gate issues a pass/fail from ONE fire's separation ratio, but reconciling that ratio against the run-to-run noise floor measured across the accrued same-build history shows the noise band is wider than the ratio's margin to the 1.8x gate, so no single-fire verdict is defensible: **gVisor** — one fire measured 3.11x; at the measured noise floor (σ(log)=0.91, 95% band 0.52x–18.6x) the interval straddles the 1.8x gate, so this single fire cannot tell a real pass from an unlucky draw — 11 consistent fires would resolve this margin. **Kata + microVM** — one fire measured 0.519x; at the measured noise floor (σ(log)=0.91, 95% band 0.0868x–3.1x) the interval straddles the 1.8x gate, so this single fire cannot tell a real pass from an unlucky draw — 3 consistent fires would resolve this margin. The verdict layer refuses to issue one and states the fires required instead (fail-closed: it withholds the pass/fail rather than emitting the raw single-fire one it cannot defend). See [WARMPOOL_SEPARATION_VERDICT_PROTOCOL.md](WARMPOOL_SEPARATION_VERDICT_PROTOCOL.md). A refresh with enough consistent fires to clear the noise band resolves this.
+> ⚠️ **Single-fire separation verdict withheld:** the raw gate issues a pass/fail from ONE fire's separation ratio, but reconciling that ratio against the run-to-run noise floor measured across the accrued same-build history shows the noise band is wider than the ratio's margin to the 1.8x gate, so no single-fire verdict is defensible: **gVisor** — one fire measured 2.3x; at the measured noise floor (σ(log)=0.91, 95% band 0.385x–13.8x) the interval straddles the 1.8x gate, so this single fire cannot tell a real pass from an unlucky draw — 53 consistent fires would resolve this margin. **Kata + microVM** — one fire measured 0.519x; at the measured noise floor (σ(log)=0.91, 95% band 0.0868x–3.1x) the interval straddles the 1.8x gate, so this single fire cannot tell a real pass from an unlucky draw — 3 consistent fires would resolve this margin. The verdict layer refuses to issue one and states the fires required instead (fail-closed: it withholds the pass/fail rather than emitting the raw single-fire one it cannot defend). See [WARMPOOL_SEPARATION_VERDICT_PROTOCOL.md](WARMPOOL_SEPARATION_VERDICT_PROTOCOL.md). A refresh with enough consistent fires to clear the noise band resolves this.
 
 ### Adjudicated separation verdict (median-of-N)
 
-The published separation verdict adjudicates over the **median of the most recent >=3 accrued fires** per substrate, not a single fire — a single Cloud Build draw is noise-dominated at the 1.8x bar and must not flip the verdict. A side (PASS/FAIL) is issued only when the noise-band interval clears the gate; otherwise the verdict is **HELD** (no flip) and states the fires needed to resolve it. **gke-sandbox** — **FAIL**: median-of-27 = 1.24x is below the 1.8x gate (95% band 0.878x–1.75x); the shortfall is statistically defensible, not a single-fire draw. See [WARMPOOL_SEPARATION_VERDICT_PROTOCOL.md](WARMPOOL_SEPARATION_VERDICT_PROTOCOL.md).
+The published separation verdict adjudicates over the **median of the most recent >=3 accrued fires** per substrate, not a single fire — a single Cloud Build draw is noise-dominated at the 1.8x bar and must not flip the verdict. A side (PASS/FAIL) is issued only when the noise-band interval clears the gate; otherwise the verdict is **HELD** (no flip) and states the fires needed to resolve it. **gke-sandbox** — **HELD** (no flip): median-of-28 = 1.3x, but at the measured noise floor (σ(log)=0.91, 95% band 0.929x–1.83x) the interval straddles the 1.8x gate, so the median does not resolve which side of the gate the build is on — 31 consistent fires would resolve this margin. The prior conservative posture is retained rather than flipping on an unresolved margin. See [WARMPOOL_SEPARATION_VERDICT_PROTOCOL.md](WARMPOOL_SEPARATION_VERDICT_PROTOCOL.md).
 
 ### Mixed rig within this run
 
@@ -78,6 +78,7 @@ Warm/cold separation ratio — fire-over-fire (gate: 1.8x)
 2026-08-26 7606cc6a █ 0.26x (below gate)
 2026-08-26 7606cc6a █ 0.18x (below gate)
 2026-08-26 7606cc6a ████████████████ 3.11x
+2026-08-26 eeb53623 ████████████ 2.30x
 ```
 
 ## Burst Create — TTFE Corroboration
@@ -86,9 +87,9 @@ The headline burst count is **pod-Ready** — but a pod can report Ready before 
 
 | Signal | Count |
 |---|---|
-| Pod-Ready <1s (weaker claim) | 5 |
-| Executed first-instruction <1s (TTFE, stronger claim) | 3 |
-| Ready-but-not-yet-run (gap) | 2 |
+| Pod-Ready <1s (weaker claim) | 8 |
+| Executed first-instruction <1s (TTFE, stronger claim) | 1 |
+| Ready-but-not-yet-run (gap) | 7 |
 | Execution success (Honesty Check) | 100% |
 
 _Pod-Ready ≥ executed-TTFE by construction; the gap is the over-claim a pod-Ready headline would hide._
@@ -99,17 +100,17 @@ Warm-hit TTFE (create → first-instruction result) splits into **bind** (create
 
 | Stage | p50 | p95 |
 |---|---|---|
-| Bind (create → bound, provisioning) | 2.1327s | 2.8065s |
-| Exec (websocket + first-instruction) | 0.322s | 0.9561s |
-| **TTFE (total)** | **2.5304s** | **3.3745s** |
+| Bind (create → bound, provisioning) | 3.2761s | 4.2567s |
+| Exec (websocket + first-instruction) | 0.561s | 1.2732s |
+| **TTFE (total)** | **3.9833s** | **4.7405s** |
 
 _Each row is an independently-measured percentile of its own per-claim distribution (exec is measured per-claim as TTFE − bind, then percentiled — not p50(TTFE) − p50(bind)). Percentiles do not sum, so bind and exec need not add exactly to the total TTFE._
 
 ```mermaid
 pie showData
     title Warm-Hit TTFE p50 split — Bind vs Exec (ms)
-    "Bind (provisioning)" : 2132.7
-    "Exec (websocket + first-instruction)" : 322.0
+    "Bind (provisioning)" : 3276.1
+    "Exec (websocket + first-instruction)" : 561.0
 ```
 
 ## Cold-Start TTFE — Provision vs Exec Decomposition
@@ -118,21 +119,21 @@ Cold-start TTFE (create → first-instruction result) splits into **provision** 
 
 | Stage | p50 | p95 |
 |---|---|---|
-| Provision (create → Ready) | 2.8007s | 3.117s |
-| Exec (websocket + first-instruction) | 0.4507s | 0.5496s |
-| **TTFE (total)** | **3.251s** | **3.5627s** |
+| Provision (create → Ready) | 3.4816s | 3.8058s |
+| Exec (websocket + first-instruction) | 0.4929s | 0.6718s |
+| **TTFE (total)** | **4s** | **4.3764s** |
 
 _Each row is an independently-measured value against the same shared t0 (exec is the measured residual TTFE − provision, not a subtraction of percentiles). For the single-sample cold cell the p50 and p95 are the one measured sample._
 
 ## Warm-vs-Cold Speedup
 
-A warm-pool provision is **2.25921× faster** † than a true-cold start (gVisor). The warm pool keeps a ready slot so a claim skips the fresh-node image-pull path a cold start pays in full. Both legs are measured the same way (TTFE (executed first-instruction)); but this ratio rests on only n=10 warm claims — fewer than N=30, too few to rank reliably, so treat it as provisional.
+A warm-pool provision is **3.39184× faster** † than a true-cold start (gVisor). The warm pool keeps a ready slot so a claim skips the fresh-node image-pull path a cold start pays in full. Both legs are measured the same way (TTFE (executed first-instruction)); but this ratio rests on only n=10 warm claims — fewer than N=30, too few to rank reliably, so treat it as provisional.
 
 | Leg | TTFE (p50) |
 |---|---|
-| Warm-pool hit (gVisor, n=10) | 1.439s |
-| True-cold (unique-image) | 3.251s |
-| Speedup (warm is N× faster) | 2.25921× † |
+| Warm-pool hit (gVisor, n=10) | 1.1793s |
+| True-cold (unique-image) | 4s |
+| Speedup (warm is N× faster) | 3.39184× † |
 
 _Speedup = cold ÷ warm, computed from the displayed values over n=10 warm claims; both legs are medians (p50) — the warm leg over its warm-pool claims and the cold leg over the true-cold distribution — so half of warm claims and half of cold starts run slower than the values shown._
 
@@ -205,21 +206,21 @@ Max Density is sandboxes per node-allocatable sandbox-schedulable vCPU (the per-
 
 | Runtime | Max Density (sb/vCPU) |
 |---|---|
-| gVisor | 6.23 |
+| gVisor | 6.29 |
 | Kata + microVM | 1.26 |
 
 ```
 Max Density (sandboxes per vCPU)
 
-gVisor          ████████████████████ 6.23
+gVisor          ████████████████████ 6.29
 Kata + microVM  ████ 1.26
 ```
 
 ```
 Warm-Pool TTFE (ms) — p50 vs p95
 
-gVisor         p50  ███████████ 2.5304s
-               p95  ██████████████ 3.3745s
+gVisor         p50  █████████████████ 3.9833s
+               p95  ████████████████████ 4.7405s
 Kata + microVM p50  ██████████████ 3.1999s
                p95  ████████████████████ 4.6972s
 ```
@@ -276,8 +277,8 @@ The matrix measures the **claim** side (a warm hit is sub-second). This block me
 
 | Refill latency | Value |
 |---|---|
-| Median (p50) (over 5 cycles) | 1.04912s |
-| Tail (p90) | 1.05912s |
+| Median (p50) (over 5 cycles) | 1.12165s |
+| Tail (p90) | 1.60807s |
 
 _Refill latency is measured per-cycle as the wall-clock from a claim release to the warm pool returning to full readiness; the median and tail are percentiles of the completed-cycle distribution._
 
@@ -289,8 +290,8 @@ _Capability note: this is an **administrative** (operator- or user-driven) suspe
 
 | Suspend latency | Value |
 |---|---|
-| Median (p50) | 2.2648s |
-| Tail (p90) | 2.3003s |
+| Median (p50) | 2.2889s |
+| Tail (p90) | 2.3817s |
 
 _Suspend latency is measured per-cycle as the wall-clock from the `operatingMode=Suspended` patch return to the terminal Suspended state; the median and tail are percentiles of the measured suspend distribution._
 
@@ -298,8 +299,8 @@ _Suspend latency is measured per-cycle as the wall-clock from the `operatingMode
 
 The tables above are the raw measurements. If you build *on* sandboxes but do not run the cluster yourself, here is what they mean in practice:
 
-- **Keep a warm pool sized to demand and a new sandbox is ready in ~2.5s (~3.4s at the p95).** That is fast enough to put a fresh sandbox directly in a user-facing request path — no need to hide it behind a spinner or pre-allocate one per session.
-- **A warm-pool hit is about 2.3× faster than starting cold (gVisor).** If start-up latency matters to you, the warm pool is the single biggest lever — size it for your steady demand and most claims never pay the cold path. (This ratio is the dedicated warm-vs-cold leg — a separate point-in-time measurement from the Core Metrics matrix rows above, so do not reproduce it by dividing the matrix cells.)
+- **Keep a warm pool sized to demand and a new sandbox is ready in ~4s (~4.7s at the p95).** That is fast enough to put a fresh sandbox directly in a user-facing request path — no need to hide it behind a spinner or pre-allocate one per session.
+- **A warm-pool hit is about 3.4× faster than starting cold (gVisor).** If start-up latency matters to you, the warm pool is the single biggest lever — size it for your steady demand and most claims never pay the cold path. (This ratio is the dedicated warm-vs-cold leg — a separate point-in-time measurement from the Core Metrics matrix rows above, so do not reproduce it by dividing the matrix cells.)
 - **Big simultaneous bursts still work — 300 sandboxes asked for at once settled in ~6.9s.** But that is the pool-overflow regime: the wait climbs toward the cold-start number as claims outrun ready slots, so plan the pool around your steady rate, not your worst spike.
 - **Rule of thumb for pool size:** start near your typical concurrent demand (≈0.75× of it) and tune from there. This is a planning heuristic, not one of the measured numbers above.
 - **Both runtimes are measured — choose by isolation need.** In the measurements above, warm-pool latency is comparable between them; gVisor delivers the higher per-node throughput, while Kata + microVM puts each sandbox in its own VM for hardware-grade isolation. If unsure, start with gVisor and move only the workloads that need a VM boundary to Kata.
