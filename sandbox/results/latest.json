@@ -93,7 +93,7 @@
     "measured_at": "2026-06-30",
     "node_count": 20
   },
-  "generated_at": "2026-08-26T10:15:12Z",
+  "generated_at": "2026-08-26T20:53:06Z",
   "kata_activation": {
     "cold_ready": [
       {
@@ -123,16 +123,20 @@
   "provenance": {
     "cluster_substrate": "gke-sandbox",
     "cold_start_mode": "cold-provision",
-    "controller_digest": "sha256:7606cc6ac7fa397687c0ca4b8d53aee528f3733fc31146c394729791a8fefbef",
+    "controller_digest": "sha256:8be952c34317ed93a37ead71c416046feb8e1d896322b278aadf5836a9671ca7",
+    "fork_base_upstream_sha": "5537f8124ea6c2becae75f4a260bccf735f689e6",
+    "fork_fix_count": 0,
+    "fork_sha": "5537f8124ea6c2becae75f4a260bccf735f689e6",
     "machine_type": "n2-standard-16",
     "node_count": 2,
     "node_image": "v1.36.3-gke.1537000",
-    "prior_suite_git_sha": "f837cbe277a104c2abc891d47dd4fb1a860d1e0e",
-    "prior_warmpool_ttfe_p95_ms": 18438.0,
-    "run_id": "f6f6d62558684b67b1b1d29976632055",
+    "prior_controller_digest": "sha256:7606cc6ac7fa397687c0ca4b8d53aee528f3733fc31146c394729791a8fefbef",
+    "prior_suite_git_sha": "6876e3ea79785b2a40d456339c61b2654f04993e",
+    "prior_warmpool_ttfe_p95_ms": 3374.5,
+    "run_id": "6cfcce524db249dd91fcb3b23c6a42f3",
     "runsc_version": "directory",
     "runtime": "gvisor",
-    "suite_git_sha": "6876e3ea79785b2a40d456339c61b2654f04993e"
+    "suite_git_sha": "809abdc61440b0b25b8f22b54846d43a270ac10c"
   },
   "provisioning_rate_sweep": {
     "ceiling_high_per_s": 150.0,
@@ -193,10 +197,10 @@
       "name": "burst_create",
       "outcome": "FAIL",
       "sla_metrics": {
-        "density_per_vcpu": 0.078125,
+        "density_per_vcpu": 0.03125,
         "exec_success_rate": 1.0,
-        "sandboxes_exec_under_1s": 3.0,
-        "sandboxes_ready_under_1s": 5.0,
+        "sandboxes_exec_under_1s": 0.0,
+        "sandboxes_ready_under_1s": 2.0,
         "total_vcpu": 64.0
       }
     },
@@ -207,28 +211,28 @@
       },
       "n": 30,
       "name": "warmpool_cold_start",
-      "outcome": "PASS",
+      "outcome": "FAIL",
       "sla_metrics": {
-        "bind_p50_ms": 2132.7,
-        "bind_p95_ms": 2806.5,
+        "bind_p50_ms": 8310.0,
+        "bind_p95_ms": 10601.9,
         "density_per_vcpu": 6.23,
-        "exec_p50_ms": 322.0,
-        "exec_p95_ms": 956.1,
+        "exec_p50_ms": 458.4,
+        "exec_p95_ms": 2058.3,
         "exec_success_rate": 1.0,
         "thpt_cluster_node_count": 4.0,
         "thpt_slo_basis": "true_ttfe",
         "thpt_under_1s_per_cluster": 9.336,
         "thpt_under_1s_per_node": 0.0,
         "thpt_under_5s_per_cluster": 9.336,
-        "thpt_under_5s_per_node": 4.079,
-        "ttfe_p50_ms": 2530.4,
-        "ttfe_p95_ms": 3374.5,
-        "warmpool_gate_cold_min_ms": 1924.4832770000357,
-        "warmpool_gate_cold_p50_ms": 6634.301428499953,
+        "thpt_under_5s_per_node": 0.081,
+        "ttfe_p50_ms": 9185.1,
+        "ttfe_p95_ms": 12092.6,
+        "warmpool_gate_cold_min_ms": 2511.3617009999416,
+        "warmpool_gate_cold_p50_ms": 3939.4678199998907,
         "warmpool_gate_min_ready_during_burst": 6.0,
-        "warmpool_gate_separation_ratio": 3.110756421201898,
-        "warmpool_gate_warm_max_ms": 2848.1499639999583,
-        "warmpool_gate_warm_p50_ms": 2132.6971740001
+        "warmpool_gate_separation_ratio": 0.47406083805845467,
+        "warmpool_gate_warm_max_ms": 12266.270133000035,
+        "warmpool_gate_warm_p50_ms": 8310.046946999933
       }
     },
     {
@@ -240,13 +244,13 @@
       "name": "native_digest_cold",
       "outcome": "PASS",
       "sla_metrics": {
-        "bind_p50_ms": 2800.7,
-        "bind_p95_ms": 3117.0,
-        "exec_p50_ms": 450.7,
-        "exec_p95_ms": 549.6,
+        "bind_p50_ms": 2963.1,
+        "bind_p95_ms": 4004.4,
+        "exec_p50_ms": 509.1,
+        "exec_p95_ms": 766.9,
         "exec_success_rate": 1.0,
-        "ttfe_p50_ms": 3251.0,
-        "ttfe_p95_ms": 3562.7
+        "ttfe_p50_ms": 3530.1,
+        "ttfe_p95_ms": 4614.8
       }
     },
     {
@@ -255,10 +259,10 @@
       "outcome": "PASS",
       "sla_metrics": {
         "exec_success_rate": 1.0,
-        "suspend_latency_ms": 2264.8,
-        "suspend_p90_ms": 2300.3,
-        "ttfe_p50_ms": 4663.7,
-        "ttfe_p95_ms": 4792.6
+        "suspend_latency_ms": 2383.8,
+        "suspend_p90_ms": 2548.4,
+        "ttfe_p50_ms": 4808.6,
+        "ttfe_p95_ms": 5067.4
       }
     },
     {
@@ -266,8 +270,8 @@
       "name": "session_turnover",
       "outcome": "PASS",
       "sla_metrics": {
-        "refill_latency_ms": 1049.1174100002354,
-        "refill_p90_ms": 1059.1197210001155
+        "refill_latency_ms": 1415.4671279998183,
+        "refill_p90_ms": 1906.1817249998967
       }
     },
     {
@@ -306,12 +310,12 @@
     "warmpool_size": 600
   },
   "warm_vs_cold": {
-    "cold_ms": 3251.0,
-    "measured_at": "2026-08-26T10:15:12Z",
+    "cold_ms": 3530.1,
+    "measured_at": "2026-08-26T20:53:06Z",
     "n_warm": 10,
     "runtime_class": "gvisor",
     "semantic": "ttfe",
-    "speedup": 2.259,
-    "warm_p50_ms": 1439.0
+    "speedup": 2.096,
+    "warm_p50_ms": 1684.1
   }
 }

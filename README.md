@@ -39,14 +39,14 @@ blocker — diagnosis plus file-ready patches and comments — is hand-maintaine
 
 | Runtime | Activation Mode | Throughput @ <5s TTFE (sb/s — node · cluster) | Throughput @ <1s TTFE (sb/s — node · cluster) | TTFE p50 | TTFE p95 | Execution Success (Honesty Check) |
 |---|---|---|---|---|---|---|
-| gVisor | Warm-pool hit (Base image) | 4.079 /node · 9.336 /cluster ⚠️ | 0 /node · 9.336 /cluster ⚠️ | 2.5304s (count=30) | 3.3745s (count=30) | 100% |
-| gVisor | Unique-image cold (RL reality) | [pending](WORK_IN_PROGRESS.md#not-yet-measured) | 0 /node · 0 /cluster | 3.251s (count=200) | 3.5627s (count=200) | 100% |
-| gVisor | Resume-from-suspend | [pending](WORK_IN_PROGRESS.md#not-yet-measured) | 0 /node · 0 /cluster | 4.6637s (count=30) | 4.7926s (count=30) | 100% |
+| gVisor | Warm-pool hit (Base image) ⚠️ FAIL | 0.081 /node ‡ · 9.336 /cluster ⚠️ | 0 /node · 9.336 /cluster ⚠️ | 9.1851s (count=30) | 12.0926s (count=30) | 100% |
+| gVisor | Unique-image cold (RL reality) | [pending](WORK_IN_PROGRESS.md#not-yet-measured) | 0 /node · 0 /cluster | 3.5301s (count=200) | 4.6148s (count=200) | 100% |
+| gVisor | Resume-from-suspend | 0 /node · 0 /cluster | 0 /node · 0 /cluster | 4.8086s (count=30) | 5.0674s (count=30) | 100% |
 | Kata + microVM | Warm-pool hit (Base image) ⚠️ FAIL | 7.562 /node · 0.742 /cluster ⚠️ | 0 /node · [pending (cluster-fire)](WORK_IN_PROGRESS.md#cluster-fire) | 3.1999s (count=30) | 4.6972s (count=30) | 100% |
 | Kata + microVM | Unique-image cold (RL reality) | [pending](WORK_IN_PROGRESS.md#not-yet-measured) | 0 /node · 0 /cluster | 3.3043s (count=30) | 3.6659s (count=30) | 100% |
 | Kata + microVM | Resume-from-suspend | [N/A](WORK_IN_PROGRESS.md#na-by-construction) | [N/A](WORK_IN_PROGRESS.md#na-by-construction) | [N/A](WORK_IN_PROGRESS.md#na-by-construction) | [N/A](WORK_IN_PROGRESS.md#na-by-construction) | [N/A](WORK_IN_PROGRESS.md#na-by-construction) |
 
-_⚠️ **Scenario FAIL:** **Kata + microVM** Warm-pool hit (Base image) — the row above carries a real measurement whose own scenario outcome is **FAIL** (SLA not met), not a passing warm hit. The numbers are honest data, disclosed as a miss rather than dropped or greened; a later refresh whose scenario returns to PASS clears this._
+_⚠️ **Scenario FAIL:** **gVisor** Warm-pool hit (Base image); **Kata + microVM** Warm-pool hit (Base image) — the row above carries a real measurement whose own scenario outcome is **FAIL** (SLA not met), not a passing warm hit. The numbers are honest data, disclosed as a miss rather than dropped or greened; a later refresh whose scenario returns to PASS clears this._
 
 ### Max Density (sandboxes per vCPU)
 
@@ -72,14 +72,14 @@ Full cell-decoding key — TTFE basis, honest vs. measured zeros, the dual per-n
 
 _Kata + microVM rows are measured in a separate run on the kata node pool: cluster_substrate=gke-kata · node_count=1 · generated-at=2026-08-26T10:13:44Z._
 
-_build: cluster_substrate=gke-sandbox · controller_digest=sha256:7606cc6ac7fa397687c0ca4b8d53aee528f3733fc31146c394729791a8fefbef · suite_git_sha=6876e3ea79785b2a40d456339c61b2654f04993e · run_id=f6f6d62558684b67b1b1d29976632055 · node_count=2_
-_generated-at: 2026-08-26T10:15:12Z_
+_build: cluster_substrate=gke-sandbox · controller_digest=sha256:8be952c34317ed93a37ead71c416046feb8e1d896322b278aadf5836a9671ca7 · suite_git_sha=809abdc61440b0b25b8f22b54846d43a270ac10c · run_id=6cfcce524db249dd91fcb3b23c6a42f3 · node_count=2_
+_generated-at: 2026-08-26T20:53:06Z_
 
-_**North Star** — warm-pool-hit TTFE p95 < 1s (the spec doc bar): gVisor 3.3745s (count=30) ❌ not met (2.3745s above the bar); Kata + microVM 4.6972s (count=30) ❌ not met (3.6972s above the bar) ⚠️ **scenario FAIL**. An honest ❌ prints the measured gap to the bar (tagged `within sampling noise` when the miss sits inside the sample spread — it stays a ❌, the tag never flips a miss to a pass); `pending` = unmeasured (never a guess); † marks a p95 over fewer than N=30 samples._
+_**North Star** — warm-pool-hit TTFE p95 < 1s (the spec doc bar): gVisor 12.0926s (count=30) ❌ not met (11.0926s above the bar) ⚠️ **scenario FAIL**; Kata + microVM 4.6972s (count=30) ❌ not met (3.6972s above the bar) ⚠️ **scenario FAIL**. An honest ❌ prints the measured gap to the bar (tagged `within sampling noise` when the miss sits inside the sample spread — it stays a ❌, the tag never flips a miss to a pass); `pending` = unmeasured (never a guess); † marks a p95 over fewer than N=30 samples._
 
-_**Stretch bar** — warm-pool-hit TTFE p95 < 0.5s (an aspiration above the North Star, not the North Star itself; the step-up curve grades sustained creation-rate against it — see [DETAILS.md](DETAILS.md)): gVisor 3.3745s (count=30) ❌ not met (2.8745s above the bar); Kata + microVM 4.6972s (count=30) ❌ not met (4.1972s above the bar) ⚠️ **scenario FAIL**._
+_**Stretch bar** — warm-pool-hit TTFE p95 < 0.5s (an aspiration above the North Star, not the North Star itself; the step-up curve grades sustained creation-rate against it — see [DETAILS.md](DETAILS.md)): gVisor 12.0926s (count=30) ❌ not met (11.5926s above the bar) ⚠️ **scenario FAIL**; Kata + microVM 4.6972s (count=30) ❌ not met (4.1972s above the bar) ⚠️ **scenario FAIL**._
 
-> ⚠️ **Refresh delta:** **gVisor** improved by 15.0635s (18.438s → 3.3745s, 0.2x) · suite_git_sha `f837cbe277a104c2abc891d47dd4fb1a860d1e0e`→`6876e3ea79785b2a40d456339c61b2654f04993e`. A swing this large, or a bar-crossing flip, between consecutive published runs is flagged for a second look before trusting it as a substrate signal — check for a machine-class change, a node-count change, a node-image change, a broken measurement, or a real regression/fix. Note: a build-lineage change (controller/suite rebuild) is already disclosed inline above — weigh that rebuild as the leading confound before reading this swing as a substrate regression.
+> ⚠️ **Refresh delta:** **gVisor** regressed by 8.7181s (3.3745s → 12.0926s, 3.6x) · controller_digest `sha256:7606cc6ac7fa…` → `sha256:8be952c34317…` · suite_git_sha `6876e3ea79785b2a40d456339c61b2654f04993e`→`809abdc61440b0b25b8f22b54846d43a270ac10c`. A swing this large, or a bar-crossing flip, between consecutive published runs is flagged for a second look before trusting it as a substrate signal — check for a machine-class change, a node-count change, a node-image change, a broken measurement, or a real regression/fix. Note: a build-lineage change (controller/suite rebuild) is already disclosed inline above — weigh that rebuild as the leading confound before reading this swing as a substrate regression.
 
 ### Known anomalies
 
@@ -105,10 +105,12 @@ Find the row closest to **your** load; the p50 is the wait to plan around. The *
 
 | Your load pattern | Wait to budget (p50) | Scope |
 |---|---|---|
-| Steady trickle — warm pool keeps up with demand | ~2.5s | full start → first result |
+| Steady trickle — warm pool keeps up with demand ⚠️ FAIL | ~9.2s | full start → first result |
 | Bursty — pool oversubscribed 2:1 (60 claims / 30 ready) | ~1.7s | full start → first result |
 | 300 sandboxes requested at once (1:1 pool) | ~6.9s | full start → first result |
 | Sustained 300/sec churn | ~2.9s | pool hand-off only (before exec) |
+
+_⚠️ **Scenario FAIL:** **Steady trickle — warm pool keeps up with demand** — the row above carries a real measurement whose own scenario outcome is **FAIL** (SLA not met), not a passing warm hit. The wait is honest data, disclosed as a miss rather than dropped or hidden as `pending`; a later refresh whose scenario returns to PASS clears this._
 
 ## Does it hold at cluster scale?
 
@@ -196,6 +198,7 @@ COUNT vs the prior build; the first build is the baseline. Drive this COUNT up.
 | `sha256:1c884bd5d9d7…` | 2026-08-25 | 4 | -6 † | 0.03125 | 10 | FAIL |
 | `sha256:cd69601f8fd3…` | 2026-08-25 | 4 | +0 † | 0.0625 | 10 | FAIL |
 | `sha256:7606cc6ac7fa…` | 2026-08-26 | 5 | +1 † | 0.078125 | 10 | FAIL |
+| `sha256:8be952c34317…` | 2026-08-26 | 2 | -3 † | 0.03125 | 10 | FAIL |
 
 _† Δ spans a build whose burst sampled fewer than N=30 claims — too few to rank build-over-build; the swing may be sampling noise, not a real move._
 
@@ -212,6 +215,7 @@ Throughput — build-over-build (sandboxes ready <1s)
 2026-08-25 ████████ 4 (FAIL)
 2026-08-25 ████████ 4 (FAIL)
 2026-08-26 ██████████ 5 (FAIL)
+2026-08-26 ████ 2 (FAIL)
 ```
 
 ## Which storage class should you pick?
