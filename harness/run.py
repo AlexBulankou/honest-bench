@@ -912,7 +912,20 @@ def maybe_scale_proof(product: str):
         return None
     from .scenarios import scale_slope
     proof = scale_slope.run_sweep()
-    return proof or None
+    if not proof:
+        return None
+    # Stamp the rig onto the section itself (honest-bench#756): the top-level
+    # provenance.machine_type is stamped once per run, but scale_proof is a
+    # point-in-time block that carries forward unchanged across many later runs
+    # (carry_prior_scale_proof) — without its own copy, render's
+    # _stale_carry_forward_caveat can never compare "the rig this sweep measured
+    # on" against "the rig this run reports", so the "Rig un-attributed" caveat
+    # was structurally permanent. Same absent-env -> omit-key contract as the
+    # top-level stamp: an unset BENCH_MACHINE_TYPE never fabricates a rig.
+    machine_type = os.environ.get("BENCH_MACHINE_TYPE", "").strip()
+    if machine_type:
+        proof["machine_type"] = machine_type
+    return proof
 
 
 def _stepup_usd_per_node_hour():

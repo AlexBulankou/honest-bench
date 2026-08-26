@@ -636,6 +636,20 @@ def _coerce_scale_proof(raw):
     ma = raw.get("measured_at")
     if isinstance(ma, str) and ma:
         out["measured_at"] = ma
+    # machine_type (honest-bench#756): the rig this specific sweep measured on,
+    # stamped by maybe_scale_proof from BENCH_MACHINE_TYPE. Carried forward by
+    # carry_prior_scale_proof like every other field in this block, so a
+    # once-stamped sweep stays attributed until a fresh sweep re-stamps it.
+    # Without this, render._stale_carry_forward_caveat always sees
+    # section.get("machine_type") as absent and renders "Rig un-attributed"
+    # permanently, even when the sweep genuinely ran on a known, stamped rig.
+    # Bounded against _MACHINE_TYPE_RE (not a bare truthy-string check) to match
+    # every sibling machine_type coercer in this file — PUBLIC hygiene: only a
+    # recognizable GCP machine shape passes, an internal name must never reach
+    # the public page (see test_stepup_machine_type_internal_name_rejected).
+    mt = raw.get("machine_type")
+    if isinstance(mt, str) and _MACHINE_TYPE_RE.match(mt):
+        out["machine_type"] = mt
     return out
 
 
