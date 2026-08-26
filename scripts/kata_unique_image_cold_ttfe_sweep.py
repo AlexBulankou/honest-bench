@@ -177,6 +177,27 @@ def assemble_record(boundary_texts, rates, *, runtime_class, node_count, images)
     }
 
 
+def _plan_rung_pool_indices(rung_sizes):
+    """Assign each rung's pools a globally-unique, flat index.
+
+    Returns a list (one entry per rung) of lists of indices, e.g.
+    ``_plan_rung_pool_indices([1, 2]) == [[0], [1, 2]]``. Every index across
+    every rung is distinct -- this is what guarantees ``provision_one_claim_pool``
+    never re-derives the same Template/WarmPool name for two pools in the same
+    sweep. A prior version of ``main()`` passed the per-claim ``claim_seq``
+    counter -- which is NOT advanced during the provisioning loop -- into
+    ``provision_one_claim_pool`` instead of a dedicated pool index, so any
+    rung with more than one pool issued two identical Template/WarmPool
+    names and the second create call 409-Conflicted on a live fire.
+    """
+    plan = []
+    next_idx = 0
+    for n in rung_sizes:
+        plan.append(list(range(next_idx, next_idx + n)))
+        next_idx += n
+    return plan
+
+
 def main():
     n_claims_needed = sum(RUNG_SIZES)
     if len(UNIQUE_IMAGE_TAGS) < n_claims_needed:
@@ -258,15 +279,14 @@ def main():
         boundary_texts.append(scrape_metrics())
 
         claim_seq = 0
-        img_idx = 0
+        rung_pool_indices = _plan_rung_pool_indices(RUNG_SIZES)
         for rung_idx, n in enumerate(RUNG_SIZES):
             log(f"=== rung {rung_idx} -- provisioning {n} unique-image pool(s) ===")
             pool_names = []
-            for _ in range(n):
-                tag = UNIQUE_IMAGE_TAGS[img_idx]
-                img_idx += 1
-                pool_names.append(provision_one_claim_pool(claim_seq, tag))
-                log(f"  pool for claim {claim_seq}: image={tag}")
+            for pool_idx in rung_pool_indices[rung_idx]:
+                tag = UNIQUE_IMAGE_TAGS[pool_idx]
+                pool_names.append(provision_one_claim_pool(pool_idx, tag))
+                log(f"  pool for claim {pool_idx}: image={tag}")
 
             log(f"=== rung {rung_idx} -- firing {n} cold claim(s), "
                 f"each against its own unique-image pool ===")
