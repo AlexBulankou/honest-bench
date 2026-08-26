@@ -48,7 +48,7 @@ blocker — diagnosis plus file-ready patches and comments — is hand-maintaine
 
 _⚠️ **Scenario FAIL:** **gVisor** Warm-pool hit (Base image); **Kata + microVM** Warm-pool hit (Base image) — the row above carries a real measurement whose own scenario outcome is **FAIL** (SLA not met), not a passing warm hit. The numbers are honest data, disclosed as a miss rather than dropped or greened; a later refresh whose scenario returns to PASS clears this._
 
-_ℹ️ **Basis-change note:** the **Kata + microVM** Warm-pool hit p95 climbed from an older ~2.24s to today's 4.6972s across several refreshes — that jump is a **true-TTFE basis graduation** (PR [#740](https://github.com/AlexBulankou/honest-bench/pull/740), same node_count=1 rig later confirmed sound by the [#764](https://github.com/AlexBulankou/honest-bench/pull/764) `convert_kata_cold()` fix), not a controller performance regression: the cell moved off an earlier proxy timing basis onto a genuine measured TTFE, and post-graduation refreshes vary within that new, tighter-truth basis. Don't burn a bisect chasing this shift._
+_ℹ️ **Basis-change note:** the **Kata + microVM** Warm-pool hit p95 in the row above reflects a **true-TTFE basis graduation** (hb#740, confirmed sound by the hb#764 `convert_kata_cold()` fix) off an older ~2.24s proxy-timing baseline — not a controller performance regression. The cell moved off an earlier proxy basis onto a genuine measured TTFE; post-graduation refreshes vary within that new, tighter-truth basis. Don't burn a bisect chasing this shift._
 
 ### Max Density (sandboxes per vCPU)
 

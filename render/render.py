@@ -2395,6 +2395,26 @@ def render_matrix(results, kata_results=None, include_legend=True):
         )
         lines.append("")
 
+    # hb#772: the Kata + microVM warm-pool-hit FAIL above is worth a basis-change note — its
+    # p95 climbed off an older proxy-timing baseline when hb#740 cut the headline over to the
+    # true-TTFE basis (same node_count=1 rig, later confirmed sound by hb#764's
+    # convert_kata_cold() fix). Without this, a reader watching the p95 climb across refreshes
+    # could mistake a basis graduation for a controller performance regression and burn a
+    # bisect chasing it. Gated on the exact (rt, mode) pair so it renders only while that cell
+    # is FAILing, self-clearing the moment the row returns to PASS — no specific post-
+    # graduation figure is cited here (only the pre-graduation ~2.24s baseline, which is
+    # fixed history) so this note can't drift stale against future refreshes' own numbers.
+    if ("Kata + microVM", "Warm-pool hit (Base image)") in fail_cells:
+        lines.append(
+            "_ℹ️ **Basis-change note:** the **Kata + microVM** Warm-pool hit p95 in the row "
+            "above reflects a **true-TTFE basis graduation** (hb#740, confirmed sound by the "
+            "hb#764 `convert_kata_cold()` fix) off an older ~2.24s proxy-timing baseline — "
+            "not a controller performance regression. The cell moved off an earlier proxy "
+            "basis onto a genuine measured TTFE; post-graduation refreshes vary within that "
+            "new, tighter-truth basis. Don't burn a bisect chasing this shift._"
+        )
+        lines.append("")
+
     # #6913 / #4420: the suspend_resume Suspended-persists FAIL gets its own honest headline —
     # it is a CONTRACT regression (the resume completed but the Suspended condition never
     # cleared), NOT a measured-SLA miss, so the metric-SLA caveat above would misdescribe it.
