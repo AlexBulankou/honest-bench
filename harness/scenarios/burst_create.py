@@ -917,6 +917,19 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
                 f"(first-instruction result) in < {_TTFI_CEILING_S}s, "
                 f"exec_success_rate={corr[_KEY_EXEC_RATE]:.4f}."
             )
+        # Forensic log line (hb#737 follow-up): `common` (all_ttfi_s + timeouts,
+        # the exact per-claim breakdown) was previously classification-only —
+        # built here, folded into `excerpt`, and dropped by run.py's `del
+        # excerpt` ("excerpt is classification-only — drop it here; it is NEVER
+        # emitted"). That made a real density regression (hb#737: 3/10 vs a
+        # 10/10 baseline) unforensicable after the fact — the published
+        # sla_metrics carries only the aggregate count/density, never which
+        # claims were slow or by how much, and no build log line held it either.
+        # Logging (not returning/publishing) costs nothing schema-wise and
+        # gives the next investigation the per-claim TTFI distribution instead
+        # of a bare aggregate.
+        log_fn = log.info if passed else log.warning
+        log_fn("burst-create classification: %s", common)
         if passed:
             return ("PASS", f"Burst-create delivered the sub-1s tier: {common}",
                     sla_metrics)
