@@ -543,6 +543,18 @@ if [ -n "${HB_WARMPOOL_COLD_START_SWEEP_B64:-}" ]; then
   fi
 fi
 
+# Linearity multi-node sweep, opt-in via _BENCH_SCALE_SLOPE substitution /
+# BENCH_SCALE_SLOPE env, default empty = INERT (same shape as HB_DENSITY_PROBE /
+# HB_WARMPOOL_COLD_START_SWEEP_B64 above). scale_slope.py resizes THIS fire's own
+# hb-gvisor-pool up to SCALE_SLOPE_MAX_GVISOR_NODES via the cluster autoscaler
+# (default "0" = no autoscale assumed, falls back to the current Ready count) — pin
+# it to the real $MAX_NODES this pipeline actually provisioned above, so the sweep
+# never assumes headroom beyond what the cluster can autoscale to.
+if [ -n "${BENCH_SCALE_SLOPE:-}" ]; then
+  export SCALE_SLOPE_MAX_GVISOR_NODES="$MAX_NODES"
+  echo "==> scale-slope sweep enabled, max_gvisor_nodes=$MAX_NODES (pinned to this fire's provisioned ceiling)"
+fi
+
 echo "==> running sandbox harness (gke-sandbox / gVisor)"
 python3 -m harness.run --product sandbox
 
