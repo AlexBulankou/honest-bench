@@ -250,6 +250,19 @@ substitutions:
   #   gcloud builds triggers run hb-refresh-gke-sandbox --project=<PROJECT> \
   #     --substitutions=_BENCH_SCALE_SLOPE=1
   _BENCH_SCALE_SLOPE: ""
+  # Opt-in override for scale_slope.py's own node-count sweep points (default
+  # "1,2,4" in-code — see harness/scenarios/scale_slope.py's SCALE_SLOPE_NODE_COUNTS
+  # env lookup). Independent of SCALE_SLOPE_MAX_GVISOR_NODES above: that value only
+  # caps how far the cluster autoscaler is ALLOWED to go, it doesn't choose which
+  # rungs the sweep visits. A #7281 Linearity re-fire matching the historical
+  # 1->2->4->8->16 node table needs this set explicitly (paired with a raised
+  # _MAX_NODES so the ceiling covers the widest rung) — the code default alone
+  # only reaches 1,2,4. Default empty ⇒ INERT, scale_slope.py's own "1,2,4"
+  # in-code default applies unchanged, same as before this substitution existed.
+  # Usage (paired with a raised ceiling so the sweep can actually reach 16 nodes):
+  #   gcloud builds triggers run hb-refresh-gke-sandbox --project=<PROJECT> \
+  #     --substitutions=_BENCH_SCALE_SLOPE=1,_SCALE_SLOPE_NODE_COUNTS=1,2,4,8,16,_NUM_NODES=2,_MAX_NODES=16
+  _SCALE_SLOPE_NODE_COUNTS: ""
 
 steps:
   # PRE-FIRE FUNCTIONAL PROBE: a policy READ (`gcloud projects get-iam-policy`)
@@ -408,6 +421,11 @@ steps:
       # variable used to provision the cluster below — not here, since that value
       # isn't known until the script computes it.
       - "BENCH_SCALE_SLOPE=${_BENCH_SCALE_SLOPE}"
+      # Direct pass-through, same handoff reason as HB_REGION above — read by
+      # cb-measure-gke-sandbox.sh, which (when BENCH_SCALE_SLOPE is on) exports it
+      # onward as SCALE_SLOPE_NODE_COUNTS for scale_slope.py to read (see the
+      # _SCALE_SLOPE_NODE_COUNTS substitution comment above). Empty ⇒ inert.
+      - "HB_SCALE_SLOPE_NODE_COUNTS=${_SCALE_SLOPE_NODE_COUNTS}"
     args:
       - scripts/cb-measure-gke-sandbox.sh
 
