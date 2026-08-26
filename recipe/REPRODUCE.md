@@ -419,8 +419,10 @@ reproducing it. Concretely:
 - Without `BENCH_TTFE_EXEC=1` the TTFE columns are not armed at all.
 
 The graduation shape published on the page is **pool=30 / claims=40** (a 1.33:1
-claims:pool ratio, so the pool is fully consumed with overflow exercised) and
-**30 cold samples**. Copy-paste, per product, in a **fresh shell each** (the
+claims:pool ratio, so the pool is fully consumed with overflow exercised) and,
+for the gVisor product, **200 cold samples** (bumped from 30 by PR#736,
+2026-08-25 — the Kata product's cold-sample shape is unchanged at 30, see its
+copy-paste block below). Copy-paste, per product, in a **fresh shell each** (the
 `BENCH_SLO_SWEEP_*` cross-product caveat above applies to refreshes too):
 
 ```bash
@@ -435,7 +437,7 @@ WARMPOOL_COLD_START_BIND_TIMEOUT_S=600 \
 SUSPEND_RESUME_RUNTIME_CLASS=gvisor \
 SUSPEND_RESUME_CYCLE_COUNT=30 \
 NATIVE_DIGEST_COLD_RUNTIME_CLASS=gvisor \
-NATIVE_DIGEST_COLD_SAMPLES=30 \
+NATIVE_DIGEST_COLD_SAMPLES=200 \
 BENCH_TTFE_EXEC=1 \
   python3 -m harness.run
 ```
@@ -481,9 +483,11 @@ headline without a local cluster and read the build log to see every command:
 
   The published graduation shape's other two N-bearing knobs — `NATIVE_DIGEST_COLD_SAMPLES`
   and `SUSPEND_RESUME_CYCLE_COUNT` (see "Refreshing published cells" above) — are
-  also fire-time substitutions on this trigger (`_NATIVE_DIGEST_COLD_SAMPLES` /
-  `_SUSPEND_RESUME_CYCLE_COUNT`, both default `"30"`, byte-identical to the
-  committed shape), alongside `_NUM_NODES`/`_MAX_NODES` (node-pool sizing — gVisor
+  also fire-time substitutions on this trigger (`_NATIVE_DIGEST_COLD_SAMPLES`
+  default `"200"`, `_SUSPEND_RESUME_CYCLE_COUNT` default `"30"` — the two
+  defaults DIVERGED 2026-08-25 (PR#736 bumped the gVisor cold-sample committed
+  shape 30->200; resume did not move), each byte-identical to its own committed
+  shape), alongside `_NUM_NODES`/`_MAX_NODES` (node-pool sizing — gVisor
   pool pods are CPU/mem-tiny, so the real ceiling at high pool/claim counts is
   GKE's default max-pods-per-node, not resources) and `_BUILD_TIMEOUT` (default
   `"3600s"`, caps the whole create→measure→render→PR→teardown lifecycle). Example

@@ -19,8 +19,10 @@
 # expected to publish and can let that refusal stop it short of the PR step.
 #
 # The cold and resume sample counts are ALSO fire-time substitutions now —
-# _NATIVE_DIGEST_COLD_SAMPLES / _SUSPEND_RESUME_CYCLE_COUNT, both default "30"
-# (byte-identical to the committed shape). A
+# _NATIVE_DIGEST_COLD_SAMPLES (default "200", byte-identical to the committed
+# shape — bumped from 30 by PR#736; a fire below 200 WILL trip
+# check_n_regression) / _SUSPEND_RESUME_CYCLE_COUNT (default "30", still
+# byte-identical to its committed shape). A
 # large warmpool fire also needs more scheduling headroom than the default
 # 2-node cluster: gVisor pool pods are tiny (10m CPU / 16Mi mem each — CPU/mem
 # is never the ceiling) but GKE's default max-pods-per-node (110) is, so pass
@@ -106,10 +108,16 @@ substitutions:
   # The cold and resume sample counts were the two graduation-shape knobs left
   # hardcoded in the measure-step env below instead of following the warmpool
   # pattern above — a fire wanting a bigger N had to edit this file.
-  # Default "30" is byte-identical to the committed published shape; overridable
-  # at fire time the same way as the warmpool knobs, e.g.:
+  # _NATIVE_DIGEST_COLD_SAMPLES default "200" is byte-identical to the committed
+  # published shape (bumped 30->200 by PR#736, 2026-08-25 — an earlier fire that
+  # left this default at the stale "30" tripped check_n_regression, refused to
+  # publish, and wasted ~29min of cluster time; this comment + the value below
+  # were the doc-drift that fire's follow-up fixes). _SUSPEND_RESUME_CYCLE_COUNT
+  # default "30" is still byte-identical to its own committed shape — the two
+  # knobs' defaults have DIVERGED and must not be assumed to move together.
+  # Overridable at fire time the same way as the warmpool knobs, e.g.:
   #   gcloud builds triggers run hb-refresh-gke-sandbox --project=<PROJECT> \
-  #     --substitutions=_NATIVE_DIGEST_COLD_SAMPLES=200
+  #     --substitutions=_NATIVE_DIGEST_COLD_SAMPLES=300
   # Cold samples are cheap (~5.1s/sample measured live via build a71a50bc,
   # 2026-08-25 — 200 samples costs ~17min beyond baseline, well inside the
   # fixed `timeout:` ceiling at the bottom of this file).
@@ -120,9 +128,10 @@ substitutions:
   # _SUSPEND_RESUME_CYCLE_COUNT fire (e.g. the 1376-class spec shape, ~3hr at
   # the measured rate) must fit inside the fixed `timeout:` ceiling below AND
   # accepts the risk that a mid-run failure loses every accumulated sample.
-  # A below-30 value on either knob will trip check_n_regression on publish,
-  # same as the warmpool knobs above.
-  _NATIVE_DIGEST_COLD_SAMPLES: "30"
+  # A fire below the respective committed n on either knob (200 for cold, 30
+  # for resume) will trip check_n_regression on publish, same as the warmpool
+  # knobs above.
+  _NATIVE_DIGEST_COLD_SAMPLES: "200"
   _SUSPEND_RESUME_CYCLE_COUNT: "30"
   # epic #6669 WS4: opt-in fork-source controller build. Default empty ⇒ the
   # measure step's fork block (scripts/cb-measure-gke-sandbox.sh) is INERT and
