@@ -3189,13 +3189,14 @@ def _warm_cold_inversion_caveat(results, kata_results=None):
 def _warmpool_separation_caveat(results, kata_results=None):
     """Loud disclosure when the warm-pool separation ratio is below its gate.
 
-    warmpool_cold_start emits warmpool_gate_separation_ratio = cold_min / warm_max — the factor
-    by which the slowest warm-pool hit beats the fastest unique-image cold claim. It is the
-    CANONICAL warm-pool trust metric: a real pre-warmed pool hands off already-running sandboxes,
-    so its slowest hit should still clear the fastest cold start by a wide margin. The gate target
-    is WARMPOOL_SEPARATION_MIN_RATIO (1.8x). A ratio at ~1x means the warm and cold populations
-    overlap — "warm" and "cold" are statistically indistinguishable, so the published warm tier is
-    not demonstrably a fast path at all.
+    warmpool_cold_start emits warmpool_gate_separation_ratio = cold_p50 / warm_p50 — the
+    percentile-matched MEDIAN cold bind divided by the MEDIAN warm bind (hb#6743; superseded the
+    prior cold_min/warm_max form, which let a single fast-cold outlier crater the ratio even on a
+    healthy warm-adoption run). It is the CANONICAL warm-pool trust metric: a real pre-warmed pool
+    hands off already-running sandboxes, so its typical hit should still clear a typical cold start
+    by a wide margin. The gate target is WARMPOOL_SEPARATION_MIN_RATIO (1.8x). A ratio at ~1x means
+    the warm and cold populations overlap — "warm" and "cold" are statistically indistinguishable,
+    so the published warm tier is not demonstrably a fast path at all.
 
     This is the QUANTITATIVE companion to _warm_cold_inversion_caveat: that caveat fires only when
     warm p95 STRICTLY exceeds cold p95 (a backwards central tendency); this one fires on the
@@ -3298,7 +3299,7 @@ def _warmpool_separation_caveat(results, kata_results=None):
         )
     return (
         "> ⚠️ **Warm/cold separation below gate:** the warm-pool separation ratio "
-        "(fastest cold start ÷ slowest warm-pool hit) is below the "
+        "(median cold bind ÷ median warm bind, hb#6743) is below the "
         f"{WARMPOOL_SEPARATION_MIN_RATIO:g}x gate for {who} — at ~1x the warm and cold "
         "populations overlap, so the published warm tier is not demonstrably faster than a "
         f"unique-image cold start. The warm row clears the N={TTFE_COMPARABILITY_MIN_N} floor, so "

@@ -7056,8 +7056,10 @@ def test_warm_cold_inversion_caveat_bind_absent_falls_back_to_ttfe():
 # ---------------------------------------------------------------------------
 # warmpool separation-ratio disclosure (_warmpool_separation_caveat). The
 # warmpool_cold_start scenario emits warmpool_gate_separation_ratio =
-# cold_min / warm_max (+ the two bound keys), but those three warmpool_gate_*
-# keys are not public matrix cells, so the caveat reads them from the RAW emit.
+# cold_p50 / warm_p50 (percentile-matched medians, hb#6743; the warm_max/cold_min
+# keys below are retained as auxiliary bounds, not the ratio's inputs), but those
+# warmpool_gate_* keys are not public matrix cells, so the caveat reads them from
+# the RAW emit.
 # The QUANTITATIVE companion to the inversion caveat above: inversion fires only
 # on strict warm p95 > cold p95; separation fires on the weaker-but-broken
 # "distributions don't cleanly separate" (ratio < 1.8x), which holds even when
