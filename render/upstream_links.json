@@ -8,7 +8,7 @@
   },
   "classes": {
     "substrate-listactors-brick": {
-      "renders_at": "mapping-only (freshness-verifier seed for the GA-critical ListActors proto-rename brick; blocker page S1)",
+      "renders_at": "archive-only (RESOLVED upstream by substrate#940, merged 2026-08-25 -- ateredis removed, atepg/postgres is the sole ate-system store backend so the proto-rename brick cannot occur upstream; blocker archive, was page S1)",
       "refs": [
         {
           "repo": "agent-substrate/substrate",
@@ -16,7 +16,7 @@
           "kind": "pr",
           "role": "fix-partial-merged",
           "status": "merged",
-          "note": "Durable fix, landed via backend migration: adds the postgres/atepg persistence backend, which stores every persisted record (actors/workers/templates/versions/snapshots/tags) as BINARY protobuf via proto.Unmarshal -- keyed on field NUMBER, so a proto field rename is transparent and ListActors cannot brick. Same loss-free approach #356 pursued for ateredis, but merged. MERGED 2026-08-12. Verified in code: atepg ListActors reads binary protobuf (listActorsScoped/listActorsGlobal); the sole protojson.Unmarshal in atepg is the transient worker-event notification envelope, not a persisted store row. Upstream main still defaults --store-backend=redis, so redis deployments stay vulnerable until #940 lands or the deployment opts into --store-backend=postgres."
+          "note": "Durable fix, landed via backend migration: adds the postgres/atepg persistence backend, which stores every persisted record (actors/workers/templates/versions/snapshots/tags) as BINARY protobuf via proto.Unmarshal -- keyed on field NUMBER, so a proto field rename is transparent and ListActors cannot brick. Same loss-free approach #356 pursued for ateredis, but merged. MERGED 2026-08-12. Verified in code: atepg ListActors reads binary protobuf (listActorsScoped/listActorsGlobal); the sole protojson.Unmarshal in atepg is the transient worker-event notification envelope, not a persisted store row. As of #940 (merged 2026-08-25) upstream main no longer has a redis backend at all -- atepg/postgres is the sole store backend, so no upstream deployment remains on the vulnerable strict-protojson path."
         },
         {
           "repo": "agent-substrate/substrate",
@@ -24,7 +24,7 @@
           "kind": "pr",
           "role": "fix-partial-merged",
           "status": "merged",
-          "note": "Replace ateredis with atepg: removes ateredis.go wholesale and strips the redis backend from cmd/ateapi/main.go, retiring the strict-protojson decode path that bricks ListActors on a proto field rename. MERGED 2026-08-25 (was OPEN + CONFLICTING/DIRTY through 2026-08-14; rebased and landed). Completes the #640 backend migration -- with ateredis removed from upstream main the vulnerable redis path no longer exists upstream, and #356 (the ateredis-specific durable fix) is moot. Marked fix-partial-merged, not fully-closed, because the standing benchmark loop pins the redis backend deliberately (dual-lane honest-RED), so the RED lane holds on that pinned build until it opts into the postgres backend; #940 is the durable upstream close, not a change to the pinned deployment."
+          "note": "Replace ateredis with atepg: removes ateredis.go wholesale and strips the redis backend from cmd/ateapi/main.go, retiring the strict-protojson decode path that bricks ListActors on a proto field rename. MERGED 2026-08-25 (was OPEN + CONFLICTING/DIRTY through 2026-08-14; rebased and landed). Completes the #640 backend migration -- with ateredis removed from upstream main the vulnerable redis path no longer exists upstream, and #356 (the ateredis-specific durable fix) is moot (it patched the file #940 deletes). This is the durable upstream close of the ListActors proto-rename brick: the customer-facing blocker is resolved upstream, so the S1 row moves to the blocker-page archive."
         },
         {
           "repo": "agent-substrate/substrate",
