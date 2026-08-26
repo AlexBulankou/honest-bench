@@ -112,6 +112,61 @@ def test_truthy_flag_variants_arm():
         _check(result == _PROOF, f"flag={variant!r} -> proof, got {result!r}")
 
 
+# --- machine_type stamping (honest-bench#756) ---
+#
+# The top-level run-wide provenance.machine_type is stamped once per run, but
+# scale_proof is a point-in-time block carried forward unchanged across many
+# later runs (carry_prior_scale_proof) — without its own copy of the rig,
+# render's _stale_carry_forward_caveat could never compare "the rig this sweep
+# measured on" against "the rig this run reports", so the "Rig un-attributed"
+# caveat was structurally permanent. Same absent-env -> omit-key contract as
+# the top-level stamp: an unset BENCH_MACHINE_TYPE never fabricates a rig.
+
+
+def _with_machine_type(env_value, product, sweep_ret):
+    """Like _with, but also drives BENCH_MACHINE_TYPE. Returns (result, called)."""
+    saved_mt = os.environ.get("BENCH_MACHINE_TYPE")
+    try:
+        if env_value is None:
+            os.environ.pop("BENCH_MACHINE_TYPE", None)
+        else:
+            os.environ["BENCH_MACHINE_TYPE"] = env_value
+        return _with("1", product, sweep_ret)
+    finally:
+        if saved_mt is None:
+            os.environ.pop("BENCH_MACHINE_TYPE", None)
+        else:
+            os.environ["BENCH_MACHINE_TYPE"] = saved_mt
+
+
+def test_machine_type_stamped_onto_proof_when_env_set():
+    result, called = _with_machine_type("e2-standard-16", "sandbox", dict(_PROOF))
+    _check(called, "armed path must invoke the sweep")
+    _check(result.get("machine_type") == "e2-standard-16",
+           f"machine_type must be stamped from BENCH_MACHINE_TYPE, got {result!r}")
+
+
+def test_machine_type_absent_when_env_unset():
+    result, called = _with_machine_type(None, "sandbox", dict(_PROOF))
+    _check(called, "armed path must invoke the sweep")
+    _check("machine_type" not in result,
+           f"unset BENCH_MACHINE_TYPE must never fabricate a rig, got {result!r}")
+
+
+def test_machine_type_absent_when_env_blank():
+    result, called = _with_machine_type("  ", "sandbox", dict(_PROOF))
+    _check(called, "armed path must invoke the sweep")
+    _check("machine_type" not in result,
+           f"blank BENCH_MACHINE_TYPE must never fabricate a rig, got {result!r}")
+
+
+def test_machine_type_not_stamped_on_empty_sweep():
+    # Empty sweep collapses to None before the stamp step even runs.
+    result, called = _with_machine_type("e2-standard-16", "sandbox", {})
+    _check(called, "armed path still invokes the sweep")
+    _check(result is None, f"empty sweep ({{}}) collapses to None, got {result!r}")
+
+
 # --- carry_prior_scale_proof (#3952): persist across the daily refresh ---
 
 _GEN_AT = "2026-06-29T12:00:00Z"

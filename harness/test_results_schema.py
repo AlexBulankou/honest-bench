@@ -706,12 +706,45 @@ def test_scale_proof_extra_keys_dropped():
         "obs_dsn": leak,
     }
     out = rs.build_results([], _prov(), GEN_AT, scale_proof=sp)["scale_proof"]
-    _check(set(out) <= {"scale_points", "density_retention", "thpt_retention", "measured_at"},
+    _check(set(out) <= {"scale_points", "density_retention", "thpt_retention", "measured_at",
+                        "machine_type"},
            f"only contract keys on the object, got {sorted(out)}")
     for p in out["scale_points"]:
         _check(set(p) <= {"node_count", "density", "throughput"},
                f"only contract keys per point, got {sorted(p)}")
     _check(leak not in repr(out), "no leaked string anywhere in emitted scale_proof")
+
+
+def test_scale_proof_machine_type_passthrough_and_dropped():
+    # machine_type (honest-bench#756): a non-empty string survives; anything else is
+    # dropped (mirrors measured_at's optional-string carry-forward shape).
+    base = {"scale_points": [{"node_count": 1, "density": 4.0},
+                             {"node_count": 2, "density": 4.0}]}
+    r = rs.build_results([], _prov(), GEN_AT,
+                         scale_proof={**base, "machine_type": "e2-standard-16"})
+    _check(r["scale_proof"]["machine_type"] == "e2-standard-16",
+           "valid GCP shape kept")
+    for bad in ("", 1, True, None, ["x"]):
+        r = rs.build_results([], _prov(), GEN_AT,
+                             scale_proof={**base, "machine_type": bad})
+        _check("machine_type" not in r["scale_proof"],
+               f"bad machine_type dropped: {bad!r}")
+
+
+def test_scale_proof_machine_type_internal_name_rejected():
+    # PUBLIC hygiene: only a bounded GCP machine shape passes machine_type; an internal
+    # cluster/namespace/project string is rejected (dropped), never carried to render.
+    # Mirrors test_stepup_machine_type_internal_name_rejected for the scale_proof field.
+    base = {"scale_points": [{"node_count": 1, "density": 4.0},
+                             {"node_count": 2, "density": 4.0}]}
+    # Synthetic internal-shaped strings (uppercase-start fails ^[a-z]; the case-variant
+    # of a real GCP shape exercises the case-sensitivity reject). No real internal
+    # identifier appears in this PUBLIC repo — even a broken drop ships only a sentinel.
+    for leak in ("SYNTHETIC-GCP-PROJECT-ID", "SYNTHETIC-INTERNAL-NAMESPACE",
+                 "SYNTHETIC-INTERNAL-OBS-HOST", "E2-STANDARD-16"):
+        r = rs.build_results([], _prov(), GEN_AT, scale_proof={**base, "machine_type": leak})
+        _check("machine_type" not in r["scale_proof"], f"internal-ish machine_type dropped: {leak!r}")
+        _check(leak not in repr(r["scale_proof"]), f"no leaked string in emitted scale_proof: {leak!r}")
 
 
 def test_stepup_passthrough_valid():
