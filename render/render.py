@@ -1836,45 +1836,24 @@ def _core_metrics_glossary_bullets():
 
 
 def _core_metrics_caveat_lines():
-    """The consolidated `***` caveat block (header + intro + the two LIVE class bullets),
-    returned INCLUDING its trailing blank line. Emitted only when the matrix actually earned a
-    `***` caveat — see the matrix_has_starstar snapshot in render_matrix / the recompute in
-    render_core_metrics_legend. The archive of graduated flavors (former `pending (...)` and
-    `***` classes) lives separately in _resolved_archive_lines(), which is NOT gated on
-    matrix_has_starstar — those flavors are historical regardless of what the current matrix
-    shows."""
+    """The consolidated `***` caveat pointer, returned INCLUDING its trailing blank line.
+    Emitted only when the matrix actually earned a `***` caveat — see the matrix_has_starstar
+    snapshot in render_matrix / the recompute in render_core_metrics_legend. All four caveat
+    classes (`***U`, `***Z`, `***K`, `***R`) have graduated; their full explanations live in
+    _resolved_archive_lines(), which is NOT gated on matrix_has_starstar — those flavors are
+    historical regardless of what the current matrix shows. This function is kept (not
+    deleted) as a live-side pointer: the `_STARSTAR_TAGS` mapping that applies the letter tags
+    is intentionally retained, so a cell that somehow still earns one resolves to an
+    explanation instead of a silent, unexplained mark."""
     return [
-        "**Published-with-caveat cells (`***Z` / `***K`)**",
+        "**Published-with-caveat cells**",
         "",
         "A cell tagged `***<letter>` prints the best figure we measured, not an "
         "honest-empty `pending`: the measurement exists but carries a bound or a "
-        "single-source caveat, spelled out below. Each letter names a distinct "
-        "measurement basis, so a cell's tag alone tells you which caveat below applies "
-        "— no need to cross-reference by row/column position. The number is real — read "
-        "it with its caveat. Each class graduates to a clean figure when its upstream "
-        "fix lands.",
-        "",
-        "- **`***Z` — Cold-start floor zero** (unique-image-cold SLO-rate cells) — a "
-        "MEASURED zero, not an absence: the controller cold-start floor (~14.7s p50) "
-        "exceeds BOTH throughput bars at every offered rate (rate-independent), so no "
-        "compliant operating point exists. The zero is the sandbox cold-start floor, not "
-        "an acquire-path miss — the acquire-side latency is clean sub-second (~5/s) at "
-        "every rung. Corroborated by a controller-MEASURED (trusted) rung whose cold p50 "
-        "is also over both bars, so it is never asserted from the controller-untrusted "
-        "floor rung alone. "
-        "Tracked upstream: " + upstream_prose_refs("no-compliant-rung") + ".",
-        "- **`***K` — Unresolved bounds** (`unk.***K`, Kata + microVM unique-image-cold "
-        "5s cell) — a measurement was taken, but the true TTFE p95 is bounded in "
-        "[~2.5s, ~8.4s] at 0.05–0.07/s: the controller-cold proxy (lower bound) does not "
-        "breach the 5s bar and the literal exec-probe (upper bound) does not clear it, so "
-        "no claim is supportable either direction. The exec-probe upper bound includes "
-        "Kata exec websocket setup overhead; the 5s bar sits INSIDE the bracket — no "
-        "supportable claim either way. "
-        "Tracked upstream: " + upstream_prose_refs("no-compliant-rung") + ".",
-        "",
-        "Two more caveat classes (`***U`, `***R`) formerly applied here and have since "
-        "graduated — see [Resolved (archive)](#resolved-archive) below; a fresh read of "
-        "this section never needs them.",
+        "single-source caveat. All four caveat classes (`***U`, `***Z`, `***K`, `***R`) "
+        "have graduated to clean figures — see "
+        "[Resolved (archive)](#resolved-archive) below for each class's basis and "
+        "upstream fix.",
         "",
     ]
 
@@ -1924,6 +1903,25 @@ def _resolved_archive_lines():
         "confirmed the histogram-vs-acquire cross-check now PASSES, so the warm-pool "
         "cells are no longer single-source-capped. "
         "Tracked upstream: " + upstream_prose_refs("trust-gate") + ".",
+        "- **`***Z` — Cold-start floor zero** (formerly applied to unique-image-cold "
+        "SLO-rate cells) — applied while the controller cold-start floor (~14.7s p50) "
+        "exceeded BOTH throughput bars at every offered rate (rate-independent), so no "
+        "compliant operating point existed. The zero was the sandbox cold-start floor, "
+        "not an acquire-path miss — the acquire-side latency was clean sub-second "
+        "(~5/s) at every rung. Corroborated by a controller-MEASURED (trusted) rung "
+        "whose cold p50 was also over both bars, so it was never asserted from the "
+        "controller-untrusted floor rung alone. That upstream fix has since merged and "
+        "both formerly-gated cold cells graduated to measured figures. "
+        "Tracked upstream: " + upstream_prose_refs("no-compliant-rung") + ".",
+        "- **`***K` — Unresolved bounds** (formerly applied to the Kata + microVM "
+        "unique-image-cold 5s cell, rendered `unk.***K`) — a measurement was taken, but "
+        "the true TTFE p95 was bounded in [~2.5s, ~8.4s] at 0.05–0.07/s: the "
+        "controller-cold proxy (lower bound) did not breach the 5s bar and the literal "
+        "exec-probe (upper bound) did not clear it, so no claim was supportable either "
+        "direction. The exec-probe upper bound included Kata exec websocket setup "
+        "overhead; the 5s bar sat INSIDE the bracket. That upstream fix has since "
+        "merged and the cell graduated to a measured figure. "
+        "Tracked upstream: " + upstream_prose_refs("no-compliant-rung") + ".",
         "- **`***R` — Resume probe ceiling** (formerly the two TTFE cells of the "
         "Resume-from-suspend × gVisor row) — applied while the resume never completed "
         "(the upstream Suspended condition never cleared on resume), so the probe "

@@ -1712,7 +1712,7 @@ def test_starstar_footnote_renders_all_classes_with_upstream_links():
         "resume_probe_ceiling_ms": 34604.4, "n": 1376,
     }
     out = render.render_matrix(_matrix_results(scen))
-    assert "**Published-with-caveat cells (`***Z` / `***K`)**" in out
+    assert "**Published-with-caveat cells**" in out
     # all four class bullets present, once each
     assert "**`***U` — Uncorroborated acquire-side rate**" in out
     assert "**`***Z` — Cold-start floor zero**" in out
@@ -1749,7 +1749,7 @@ def test_starstar_footnote_triggered_by_acq_uncorroborated_basis():
     out = render.render_matrix(_matrix_results(scen))
     warm_line = [l for l in out.splitlines() if "Warm-pool hit" in l][0]
     assert "***" in warm_line  # the cell earned the caveat mark
-    assert "**Published-with-caveat cells (`***Z` / `***K`)**" in out
+    assert "**Published-with-caveat cells**" in out
 
 
 def test_matrix_include_legend_false_emits_compact_pointer_only():
@@ -1799,7 +1799,7 @@ def test_core_metrics_legend_caveat_gated_matches_matrix():
         "resume_probe_ceiling_ms": 34604.4, "n": 1376,
     }
     legend_caveat = render.render_core_metrics_legend(_matrix_results(scen))
-    assert "**Published-with-caveat cells (`***Z` / `***K`)**" in legend_caveat
+    assert "**Published-with-caveat cells**" in legend_caveat
     assert "**`***R` — Resume probe ceiling**" in legend_caveat
 
 
