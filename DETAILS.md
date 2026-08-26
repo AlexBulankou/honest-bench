@@ -10,15 +10,15 @@ come here when you want the guidance or to see the working.
 
 ### Scenario FAIL
 
-> ⚠️ **Scenario FAIL:** the warm-pool-hit scenario's own outcome is **FAIL** for **gVisor**, **Kata + microVM** — the p95 above is a real measurement that MISSED its SLA, not a passing warm hit. It is still graded against the bar and carried forward as the refresh baseline honestly (an SLA-failing number is disclosed, never softened into a green cell); a later refresh whose scenario returns to PASS clears this.
+> ⚠️ **Scenario FAIL:** the warm-pool-hit scenario's own outcome is **FAIL** for **gVisor** — the p95 above is a real measurement that MISSED its SLA, not a passing warm hit. It is still graded against the bar and carried forward as the refresh baseline honestly (an SLA-failing number is disclosed, never softened into a green cell); a later refresh whose scenario returns to PASS clears this.
 
 ### Warm-slower-than-cold
 
-> ⚠️ **Warm-slower-than-cold:** the warm-pool-hit path is SLOWER than the unique-image cold-start path for **gVisor** (warm count=30, cold count=200): bind warm 7.6382s > cold 3.2495s, TTFE warm 8.5242s > cold 3.7485s; **Kata + microVM** (warm count=30, cold count=30): bind warm 3.3203s > cold 3.0445s, TTFE warm 3.7142s > cold 3.5847s — a backwards result (warm is meant to be the fast path). Both rows clear the N=30 comparability floor, so this is not a small-sample inversion. The per-leg breakdown localizes it: the **bind** leg (pod-bind latency) is where warm-pool under-delivery shows up — a real warm hit binds an already-running pod ~instantly, so an inverted bind p95 means the warm population is blended with genuinely-cold claims; the **TTFE** leg is total latency (bind + exec), so a TTFE-only inversion with a clean bind leg points instead at the exec phase, not the pool. The cause is not asserted here (candidates: the warm fire not gating on pool-Ready before probing, a silent image-pull on the warm hit, or a real tail regression); a later refresh whose warm legs return below cold clears this.
+> ⚠️ **Warm-slower-than-cold:** the warm-pool-hit path is SLOWER than the unique-image cold-start path for **gVisor** (warm count=30, cold count=200): bind warm 7.6382s > cold 3.2495s, TTFE warm 8.5242s > cold 3.7485s; **Kata + microVM** (warm count=30, cold count=30): bind warm 3.7883s > cold 3.0812s, TTFE warm 4.2478s > cold 3.5331s — a backwards result (warm is meant to be the fast path). Both rows clear the N=30 comparability floor, so this is not a small-sample inversion. The per-leg breakdown localizes it: the **bind** leg (pod-bind latency) is where warm-pool under-delivery shows up — a real warm hit binds an already-running pod ~instantly, so an inverted bind p95 means the warm population is blended with genuinely-cold claims; the **TTFE** leg is total latency (bind + exec), so a TTFE-only inversion with a clean bind leg points instead at the exec phase, not the pool. The cause is not asserted here (candidates: the warm fire not gating on pool-Ready before probing, a silent image-pull on the warm hit, or a real tail regression); a later refresh whose warm legs return below cold clears this.
 
 ### Warm-cold separation below gate
 
-> ⚠️ **Warm/cold separation below gate:** the warm-pool separation ratio (fastest cold start ÷ slowest warm-pool hit) is below the 1.8x gate for **gVisor** (warm count=30): 0.255x (slowest warm bind 8.29192s vs fastest cold bind 0.462378s); **Kata + microVM** (warm count=30): 0.519x (slowest warm bind 3.39408s vs fastest cold bind 0.488388s) — at ~1x the warm and cold populations overlap, so the published warm tier is not demonstrably faster than a unique-image cold start. The warm row clears the N=30 floor, so this is not a small-sample artifact. The cause is a supply-constrained pool draining under load, not cold-claim contamination (hb#450's provenance gate already excludes blends from the counted warm hits): **gVisor** min readyReplicas=10 during the burst; **Kata + microVM** min readyReplicas=0 during the burst — remaining warm-tier binds queue behind the drain rather than being served pre-warmed. A later refresh whose ratio returns to the gate clears this.
+> ⚠️ **Warm/cold separation below gate:** the warm-pool separation ratio (fastest cold start ÷ slowest warm-pool hit) is below the 1.8x gate for **gVisor** (warm count=30): 0.255x (slowest warm bind 8.29192s vs fastest cold bind 0.462378s) — at ~1x the warm and cold populations overlap, so the published warm tier is not demonstrably faster than a unique-image cold start. The warm row clears the N=30 floor, so this is not a small-sample artifact. The cause is a supply-constrained pool draining under load, not cold-claim contamination (hb#450's provenance gate already excludes blends from the counted warm hits): **gVisor** min readyReplicas=10 during the burst — remaining warm-tier binds queue behind the drain rather than being served pre-warmed. A later refresh whose ratio returns to the gate clears this.
 
 ### Same-build separation-ratio variance
 
@@ -26,7 +26,7 @@ come here when you want the guidance or to see the working.
 
 ### Single-fire separation verdict defensibility
 
-> ⚠️ **Single-fire separation verdict withheld:** the raw gate issues a pass/fail from ONE fire's separation ratio, but reconciling that ratio against the run-to-run noise floor measured across the accrued same-build history shows the noise band is wider than the ratio's margin to the 1.8x gate, so no single-fire verdict is defensible: **Kata + microVM** — one fire measured 0.519x; at the measured noise floor (σ(log)=0.82, 95% band 0.104x–2.6x) the interval straddles the 1.8x gate, so this single fire cannot tell a real pass from an unlucky draw — 2 consistent fires would resolve this margin. The verdict layer refuses to issue one and states the fires required instead (fail-closed: it withholds the pass/fail rather than emitting the raw single-fire one it cannot defend). See [WARMPOOL_SEPARATION_VERDICT_PROTOCOL.md](WARMPOOL_SEPARATION_VERDICT_PROTOCOL.md). A refresh with enough consistent fires to clear the noise band resolves this.
+_Clear as of the latest measured refresh — no single-fire separation verdict as indefensible currently disclosed._
 
 ### Adjudicated separation verdict (median-of-N)
 
@@ -225,8 +225,8 @@ Warm-Pool TTFE (ms) — p50 vs p95
 
 gVisor         p50  ███████████████ 6.2698s
                p95  ████████████████████ 8.5242s
-Kata + microVM p50  ██████ 2.7477s
-               p95  █████████ 3.7142s
+Kata + microVM p50  ███████ 3.1349s
+               p95  ██████████ 4.2478s
 ```
 
 _Cluster shape (gVisor leg): node_count=2, `n2-standard-16` — the swing-flag threshold compares consecutive fires on this chart, so a node-count or machine-class change shows up here first._
