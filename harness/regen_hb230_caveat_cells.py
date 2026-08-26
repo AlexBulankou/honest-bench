@@ -37,7 +37,7 @@ The five conversions (see hb#230 rulings):
      both bars (Class A ***), from the Kata warm leg.
   5. Kata cold    (native_digest_cold, sandbox-kata/)  — 5s bar bracketed
      (unresolved-bounds ***); 1s stays render-derived-0. RETIRED as of
-     2026-08-26 (a#7281's kata cold true_ttfe fire): the cell graduated to a
+     2026-08-26 (kata cold true_ttfe fire): the cell graduated to a
      genuine whole-triple measurement, so ``convert_kata_cold`` is now a
      documented no-op guarded on the precondition it used to unconditionally
      assume (see its docstring) — it never overwrites a real measurement.
@@ -211,8 +211,9 @@ def convert_kata_cold(results: dict) -> None:
     """5s bar bracketed (unresolved-bounds ***); 1s stays render-derived-0.
 
     No-op once the cell has genuinely graduated to a real ``true_ttfe``
-    measurement (a#7281's kata cold fire) — the bracketed-caveat placeholder
-    this stamps is now stale and must never overwrite a real measurement.
+    measurement (kata cold true_ttfe fire, 2026-08-26) — the bracketed-caveat
+    placeholder this stamps is now stale and must never overwrite a real
+    measurement.
     """
     sc = _scenario(results, "native_digest_cold")
     sla = sc["sla_metrics"]

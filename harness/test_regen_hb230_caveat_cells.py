@@ -132,7 +132,7 @@ def test_kata_warm_acq_both_bars_with_node_count():
 
 
 # --- 5. Kata cold: 5s bar unresolved-bounds; 1s stays render-derived-0 -----
-# RETIRED conversion (2026-08-26, a#7281's kata cold true_ttfe fire): the
+# RETIRED conversion (2026-08-26, kata cold true_ttfe fire): the
 # committed record may now already carry a real whole-triple measurement, in
 # which case convert_kata_cold must no-op rather than stamp a stale per-bar
 # caveat on top of it. This test asserts whichever shape the committed record
