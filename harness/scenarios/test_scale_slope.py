@@ -186,6 +186,66 @@ def test_two_wellformed_after_dropping_malformed():
     assert [p["node_count"] for p in out["scale_points"]] == [1, 2]
 
 
+# ---- dropped_tiers passthrough (honest-bench#749) ----
+
+def test_dropped_tiers_deduped_and_sorted_when_emitting():
+    pts = [
+        _point(1, 4, 2.13, [200.0] * 4),
+        _point(2, 8, 2.13, [200.0] * 8),
+    ]
+    out = cell._classify_scale_slope(
+        pts, threshold_ms=_THR, window_s=_WIN, dropped_tiers=[16, 8, 8],
+    )
+    assert out["dropped_tiers"] == [8, 16]
+
+
+def test_dropped_tiers_absent_when_none():
+    pts = [
+        _point(1, 4, 2.13, [200.0] * 4),
+        _point(2, 8, 2.13, [200.0] * 8),
+    ]
+    out = cell._classify_scale_slope(pts, threshold_ms=_THR, window_s=_WIN)
+    assert "dropped_tiers" not in out
+
+
+def test_dropped_tiers_absent_when_empty_list():
+    pts = [
+        _point(1, 4, 2.13, [200.0] * 4),
+        _point(2, 8, 2.13, [200.0] * 8),
+    ]
+    out = cell._classify_scale_slope(
+        pts, threshold_ms=_THR, window_s=_WIN, dropped_tiers=[],
+    )
+    assert "dropped_tiers" not in out
+
+
+def test_dropped_tiers_malformed_entries_filtered_not_whole_field():
+    # This is the pure classifier's OWN internal accumulator (run_sweep only ever
+    # appends real loop-local ints here) -- not the public emit gate. The public
+    # contract (a single bad entry hard-fails the WHOLE list) is enforced downstream
+    # by results_schema.py's coercer; this layer just sanitizes what it was handed.
+    pts = [
+        _point(1, 4, 2.13, [200.0] * 4),
+        _point(2, 8, 2.13, [200.0] * 8),
+    ]
+    out = cell._classify_scale_slope(
+        pts, threshold_ms=_THR, window_s=_WIN,
+        dropped_tiers=[8, "x", True, 0, -1, 16],
+    )
+    assert out["dropped_tiers"] == [8, 16]
+
+
+def test_dropped_tiers_never_emitted_when_classifier_itself_returns_empty():
+    # A sweep that never reached 2 achieved points has no achieved-points table for
+    # a dropped-tiers footnote to attach to -- dropped_tiers must not leak out of an
+    # otherwise-empty {} emission.
+    pts = [_point(1, 8, 2.0, [200.0] * 8)]
+    out = cell._classify_scale_slope(
+        pts, threshold_ms=_THR, window_s=_WIN, dropped_tiers=[8, 16],
+    )
+    assert out == {}
+
+
 # ---- delegation to LOCKED metrics functions ----
 
 def test_density_uses_locked_metric():

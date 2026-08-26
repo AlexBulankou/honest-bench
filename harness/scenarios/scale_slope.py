@@ -209,7 +209,9 @@ def _build_claim_manifest(claim_name: str, pool_name: str) -> dict:
     }
 
 
-def _classify_scale_slope(points, *, threshold_ms: float, window_s: float) -> dict:
+def _classify_scale_slope(
+    points, *, threshold_ms: float, window_s: float, dropped_tiers=None,
+) -> dict:
     """Pure linearity classifier. No cluster, no clock — unit-testable.
 
     `points` is a list of per-node-count raw measurements, each a dict:
@@ -221,11 +223,19 @@ def _classify_scale_slope(points, *, threshold_ms: float, window_s: float) -> di
     Returns the TOP-LEVEL scale_proof object the render side consumes:
         {"scale_points": [{"node_count": K, "density": D, "throughput": T}, ...],
          "density_retention": float,
-         "thpt_retention": float}              # omitted when base throughput == 0
+         "thpt_retention": float,              # omitted when base throughput == 0
+         "dropped_tiers": [int, ...]}          # omitted when empty — see below
 
     emit-only-when-complete: returns {} unless there are >= 2 distinct node-count
     points AND the base point delivered a real density (> 0). Every number is
     computed by the LOCKED metrics.py functions so the page's basis is single-source.
+
+    dropped_tiers (honest-bench#749): node-counts the sweep REQUESTED but could not
+    reach (cluster ceiling or per-tier autoscale-wait timeout in run_sweep) —
+    purely additive/observability, never affects the achieved scale_points. Carried
+    only when the classifier actually emits (>= 2 achieved points); a sweep that
+    itself collapses to {} has no achieved-points table for the footnote to attach
+    to, so dropped_tiers would be a caveat with nothing to caveat.
     """
     if not isinstance(points, list):
         return {}
@@ -281,6 +291,12 @@ def _classify_scale_slope(points, *, threshold_ms: float, window_s: float) -> di
     # fabricated ratio.
     if thpts[0] > 0:
         out["thpt_retention"] = metrics.retention(thpts[0], thpts[-1])
+    clean_dropped = sorted({
+        v for v in (dropped_tiers or [])
+        if not isinstance(v, bool) and isinstance(v, int) and v > 0
+    })
+    if clean_dropped:
+        out["dropped_tiers"] = clean_dropped
     return out
 
 
@@ -490,12 +506,14 @@ def run_sweep(scenario_name: str = "scale_slope") -> dict:
     )
 
     points: list[dict] = []
+    dropped_tiers: list[int] = []
     for k in sorted(set(_NODE_COUNTS)):
         if k > max_capable:
             log.info(
                 "skipping node-count=%d (cluster can reach at most %d gVisor-capable "
                 "nodes)", k, max_capable,
             )
+            dropped_tiers.append(k)
             continue
         claim_count = k * _SLOTS_PER_NODE
         ttfis = _measure_point(
@@ -506,6 +524,7 @@ def run_sweep(scenario_name: str = "scale_slope") -> dict:
                 "dropping node-count=%d (autoscale-wait did not reach %d capable "
                 "nodes)", k, k,
             )
+            dropped_tiers.append(k)
             continue
         max_concurrent = sum(1 for v in ttfis if v is not None)
         points.append(
@@ -519,6 +538,7 @@ def run_sweep(scenario_name: str = "scale_slope") -> dict:
 
     return _classify_scale_slope(
         points, threshold_ms=_TTFI_CEILING_MS, window_s=_THROUGHPUT_WINDOW_S,
+        dropped_tiers=dropped_tiers,
     )
 
 
