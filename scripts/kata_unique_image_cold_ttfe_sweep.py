@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Honest Kata unique-image cold step-up sweep -> true-TTFE stamp (a#7281).
+"""Honest Kata unique-image cold step-up sweep -> true-TTFE stamp.
 
 Sibling of ``kata_cold_ttfe_sweep.py`` (hb#5396 box 4, which resolved
 ``warmpool_cold_start``'s Kata cold cell). That sweep proves the
 cold-*provision* number: every claim pays a real cold provision, but all
 claims share ONE already-cached ``busybox:1.36`` image, so no claim ever pays a
-real image-layer *pull*. Epic a#7281's outstanding "Kata + microVM · Unique-
-image cold · Throughput @<5s/node" cell needs the distinct cold-*pull*
+real image-layer *pull*. The outstanding "Kata + microVM · Unique-
+image cold · Throughput @<5s/node" matrix cell needs the distinct cold-*pull*
 semantic that ``harness/scenarios/native_digest_cold.py`` names but cannot
 itself produce a throughput/pareto axis for: that scenario fires a bare
 Sandbox CR (no Claim -> no true-TTFE webhook stamp) strictly serially (no
