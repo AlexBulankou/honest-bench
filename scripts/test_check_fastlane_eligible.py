@@ -27,7 +27,7 @@ def _write(path, text):
 
 def _init_repo(tmp):
     _git(["init", "-q"], tmp)
-    _git(["config", "user.email", "test@example.com"], tmp)
+    _git(["config", "user.email", "test@localhost"], tmp)
     _git(["config", "user.name", "test"], tmp)
 
 
