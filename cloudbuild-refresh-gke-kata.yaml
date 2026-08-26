@@ -37,9 +37,17 @@
 #   3. Cold-honesty guard: assert 0 resident kata nodes before trusting "cold".
 #   4. Fire the honest kata cold step-up sweep (scripts/kata_cold_ttfe_sweep.py) ->
 #      a BENCH_SLO_SWEEP record carrying the cold true_ttfe pareto.
+#   4b. Fire the honest kata UNIQUE-IMAGE cold step-up sweep
+#      (scripts/kata_unique_image_cold_ttfe_sweep.py) -> a second, independent
+#      BENCH_SLO_SWEEP record (one never-before-pulled image tag per claim, so
+#      containerd's layer cache can never mask a real cold pull) targeting the
+#      DIFFERENT native_digest_cold cell (a#7281 "Unique-image cold (RL
+#      reality)" row) -- distinct from 4's warmpool_cold_start cell, so the two
+#      sweeps' triples land on different matrix rows with no cross-contamination
+#      (see the runtime-match + per-scenario-key merge in harness/run.py).
 #   5. Run the full sandbox-kata graduation suite (harness.run --product
-#      sandbox-kata) at the published n=30 shape, merging the sweep's cold
-#      true_ttfe triple into scenarios[0].sla_metrics.thpt_slo_basis=true_ttfe.
+#      sandbox-kata) at the published n=30 shape, merging both sweeps' cold
+#      true_ttfe triples into their respective cells' sla_metrics.
 #   6. Render, run public-safety fail-closed, and open a PR with the result.
 #
 # Honest by construction: the cold-honesty guard means every cold sample pays the
@@ -106,6 +114,14 @@ steps:
       # shell" holds — this build fires only sandbox-kata, and the derive path's
       # runtime-match gate on params.runtime_class guards cross-contamination.
       - "BENCH_SLO_SWEEP_WARMPOOL_COLD_START=/workspace/kata-cold-ttfe-sweep.json"
+      # Same mechanism, second independent sweep (a#7281): merges into the
+      # DIFFERENT native_digest_cold cell (render/schema.py's
+      # ACTIVATION_MODE_ROWS maps native_digest_cold -> "Unique-image cold (RL
+      # reality)", a distinct matrix row from warmpool_cold_start above) so the
+      # two sweeps' triples can never collide on the same cell even though they
+      # share this one shell.
+      - "KATA_UNIQUE_IMAGE_SWEEP_OUT=/workspace/kata-unique-image-cold-ttfe-sweep.json"
+      - "BENCH_SLO_SWEEP_NATIVE_DIGEST_COLD=/workspace/kata-unique-image-cold-ttfe-sweep.json"
     args:
       - -c
       - |
@@ -194,8 +210,24 @@ steps:
         KATA_SWEEP_OUT=/workspace/kata-cold-ttfe-sweep.json PYTHONPATH=/workspace \
           python3 scripts/kata_cold_ttfe_sweep.py
 
-        # Step 2 — full graduation refresh, merging the sweep's cold true_ttfe
-        # triple (BENCH_SLO_SWEEP_WARMPOOL_COLD_START, set in env: above).
+        # Step 1b — honest kata UNIQUE-IMAGE cold step-up sweep (a#7281) -> a
+        # second, independent BENCH_SLO_SWEEP record. KATA_UNIQUE_IMAGE_SWEEP_OUT
+        # is set in env: above; PYTHONPATH=/workspace for the same reason as
+        # Step 1 (repo-root imports). Reuses WARMPOOL_COLD_START_RUNTIME_CLASS
+        # (kata-clh, set in env: above) for its runtime class -- the script
+        # itself only setdefault()s that var, so the graduation shape's value
+        # wins. Coldness here does NOT depend on the 0-resident-node guard above
+        # (a node may still be draining down from Step 1 by this point) -- each
+        # claim's image tag is unique and never pulled before, so containerd on
+        # ANY node pays a real cold pull regardless of node residency; Step 1's
+        # own claims/warmpool/template are already deleted by its own `finally`
+        # cleanup before this starts.
+        echo "==> firing honest kata UNIQUE-IMAGE cold true_ttfe sweep"
+        PYTHONPATH=/workspace python3 scripts/kata_unique_image_cold_ttfe_sweep.py
+
+        # Step 2 — full graduation refresh, merging BOTH sweeps' cold true_ttfe
+        # triples (BENCH_SLO_SWEEP_WARMPOOL_COLD_START + _NATIVE_DIGEST_COLD,
+        # set in env: above) into their respective, distinct cells.
         echo "==> running sandbox-kata harness (full graduation shape + sweep merge)"
         python3 -m harness.run --product sandbox-kata
 
@@ -352,5 +384,7 @@ options:
 # No cluster create/teardown, but the kata cold path is slower than gVisor: the
 # pool scales 0 -> N under the step-up sweep (VM boot + kata-runtime init) and the
 # full n=30 graduation suite (30-member warmup + 40 claims + 30 serial cold
-# microVM samples) runs against microVMs. 90 min gives generous headroom.
-timeout: 5400s
+# microVM samples) runs against microVMs. The unique-image sweep (Step 1b, a#7281)
+# adds a handful of minutes (3 claims across 2 rungs, each a single cold microVM
+# boot) -- small next to the existing budget, but bumped slightly for headroom.
+timeout: 5700s
