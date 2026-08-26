@@ -707,7 +707,7 @@ def test_scale_proof_extra_keys_dropped():
     }
     out = rs.build_results([], _prov(), GEN_AT, scale_proof=sp)["scale_proof"]
     _check(set(out) <= {"scale_points", "density_retention", "thpt_retention", "measured_at",
-                        "machine_type"},
+                        "machine_type", "dropped_tiers"},
            f"only contract keys on the object, got {sorted(out)}")
     for p in out["scale_points"]:
         _check(set(p) <= {"node_count", "density", "throughput"},
@@ -745,6 +745,32 @@ def test_scale_proof_machine_type_internal_name_rejected():
         r = rs.build_results([], _prov(), GEN_AT, scale_proof={**base, "machine_type": leak})
         _check("machine_type" not in r["scale_proof"], f"internal-ish machine_type dropped: {leak!r}")
         _check(leak not in repr(r["scale_proof"]), f"no leaked string in emitted scale_proof: {leak!r}")
+
+
+def test_scale_proof_dropped_tiers_passthrough_and_dropped():
+    # dropped_tiers (honest-bench#749): a non-empty list of bounded positive ints
+    # survives (deduped + sorted); anything else (wrong shape, empty, out-of-bounds
+    # values) is dropped entirely rather than partially emitted.
+    base = {"scale_points": [{"node_count": 1, "density": 4.0},
+                             {"node_count": 2, "density": 4.0}]}
+    r = rs.build_results([], _prov(), GEN_AT,
+                         scale_proof={**base, "dropped_tiers": [16, 8, 8]})
+    _check(r["scale_proof"]["dropped_tiers"] == [8, 16],
+           f"deduped+sorted list kept, got {r['scale_proof'].get('dropped_tiers')!r}")
+    for bad in ("8", 8, True, None, [], ["8"], [0], [-1], [True], [10000], [1, "x"]):
+        r = rs.build_results([], _prov(), GEN_AT,
+                             scale_proof={**base, "dropped_tiers": bad})
+        _check("dropped_tiers" not in r["scale_proof"],
+               f"bad dropped_tiers dropped: {bad!r}")
+
+
+def test_scale_proof_dropped_tiers_absent_by_default():
+    # No dropped_tiers key on the input -> no dropped_tiers key on the output (never
+    # fabricated).
+    base = {"scale_points": [{"node_count": 1, "density": 4.0},
+                             {"node_count": 2, "density": 4.0}]}
+    r = rs.build_results([], _prov(), GEN_AT, scale_proof=base)
+    _check("dropped_tiers" not in r["scale_proof"], "no dropped_tiers fabricated")
 
 
 def test_stepup_passthrough_valid():

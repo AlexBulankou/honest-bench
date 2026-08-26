@@ -787,6 +787,13 @@ SCALE_PROOF_FIELDS = {
     # render_scale_proof() surfaces a stale-carry-forward banner (mirrors concurrent_burst /
     # at_scale_contention / cluster_saturation, which all already carry this field).
     "machine_type": lambda v: isinstance(v, str) and bool(_MACHINE_TYPE.match(v)),
+    # dropped_tiers (honest-bench#749): node-counts the sweep REQUESTED but could not
+    # reach (cluster ceiling or per-tier autoscale-wait timeout — scale_slope.run_sweep).
+    # Optional; purely additive/observability — render_scale_proof() surfaces a one-line
+    # footnote when non-empty, never alters the achieved scale_points row.
+    "dropped_tiers": lambda v: isinstance(v, list) and bool(v) and all(
+        isinstance(n, int) and not isinstance(n, bool) and 0 < n < 10000 for n in v
+    ),
 }
 
 # --- #3954 sibling: warm-vs-cold speedup block (TOP-LEVEL warm_vs_cold object) -----------

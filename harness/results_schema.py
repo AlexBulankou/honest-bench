@@ -650,6 +650,21 @@ def _coerce_scale_proof(raw):
     mt = raw.get("machine_type")
     if isinstance(mt, str) and _MACHINE_TYPE_RE.match(mt):
         out["machine_type"] = mt
+    # dropped_tiers (honest-bench#749): node-counts the sweep REQUESTED but could not
+    # reach — either the cluster's max-capable ceiling or a per-tier autoscale-wait
+    # timeout (scale_slope.run_sweep). Purely additive/observability: informs the
+    # render footnote that wider tiers were requested-but-unreached, never touches
+    # any achieved scale_points value. Optional and independently allow-listed
+    # (mirrors measured_at/machine_type). Mirrors the pareto_points convention
+    # (line ~892): a single malformed entry hard-fails the WHOLE list rather than
+    # silently filtering it out entry-by-entry — a partial filter would silently
+    # reshape the sweep's own claim about what it requested.
+    dt = raw.get("dropped_tiers")
+    if isinstance(dt, list) and dt:
+        if all(not isinstance(v, bool) and isinstance(v, int) and 0 < v < 10000 for v in dt):
+            clean_dt = sorted(set(dt))
+            if clean_dt:
+                out["dropped_tiers"] = clean_dt
     return out
 
 

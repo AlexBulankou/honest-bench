@@ -3348,6 +3348,80 @@ def test_scale_proof_absent_renders_nothing():
     assert render.render_scale_proof(_matrix_results(_full_gvisor_scenarios())) == ""
 
 
+def test_scale_proof_dropped_tiers_renders_footnote():
+    # hb#749: node-counts REQUESTED but not reached (cluster ceiling / autoscale-wait
+    # timeout) surface as an additive one-line footnote — the achieved-points row is
+    # unchanged.
+    results = _matrix_results(
+        _full_gvisor_scenarios(),
+        scale_proof={
+            "scale_points": [
+                {"node_count": 1, "density": 1.88},
+                {"node_count": 2, "density": 1.86},
+            ],
+            "density_retention": 0.99,
+            "thpt_retention": 0.99,
+            "dropped_tiers": [16, 8],
+        },
+    )
+    out = render.render_scale_proof(results)
+    assert "| 1 → 2 |" in out
+    assert "_Node-counts 8, 16 requested but not reached (cluster/autoscale ceiling this fire)._" in out
+
+
+def test_scale_proof_dropped_tiers_singular_wording():
+    results = _matrix_results(
+        _full_gvisor_scenarios(),
+        scale_proof={
+            "scale_points": [
+                {"node_count": 1, "density": 1.88},
+                {"node_count": 2, "density": 1.86},
+            ],
+            "density_retention": 0.99,
+            "thpt_retention": 0.99,
+            "dropped_tiers": [8],
+        },
+    )
+    out = render.render_scale_proof(results)
+    assert "_Node-count 8 requested but not reached (cluster/autoscale ceiling this fire)._" in out
+
+
+def test_scale_proof_dropped_tiers_absent_no_footnote():
+    results = _matrix_results(
+        _full_gvisor_scenarios(),
+        scale_proof={
+            "scale_points": [
+                {"node_count": 1, "density": 1.88},
+                {"node_count": 2, "density": 1.86},
+            ],
+            "density_retention": 0.99,
+            "thpt_retention": 0.99,
+        },
+    )
+    out = render.render_scale_proof(results)
+    assert "requested but not reached" not in out
+
+
+def test_scale_proof_dropped_tiers_malformed_dropped_whole_field():
+    # A single bad entry hard-fails the WHOLE dropped_tiers field (mirrors the
+    # results_schema.py fail-closed-on-any-bad-entry convention) — never a partial list.
+    for bad in ([], ["8"], [0], [-1], [True], [10000], [1, "x"], "8", 8):
+        results = _matrix_results(
+            _full_gvisor_scenarios(),
+            scale_proof={
+                "scale_points": [
+                    {"node_count": 1, "density": 1.88},
+                    {"node_count": 2, "density": 1.86},
+                ],
+                "density_retention": 0.99,
+                "thpt_retention": 0.99,
+                "dropped_tiers": bad,
+            },
+        )
+        out = render.render_scale_proof(results)
+        assert "requested but not reached" not in out, f"bad dropped_tiers rendered: {bad!r}"
+
+
 def test_scale_proof_stale_caveat_on_rig_change():
     # the goal-2.1 display-vs-spec audit gap 2: Linearity had no machine_type attribution
     # and no stale-rig banner, unlike its sibling carried-forward sections (concurrent_burst /

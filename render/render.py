@@ -4921,12 +4921,18 @@ def _clean_scale_proof(results):
         machine_type = mt if SCALE_PROOF_FIELDS["machine_type"](mt) else None
     except (TypeError, ValueError):
         machine_type = None
+    dt = sp.get("dropped_tiers")
+    try:
+        dropped_tiers = sorted(dt) if SCALE_PROOF_FIELDS["dropped_tiers"](dt) else None
+    except (TypeError, ValueError):
+        dropped_tiers = None
     return {
         "points": points,
         "density_retention": dens_ret,
         "thpt_retention": _ratio("thpt_retention"),
         "measured_at": measured_at,
         "machine_type": machine_type,
+        "dropped_tiers": dropped_tiers,
     }
 
 
@@ -4990,6 +4996,19 @@ def render_scale_proof(results, heading="## Scale Proof (Linearity Check)"):
         lines.append(
             f"_Measured {sp['measured_at'][:10]} — node-count linearity sweep "
             "(point-in-time; refreshed on the next multi-node sweep)._"
+        )
+        lines.append("")
+    # hb#749: the achieved-points row above is honest about what WAS measured, but says
+    # nothing about wider tiers the sweep REQUESTED and could not reach (cluster ceiling
+    # or a per-tier autoscale-wait timeout — scale_slope.run_sweep). Without this, a
+    # reader sees "3 points" with no signal that 8/16 were asked for and dropped, which
+    # reads as "only 3 were ever attempted" rather than "5 attempted, 2 unreachable this
+    # fire." One line, additive only — never changes a scale_points value.
+    if sp.get("dropped_tiers"):
+        tiers = ", ".join(str(n) for n in sp["dropped_tiers"])
+        lines.append(
+            f"_Node-count{'s' if len(sp['dropped_tiers']) > 1 else ''} {tiers} requested "
+            "but not reached (cluster/autoscale ceiling this fire)._"
         )
         lines.append("")
     # hb#(gap-2, the goal-2.1 display-vs-spec audit): Scale Proof has no daily in-process
