@@ -1,12 +1,12 @@
 {
-  "generated_at": "2026-08-26T02:53:01Z",
+  "generated_at": "2026-08-26T07:21:37Z",
   "product": "sandbox-kata",
   "provenance": {
     "cluster_substrate": "gke-kata",
     "cold_start_mode": "cold-provision",
     "node_count": 1,
-    "prior_warmpool_ttfe_p95_ms": 2242.6,
-    "run_id": "803e0e284aa84498b8c4df19cd54db13",
+    "prior_warmpool_ttfe_p95_ms": 3714.2,
+    "run_id": "793ce13f48ee472aad29f5ddc2c35b82",
     "runtime": "kata-microvm"
   },
   "scenarios": [
@@ -17,27 +17,27 @@
       },
       "n": 30,
       "name": "warmpool_cold_start",
-      "outcome": "FAIL",
+      "outcome": "PASS",
       "sla_metrics": {
-        "bind_p50_ms": 2291.9,
-        "bind_p95_ms": 3320.3,
+        "bind_p50_ms": 2803.0,
+        "bind_p95_ms": 3788.3,
         "density_per_vcpu": 1.26,
-        "exec_p50_ms": 441.7,
-        "exec_p95_ms": 503.0,
+        "exec_p50_ms": 369.0,
+        "exec_p95_ms": 655.1,
         "exec_success_rate": 1.0,
         "thpt_cluster_node_count": 5.0,
         "thpt_slo_basis": "true_ttfe",
         "thpt_under_1s_per_node": 0.0,
-        "thpt_under_5s_per_cluster": 0.746,
-        "thpt_under_5s_per_node": 8.481,
-        "ttfe_p50_ms": 2747.7,
-        "ttfe_p95_ms": 3714.2,
-        "warmpool_gate_cold_min_ms": 488.38823000005505,
-        "warmpool_gate_cold_p50_ms": 1189.836491000051,
-        "warmpool_gate_min_ready_during_burst": 0.0,
-        "warmpool_gate_separation_ratio": 0.5191556962296423,
-        "warmpool_gate_warm_max_ms": 3394.0778789999513,
-        "warmpool_gate_warm_p50_ms": 2291.8683154999826
+        "thpt_under_5s_per_cluster": 0.76,
+        "thpt_under_5s_per_node": 7.342,
+        "ttfe_p50_ms": 3134.9,
+        "ttfe_p95_ms": 4247.8,
+        "warmpool_gate_cold_min_ms": 1028.2406839999112,
+        "warmpool_gate_cold_p50_ms": 589261.2044294999,
+        "warmpool_gate_min_ready_during_burst": 2.0,
+        "warmpool_gate_separation_ratio": 210.22606349651988,
+        "warmpool_gate_warm_max_ms": 3957.680585999924,
+        "warmpool_gate_warm_p50_ms": 2802.988338499972
       }
     },
     {
@@ -49,14 +49,14 @@
       "name": "native_digest_cold",
       "outcome": "PASS",
       "sla_metrics": {
-        "bind_p50_ms": 2808.2,
-        "bind_p95_ms": 3044.5,
-        "exec_p50_ms": 478.5,
-        "exec_p95_ms": 610.5,
+        "bind_p50_ms": 2788.3,
+        "bind_p95_ms": 3081.2,
+        "exec_p50_ms": 473.1,
+        "exec_p95_ms": 593.9,
         "exec_success_rate": 1.0,
         "thpt_slo_basis_5s": "unresolved_bounds_bar_bracketed",
-        "ttfe_p50_ms": 3287.3,
-        "ttfe_p95_ms": 3584.7
+        "ttfe_p50_ms": 3268.3,
+        "ttfe_p95_ms": 3533.1
       }
     },
     {
