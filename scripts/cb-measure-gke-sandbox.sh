@@ -520,6 +520,29 @@ except Exception:
   fi
 fi
 
+# External true-TTFE warm step-up sweep, opt-in via
+# _WARMPOOL_COLD_START_SWEEP_B64 substitution / HB_WARMPOOL_COLD_START_SWEEP_B64 env,
+# default empty = INERT (same "diagnostic add-on, standing fire unaffected" shape as
+# HB_DENSITY_PROBE above). gvisor_warm_ttfe_sweep.py fires offline against a
+# persistent, shared standing GKE cluster (a different cluster than this ephemeral
+# one), so its record is handed across as base64 rather than run inline. Decode it to a
+# workspace file and export BENCH_SLO_SWEEP_WARMPOOL_COLD_START from it — harness/run.py's
+# merge_slo_sweeps() reads that env var and fails closed (leaves the prior committed
+# triple untouched via carry_prior_cluster_triples()) on anything empty/unreadable/
+# malformed/runtime-mismatched, so a bad decode here is never a fabrication risk, only
+# a missed opportunity to refresh the triple this fire.
+if [ -n "${HB_WARMPOOL_COLD_START_SWEEP_B64:-}" ]; then
+  SLO_SWEEP_OUT=/workspace/gvisor-warm-ttfe-sweep.json
+  if echo "$HB_WARMPOOL_COLD_START_SWEEP_B64" | base64 -d >"$SLO_SWEEP_OUT" 2>/dev/null \
+      && python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$SLO_SWEEP_OUT" 2>/dev/null; then
+    export BENCH_SLO_SWEEP_WARMPOOL_COLD_START="$SLO_SWEEP_OUT"
+    echo "==> external warm TTFE sweep wired in as BENCH_SLO_SWEEP_WARMPOOL_COLD_START=$SLO_SWEEP_OUT"
+  else
+    echo "==> WARNING: HB_WARMPOOL_COLD_START_SWEEP_B64 set but failed to decode to valid JSON — leaving BENCH_SLO_SWEEP_WARMPOOL_COLD_START unset (no fabricated triple; the prior committed triple carries forward via carry_prior_cluster_triples())" >&2
+    rm -f "$SLO_SWEEP_OUT"
+  fi
+fi
+
 echo "==> running sandbox harness (gke-sandbox / gVisor)"
 python3 -m harness.run --product sandbox
 

@@ -206,6 +206,23 @@ substitutions:
   #   gcloud builds triggers run hb-refresh-gke-sandbox --project=<PROJECT> \
   #     --substitutions=_HB_DENSITY_PROBE=1
   _HB_DENSITY_PROBE: ""
+  # Opt-in true-TTFE warm step-up sweep record for warmpool_cold_start's
+  # cluster-throughput triple (thpt_under_5s/1s_per_cluster, thpt_cluster_node_count).
+  # gvisor_warm_ttfe_sweep.py fires OFFLINE against a persistent, shared standing
+  # GKE cluster — a different cluster than the one
+  # THIS pipeline provisions fresh per fire — so its output can't be
+  # produced inline the way scripts/kata_cold_ttfe_sweep.py is for the Kata pipeline
+  # (that one's persistent cluster IS the measure step's own cluster). Instead the
+  # record is base64'd into this substitution and decoded to a workspace file by
+  # cb-measure-gke-sandbox.sh, which exports BENCH_SLO_SWEEP_WARMPOOL_COLD_START to
+  # it before invoking harness.run — harness/run.py's merge_slo_sweeps() then derives
+  # the triple via slo_rate.slo_sla_metrics_from_stepup(), never a raw extrapolation.
+  # Default empty ⇒ INERT — harness.run's carry_prior_cluster_triples() carries the
+  # prior committed triple forward unchanged, same as any fire without this opt-in.
+  # Usage:
+  #   gcloud builds triggers run hb-refresh-gke-sandbox --project=<PROJECT> \
+  #     --substitutions=_WARMPOOL_COLD_START_SWEEP_B64="$(base64 -w0 sweep.json)"
+  _WARMPOOL_COLD_START_SWEEP_B64: ""
 
 steps:
   # PRE-FIRE FUNCTIONAL PROBE: a policy READ (`gcloud projects get-iam-policy`)
@@ -352,6 +369,10 @@ steps:
       # exact name to opt into the gVisor Max Density saturation probe (see the
       # _HB_DENSITY_PROBE substitution comment above for the bounded-cost rationale).
       - "HB_DENSITY_PROBE=${_HB_DENSITY_PROBE}"
+      # Same direct pass-through shape — cb-measure-gke-sandbox.sh decodes this
+      # into a workspace file and exports BENCH_SLO_SWEEP_WARMPOOL_COLD_START from it
+      # (see the _WARMPOOL_COLD_START_SWEEP_B64 substitution comment above).
+      - "HB_WARMPOOL_COLD_START_SWEEP_B64=${_WARMPOOL_COLD_START_SWEEP_B64}"
     args:
       - scripts/cb-measure-gke-sandbox.sh
 
