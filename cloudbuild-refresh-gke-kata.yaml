@@ -343,6 +343,12 @@ steps:
           echo "No PR opened this run — nothing to notify."
           exit 0
         fi
+        # hb#765 fast-lane checker shells out to git (diff/show); python:3.12-slim
+        # ships none, so without this it FileNotFoundErrors and fail-closes to a
+        # spurious NOT-ELIGIBLE post on every numbers-only refresh. Best-effort:
+        # if the install fails the checker still fail-closes (advisory), so this
+        # must never red the notify step.
+        apt-get update -qq >/dev/null 2>&1 && apt-get install -y -qq --no-install-recommends git >/dev/null 2>&1 || echo "WARNING: git install failed — fast-lane will fail-closed (advisory, non-fatal)"
         PR_URL=$$(cat /workspace/pr_url.txt)
         cd /workspace
         PR_URL="$$PR_URL" python3 <<'PYEOF'
