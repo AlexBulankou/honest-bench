@@ -693,6 +693,14 @@ steps:
         _render = importlib.util.module_from_spec(_spec)
         _spec.loader.exec_module(_render)
 
+        # hb#765: fast-lane eligibility signal, loaded the same explicit-file-path
+        # way as render.py above (scripts/ is not normally on sys.path here).
+        _spec_fl = importlib.util.spec_from_file_location(
+            "_fastlane", "/workspace/scripts/check_fastlane_eligible.py"
+        )
+        _fastlane = importlib.util.module_from_spec(_spec_fl)
+        _spec_fl.loader.exec_module(_fastlane)
+
         with open("sandbox/results/latest.json") as fh:
             results = json.load(fh)
 
@@ -709,13 +717,38 @@ steps:
                 kata_results = json.load(fh)
 
         caveat = _render._north_star_delta_caveat(results, kata_results)
-        if not caveat:
-            print("No refresh-delta flag triggered — nothing to notify.")
+
+        # hb#765: run the fast-lane eligibility signal against the commit open-pr
+        # just made (HEAD) vs. the pre-refresh state (HEAD~1) -- advisory only,
+        # never blocks this step or the PR (see check_fastlane_eligible.py's module
+        # docstring). Fail CLOSED on the checker itself erroring, matching the
+        # checker's own fail-closed posture, so a checker bug never silently reads
+        # as a quiet ELIGIBLE.
+        try:
+            fl_eligible, fl_reasons = _fastlane.check("sandbox", "HEAD~1", "HEAD")
+        except Exception as exc:
+            fl_eligible, fl_reasons = False, [
+                "fast-lane checker itself errored: %s -- failing closed (NOT-ELIGIBLE)" % exc
+            ]
+        for _ln in fl_reasons:
+            print("[fastlane-eligible] " + _ln)
+        print("[fastlane-eligible] VERDICT: " + ("ELIGIBLE" if fl_eligible else "NOT-ELIGIBLE"))
+
+        if not caveat and fl_eligible:
+            print("No refresh-delta flag triggered and fast-lane ELIGIBLE — nothing to notify.")
             raise SystemExit(0)
 
         pr_url = os.environ["PR_URL"]
         webhook = os.environ["HB_SDEV_WEBHOOK"]
-        text = caveat + "\n\nResults PR: " + pr_url
+        msg_parts = []
+        if caveat:
+            msg_parts.append(caveat)
+        if not fl_eligible:
+            msg_parts.append(
+                "⚠️ fast-lane check: NOT-ELIGIBLE (not a provable numbers-only "
+                "refresh, needs a human read) -- " + "; ".join(fl_reasons)
+            )
+        text = "\n\n".join(msg_parts) + "\n\nResults PR: " + pr_url
         body = json.dumps({"text": text}).encode()
         req = urllib.request.Request(
             webhook, data=body, headers={"Content-Type": "application/json"}
