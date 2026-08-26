@@ -41,7 +41,7 @@
 #      (scripts/kata_unique_image_cold_ttfe_sweep.py) -> a second, independent
 #      BENCH_SLO_SWEEP record (one never-before-pulled image tag per claim, so
 #      containerd's layer cache can never mask a real cold pull) targeting the
-#      DIFFERENT native_digest_cold cell (a#7281 "Unique-image cold (RL
+#      DIFFERENT native_digest_cold cell (the "Unique-image cold (RL
 #      reality)" row) -- distinct from 4's warmpool_cold_start cell, so the two
 #      sweeps' triples land on different matrix rows with no cross-contamination
 #      (see the runtime-match + per-scenario-key merge in harness/run.py).
@@ -114,7 +114,7 @@ steps:
       # shell" holds — this build fires only sandbox-kata, and the derive path's
       # runtime-match gate on params.runtime_class guards cross-contamination.
       - "BENCH_SLO_SWEEP_WARMPOOL_COLD_START=/workspace/kata-cold-ttfe-sweep.json"
-      # Same mechanism, second independent sweep (a#7281): merges into the
+      # Same mechanism, second independent sweep: merges into the
       # DIFFERENT native_digest_cold cell (render/schema.py's
       # ACTIVATION_MODE_ROWS maps native_digest_cold -> "Unique-image cold (RL
       # reality)", a distinct matrix row from warmpool_cold_start above) so the
@@ -210,7 +210,7 @@ steps:
         KATA_SWEEP_OUT=/workspace/kata-cold-ttfe-sweep.json PYTHONPATH=/workspace \
           python3 scripts/kata_cold_ttfe_sweep.py
 
-        # Step 1b — honest kata UNIQUE-IMAGE cold step-up sweep (a#7281) -> a
+        # Step 1b — honest kata UNIQUE-IMAGE cold step-up sweep -> a
         # second, independent BENCH_SLO_SWEEP record. KATA_UNIQUE_IMAGE_SWEEP_OUT
         # is set in env: above; PYTHONPATH=/workspace for the same reason as
         # Step 1 (repo-root imports). Reuses WARMPOOL_COLD_START_RUNTIME_CLASS
@@ -384,7 +384,7 @@ options:
 # No cluster create/teardown, but the kata cold path is slower than gVisor: the
 # pool scales 0 -> N under the step-up sweep (VM boot + kata-runtime init) and the
 # full n=30 graduation suite (30-member warmup + 40 claims + 30 serial cold
-# microVM samples) runs against microVMs. The unique-image sweep (Step 1b, a#7281)
+# microVM samples) runs against microVMs. The unique-image sweep (Step 1b)
 # adds a handful of minutes (3 claims across 2 rungs, each a single cold microVM
 # boot) -- small next to the existing budget, but bumped slightly for headroom.
 timeout: 5700s
