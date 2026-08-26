@@ -154,6 +154,13 @@ _MIN_QUALIFIED_RATIO = float(
 # METRIC_LABELS registers their display labels (the render-side lane).
 _KEY_COUNT = "sandboxes_ready_under_1s"
 _KEY_DENSITY = "density_per_vcpu"
+# hb#737 rec-1: the density denominator, persisted alongside the ratio it
+# produces so a future investigation can read it straight from
+# sandbox-*/results/latest.json instead of reverse-engineering it from
+# count/density (or re-deriving it from a live cluster query that has since
+# moved on). Not in render/schema.py's METRIC_LABELS by design — this is a
+# forensic field for the raw JSON, not a new public table column.
+_KEY_TOTAL_VCPU = "total_vcpu"
 
 # Additive literal-TTFE corroboration (#3954). Default-OFF: at the default the
 # page is byte-unchanged (only the Ready+bound headline emits). When
@@ -514,6 +521,11 @@ def _classify_burst(
     never bound. Returns (passed, breakdown, sla_metrics):
       - sandboxes_ready_under_1s = count of claims with TTFI < ttfi_ceiling_s
       - density_per_vcpu = that count / total_vcpu (0.0 if vcpu unknown)
+      - total_vcpu = the density denominator itself (hb#737 rec-1) — persisted
+        so a future investigation can read the exact cluster capacity this
+        fire measured against, without reverse-engineering it from the other
+        two numbers or re-querying a cluster whose node count has since moved
+        (GKE's scale-down cooldown makes the live count timing-sensitive).
       - passed iff count >= ceil(claim_count * min_qualified_ratio)
     sla_metrics is ALWAYS emitted (hb#709) — count == 0 is a real, honest
     measurement ("not fast enough" per the spec doc), not an absence. Prior
@@ -548,6 +560,7 @@ def _classify_burst(
     sla_metrics = {
         _KEY_COUNT: float(count_under),
         _KEY_DENSITY: density,
+        _KEY_TOTAL_VCPU: total_vcpu,
         "n": claim_count,
     }
 

@@ -19,6 +19,7 @@ except ModuleNotFoundError:  # repo-root pytest: scenarios/ is a package, not on
 
 _KC = cell._KEY_COUNT       # "sandboxes_ready_under_1s"
 _KD = cell._KEY_DENSITY     # "density_per_vcpu"
+_KTV = cell._KEY_TOTAL_VCPU  # "total_vcpu" (hb#737 rec-1 denominator persistence)
 _KEC = cell._KEY_EXEC_COUNT  # "sandboxes_exec_under_1s" (#3954 corroboration)
 _KER = cell._KEY_EXEC_RATE   # "exec_success_rate" (#3954 corroboration)
 
@@ -118,7 +119,7 @@ def test_zero_under_emits_explicit_zero_metrics():
     )
     assert passed is False
     assert bd["count_under"] == 0
-    assert sla == {_KC: 0.0, _KD: 0.0, "n": 3}
+    assert sla == {_KC: 0.0, _KD: 0.0, _KTV: 2.0, "n": 3}
 
 
 def test_partial_delivery_fails_but_surfaces_real_count():
@@ -130,6 +131,19 @@ def test_partial_delivery_fails_but_surfaces_real_count():
     assert passed is False
     assert sla[_KC] == 5.0
     assert sla[_KD] == 1.0                  # 5 / 5
+
+
+def test_total_vcpu_persisted_alongside_density():
+    # hb#737 rec-1: the density denominator is published, not just logged, so a
+    # future investigation can read the exact capacity a fire measured against
+    # straight from latest.json instead of reverse-engineering it from the
+    # other two numbers or re-querying a cluster whose node count has moved on.
+    _, bd, sla = cell._classify_burst(
+        _ttfis(*([0.2] * 8)),
+        claim_count=8, ttfi_ceiling_s=1.0, total_vcpu=4.0, min_qualified_ratio=0.8,
+    )
+    assert sla[_KTV] == 4.0
+    assert sla[_KTV] == bd["total_vcpu"]    # sla_metrics mirrors breakdown, not a re-derivation
 
 
 # ---- _parse_cpu_quantity ----
