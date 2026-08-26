@@ -553,6 +553,14 @@ fi
 if [ -n "${BENCH_SCALE_SLOPE:-}" ]; then
   export SCALE_SLOPE_MAX_GVISOR_NODES="$MAX_NODES"
   echo "==> scale-slope sweep enabled, max_gvisor_nodes=$MAX_NODES (pinned to this fire's provisioned ceiling)"
+  # Opt-in override of which node counts the sweep visits (default in-code "1,2,4"
+  # in harness/scenarios/scale_slope.py). Independent of the ceiling above — this
+  # picks the rungs, not the autoscale limit. Empty (the common case) leaves the
+  # code default untouched.
+  if [ -n "${HB_SCALE_SLOPE_NODE_COUNTS:-}" ]; then
+    export SCALE_SLOPE_NODE_COUNTS="$HB_SCALE_SLOPE_NODE_COUNTS"
+    echo "==> scale-slope node_counts override: $SCALE_SLOPE_NODE_COUNTS"
+  fi
 fi
 
 echo "==> running sandbox harness (gke-sandbox / gVisor)"
