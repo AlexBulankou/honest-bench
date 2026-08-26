@@ -48,6 +48,8 @@ blocker — diagnosis plus file-ready patches and comments — is hand-maintaine
 
 _⚠️ **Scenario FAIL:** **gVisor** Warm-pool hit (Base image); **Kata + microVM** Warm-pool hit (Base image) — the row above carries a real measurement whose own scenario outcome is **FAIL** (SLA not met), not a passing warm hit. The numbers are honest data, disclosed as a miss rather than dropped or greened; a later refresh whose scenario returns to PASS clears this._
 
+_ℹ️ **Basis-change note:** the **Kata + microVM** Warm-pool hit p95 in the row above reflects a **true-TTFE basis graduation** (hb#740, confirmed sound by the hb#764 `convert_kata_cold()` fix) off an older ~2.24s proxy-timing baseline — not a controller performance regression. The cell moved off an earlier proxy basis onto a genuine measured TTFE; post-graduation refreshes vary within that new, tighter-truth basis. Don't burn a bisect chasing this shift._
+
 ### Max Density (sandboxes per vCPU)
 
 Density is per-**runtime** — constant across a runtime's activation-mode rows above, so it renders as a compact per-runtime sub-table here rather than a matrix column (a column would repeat each value down the mode rows and imply a mode-dependence that does not exist). Full methodology (per-vCPU denominator, saturation source) is in [DETAILS.md](DETAILS.md).
