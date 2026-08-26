@@ -426,6 +426,7 @@ def run_probe() -> dict:
     hold_s = int(os.environ.get("DENSITY_PROBE_HOLD_S", "90"))
     poll_s = int(os.environ.get("DENSITY_PROBE_POLL_S", "10"))
     timeout_s = int(os.environ.get("DENSITY_PROBE_TIMEOUT_S", "1200"))
+    teardown_wait_s = int(os.environ.get("DENSITY_PROBE_TEARDOWN_WAIT_S", "180"))
     image = os.environ.get("DENSITY_PROBE_IMAGE", "busybox:1.36")
     if not runtime_class:
         raise SystemExit(
@@ -494,6 +495,17 @@ def run_probe() -> dict:
                 break
     finally:
         _cleanup(custom, pool_name=pool_name, template_name=template_name)
+        cleared = _wait_for_target_clear(
+            core_v1, node_name=target["name"],
+            timeout_s=teardown_wait_s, poll_s=poll_s,
+        )
+        if not cleared:
+            log.warning(
+                "teardown wait timed out after %ds — probe pods may still be "
+                "terminating on %s; the next scenario may race for node "
+                "capacity (cell-downgrade risk)",
+                teardown_wait_s, target["name"],
+            )
 
     if counts.get("wrong_runtime") or counts.get("wrong_node"):
         raise RuntimeError(
@@ -517,6 +529,37 @@ def run_probe() -> dict:
                 for k, v in counts.items()},
         poll_history=history,
     )
+
+
+def _wait_for_target_clear(
+    core_v1, *, node_name: str, timeout_s: int, poll_s: int,
+) -> bool:
+    """Poll until no probe pods remain on the target node, or timeout.
+
+    ``_cleanup()`` only ISSUES the WarmPool/Template deletes — the resulting
+    cascade-deleted pods (up to the replica ceiling, i.e. potentially dozens
+    of heavy sandbox microVMs) take real wall-clock time to actually
+    terminate and free the node. Returning before they're gone lets the very
+    next scenario's own WarmPool race those still-terminating pods for the
+    same node's capacity, silently degrading its claim-binding latency (the
+    mechanism behind a same-fire cell-downgrade: claims still bind, just past
+    the 1.0s TTFI ceiling, because the node was still busy tearing down this
+    probe). Best-effort: returns False on timeout rather than raising — a
+    stuck teardown must never block the run, but IS worth a loud log line so
+    the caller can attribute a downstream density degradation to it.
+    """
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        pods = _list_probe_pods_raw(core_v1, _NAMESPACE)
+        remaining = [p for p in pods if is_probe_pod(p, node_name=node_name)]
+        if not remaining:
+            return True
+        log.info(
+            "waiting for %d probe pod(s) to finish terminating on %s",
+            len(remaining), node_name,
+        )
+        time.sleep(poll_s)
+    return False
 
 
 def _cleanup(custom, *, pool_name: str, template_name: str) -> None:
