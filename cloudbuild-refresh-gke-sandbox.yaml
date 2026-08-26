@@ -223,6 +223,24 @@ substitutions:
   #   gcloud builds triggers run hb-refresh-gke-sandbox --project=<PROJECT> \
   #     --substitutions=_WARMPOOL_COLD_START_SWEEP_B64="$(base64 -w0 sweep.json)"
   _WARMPOOL_COLD_START_SWEEP_B64: ""
+  # Opt-in Linearity multi-node sweep (harness/scenarios/scale_slope.py).
+  # In-process, runs against THIS fire's own ephemeral cluster (no separate sweep
+  # payload/collision-ack needed, unlike _WARMPOOL_COLD_START_SWEEP_B64 above —
+  # scale_slope.py resizes the SAME hb-gvisor-pool node pool this pipeline already
+  # provisions and tears down). Direct pass-through, no script-side translation:
+  # harness/run.py's maybe_scale_proof() reads BENCH_SCALE_SLOPE from the
+  # environment by this exact name, dual-gated on product=="sandbox". Its own
+  # SCALE_SLOPE_MAX_GVISOR_NODES autoscale ceiling is separately exported by
+  # cb-measure-gke-sandbox.sh from the same $MAX_NODES the cluster was actually
+  # provisioned with (see _MAX_NODES above), so the sweep's headroom always
+  # matches the real cluster rather than assuming autoscale beyond it. Emits
+  # {} (no partial series) unless >=2 distinct node-count points and a real
+  # (nonzero) base density complete cleanly — never a half-series, per its own
+  # honesty contract. Default empty ⇒ INERT — the standing daily fire is
+  # unaffected. Usage:
+  #   gcloud builds triggers run hb-refresh-gke-sandbox --project=<PROJECT> \
+  #     --substitutions=_BENCH_SCALE_SLOPE=1
+  _BENCH_SCALE_SLOPE: ""
 
 steps:
   # PRE-FIRE FUNCTIONAL PROBE: a policy READ (`gcloud projects get-iam-policy`)
@@ -373,6 +391,14 @@ steps:
       # into a workspace file and exports BENCH_SLO_SWEEP_WARMPOOL_COLD_START from it
       # (see the _WARMPOOL_COLD_START_SWEEP_B64 substitution comment above).
       - "HB_WARMPOOL_COLD_START_SWEEP_B64=${_WARMPOOL_COLD_START_SWEEP_B64}"
+      # Direct pass-through, no script-side translation needed —
+      # harness/run.py's maybe_scale_proof() reads BENCH_SCALE_SLOPE from the
+      # environment by this exact name (see the _BENCH_SCALE_SLOPE substitution
+      # comment above for the rationale). SCALE_SLOPE_MAX_GVISOR_NODES is exported
+      # separately by cb-measure-gke-sandbox.sh itself, from the same $MAX_NODES
+      # variable used to provision the cluster below — not here, since that value
+      # isn't known until the script computes it.
+      - "BENCH_SCALE_SLOPE=${_BENCH_SCALE_SLOPE}"
     args:
       - scripts/cb-measure-gke-sandbox.sh
 
