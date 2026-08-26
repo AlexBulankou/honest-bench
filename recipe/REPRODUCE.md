@@ -100,11 +100,11 @@ time. It publishes two numbers:
 **Read `sandboxes_ready_under_1s` first when triaging a regression; treat
 `density_per_vcpu` as a secondary, noisier signal.** The denominator behind
 `density_per_vcpu` (`total_vcpu`, also published in `sla_metrics` since
-honest-bench#737's rec-1) is a live `list_node()` sum taken at classify time, not
-the pool-fill-time node count — so it can float 2-4x higher than the fire's
-intended shape if the cluster autoscaler is mid-scale-down (GKE's default
+honest-bench#737's rec-1) is a live `list_node()` sum taken before the burst
+starts, not the pool-fill-time node count — so it can float 2-4x higher than the
+fire's intended shape if the cluster autoscaler is mid-scale-down (GKE's default
 scale-down cooldown is ~10 min) from an unrelated, concurrent scenario. A larger
-live node count at classify time mechanically depresses `density_per_vcpu` even
+live node count at that pre-burst moment mechanically depresses `density_per_vcpu` even
 when the raw throughput is unchanged, so a density drop alone conflates two
 different things: "fewer sandboxes went Ready in time" vs. "the cluster happened
 to have more nodes online at that instant." `sandboxes_ready_under_1s` is immune
