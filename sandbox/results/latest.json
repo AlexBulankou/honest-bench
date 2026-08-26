@@ -93,7 +93,7 @@
     "measured_at": "2026-06-30",
     "node_count": 20
   },
-  "generated_at": "2026-08-26T02:05:08Z",
+  "generated_at": "2026-08-26T03:48:09Z",
   "kata_activation": {
     "cold_ready": [
       {
@@ -127,13 +127,12 @@
     "machine_type": "n2-standard-16",
     "node_count": 2,
     "node_image": "v1.36.3-gke.1537000",
-    "prior_controller_digest": "sha256:cd69601f8fd3a61b76e46e5e6b711d3253ee5829c38aa11e06345d83e1471d9b",
-    "prior_suite_git_sha": "33a89609a6bc85c10a8143ecd84c75827f25418d",
-    "prior_warmpool_ttfe_p95_ms": 15789.6,
-    "run_id": "10da1dceedce441099597fa09cfd5143",
+    "prior_suite_git_sha": "685e1edc77951425160a9a7bcf9b1a6e21cdcbee",
+    "prior_warmpool_ttfe_p95_ms": 8178.8,
+    "run_id": "7f0d33de63c84f318c9613afdd32b0e5",
     "runsc_version": "directory",
     "runtime": "gvisor",
-    "suite_git_sha": "685e1edc77951425160a9a7bcf9b1a6e21cdcbee"
+    "suite_git_sha": "d28c1083d1c5fed6a1d9f93d50cb93ad00111754"
   },
   "provisioning_rate_sweep": {
     "ceiling_high_per_s": 150.0,
@@ -200,10 +199,10 @@
       "name": "burst_create",
       "outcome": "FAIL",
       "sla_metrics": {
-        "density_per_vcpu": 0.046875,
+        "density_per_vcpu": 0.0625,
         "exec_success_rate": 1.0,
-        "sandboxes_exec_under_1s": 0.0,
-        "sandboxes_ready_under_1s": 3.0
+        "sandboxes_exec_under_1s": 3.0,
+        "sandboxes_ready_under_1s": 5.0
       }
     },
     {
@@ -215,22 +214,26 @@
       "name": "warmpool_cold_start",
       "outcome": "PASS",
       "sla_metrics": {
-        "bind_p50_ms": 4773.0,
-        "bind_p95_ms": 6406.8,
+        "bind_p50_ms": 2169.5,
+        "bind_p95_ms": 2825.9,
         "density_per_vcpu": 6.23,
-        "exec_p50_ms": 1420.4,
-        "exec_p95_ms": 2567.3,
+        "exec_p50_ms": 635.5,
+        "exec_p95_ms": 985.6,
         "exec_success_rate": 1.0,
+        "thpt_cluster_node_count": 4.0,
+        "thpt_slo_basis": "true_ttfe",
+        "thpt_under_1s_per_cluster": 9.336,
         "thpt_under_1s_per_node": 0.0,
-        "thpt_under_5s_per_node": 0.285,
-        "ttfe_p50_ms": 5902.1,
-        "ttfe_p95_ms": 8178.8,
-        "warmpool_gate_cold_min_ms": 3355.8749919998263,
-        "warmpool_gate_cold_p50_ms": 14758.900672499976,
+        "thpt_under_5s_per_cluster": 9.336,
+        "thpt_under_5s_per_node": 3.977,
+        "ttfe_p50_ms": 2804.8,
+        "ttfe_p95_ms": 3432.0,
+        "warmpool_gate_cold_min_ms": 7085.239700999978,
+        "warmpool_gate_cold_p50_ms": 8309.696748000022,
         "warmpool_gate_min_ready_during_burst": 2.0,
-        "warmpool_gate_separation_ratio": 3.0921421983064405,
-        "warmpool_gate_warm_max_ms": 6968.962027999623,
-        "warmpool_gate_warm_p50_ms": 4773.034267500179
+        "warmpool_gate_separation_ratio": 3.830178781568364,
+        "warmpool_gate_warm_max_ms": 2934.9117399999614,
+        "warmpool_gate_warm_p50_ms": 2169.532343500009
       }
     },
     {
@@ -242,13 +245,13 @@
       "name": "native_digest_cold",
       "outcome": "PASS",
       "sla_metrics": {
-        "bind_p50_ms": 3202.5,
-        "bind_p95_ms": 4134.4,
-        "exec_p50_ms": 516.1,
-        "exec_p95_ms": 1058.4,
+        "bind_p50_ms": 2791.7,
+        "bind_p95_ms": 6479.7,
+        "exec_p50_ms": 453.1,
+        "exec_p95_ms": 570.3,
         "exec_success_rate": 1.0,
-        "ttfe_p50_ms": 3728.2,
-        "ttfe_p95_ms": 4821.5
+        "ttfe_p50_ms": 3244.3,
+        "ttfe_p95_ms": 6925.9
       }
     },
     {
@@ -257,10 +260,10 @@
       "outcome": "PASS",
       "sla_metrics": {
         "exec_success_rate": 1.0,
-        "suspend_latency_ms": 2342.7,
-        "suspend_p90_ms": 2423.8,
-        "ttfe_p50_ms": 4945.5,
-        "ttfe_p95_ms": 5928.4
+        "suspend_latency_ms": 2266.8,
+        "suspend_p90_ms": 2290.8,
+        "ttfe_p50_ms": 4691.1,
+        "ttfe_p95_ms": 12134.1
       }
     },
     {
@@ -268,8 +271,8 @@
       "name": "session_turnover",
       "outcome": "PASS",
       "sla_metrics": {
-        "refill_latency_ms": 1309.2400909999924,
-        "refill_p90_ms": 2059.80061199989
+        "refill_latency_ms": 1215.2181419999124,
+        "refill_p90_ms": 1519.917618000136
       }
     },
     {
@@ -308,12 +311,12 @@
     "warmpool_size": 600
   },
   "warm_vs_cold": {
-    "cold_ms": 3728.2,
-    "measured_at": "2026-08-26T02:05:08Z",
+    "cold_ms": 3244.3,
+    "measured_at": "2026-08-26T03:48:09Z",
     "n_warm": 10,
     "runtime_class": "gvisor",
     "semantic": "ttfe",
-    "speedup": 2.068,
-    "warm_p50_ms": 1803.2
+    "speedup": 2.161,
+    "warm_p50_ms": 1501.4
   }
 }
