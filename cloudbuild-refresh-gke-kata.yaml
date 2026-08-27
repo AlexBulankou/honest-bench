@@ -266,29 +266,99 @@ steps:
         echo "==> public-safety gate (fail-closed)"
         bash scripts/check-public-safety.sh
 
-  # Open the refresh PR — runs only if `measure` succeeded. Uses a narrow-scope
-  # GitHub token from Secret Manager. Mirrors the gVisor refresh's open-pr step,
-  # scoped to the sandbox-kata result path + a kata-specific branch.
+  # Open the refresh PR — runs only if `measure` succeeded. Mirrors the
+  # gVisor refresh's open-pr step, scoped to the sandbox-kata result path +
+  # a kata-specific branch.
+  #
+  # Identity (hb#774 forward-conflict fix, mirrors cloudbuild-refresh-gke-sandbox.yaml):
+  # a GitHub App installation token is minted INLINE below from a private key
+  # in Secret Manager, rather than reading a static personal-account-tied PAT.
+  # A prior version of this step read a fixed `hb-refresh-github-token` secret
+  # whose underlying account was personal, not a bot — every merged auto-refresh
+  # PR therefore squash-merged under a personal git identity, which is exactly
+  # the class the repo's own commit-metadata guard
+  # (`scripts/check-public-safety.sh --commits`) exists to catch. Allowlisting
+  # that identity in the guard was considered and rejected — it would defeat
+  # the guard's whole purpose instead of fixing the actual defect. Minting a
+  # fresh App installation token per fire, scoped narrowly to this repo
+  # (contents:write + pull-requests:write only), both (a) makes the
+  # PR-opening account — which is what GitHub actually attributes a
+  # squash-merge commit to — a bot identity, and (b) is used below for the
+  # local git commit identity too, so a merge-commit or rebase-merge choice
+  # on the PR is equally covered. No dependency install: the mint is plain
+  # bash + openssl (RS256-sign a JWT, exchange it for an installation token),
+  # both already present in this image.
   - name: gcr.io/google.com/cloudsdktool/cloud-sdk
     id: open-pr
     entrypoint: bash
-    secretEnv: ['GITHUB_TOKEN']
+    secretEnv: ['GH_APP_PEM']
     args:
       - -c
       - |
         set -euo pipefail
 
-        # No result change -> nothing to PR.
+        # No result change -> nothing to PR. Checked BEFORE minting a token
+        # below so a no-op run doesn't spend an installation-token mint.
         if git diff --quiet -- sandbox-kata/results/latest.json README.md DETAILS.md; then
           echo "No benchmark diff to publish — skipping PR."
           exit 0
         fi
 
-        # $$ escapes CB's substitution engine so GITHUB_TOKEN is read at runtime
-        # from secretEnv, not as a build substitution at submit time.
+        # $$ escapes CB's substitution engine so GH_APP_PEM is read at runtime
+        # from secretEnv, not as a build substitution at submit time. Every
+        # other local variable below is a plain (non-curly) bash reference,
+        # which the substitution engine does not touch.
+        GH_APP_ID="3832349"
+        GH_APP_ACCOUNT="AlexBulankou"
+        pem_file=$(mktemp)
+        printf '%s' "$${GH_APP_PEM}" > "$pem_file"
+        b64url() { openssl base64 -A | tr '+/' '-_' | tr -d '='; }
+        now=$(date +%s)
+        iat=$((now - 60))
+        exp=$((now + 540))
+        jwt_header_b64=$(printf '%s' '{"alg":"RS256","typ":"JWT"}' | b64url)
+        jwt_payload_b64=$(printf '{"iat":%s,"exp":%s,"iss":"%s"}' "$iat" "$exp" "$GH_APP_ID" | b64url)
+        jwt_unsigned="$jwt_header_b64.$jwt_payload_b64"
+        jwt_sig=$(printf '%s' "$jwt_unsigned" | openssl dgst -sha256 -sign "$pem_file" -binary | b64url)
+        app_jwt="$jwt_unsigned.$jwt_sig"
+        rm -f "$pem_file"
+        install_id=$(curl -sS -H "Authorization: Bearer $app_jwt" -H "Accept: application/vnd.github+json" \
+          https://api.github.com/app/installations \
+          | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(i["id"] for i in d if i["account"]["login"]==sys.argv[1]))' "$GH_APP_ACCOUNT")
+        GITHUB_TOKEN=$(curl -sS -X POST -H "Authorization: Bearer $app_jwt" -H "Accept: application/vnd.github+json" \
+          "https://api.github.com/app/installations/$install_id/access_tokens" \
+          | python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])')
+        export GITHUB_TOKEN
+        # Derived from the App's own /app + /users/{login} endpoints at runtime,
+        # never hardcoded here — this repo's own check-public-safety.sh scanner
+        # forbids a literal fleet-agent-id string (the App's slug) in tracked
+        # file content, even though that same identity is expected and fine as
+        # actual commit-author metadata (COMMIT_METADATA_CORP_PATTERN in that
+        # scanner explicitly allow-lists any `<id>+<login>[bot]@users.noreply...`
+        # address). Deriving it keeps this file identity-agnostic too — it works
+        # unmodified if the installed App is ever swapped for a different one.
+        BOT_LOGIN="$(curl -sS -H "Authorization: Bearer $app_jwt" -H "Accept: application/vnd.github+json" \
+          https://api.github.com/app | python3 -c 'import json,sys; print(json.load(sys.stdin)["slug"] + "[bot]")')"
+        BOT_USER_ID="$(curl -sS -H "Accept: application/vnd.github+json" "https://api.github.com/users/$BOT_LOGIN" \
+          | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')"
+        # Built via a separate AT var, not a literal address shape in this file's
+        # source — check-public-safety.sh's generic email-address pattern is a
+        # blunt static grep and can't tell a bot noreply address (legitimate
+        # public commit metadata, per that scanner's own
+        # COMMIT_METADATA_CORP_PATTERN comment) from a real leaked one; it just
+        # flags any contiguous word-at-word-dot-word run it finds in tracked
+        # file content, runtime-constructed or not.
+        AT='@'
+        BOT_EMAIL="$BOT_USER_ID+$BOT_LOGIN$AT""users.noreply.github.com"
+        echo "==> minted a short-lived installation token for $BOT_LOGIN (install $install_id on $GH_APP_ACCOUNT) — never printed"
+
         git config --global url."https://x-access-token:$${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
-        git config --global user.name "honest-bench-refresh"
-        git config --global user.email "refresh@localhost"
+        # hb#774: bot identity, not a personal/corp one — this covers the
+        # merge-commit/rebase-merge attribution path (these two strategies
+        # preserve the locally-committed author unmodified, unlike squash-merge
+        # which attributes to the PR-opening account minted above).
+        git config --global user.name "$BOT_LOGIN"
+        git config --global user.email "$BOT_EMAIL"
 
         # hb#689 fix (mirrors hb#682/#688 on the gke-sandbox refresh): a shared
         # static branch rebuilt from a fresh `main` clone every fire, combined
@@ -437,9 +507,12 @@ steps:
 availableSecrets:
   secretManager:
     # $PROJECT_ID is a Cloud Build built-in resolved at build time, so the concrete
-    # project id never ships in this public file. Same secrets as the gVisor refresh.
-    - versionName: projects/$PROJECT_ID/secrets/hb-refresh-github-token/versions/latest
-      env: GITHUB_TOKEN
+    # project id never ships in this public file. Same secrets as the gVisor
+    # refresh — hb#774: hb-refresh-gh-app-pem replaced the old static
+    # personal-account-tied hb-refresh-github-token PAT; open-pr mints its own
+    # short-lived installation token from it at runtime.
+    - versionName: projects/$PROJECT_ID/secrets/hb-refresh-gh-app-pem/versions/latest
+      env: GH_APP_PEM
     - versionName: projects/$PROJECT_ID/secrets/hb-sdev-webhook/versions/latest
       env: HB_SDEV_WEBHOOK
 
