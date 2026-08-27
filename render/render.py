@@ -953,6 +953,27 @@ def render_trend(history_rows, latest_results=None):
         "scenarios), not a build-over-build regression._"
     )
     lines.append("")
+    # hb#737: the trailing FAIL streak above (COUNT collapsed to a handful of sandboxes per
+    # burst) is a confirmed, root-caused upstream regression, not an open mystery — a
+    # zero-confound single-commit bisect (paired diagnostic fires, parent vs. child) isolated
+    # agent-sandbox#1454 as the sole cause of the additional collapse, compounding on a partial
+    # prior contribution from agent-sandbox#1078. Both land in the reconcile hot path
+    # (warmCandidateRetryInterval 5x tighter + a new synchronous authoritative Get on the
+    # AlreadyExists collision path). No fix is ours to ship (upstream PR authorship needs
+    # alex's explicit per-PR ask, AGENTS.md #6664) — this cell stays honestly RED until the
+    # upstream fixes land. Gated on the newest row's own Outcome, so this self-clears the
+    # moment a later build recovers the COUNT — no specific post-fix figure is cited here, so
+    # this note can't drift stale against a future refresh's numbers.
+    if rows[-1]["outcome"] == "FAIL":
+        lines.append(
+            "_ℹ️ **Root-caused regression (hb#737):** the trailing FAIL streak above is a "
+            "confirmed upstream regression, not an open mystery — a zero-confound bisect "
+            "isolated **agent-sandbox#1454** (confirmed, compounding) on top of a partial "
+            "prior contribution from **agent-sandbox#1078**, both in the create/bind reconcile "
+            "hot path. No fix is ours to ship; this cell stays honestly RED until the upstream "
+            "fixes land._"
+        )
+        lines.append("")
     # Trend-vs-latest divergence guard (see docstring): when the newest fire measured the
     # headline COUNT but its build is not the newest row above, the trend has silently frozen —
     # say so on the page instead of rendering the last row as if it were current.
