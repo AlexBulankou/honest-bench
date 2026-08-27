@@ -470,7 +470,7 @@ steps:
         # #1474 foot-gun; the engine scans the whole step string, comments
         # included — avoid the single-dollar-brace form even here). CB's
         # substitution scan also fires on BARE (non-curly) uppercase
-        # references, not just the curly `${VAR}` form (hb#775 live-fire
+        # references, not just the curly `$${VAR}` form (hb#775 live-fire
         # bug: `gcloud builds triggers run` rejected the whole build with
         # "key ... GH_APP_ID ... is not a valid built-in substitution"
         # before a single step ran) — every uppercase local below is
@@ -699,7 +699,7 @@ steps:
         # personal PAT everywhere is the cleaner end state now that open-pr no
         # longer needs it either.
         # hb#775 live-fire bug: CB's substitution scan also fires on BARE
-        # (non-curly) uppercase references, not just `${VAR}` — every
+        # (non-curly) uppercase references, not just `$${VAR}` — every
         # uppercase local below is `$$`-escaped for that reason (see the
         # open-pr step's matching comment for the full explanation).
         GH_APP_ID="3832349"
