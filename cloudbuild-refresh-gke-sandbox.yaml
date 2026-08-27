@@ -465,62 +465,15 @@ steps:
       - |
         set -euo pipefail
 
-        # $$ escapes CB's substitution engine so GH_APP_PEM is read at runtime
-        # from secretEnv, not as a build substitution at submit time (the
-        # #1474 foot-gun; the engine scans the whole step string, comments
-        # included — avoid the single-dollar-brace form even here). CB's
-        # substitution scan also fires on BARE (non-curly) uppercase
-        # references, not just the curly `$${VAR}` form (hb#775 live-fire
-        # bug: `gcloud builds triggers run` rejected the whole build with
-        # "key ... GH_APP_ID ... is not a valid built-in substitution"
-        # before a single step ran) — every uppercase local below is
-        # `$$`-escaped for that reason. Lowercase locals (iat, exp,
-        # pem_file, jwt_*, app_jwt, install_id, ...) are genuinely exempt:
-        # CB substitution names must be uppercase, so the scanner never
-        # matches a lowercase reference in the first place.
+        # hb#775/#776/#777: JWT-mint+bot-identity block extracted to
+        # scripts/mint-gh-app-token.sh (was inline+duplicated 3x, eventually
+        # pushing this step past CB's per-arg 10000-char limit). That file is
+        # never scanned by CB's substitution engine, so no $$-escaping needed
+        # inside it -- see its header for the full contract.
         GH_APP_ID="3832349"
         GH_APP_ACCOUNT="AlexBulankou"
-        pem_file=$(mktemp)
-        printf '%s' "$${GH_APP_PEM}" > "$pem_file"
-        b64url() { openssl base64 -A | tr '+/' '-_' | tr -d '='; }
-        now=$(date +%s)
-        iat=$((now - 60))
-        exp=$((now + 540))
-        jwt_header_b64=$(printf '%s' '{"alg":"RS256","typ":"JWT"}' | b64url)
-        jwt_payload_b64=$(printf '{"iat":%s,"exp":%s,"iss":"%s"}' "$iat" "$exp" "$${GH_APP_ID}" | b64url)
-        jwt_unsigned="$jwt_header_b64.$jwt_payload_b64"
-        jwt_sig=$(printf '%s' "$jwt_unsigned" | openssl dgst -sha256 -sign "$pem_file" -binary | b64url)
-        app_jwt="$jwt_unsigned.$jwt_sig"
-        rm -f "$pem_file"
-        install_id=$(curl -sS -H "Authorization: Bearer $app_jwt" -H "Accept: application/vnd.github+json" \
-          https://api.github.com/app/installations \
-          | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(i["id"] for i in d if i["account"]["login"]==sys.argv[1]))' "$${GH_APP_ACCOUNT}")
-        GITHUB_TOKEN=$(curl -sS -X POST -H "Authorization: Bearer $app_jwt" -H "Accept: application/vnd.github+json" \
-          "https://api.github.com/app/installations/$install_id/access_tokens" \
-          | python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])')
-        export GITHUB_TOKEN
-        # Derived from the App's own /app + /users/{login} endpoints at runtime,
-        # never hardcoded here — this repo's own check-public-safety.sh scanner
-        # forbids a literal fleet-agent-id string (the App's slug) in tracked
-        # file content, even though that same identity is expected and fine as
-        # actual commit-author metadata (COMMIT_METADATA_CORP_PATTERN in that
-        # scanner explicitly allow-lists any `<id>+<login>[bot]@users.noreply...`
-        # address). Deriving it keeps this file identity-agnostic too — it works
-        # unmodified if the installed App is ever swapped for a different one.
-        BOT_LOGIN="$(curl -sS -H "Authorization: Bearer $app_jwt" -H "Accept: application/vnd.github+json" \
-          https://api.github.com/app | python3 -c 'import json,sys; print(json.load(sys.stdin)["slug"] + "[bot]")')"
-        BOT_USER_ID="$(curl -sS -H "Accept: application/vnd.github+json" "https://api.github.com/users/$${BOT_LOGIN}" \
-          | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')"
-        # Built via a separate AT var, not a literal address shape in this file's
-        # source — check-public-safety.sh's generic email-address pattern is a
-        # blunt static grep and can't tell a bot noreply address (legitimate
-        # public commit metadata, per that scanner's own
-        # COMMIT_METADATA_CORP_PATTERN comment) from a real leaked one; it just
-        # flags any contiguous word-at-word-dot-word run it finds in tracked
-        # file content, runtime-constructed or not.
-        AT='@'
-        BOT_EMAIL="$${BOT_USER_ID}+$${BOT_LOGIN}$${AT}""users.noreply.github.com"
-        echo "==> minted a short-lived installation token for $${BOT_LOGIN} (install $install_id on $${GH_APP_ACCOUNT}) — never printed"
+        MINT_BOT_IDENTITY=1
+        source scripts/mint-gh-app-token.sh
 
         # Freshness self-declaration: advance the stamp BEFORE the skip-guard so EVERY
         # fire re-anchors it. verify-upstream-freshness.py --update-stamp cross-checks
@@ -698,30 +651,15 @@ steps:
         # the corp-identity commit-metadata defect — but staying off the
         # personal PAT everywhere is the cleaner end state now that open-pr no
         # longer needs it either.
-        # hb#775 live-fire bug: CB's substitution scan also fires on BARE
-        # (non-curly) uppercase references, not just `$${VAR}` — every
-        # uppercase local below is `$$`-escaped for that reason (see the
-        # open-pr step's matching comment for the full explanation).
+        # hb#775/#776/#777: this JWT-mint block used to be inline here (and
+        # duplicated in open-pr above, and again in gke-kata's open-pr) --
+        # extracted to scripts/mint-gh-app-token.sh, which is never scanned by
+        # CB's substitution engine at all, so no $$-escaping is needed inside
+        # it -- see that file's header for the full contract. This step
+        # doesn't need MINT_BOT_IDENTITY (no `git config` here).
         GH_APP_ID="3832349"
         GH_APP_ACCOUNT="AlexBulankou"
-        pem_file=$(mktemp)
-        printf '%s' "$${GH_APP_PEM}" > "$pem_file"
-        b64url() { openssl base64 -A | tr '+/' '-_' | tr -d '='; }
-        now=$(date +%s)
-        iat=$((now - 60))
-        exp=$((now + 540))
-        jwt_header_b64=$(printf '%s' '{"alg":"RS256","typ":"JWT"}' | b64url)
-        jwt_payload_b64=$(printf '{"iat":%s,"exp":%s,"iss":"%s"}' "$iat" "$exp" "$${GH_APP_ID}" | b64url)
-        jwt_unsigned="$jwt_header_b64.$jwt_payload_b64"
-        jwt_sig=$(printf '%s' "$jwt_unsigned" | openssl dgst -sha256 -sign "$pem_file" -binary | b64url)
-        app_jwt="$jwt_unsigned.$jwt_sig"
-        rm -f "$pem_file"
-        install_id=$(curl -sS -H "Authorization: Bearer $app_jwt" -H "Accept: application/vnd.github+json" \
-          https://api.github.com/app/installations \
-          | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(i["id"] for i in d if i["account"]["login"]==sys.argv[1]))' "$${GH_APP_ACCOUNT}")
-        GITHUB_TOKEN=$(curl -sS -X POST -H "Authorization: Bearer $app_jwt" -H "Accept: application/vnd.github+json" \
-          "https://api.github.com/app/installations/$install_id/access_tokens" \
-          | python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])')
+        source scripts/mint-gh-app-token.sh
 
         api="https://api.github.com/repos/AlexBulankou/honest-bench"
         prefix="auto/refresh-gke-sandbox-upstream-"
