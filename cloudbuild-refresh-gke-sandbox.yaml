@@ -468,9 +468,16 @@ steps:
         # $$ escapes CB's substitution engine so GH_APP_PEM is read at runtime
         # from secretEnv, not as a build substitution at submit time (the
         # #1474 foot-gun; the engine scans the whole step string, comments
-        # included — avoid the single-dollar-brace form even here). Every
-        # other local variable below is a plain (non-curly) bash reference,
-        # which the substitution engine does not touch.
+        # included — avoid the single-dollar-brace form even here). CB's
+        # substitution scan also fires on BARE (non-curly) uppercase
+        # references, not just the curly `${VAR}` form (hb#775 live-fire
+        # bug: `gcloud builds triggers run` rejected the whole build with
+        # "key ... GH_APP_ID ... is not a valid built-in substitution"
+        # before a single step ran) — every uppercase local below is
+        # `$$`-escaped for that reason. Lowercase locals (iat, exp,
+        # pem_file, jwt_*, app_jwt, install_id, ...) are genuinely exempt:
+        # CB substitution names must be uppercase, so the scanner never
+        # matches a lowercase reference in the first place.
         GH_APP_ID="3832349"
         GH_APP_ACCOUNT="AlexBulankou"
         pem_file=$(mktemp)
@@ -480,14 +487,14 @@ steps:
         iat=$((now - 60))
         exp=$((now + 540))
         jwt_header_b64=$(printf '%s' '{"alg":"RS256","typ":"JWT"}' | b64url)
-        jwt_payload_b64=$(printf '{"iat":%s,"exp":%s,"iss":"%s"}' "$iat" "$exp" "$GH_APP_ID" | b64url)
+        jwt_payload_b64=$(printf '{"iat":%s,"exp":%s,"iss":"%s"}' "$iat" "$exp" "$${GH_APP_ID}" | b64url)
         jwt_unsigned="$jwt_header_b64.$jwt_payload_b64"
         jwt_sig=$(printf '%s' "$jwt_unsigned" | openssl dgst -sha256 -sign "$pem_file" -binary | b64url)
         app_jwt="$jwt_unsigned.$jwt_sig"
         rm -f "$pem_file"
         install_id=$(curl -sS -H "Authorization: Bearer $app_jwt" -H "Accept: application/vnd.github+json" \
           https://api.github.com/app/installations \
-          | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(i["id"] for i in d if i["account"]["login"]==sys.argv[1]))' "$GH_APP_ACCOUNT")
+          | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(i["id"] for i in d if i["account"]["login"]==sys.argv[1]))' "$${GH_APP_ACCOUNT}")
         GITHUB_TOKEN=$(curl -sS -X POST -H "Authorization: Bearer $app_jwt" -H "Accept: application/vnd.github+json" \
           "https://api.github.com/app/installations/$install_id/access_tokens" \
           | python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])')
@@ -502,7 +509,7 @@ steps:
         # unmodified if the installed App is ever swapped for a different one.
         BOT_LOGIN="$(curl -sS -H "Authorization: Bearer $app_jwt" -H "Accept: application/vnd.github+json" \
           https://api.github.com/app | python3 -c 'import json,sys; print(json.load(sys.stdin)["slug"] + "[bot]")')"
-        BOT_USER_ID="$(curl -sS -H "Accept: application/vnd.github+json" "https://api.github.com/users/$BOT_LOGIN" \
+        BOT_USER_ID="$(curl -sS -H "Accept: application/vnd.github+json" "https://api.github.com/users/$${BOT_LOGIN}" \
           | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')"
         # Built via a separate AT var, not a literal address shape in this file's
         # source — check-public-safety.sh's generic email-address pattern is a
@@ -512,8 +519,8 @@ steps:
         # flags any contiguous word-at-word-dot-word run it finds in tracked
         # file content, runtime-constructed or not.
         AT='@'
-        BOT_EMAIL="$BOT_USER_ID+$BOT_LOGIN$AT""users.noreply.github.com"
-        echo "==> minted a short-lived installation token for $BOT_LOGIN (install $install_id on $GH_APP_ACCOUNT) — never printed"
+        BOT_EMAIL="$${BOT_USER_ID}+$${BOT_LOGIN}$${AT}""users.noreply.github.com"
+        echo "==> minted a short-lived installation token for $${BOT_LOGIN} (install $install_id on $${GH_APP_ACCOUNT}) — never printed"
 
         # Freshness self-declaration: advance the stamp BEFORE the skip-guard so EVERY
         # fire re-anchors it. verify-upstream-freshness.py --update-stamp cross-checks
@@ -565,8 +572,8 @@ steps:
         # merge-commit/rebase-merge attribution path (these two strategies
         # preserve the locally-committed author unmodified, unlike squash-merge
         # which attributes to the PR-opening account minted above).
-        git config --global user.name "$BOT_LOGIN"
-        git config --global user.email "$BOT_EMAIL"
+        git config --global user.name "$${BOT_LOGIN}"
+        git config --global user.email "$${BOT_EMAIL}"
 
         # epic #6669 WS3/WS4: route the staging branch by fire flavor so an
         # upstream refresh never force-pushes over a pending fork-build PR (and
@@ -691,6 +698,10 @@ steps:
         # the corp-identity commit-metadata defect — but staying off the
         # personal PAT everywhere is the cleaner end state now that open-pr no
         # longer needs it either.
+        # hb#775 live-fire bug: CB's substitution scan also fires on BARE
+        # (non-curly) uppercase references, not just `${VAR}` — every
+        # uppercase local below is `$$`-escaped for that reason (see the
+        # open-pr step's matching comment for the full explanation).
         GH_APP_ID="3832349"
         GH_APP_ACCOUNT="AlexBulankou"
         pem_file=$(mktemp)
@@ -700,14 +711,14 @@ steps:
         iat=$((now - 60))
         exp=$((now + 540))
         jwt_header_b64=$(printf '%s' '{"alg":"RS256","typ":"JWT"}' | b64url)
-        jwt_payload_b64=$(printf '{"iat":%s,"exp":%s,"iss":"%s"}' "$iat" "$exp" "$GH_APP_ID" | b64url)
+        jwt_payload_b64=$(printf '{"iat":%s,"exp":%s,"iss":"%s"}' "$iat" "$exp" "$${GH_APP_ID}" | b64url)
         jwt_unsigned="$jwt_header_b64.$jwt_payload_b64"
         jwt_sig=$(printf '%s' "$jwt_unsigned" | openssl dgst -sha256 -sign "$pem_file" -binary | b64url)
         app_jwt="$jwt_unsigned.$jwt_sig"
         rm -f "$pem_file"
         install_id=$(curl -sS -H "Authorization: Bearer $app_jwt" -H "Accept: application/vnd.github+json" \
           https://api.github.com/app/installations \
-          | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(i["id"] for i in d if i["account"]["login"]==sys.argv[1]))' "$GH_APP_ACCOUNT")
+          | python3 -c 'import json,sys; d=json.load(sys.stdin); print(next(i["id"] for i in d if i["account"]["login"]==sys.argv[1]))' "$${GH_APP_ACCOUNT}")
         GITHUB_TOKEN=$(curl -sS -X POST -H "Authorization: Bearer $app_jwt" -H "Accept: application/vnd.github+json" \
           "https://api.github.com/app/installations/$install_id/access_tokens" \
           | python3 -c 'import json,sys; print(json.load(sys.stdin)["token"])')
