@@ -62,7 +62,10 @@ if [ "${MINT_BOT_IDENTITY:-}" = "1" ]; then
   # if the installed App is ever swapped for a different one.
   BOT_LOGIN="$(curl -sS -H "Authorization: Bearer $app_jwt" -H "Accept: application/vnd.github+json" \
     https://api.github.com/app | python3 -c 'import json,sys; print(json.load(sys.stdin)["slug"] + "[bot]")')"
-  BOT_USER_ID="$(curl -sS -H "Accept: application/vnd.github+json" "https://api.github.com/users/${BOT_LOGIN}" \
+  # -g/--globoff: BOT_LOGIN is "<slug>[bot]" -- curl's URL-globbing parser
+  # reads a literal `[...]` in the URL as a glob range ("bad range in URL")
+  # and refuses the request unless globbing is disabled.
+  BOT_USER_ID="$(curl -sSg -H "Accept: application/vnd.github+json" "https://api.github.com/users/${BOT_LOGIN}" \
     | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')"
   # Built via a separate AT var, not a literal address shape in this file's
   # source -- check-public-safety.sh's generic email-address pattern is a
