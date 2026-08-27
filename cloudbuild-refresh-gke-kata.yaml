@@ -307,7 +307,7 @@ steps:
         # $$ escapes CB's substitution engine so GH_APP_PEM is read at runtime
         # from secretEnv, not as a build substitution at submit time. CB's
         # substitution scan also fires on BARE (non-curly) uppercase
-        # references, not just the curly `${VAR}` form (hb#775 live-fire
+        # references, not just the curly `$${VAR}` form (hb#775 live-fire
         # bug: `gcloud builds triggers run` rejected the whole build with
         # "key ... GH_APP_ID ... is not a valid built-in substitution"
         # before a single step ran) — every uppercase local below is
