@@ -1,12 +1,12 @@
 {
-  "generated_at": "2026-08-26T10:13:44Z",
+  "generated_at": "2026-08-28T01:01:23Z",
   "product": "sandbox-kata",
   "provenance": {
     "cluster_substrate": "gke-kata",
     "cold_start_mode": "cold-provision",
     "node_count": 1,
-    "prior_warmpool_ttfe_p95_ms": 4247.8,
-    "run_id": "beb82bc6d1a54dbe9022b8ae0c1709fd",
+    "prior_warmpool_ttfe_p95_ms": 4697.2,
+    "run_id": "c91dcdff052149d9b8e502838e1cb958",
     "runtime": "kata-microvm"
   },
   "scenarios": [
@@ -19,25 +19,25 @@
       "name": "warmpool_cold_start",
       "outcome": "FAIL",
       "sla_metrics": {
-        "bind_p50_ms": 2539.7,
-        "bind_p95_ms": 3754.1,
+        "bind_p50_ms": 2507.7,
+        "bind_p95_ms": 3411.7,
         "density_per_vcpu": 1.26,
-        "exec_p50_ms": 702.1,
-        "exec_p95_ms": 1184.2,
+        "exec_p50_ms": 511.1,
+        "exec_p95_ms": 716.1,
         "exec_success_rate": 1.0,
         "thpt_cluster_node_count": 5.0,
         "thpt_slo_basis": "true_ttfe",
         "thpt_under_1s_per_node": 0.0,
-        "thpt_under_5s_per_cluster": 0.742,
-        "thpt_under_5s_per_node": 7.562,
-        "ttfe_p50_ms": 3199.9,
-        "ttfe_p95_ms": 4697.2,
-        "warmpool_gate_cold_min_ms": 603.558939000095,
-        "warmpool_gate_cold_p50_ms": 1318.3023049999747,
-        "warmpool_gate_min_ready_during_burst": 3.0,
-        "warmpool_gate_separation_ratio": 0.5190872355375643,
-        "warmpool_gate_warm_max_ms": 3850.704186999792,
-        "warmpool_gate_warm_p50_ms": 2539.6546374998934
+        "thpt_under_5s_per_cluster": 0.752,
+        "thpt_under_5s_per_node": 8.195,
+        "ttfe_p50_ms": 3067.0,
+        "ttfe_p95_ms": 3973.0,
+        "warmpool_gate_cold_min_ms": 677.6869010000155,
+        "warmpool_gate_cold_p50_ms": 882.0133104999854,
+        "warmpool_gate_min_ready_during_burst": 1.0,
+        "warmpool_gate_separation_ratio": 0.35172725063172217,
+        "warmpool_gate_warm_max_ms": 3422.3326869999937,
+        "warmpool_gate_warm_p50_ms": 2507.662709999977
       }
     },
     {
@@ -49,16 +49,16 @@
       "name": "native_digest_cold",
       "outcome": "PASS",
       "sla_metrics": {
-        "bind_p50_ms": 2819.7,
-        "bind_p95_ms": 3141.8,
-        "exec_p50_ms": 482.6,
-        "exec_p95_ms": 533.6,
+        "bind_p50_ms": 2948.6,
+        "bind_p95_ms": 3226.9,
+        "exec_p50_ms": 401.6,
+        "exec_p95_ms": 494.3,
         "exec_success_rate": 1.0,
         "thpt_cluster_node_count": 5.0,
         "thpt_slo_basis": "true_ttfe",
-        "thpt_under_5s_per_cluster": 0.53,
-        "ttfe_p50_ms": 3304.3,
-        "ttfe_p95_ms": 3665.9
+        "thpt_under_5s_per_cluster": 0.553,
+        "ttfe_p50_ms": 3355.1,
+        "ttfe_p95_ms": 3601.7
       }
     },
     {
