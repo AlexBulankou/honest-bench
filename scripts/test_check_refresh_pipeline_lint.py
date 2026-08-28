@@ -42,6 +42,44 @@ steps:
     expect(g.check_bare_substitution_refs(bare_yaml, "t.yaml") is False,
            "a bare, unescaped uppercase ref fails")
 
+    # hb#784: bare-substitution scope extends to env/dir, not just args.
+    bare_env_yaml = """
+steps:
+- id: unsafe-env
+  env: ["TOKEN=$GH_APP_ID"]
+  args: ["bash", "-c", "echo hi"]
+"""
+    expect(g.check_bare_substitution_refs(bare_env_yaml, "t.yaml") is False,
+           "a bare, unescaped ref in an env value fails")
+
+    clean_env_yaml = """
+steps:
+- id: safe-env
+  env: ["GH_APP_ID=$${GH_APP_ID}", "BUILD_TAG=$BUILD_ID"]
+  args: ["bash", "-c", "echo hi"]
+"""
+    expect(g.check_bare_substitution_refs(clean_env_yaml, "t.yaml") is True,
+           "an escaped env value passes, and the env KEY half is never scanned "
+           "as a reference even when it looks like one")
+
+    bare_dir_yaml = """
+steps:
+- id: unsafe-dir
+  dir: "$GH_APP_ID/sub"
+  args: ["bash", "-c", "echo hi"]
+"""
+    expect(g.check_bare_substitution_refs(bare_dir_yaml, "t.yaml") is False,
+           "a bare, unescaped ref in dir fails")
+
+    clean_dir_yaml = """
+steps:
+- id: safe-dir
+  dir: "$BUILD_ID/sub"
+  args: ["bash", "-c", "echo hi"]
+"""
+    expect(g.check_bare_substitution_refs(clean_dir_yaml, "t.yaml") is True,
+           "a built-in ref in dir passes")
+
     # --- check_cloudbuild_arg_length -----------------------------------------
 
     short_yaml = """

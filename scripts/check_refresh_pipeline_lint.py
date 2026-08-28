@@ -14,21 +14,21 @@ Three checks, run against every cloudbuild*.yaml (checks 1-2) and every
 scripts/*.sh plus every cloudbuild step script (check 3) in the repo:
 
 1. Bare uppercase substitution refs (hb#775/#776). Cloud Build scans the
-   full text of every `steps[].args` string for bare (single-`$`) uppercase
-   `$VAR`/`${VAR}` references and rejects the ENTIRE build at submit time if
-   the name isn't a recognized built-in or `_`-prefixed user substitution --
-   before a single step runs. The fix idiom is `$$`-escaping (`$VAR` ->
-   `$$VAR`, `${VAR}` -> `$${VAR}`); at render time CB collapses `$$` to a
-   literal `$` and hands the script to bash, which then expands the var
-   normally at runtime. Scoped to `steps[].args` string values specifically
-   (parsed via PyYAML, not a whole-file text scan) -- CB's own scanner never
-   sees a top-level YAML comment, since the YAML parser strips it before CB
-   processes any string content, and a naive whole-file scan would false-flag
-   comment-only mentions of a variable name. Scope note: Cloud Build applies
-   the same substitution scan to other step fields too (e.g. `env`, `dir`);
-   this check covers `steps[].args` only, since that's where all four
-   historical fire-5 bugs actually lived -- a bare ref living in `env`/`dir`
-   is a known, deliberate gap, not a regression (tracked as a fast-follow).
+   full text of every `steps[].args`/`env`/`dir` string for bare (single-`$`)
+   uppercase `$VAR`/`${VAR}` references and rejects the ENTIRE build at
+   submit time if the name isn't a recognized built-in or `_`-prefixed user
+   substitution -- before a single step runs. The fix idiom is
+   `$$`-escaping (`$VAR` -> `$$VAR`, `${VAR}` -> `$${VAR}`); at render time
+   CB collapses `$$` to a literal `$` and hands the script to bash, which
+   then expands the var normally at runtime. Scoped to `steps[].args`/`env`/
+   `dir` string values specifically (parsed via PyYAML, not a whole-file
+   text scan) -- CB's own scanner never sees a top-level YAML comment, since
+   the YAML parser strips it before CB processes any string content, and a
+   naive whole-file scan would false-flag comment-only mentions of a
+   variable name. `env` entries are `KEY=value` strings; only the value
+   half is scanned (hb#784 -- the field-set extension beyond the original
+   args-only scope; all four historical fire-5 bugs lived in `args`, but
+   CB's real scanner covers `env`/`dir` too, so this check now mirrors that).
 
 2. Step arg length >10,000 chars (mirrors the private repo's
    check-cloudbuild-arg-length.py, ported here per hb#782 ask #2 to close
@@ -158,18 +158,61 @@ def _iter_cloudbuild_step_args(yaml_content: str, filename: str):
                 yield step_id, arg_idx, arg
 
 
+def _iter_cloudbuild_substitution_fields(yaml_content: str, filename: str):
+    """Yield (step_id, field_desc, text) for every string steps[].args/env/dir value.
+
+    Cloud Build's bare-substitution scanner applies to all three of these
+    step fields, not just `args` (hb#784, the fast-follow to hb#782/#783).
+    `env` entries are `KEY=value` strings -- only the value half is scanned;
+    the KEY half is the *name* of the env var being set, not a substitution
+    reference, so scanning it would false-flag e.g. `HELPER_VAR=...` purely
+    because the name itself looks like a substitution.
+    """
+    import yaml
+
+    try:
+        data = yaml.safe_load(yaml_content)
+    except Exception as e:
+        print(f"Error parsing YAML from {filename}: {e}", file=sys.stderr)
+        return
+    if not isinstance(data, dict):
+        return
+    steps = data.get("steps")
+    if not isinstance(steps, list):
+        return
+    for idx, step in enumerate(steps):
+        if not isinstance(step, dict):
+            continue
+        step_id = step.get("id") or f"at index {idx}"
+        args = step.get("args")
+        if isinstance(args, list):
+            for arg_idx, arg in enumerate(args):
+                if isinstance(arg, str):
+                    yield step_id, f"arg {arg_idx}", arg
+        env = step.get("env")
+        if isinstance(env, list):
+            for env_idx, entry in enumerate(env):
+                if isinstance(entry, str):
+                    _, sep, value = entry.partition("=")
+                    if sep:
+                        yield step_id, f"env[{env_idx}] value", value
+        dir_ = step.get("dir")
+        if isinstance(dir_, str):
+            yield step_id, "dir", dir_
+
+
 def check_bare_substitution_refs(yaml_content: str, filename: str = "cloudbuild.yaml") -> bool:
-    """Fail if any steps[].args string has a bare (non-`$$`-escaped) uppercase substitution ref."""
+    """Fail if any steps[].args/env/dir string has a bare (non-`$$`-escaped) uppercase substitution ref."""
     ok = True
-    for step_id, arg_idx, arg_text in _iter_cloudbuild_step_args(yaml_content, filename):
-        for m in _BARE_SUBST_RE.finditer(arg_text):
+    for step_id, field_desc, text in _iter_cloudbuild_substitution_fields(yaml_content, filename):
+        for m in _BARE_SUBST_RE.finditer(text):
             name = m.group(1)
             if name.startswith("_"):
                 continue  # user-defined CB substitution -- legitimately bare
             if name in CB_BUILTIN_SUBSTITUTIONS:
                 continue  # CB built-in -- legitimately bare
             print(
-                f"{filename}: step \"{step_id}\" arg {arg_idx} has a bare, unescaped "
+                f"{filename}: step \"{step_id}\" {field_desc} has a bare, unescaped "
                 f"reference to ${{{name}}} -- Cloud Build's substitution scanner will "
                 f"reject the whole build at submit time unless this is a recognized "
                 f"built-in or `_`-prefixed. Escape with `$$` (e.g. `${{{name}}}` -> "
@@ -349,6 +392,55 @@ steps:
       - echo hello
 """
     assert check_bare_substitution_refs(comment_only_yaml, "self-test") is True, "top-level comment refs must not be scanned"
+
+    # hb#784: the bare-substitution scan also covers `env`/`dir`, not just
+    # `args` -- CB's own substitution scanner applies to all three fields.
+    bare_env_yaml = """
+steps:
+  - id: bare-in-env
+    env:
+      - "BENCH_CLUSTER=gke-sandbox"
+      - "TOKEN=$GH_APP_ID"
+    args:
+      - -c
+      - echo hello
+"""
+    assert check_bare_substitution_refs(bare_env_yaml, "self-test") is False, "bare non-built-in ref in env value should fail"
+
+    clean_env_yaml = """
+steps:
+  - id: clean-env
+    env:
+      - "BUILD_TAG=$BUILD_ID"
+      - "GH_APP_ID=$${GH_APP_ID}"
+    args:
+      - -c
+      - echo hello
+"""
+    assert check_bare_substitution_refs(clean_env_yaml, "self-test") is True, (
+        "built-in/escaped refs in env values should pass, and the env KEY half "
+        "(e.g. GH_APP_ID=) must never itself be scanned as a reference"
+    )
+
+    bare_dir_yaml = """
+steps:
+  - id: bare-in-dir
+    dir: "$GH_APP_ID/subdir"
+    args:
+      - -c
+      - echo hello
+"""
+    assert check_bare_substitution_refs(bare_dir_yaml, "self-test") is False, "bare non-built-in ref in dir should fail"
+
+    clean_dir_yaml = """
+steps:
+  - id: clean-dir
+    dir: "$BUILD_ID/subdir"
+    args:
+      - -c
+      - echo hello
+"""
+    assert check_bare_substitution_refs(clean_dir_yaml, "self-test") is True, "built-in ref in dir should pass"
 
     # --- check 2: arg length (ported from the private repo's lint) ---
     warn_yaml = "steps:\n  - id: warn-step\n    args:\n      - -c\n      - |\n        " + ("x" * 8500)
