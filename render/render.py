@@ -1973,8 +1973,9 @@ def _core_metrics_compact_legend_lines():
         "| `†` | Sub-N sample: a single observation, not a distribution |",
         "| `⚠️` | Miss flag: sub-100% Execution Success, or a per-cluster rate below the "
         "sizing target |",
-        "| `pending` | No publishable figure yet (currently only the `(cluster-fire)` flavor "
-        "is live) |",
+        "| `pending` | No publishable figure yet — a genuinely not-yet-run cell; the labeled "
+        "flavors (`cluster-fire`, etc.) are catalogued in "
+        "[WORK_IN_PROGRESS.md](WORK_IN_PROGRESS.md) |",
         # hb#518: a plain, untagged `0` and a caveat-tagged floor-zero cell share one glyph but
         # rest on different evidential bases — a table row each keeps the distinction scannable.
         # MUST stay asterisk-free (see the docstring above) — no literal tag characters.
@@ -2360,10 +2361,30 @@ def render_matrix(results, kata_results=None, include_legend=True):
                     # that reason + its upstream refs instead of the generic cluster-fire
                     # pend, so a reader can't mistake ran-and-refused for not-yet-fired.
                     cluster_reason = m.get(cluster_key + "_pend_reason")
+                    p95_ms = m.get("ttfe_p95_ms")
                     if cluster_reason:
                         cluster_half = f"{_PENDING} ({cluster_reason})" + upstream_cell_refs(
                             cluster_reason
                         )
+                    elif (
+                        m[node_key] == 0
+                        and isinstance(p95_ms, (int, float))
+                        and not isinstance(p95_ms, bool)
+                        and p95_ms / 1000.0 > bar_s
+                    ):
+                        # hb#142.1 extension (kata-warm <1s measured-floor close): the
+                        # node-ABSENT derivable-0 above renders `0 · 0` when p95 misses the
+                        # bar. The same exact identity holds when the per-node rate is
+                        # PRESENT and measured as exactly 0 (a throughput fire ran and found
+                        # zero sub-bar starts per node) AND p95 exceeds this bar: 0 qualifying
+                        # starts per node × N nodes = 0 across the cluster (the one exact
+                        # case, NOT a per-node × N extrapolation). So derive the per-cluster
+                        # 0 rather than an open-ended `pending (cluster-fire)` that wrongly
+                        # implies the cell is unmeasured — the row's own TTFE distribution
+                        # (p50 already over the bar) fixes the floor at 0 with no fire.
+                        # Gated on cluster-not-landed (this else), so a real landed cluster
+                        # figure — even one stamped at 0/node — is never overridden.
+                        cluster_half = f"{_fmt_num(0)} /cluster"
                     else:
                         cluster_half = f"{_PENDING} ({_CLUSTER_FIRE})"
                 return f"{node_half} · {cluster_half}{star}"

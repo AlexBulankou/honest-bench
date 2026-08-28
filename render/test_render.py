@@ -1307,7 +1307,9 @@ def _full_gvisor_scenarios():
 def test_matrix_renders_doc_exact_gvisor_rows():
     out = render.render_matrix(_matrix_results(_full_gvisor_scenarios()))
     # hb#132: throughput cells are dual `<node> /node · <cluster>`; with no per-cluster field
-    # landed, the cluster half pends `pending (cluster-fire)` while the per-node half is exact.
+    # landed and a POSITIVE per-node rate, the cluster half pends `pending (cluster-fire)` while the
+    # per-node half is exact. hb#142.1 kata-warm extension: an exactly-0 per-node half whose p95
+    # misses the bar (cold/resume <1s) derives the cluster half to an honest 0 /cluster.
     cf = f"pending ({render._CLUSTER_FIRE})"
     # hb#142: each TTFE cell carries its sample count inline as `value (count=N)`.
     out = _unlink(out)
@@ -1316,11 +1318,11 @@ def test_matrix_renders_doc_exact_gvisor_rows():
         "| 0.6s (count=200) | 0.9s (count=200) | 100% |"
     ) in out
     assert (
-        f"| gVisor | Unique-image cold (RL reality) | 4 /node · {cf} | 0 /node · {cf} "
+        f"| gVisor | Unique-image cold (RL reality) | 4 /node · {cf} | 0 /node · 0 /cluster "
         "| 1.2s (count=200) | 1.56s (count=200) | 100% |"
     ) in out
     assert (
-        f"| gVisor | Resume-from-suspend | 4 /node · {cf} | 0 /node · {cf} "
+        f"| gVisor | Resume-from-suspend | 4 /node · {cf} | 0 /node · 0 /cluster "
         "| 3.5s (count=1376) | 5s (count=1376) | 92.8% (1277/1376) ⚠️ |"
     ) in out
 
@@ -1421,10 +1423,12 @@ def test_matrix_pending_ttfe_never_marked_even_low_n():
 def test_matrix_honest_zero_throughput_not_rounded():
     # the cold + resume rows print a literal 0 for throughput@<1s (p95 misses the bar).
     out = render.render_matrix(_matrix_results(_full_gvisor_scenarios()))
-    # the per-node half of the <1s cell is exactly "0", never "pending" or a rounded-up value.
+    # the per-node half of the <1s cell is exactly "0", never "pending" or a rounded-up value;
+    # hb#142.1 kata-warm extension then derives the per-cluster half to an honest 0 /cluster
+    # (0 qualifying starts per node × N nodes = 0 — the one exact case, gated on cluster-not-landed).
     cold_line = [l for l in out.splitlines() if "Unique-image cold" in l][0]
     cells = [_unlink(c.strip()) for c in cold_line.strip("|").split("|")]
-    assert cells[3] == f"0 /node · pending ({render._CLUSTER_FIRE})"  # Throughput @ <1s TTFE
+    assert cells[3] == "0 /node · 0 /cluster"  # Throughput @ <1s TTFE
 
 
 def test_matrix_dual_throughput_cluster_figure_above_target_clean():
