@@ -86,6 +86,7 @@ _**Stretch bar** — warm-pool-hit TTFE p95 < 0.5s (an aspiration above the Nort
 | Scenario FAIL | [⚠️ ACTIVE](DETAILS.md#scenario-fail) |
 | Warm-slower-than-cold | [⚠️ ACTIVE](DETAILS.md#warm-slower-than-cold) |
 | Warm-cold separation below gate | [⚠️ ACTIVE](DETAILS.md#warm-cold-separation-below-gate) |
+| Cold-tier stall inflates separation ratio | [⚠️ ACTIVE](DETAILS.md#cold-tier-stall-inflates-separation-ratio) |
 | Same-build separation-ratio variance | [⚠️ ACTIVE](DETAILS.md#same-build-separation-ratio-variance) |
 | Single-fire separation verdict defensibility | [⚠️ ACTIVE](DETAILS.md#single-fire-separation-verdict-defensibility) |
 | Mixed rig within this run | [⚠️ ACTIVE](DETAILS.md#mixed-rig-within-this-run) |

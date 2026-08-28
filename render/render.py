@@ -25,6 +25,7 @@ from schema import (
     BADGE_SCOPES,
     BURST_CORROBORATION_FIELDS,
     CLUSTER_SATURATION_FIELDS,
+    COLD_TIER_STALL_MIN_SPREAD,
     CONCURRENT_BURST_FIELDS,
     DENSITY_SOURCE_SCENARIOS,
     GOAL_COLUMNS,
@@ -3370,6 +3371,102 @@ def _warmpool_separation_caveat(results, kata_results=None):
     )
 
 
+def _cold_tier_stall_caveat(results, kata_results=None):
+    """Loud disclosure when the cold-tier's own median is wildly inflated relative to its
+    fastest sample -- a cold-tier internal stall, not genuine warm/cold separation (hb#786 review
+    finding).
+
+    warmpool_gate_separation_ratio = cold_p50 / warm_p50 (hb#6743): a HIGH ratio normally reads
+    as "the warm tier is a real fast path". But a high ratio can also come from the cold tier
+    itself being pathological -- if a large share of cold claims individually stall for minutes
+    before completing, cold_p50 balloons far above cold_min (the fastest cold sample in the SAME
+    fire), and separation_ratio inflates right along with it even though the warm tier did
+    nothing unusual. A real gke-kata fire measured cold_min≈1.48s vs cold_p50≈597.9s (≈404x
+    spread) alongside a published separation_ratio of 376x -- a reader taking that 376x at face
+    value would conclude the warm pool is dramatically effective, when the honest read is "roughly
+    half the cold-tier claims stalled for ~10 minutes; the ratio is a stall artifact".
+
+    This is the COMPLEMENT of _warmpool_separation_caveat: that caveat fires when the ratio is
+    too LOW to trust; this one fires when the ratio might be too easily trusted, because the
+    cold-tier population it's built from is not itself well-behaved. Both can be inert on the
+    same fire (a healthy separation_ratio built from a healthy cold tier), and this one is
+    silent whenever COLD_TIER_STALL_MIN_SPREAD isn't cleared, regardless of what
+    separation_ratio itself reads.
+
+    Read from the RAW emit (warmpool_gate_cold_min_ms / warmpool_gate_cold_p50_ms are not public
+    matrix cells), so it adds no cell and no schema-contract change. Cause-agnostic (asserts no
+    mechanism), gated on the warm row N >= TTFE_COMPARABILITY_MIN_N (the same comparability floor
+    the sibling caveats use -- the cold-tier sample count rides along with the warm-pool fire),
+    skips pending rows, and AUTO-CLEARS the instant a refresh's cold-tier spread returns under the
+    threshold. Returns "" when every runtime's cold tier is internally consistent (or the metric
+    is absent) so the caller can append it unconditionally. Mirrors _warmpool_separation_caveat's
+    shape.
+    """
+    prov = _clean_provenance(results.get("provenance"))
+    measured_runtime = prov.get("runtime") or "gvisor"
+    sources = {measured_runtime: _matrix_scenarios(results.get("scenarios"))}
+    raw_sources = {measured_runtime: results.get("scenarios")}
+    if (
+        isinstance(kata_results, dict)
+        and kata_results.get("product") == "sandbox-kata"
+        and "kata-microvm" not in sources
+    ):
+        kp = _clean_provenance(kata_results.get("provenance"))
+        if kp.get("runtime") == "kata-microvm":
+            sources["kata-microvm"] = _matrix_scenarios(kata_results.get("scenarios"))
+            raw_sources["kata-microvm"] = kata_results.get("scenarios")
+
+    stalled = []  # (label, cold_min_ms, cold_p50_ms, spread, ratio)
+    for rt in MATRIX_RUNTIMES:
+        rt_scen = sources.get(rt)
+        if rt_scen is None:
+            continue
+        warm = rt_scen.get("warmpool_cold_start")
+        if not warm:
+            continue
+        warm_n = warm.get("n")
+        if not isinstance(warm_n, int) or isinstance(warm_n, bool):
+            continue
+        if warm_n < TTFE_COMPARABILITY_MIN_N:
+            continue
+        if warm.get("outcome") == "pending":
+            continue
+        raw = raw_sources.get(rt)
+        cold_min = _raw_sla_p95(raw, "warmpool_cold_start", "warmpool_gate_cold_min_ms")
+        cold_p50 = _raw_sla_p95(raw, "warmpool_cold_start", "warmpool_gate_cold_p50_ms")
+        if cold_min is None or cold_p50 is None or cold_min <= 0:
+            continue
+        spread = cold_p50 / cold_min
+        if spread < COLD_TIER_STALL_MIN_SPREAD:
+            continue
+        ratio = _raw_sla_p95(raw, "warmpool_cold_start", "warmpool_gate_separation_ratio")
+        stalled.append((RUNTIME_LABELS[rt], cold_min, cold_p50, spread, ratio))
+    if not stalled:
+        return ""
+
+    def _ratio_clause(ratio):
+        if ratio is None:
+            return ""
+        return f", inflating the published separation ratio to {ratio:.3g}x"
+
+    who = "; ".join(
+        f"**{lbl}**: fastest cold bind {_fmt_secs(cmin)} vs median cold bind "
+        f"{_fmt_secs(cp50)} ({spread:.3g}x spread){_ratio_clause(ratio)}"
+        for lbl, cmin, cp50, spread, ratio in stalled
+    )
+    return (
+        "> ⚠️ **Cold-tier stall inflates separation ratio:** the cold-tier median bind latency "
+        f"is {COLD_TIER_STALL_MIN_SPREAD:g}x or more above the fastest cold bind in the same "
+        f"fire for {who} — this large an internal spread means a substantial share of cold "
+        "claims individually stalled well beyond a normal cold-start boot time, not that the "
+        "cold tier as a whole is uniformly slow. Any separation ratio computed against this "
+        "cold-tier median (cold_p50 / warm_p50, hb#6743) reads as wide separation but is at "
+        "least partly a cold-tier stall artifact rather than evidence the warm tier is unusually "
+        "fast. The cause of the stall is not asserted here. A later refresh whose cold-tier "
+        "spread returns under the threshold clears this."
+    )
+
+
 def _warmpool_separation_variance_caveat(history_rows):
     """Loud disclosure when the SAME controller build measures wildly different separation ratios.
 
@@ -3773,6 +3870,7 @@ def render_known_anomalies_table(results, kata_results=None, history_rows=None):
     fail_active = bool(_north_star_fail_caveat(rows))
     inversion_active = bool(_warm_cold_inversion_caveat(results, kata_results))
     separation_active = bool(_warmpool_separation_caveat(results, kata_results))
+    cold_stall_active = bool(_cold_tier_stall_caveat(results, kata_results))
     mixed_rig_active = bool(_mixed_rig_confound_caveat(results))
     variance_active = bool(_warmpool_separation_variance_caveat(history_rows or []))
     verdict_active = bool(
@@ -3792,6 +3890,8 @@ def render_known_anomalies_table(results, kata_results=None, history_rows=None):
         f"| Warm-slower-than-cold | {_cell(inversion_active, 'warm-slower-than-cold')} |",
         "| Warm-cold separation below gate | "
         f"{_cell(separation_active, 'warm-cold-separation-below-gate')} |",
+        "| Cold-tier stall inflates separation ratio | "
+        f"{_cell(cold_stall_active, 'cold-tier-stall-inflates-separation-ratio')} |",
         "| Same-build separation-ratio variance | "
         f"{_cell(variance_active, 'same-build-separation-ratio-variance')} |",
         "| Single-fire separation verdict defensibility | "
@@ -3831,6 +3931,7 @@ def render_known_anomalies_detail(results, kata_results=None, history_rows=None)
     fail_caveat = _north_star_fail_caveat(rows)
     inversion_caveat = _warm_cold_inversion_caveat(results, kata_results)
     separation_caveat = _warmpool_separation_caveat(results, kata_results)
+    cold_stall_caveat = _cold_tier_stall_caveat(results, kata_results)
     variance_caveat = _warmpool_separation_variance_caveat(history_rows or [])
     verdict_caveat = _warmpool_separation_verdict_caveat(results, history_rows or [], kata_results)
     adjudicated_verdict = _warmpool_separation_adjudicated_verdict(history_rows or [])
@@ -3854,6 +3955,12 @@ def render_known_anomalies_detail(results, kata_results=None, history_rows=None)
     lines.append("")
     lines.append(
         separation_caveat if separation_caveat else _clear("warm/cold separation shortfall")
+    )
+    lines.append("")
+    lines.append("### Cold-tier stall inflates separation ratio")
+    lines.append("")
+    lines.append(
+        cold_stall_caveat if cold_stall_caveat else _clear("cold-tier internal stall")
     )
     lines.append("")
     lines.append("### Same-build separation-ratio variance")

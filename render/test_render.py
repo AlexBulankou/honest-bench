@@ -7268,6 +7268,180 @@ def test_warmpool_separation_caveat_wired_into_known_anomalies():
 
 
 # ---------------------------------------------------------------------------
+# cold-tier internal-stall disclosure (_cold_tier_stall_caveat, hb#786 review
+# finding). Complements _warmpool_separation_caveat: that caveat fires when the
+# ratio is too LOW; this one fires when the ratio might be too easily trusted
+# because the cold-tier population feeding it (cold_p50) is itself internally
+# inconsistent with its own fastest sample (cold_min) — a real gke-kata fire
+# measured cold_min~1.478s vs cold_p50~597.898s (~404x spread) alongside a
+# published separation_ratio of 376.29x that read as clean separation but was
+# actually a cold-tier stall artifact.
+# ---------------------------------------------------------------------------
+
+def _stall_scenarios(cold_min, cold_p50, warm_n=30, ratio=None, outcome="PASS"):
+    # gVisor scenario list carrying the cold_min/cold_p50 raw keys (and
+    # optionally the separation_ratio) in the warmpool_cold_start sla_metrics.
+    # cold_min/cold_p50=None omits the corresponding key entirely (the
+    # absent-metric no-false-fire case).
+    warm_m = {"ttfe_p50_ms": 400, "ttfe_p95_ms": 8500}
+    if cold_min is not None:
+        warm_m["warmpool_gate_cold_min_ms"] = cold_min
+    if cold_p50 is not None:
+        warm_m["warmpool_gate_cold_p50_ms"] = cold_p50
+    if ratio is not None:
+        warm_m["warmpool_gate_separation_ratio"] = ratio
+    return [
+        {
+            "name": "warmpool_cold_start", "outcome": outcome, "n": warm_n,
+            "sla_metrics": warm_m,
+        },
+    ]
+
+
+def test_cold_tier_stall_caveat_fires_on_wide_spread():
+    # cold_min=1.478s, cold_p50=597.898s -> ~404x spread, well past the 10x gate.
+    # The real gke-kata incident: also carries a published ratio of 376.29x.
+    out = render._cold_tier_stall_caveat(
+        _matrix_results(
+            _stall_scenarios(1478, 597898, warm_n=200, ratio=376.29),
+            provenance={"runtime": "gvisor"},
+        )
+    )
+    assert "Cold-tier stall inflates separation ratio:" in out
+    assert "gVisor" in out
+    assert "fastest cold bind 1.478s" in out
+    assert "median cold bind 597.898s" in out
+    assert "405x spread" in out
+    assert "376x" in out
+    assert "cause of the stall is not asserted" in out
+
+
+def test_cold_tier_stall_caveat_omits_ratio_clause_when_ratio_absent():
+    # spread still fires, but no separation_ratio was emitted -> no inflate clause.
+    out = render._cold_tier_stall_caveat(
+        _matrix_results(
+            _stall_scenarios(1478, 597898, warm_n=200),
+            provenance={"runtime": "gvisor"},
+        )
+    )
+    assert "Cold-tier stall inflates separation ratio:" in out
+    assert "inflating the published separation ratio" not in out
+
+
+def test_cold_tier_stall_caveat_clean_when_spread_under_gate():
+    # ordinary cold-start boot-time skew (~2x) -> well under the 10x gate, no disclosure.
+    out = render._cold_tier_stall_caveat(
+        _matrix_results(
+            _stall_scenarios(3000, 6000, warm_n=200, ratio=2.4),
+            provenance={"runtime": "gvisor"},
+        )
+    )
+    assert out == ""
+    # just under the gate (9.999x < 10x) is clean; exactly at the gate (10.0x) fires
+    # (the code's `< COLD_TIER_STALL_MIN_SPREAD` skip means >= is the firing side,
+    # mirroring _warmpool_separation_caveat's own >= convention).
+    just_under = render._cold_tier_stall_caveat(
+        _matrix_results(
+            _stall_scenarios(1000, 9999, warm_n=200),
+            provenance={"runtime": "gvisor"},
+        )
+    )
+    assert just_under == ""
+    at_gate = render._cold_tier_stall_caveat(
+        _matrix_results(
+            _stall_scenarios(1000, 10000, warm_n=200),
+            provenance={"runtime": "gvisor"},
+        )
+    )
+    assert at_gate != ""
+
+
+def test_cold_tier_stall_caveat_suppressed_when_low_n():
+    # wide spread but the warm row is under the N=30 floor -> must not fire.
+    out = render._cold_tier_stall_caveat(
+        _matrix_results(
+            _stall_scenarios(1478, 597898, warm_n=5),
+            provenance={"runtime": "gvisor"},
+        )
+    )
+    assert out == ""
+
+
+def test_cold_tier_stall_caveat_skips_pending_row():
+    # a pending warm row carries no settled cold-tier read yet -> skip, disclose nothing.
+    out = render._cold_tier_stall_caveat(
+        _matrix_results(
+            _stall_scenarios(1478, 597898, warm_n=200, outcome="pending"),
+            provenance={"runtime": "gvisor"},
+        )
+    )
+    assert out == ""
+
+
+def test_cold_tier_stall_caveat_absent_metric_no_false_fire():
+    # no warmpool_gate_cold_min_ms/cold_p50_ms emitted (older emit) -> nothing to
+    # disclose, no crash, empty string.
+    out = render._cold_tier_stall_caveat(
+        _matrix_results(
+            _stall_scenarios(None, None, warm_n=200),
+            provenance={"runtime": "gvisor"},
+        )
+    )
+    assert out == ""
+    # only one of the two keys present is equally inert.
+    assert render._cold_tier_stall_caveat(
+        _matrix_results(
+            _stall_scenarios(1478, None, warm_n=200),
+            provenance={"runtime": "gvisor"},
+        )
+    ) == ""
+    assert render._cold_tier_stall_caveat(
+        _matrix_results(
+            _stall_scenarios(None, 597898, warm_n=200),
+            provenance={"runtime": "gvisor"},
+        )
+    ) == ""
+
+
+def test_cold_tier_stall_caveat_flags_kata_independently():
+    # gVisor cold-tier is internally consistent, Kata is stalled -> only Kata is named.
+    kata_scen = _stall_scenarios(1500, 30000, warm_n=40)  # 20x spread
+    out = render._cold_tier_stall_caveat(
+        _matrix_results(
+            _stall_scenarios(3000, 6000, warm_n=200),
+            provenance={"runtime": "gvisor"},
+        ),
+        kata_results=_kata_results(
+            scenarios=kata_scen, provenance={"runtime": "kata-microvm"},
+        ),
+    )
+    assert "Kata + microVM" in out
+    assert "gVisor" not in out
+
+
+def test_cold_tier_stall_caveat_wired_into_known_anomalies():
+    # end-to-end: the Known anomalies table/detail assemble the cold-tier-stall
+    # caveat when the spread clears the gate, and stay clear/absent on a clean run.
+    results = _matrix_results(
+        _stall_scenarios(1478, 597898, warm_n=200, ratio=376.29),
+        provenance={"runtime": "gvisor"},
+    )
+    table = render.render_known_anomalies_table(results)
+    stall_line = [l for l in table.splitlines()
+                  if l.startswith("| Cold-tier stall inflates separation ratio")][0]
+    assert "⚠️ ACTIVE" in stall_line
+    detail = render.render_known_anomalies_detail(results)
+    assert "Cold-tier stall inflates separation ratio:" in detail
+    clean_results = _matrix_results(_full_gvisor_scenarios(), provenance={"runtime": "gvisor"})
+    clean_table = render.render_known_anomalies_table(clean_results)
+    clean_line = [l for l in clean_table.splitlines()
+                  if l.startswith("| Cold-tier stall inflates separation ratio")][0]
+    assert "✅ clear" in clean_line
+    clean_detail = render.render_known_anomalies_detail(clean_results)
+    assert "Cold-tier stall inflates separation ratio:" not in clean_detail
+
+
+# ---------------------------------------------------------------------------
 # #4164 / hb#132: render_storage_config — "Which storage class should you pick?"
 # Closed-enum ({ephemeral,pd,snapshot}) data-keyed guidance section. Fixtures use
 # only generic public-safe class names (never a sandbox.a4/ label prefix, volume,

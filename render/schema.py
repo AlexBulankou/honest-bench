@@ -575,6 +575,24 @@ WARMPOOL_ADJUDICATION_MIN_N = 3
 # MEASUREMENT is itself the thing worth disclosing.
 WARMPOOL_SEPARATION_VARIANCE_MIN_SPREAD = 2.0
 
+# Cold-tier internal-stall disclosure threshold (hb#786 review finding). warmpool_gate_cold_p50_ms
+# (the MEDIAN cold bind, the numerator of warmpool_gate_separation_ratio) and
+# warmpool_gate_cold_min_ms (the FASTEST cold bind in the same fire) measure the same cold
+# population from two different central-tendency angles. A gke-kata fire found cold_min≈1.48s but
+# cold_p50≈597.9s (≈404x spread) -- roughly half the cold-tier claims individually stalled for
+# ~10 minutes before completing, dragging the median far above the fast-path floor. That stall
+# also inflates warmpool_gate_separation_ratio (cold_p50 / warm_p50, hb#6743) to a value that
+# reads as a genuinely wide warm/cold separation but is actually a cold-tier pathology artifact --
+# the warm tier isn't unusually fast, the cold tier is unusually (and inconsistently) slow. This
+# is the SEPARATION-RATIO-TOO-HIGH-FOR-THE-WRONG-REASON case, the inverse shape of
+# WARMPOOL_SEPARATION_MIN_RATIO's too-low gate: the ratio clearing its gate is not itself proof of
+# a clean measurement. Set at 10x: comfortably above ordinary cold-start boot-time skew (a
+# healthy population's slow numbers cluster within 2-3x of its fast ones -- see the reference
+# points in this file's other cold/warm caveats) and comfortably below the confirmed ~404x
+# incident, so it catches genuine stall signatures with wide margin while never firing on ordinary
+# variance. Cause-agnostic, like its siblings: this only asserts the numbers disagree, not why.
+COLD_TIER_STALL_MIN_SPREAD = 10.0
+
 # Density is a per-RUNTIME property (holds across activation modes), not per-mode. The
 # renderer sources it from whichever of these scenarios carries density_per_vcpu, applies it
 # to the warm-pool + cold rows, and renders N/A on the resume row (matching the doc).
