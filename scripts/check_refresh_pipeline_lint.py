@@ -24,7 +24,11 @@ scripts/*.sh plus every cloudbuild step script (check 3) in the repo:
    (parsed via PyYAML, not a whole-file text scan) -- CB's own scanner never
    sees a top-level YAML comment, since the YAML parser strips it before CB
    processes any string content, and a naive whole-file scan would false-flag
-   comment-only mentions of a variable name.
+   comment-only mentions of a variable name. Scope note: Cloud Build applies
+   the same substitution scan to other step fields too (e.g. `env`, `dir`);
+   this check covers `steps[].args` only, since that's where all four
+   historical fire-5 bugs actually lived -- a bare ref living in `env`/`dir`
+   is a known, deliberate gap, not a regression (tracked as a fast-follow).
 
 2. Step arg length >10,000 chars (mirrors the private repo's
    check-cloudbuild-arg-length.py, ported here per hb#782 ask #2 to close
@@ -49,8 +53,8 @@ scripts/*.sh plus every cloudbuild step script (check 3) in the repo:
    surface.
 
 Usage:
-  python3 scripts/check-refresh-pipeline-lint.py            # lint the repo
-  python3 scripts/check-refresh-pipeline-lint.py --self-test # hermetic self-test
+  python3 scripts/check_refresh_pipeline_lint.py            # lint the repo
+  python3 scripts/check_refresh_pipeline_lint.py --self-test # hermetic self-test
 """
 
 import argparse
