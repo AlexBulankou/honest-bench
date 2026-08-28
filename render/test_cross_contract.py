@@ -273,19 +273,22 @@ def test_emit_to_render_matrix_convergence_gvisor_doc_rows():
     out = _unlink(render.render_matrix(results))
 
     # (b) the three gVisor rows render EXACTLY the spec doc's target numbers. hb#132: the
-    # throughput cells are dual `<node> /node · <cluster>`; with no per-cluster field emitted the
-    # cluster half pends `pending (cluster-fire)` while the per-node half matches the spec.
+    # throughput cells are dual `<node> /node · <cluster>`; with no per-cluster field emitted and a
+    # POSITIVE per-node rate the cluster half pends `pending (cluster-fire)` while the per-node half
+    # matches the spec. But when the per-node half is exactly 0 AND p95 misses the bar (cold/resume
+    # <1s), hb#142.1's kata-warm extension derives the cluster half to an honest 0 /cluster
+    # (0 qualifying starts × N nodes = 0 — the one exact case, gated on cluster-not-landed).
     cf = "pending (cluster-fire)"
     assert (
         f"| gVisor | Warm-pool hit (Base image) | 4 /node · {cf} | 4 /node · {cf} "
         "| 0.6s (count=200) | 0.9s (count=200) | 100% |"
     ) in out
     assert (
-        f"| gVisor | Unique-image cold (RL reality) | 4 /node · {cf} | 0 /node · {cf} "
+        f"| gVisor | Unique-image cold (RL reality) | 4 /node · {cf} | 0 /node · 0 /cluster "
         "| 1.2s (count=200) | 1.56s (count=200) | 100% |"
     ) in out
     assert (
-        f"| gVisor | Resume-from-suspend | 4 /node · {cf} | 0 /node · {cf} "
+        f"| gVisor | Resume-from-suspend | 4 /node · {cf} | 0 /node · 0 /cluster "
         "| 3.5s (count=1376) | 5s (count=1376) | 92.8% (1277/1376) ⚠️ |"
     ) in out
     # the unmeasured runtime stays honest-pending (never a guess) on its measurable rows.

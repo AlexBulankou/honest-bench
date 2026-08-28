@@ -42,7 +42,7 @@ blocker — diagnosis plus file-ready patches and comments — is hand-maintaine
 | gVisor | Warm-pool hit (Base image) ⚠️ FAIL | 0 /node · 9.336 /cluster ⚠️ | 0 /node · 9.336 /cluster ⚠️ | 10.8144s (count=30) | 12.9007s (count=30) | 100% |
 | gVisor | Unique-image cold (RL reality) | [pending](WORK_IN_PROGRESS.md#not-yet-measured) | 0 /node · 0 /cluster | 4.0447s (count=200) | 4.9011s (count=200) | 100% |
 | gVisor | Resume-from-suspend | 0 /node · 0 /cluster | 0 /node · 0 /cluster | 4.6461s (count=30) | 5.0332s (count=30) | 100% |
-| Kata + microVM | Warm-pool hit (Base image) ⚠️ FAIL | 8.195 /node · 0.752 /cluster ⚠️ | 0 /node · [pending (cluster-fire)](WORK_IN_PROGRESS.md#cluster-fire) | 3.067s (count=30) | 3.973s (count=30) | 100% |
+| Kata + microVM | Warm-pool hit (Base image) ⚠️ FAIL | 8.195 /node · 0.752 /cluster ⚠️ | 0 /node · 0 /cluster | 3.067s (count=30) | 3.973s (count=30) | 100% |
 | Kata + microVM | Unique-image cold (RL reality) | [pending](WORK_IN_PROGRESS.md#not-yet-measured) | 0 /node · 0 /cluster | 3.3551s (count=30) | 3.6017s (count=30) | 100% |
 | Kata + microVM | Resume-from-suspend | [N/A](WORK_IN_PROGRESS.md#na-by-construction) | [N/A](WORK_IN_PROGRESS.md#na-by-construction) | [N/A](WORK_IN_PROGRESS.md#na-by-construction) | [N/A](WORK_IN_PROGRESS.md#na-by-construction) | [N/A](WORK_IN_PROGRESS.md#na-by-construction) |
 
@@ -66,7 +66,7 @@ Density is per-**runtime** — constant across a runtime's activation-mode rows 
 | `(count=N)` | Sample size for that cell — compare down a column, not across rows |
 | `†` | Sub-N sample: a single observation, not a distribution |
 | `⚠️` | Miss flag: sub-100% Execution Success, or a per-cluster rate below the sizing target |
-| `pending` | No publishable figure yet (currently only the `(cluster-fire)` flavor is live) |
+| `pending` | No publishable figure yet — a genuinely not-yet-run cell; the labeled flavors (`cluster-fire`, etc.) are catalogued in [WORK_IN_PROGRESS.md](WORK_IN_PROGRESS.md) |
 | plain `0` | DERIVED zero: implied by that row's TTFE p95 exceeding the column's bar, no throughput fire behind it — can flip to a real rate on a latency improvement alone |
 | caveat-tagged floor-zero | MEASURED zero from an actual throughput fire — needs the cold-start floor itself to move (see the full key) |
 
