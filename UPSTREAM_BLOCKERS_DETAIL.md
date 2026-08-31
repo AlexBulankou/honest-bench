@@ -542,6 +542,21 @@ The count-gated refill above (hb#379) is an **upstream** defect the benchmark ca
 
 **Status:** shipped benchmark-side in PR #451 (against `AlexBulankou/honest-bench`, a4s2 review requested); no upstream filing and no controller change — the NO-BOT posture and hb#379's evidence-only status are unaffected. hb#450 is the durable tracker for this measurement artifact; this subsection is its evidence appendix.
 
+#### §S6.2 — Warm-pool regression: separation currently FAIL + burst-readiness intermittently regressed, onset bracketed to the #1078/#1454 window (2026-08-25)
+
+Summary-table row: **X4**. Internal tracker: [hb#737](https://github.com/AlexBulankou/honest-bench/issues/737) (open, evidence-only per the engagement model — no upstream issue/PR filed). This is **not** a brand-new blocker: it is the standing §S6 warm/cold-convergence structural weakness resurfacing after a brief recovery, plus a **separately** bisect-confirmed burst-create-readiness axis. Two axes regressed together on the identical gVisor rig (`n2-standard-16`, 2-node warm pool), both onset in the 2026-08-25 window.
+
+**Live disposition (2026-08-31), stated honestly against the latest fire — do not overclaim RED where the snapshot shows green:**
+
+- **Axis A — warm-vs-cold separation (currently FAIL; corroborating, NOT independently bisected).** The warm-pool separation ratio (warm-start speedup vs cold-start, gate 1.8×) recovered to `3.11×` PASS on 2026-08-26 10:15Z (after the [asbx#1108](https://github.com/kubernetes-sigs/agent-sandbox/pull/1108) bounded-requeue fix), then fell back to a FAIL run: `0.588×` (08-26 19:11Z) → `0.483×` (08-28 00:27Z) → `0.7548×` (08-31 15:47Z, latest). This axis is **currently RED** on the published gke-sandbox (gVisor) benchmark. `node_image` was **constant** `v1.36.3-gke.1537000` across the 2026-08-26 10:15Z PASS → 19:11Z FAIL flip (it floated to `.1640000` only on the 08-31 fire), so a node-image float is **ruled out** as the cause. Attribution to #1078/#1454 is **corroborating** (same warm-pool adoption/latency subsystem those two changes touch; same onset window) — **not** independently bisected. Its structural root cause is §S6's count-gated (not readiness-gated) refill; a straight #1078/#1454 revert does **not** fix that structural axis.
+- **Axis B — burst-create readiness (bisect-confirmed; intermittently regressed, self-recovered, root cause unfixed).** `sandboxes_ready_under_1s` was `10/10` on 2026-08-16 (pre-regression), fell to a FAIL streak `4 / 4 / 5 / 1 / 4` across 08-25→08-28, and **self-recovered to `9/10` on the 2026-08-31 fire** — so this axis is **not currently RED**, but the root cause is unfixed (the recovery is a flap, not a resolution). This axis **is** bisect-confirmed: removing #1454 restores pre-regression readiness (#1454 sole/compounding, #1078 partial from the earlier 08-18 window).
+
+**Candidate fork lever — diagnostic revert, NOT an offered clean fix.** Revert candidates for both upstream changes (#1454, #1078) are staged on integration-fork branches; both build clean and pass `./extensions/controllers/...` with no failures, and both were dup-checked against currently-open upstream PRs. Compare URLs are tracked in [hb#737](https://github.com/AlexBulankou/honest-bench/issues/737).
+
+**Tradeoff caveat (2026-08-31) — the load-bearing honesty point.** #1454 was itself fixing a genuine prior regression: `ControllerStartupLatency99` had regressed (introduced by #1072/#683) before #1454 landed. A straight revert of #1454 therefore **reintroduces that p99 startup-latency tradeoff** even as it fixes burst-create readiness. A durable fix must satisfy **all three** constraints together — burst-create readiness + warm-vs-cold separation + p99 startup — rather than a pure revert. The fork lever exists to *prove attribution*, not to be adopted as-is.
+
+**Action taken upstream: none.** Per the engagement model on the summary page, nothing is filed or proposed against `kubernetes-sigs/agent-sandbox`; the revert branches are staged fork-side and would be offered only if a maintainer asks. Evidence is parked at hb#737.
+
 ---
 
 ## Substrate upstream blockers

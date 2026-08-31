@@ -202,6 +202,27 @@
           "status": "open"
         }
       ]
+    },
+    "warmpool-latency-regression": {
+      "renders_at": "mapping-only (freshness-verifier seed for the warm-pool separation-FAIL + burst-readiness regression; blocker page X4)",
+      "refs": [
+        {
+          "repo": "kubernetes-sigs/agent-sandbox",
+          "number": 1454,
+          "kind": "pr",
+          "role": "blocks",
+          "status": "merged",
+          "note": "Merged upstream change bisect-confirmed as the sole/compounding cause of the burst-create sandboxes_ready_under_1s regression (10/10 -> FAIL streak across 08-25..08-28; self-recovered to 9/10 on the 2026-08-31 fire, root cause unfixed). #1454 itself fixed a prior ControllerStartupLatency99 regression (introduced by #1072/#683), so a straight revert reintroduces that p99 tradeoff -- the staged fork-side revert is a diagnostic attribution lever, NOT a clean fix. Nothing proposed upstream per the engagement model; evidence + fork-revert compare URLs at hb#737."
+        },
+        {
+          "repo": "kubernetes-sigs/agent-sandbox",
+          "number": 1078,
+          "kind": "pr",
+          "role": "blocks",
+          "status": "merged",
+          "note": "Merged upstream change contributing the earlier (08-18 window) partial burst-readiness regression; the warm-vs-cold separation axis (currently FAIL 0.7548x on the 2026-08-31 fire, gate 1.8x) corroborates via the same warm-pool adoption/latency subsystem + same onset window but is NOT independently bisected (probable, not confirmed). The separation axis's structural root cause is the count-gated (not readiness-gated) refill tracked at hb#379 / detail S6, which a #1078/#1454 revert does not fix. Staged fork-side revert; nothing proposed upstream per the engagement model."
+        }
+      ]
     }
   }
 }
