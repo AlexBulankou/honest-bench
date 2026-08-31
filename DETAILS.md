@@ -22,7 +22,7 @@ come here when you want the guidance or to see the working.
 
 ### Cold-tier stall inflates separation ratio
 
-> ⚠️ **Cold-tier stall inflates separation ratio:** the cold-tier median bind latency is 10x or more above the fastest cold bind in the same fire for **Kata + microVM**: fastest cold bind 1.47846s vs median cold bind 597.898s (404x spread), inflating the published separation ratio to 376x — this large an internal spread means a substantial share of cold claims individually stalled well beyond a normal cold-start boot time, not that the cold tier as a whole is uniformly slow. Any separation ratio computed against this cold-tier median (cold_p50 / warm_p50, hb#6743) reads as wide separation but is at least partly a cold-tier stall artifact rather than evidence the warm tier is unusually fast. The cause of the stall is not asserted here. A later refresh whose cold-tier spread returns under the threshold clears this.
+_Clear as of the latest measured refresh — no cold-tier internal stall currently disclosed._
 
 ### Same-build separation-ratio variance
 
@@ -227,8 +227,8 @@ Warm-Pool TTFE (ms) — p50 vs p95
 
 gVisor         p50  ███████████████ 7.0995s
                p95  ████████████████████ 9.2856s
-Kata + microVM p50  ████ 1.8657s
-               p95  ██████ 2.6797s
+Kata + microVM p50  ███ 1.4399s
+               p95  ████ 1.6844s
 ```
 
 _Cluster shape (gVisor leg): node_count=2, `n2-standard-16` — the swing-flag threshold compares consecutive fires on this chart, so a node-count or machine-class change shows up here first._

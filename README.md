@@ -42,8 +42,8 @@ blocker — diagnosis plus file-ready patches and comments — is hand-maintaine
 | gVisor | Warm-pool hit (Base image) ⚠️ FAIL | 0.261 /node ‡ · 9.336 /cluster ⚠️ | 0 /node · 9.336 /cluster ⚠️ | 7.0995s (count=30) | 9.2856s (count=30) | 100% |
 | gVisor | Unique-image cold (RL reality) | [pending](WORK_IN_PROGRESS.md#not-yet-measured) | 0 /node · 0 /cluster | 3.5425s (count=200) | 4.1278s (count=200) | 100% |
 | gVisor | Resume-from-suspend | [pending](WORK_IN_PROGRESS.md#not-yet-measured) | 0 /node · 0 /cluster | 4.5406s (count=30) | 4.708s (count=30) | 100% |
-| Kata + microVM | Warm-pool hit (Base image) | 11.337 /node · 0.592 /cluster ⚠️ | 0 /node · 0 /cluster | 1.8657s (count=30) | 2.6797s (count=30) | 100% |
-| Kata + microVM | Unique-image cold (RL reality) | [pending](WORK_IN_PROGRESS.md#not-yet-measured) | 0 /node · 0 /cluster | 3.5405s (count=30) | 3.8338s (count=30) | 100% |
+| Kata + microVM | Warm-pool hit (Base image) | 14.012 /node · 0.694 /cluster ⚠️ | 0 /node · 0 /cluster | 1.4399s (count=30) | 1.6844s (count=30) | 100% |
+| Kata + microVM | Unique-image cold (RL reality) | [pending](WORK_IN_PROGRESS.md#not-yet-measured) | 0 /node · 0 /cluster | 3.1986s (count=30) | 3.5684s (count=30) | 100% |
 | Kata + microVM | Resume-from-suspend | [N/A](WORK_IN_PROGRESS.md#na-by-construction) | [N/A](WORK_IN_PROGRESS.md#na-by-construction) | [N/A](WORK_IN_PROGRESS.md#na-by-construction) | [N/A](WORK_IN_PROGRESS.md#na-by-construction) | [N/A](WORK_IN_PROGRESS.md#na-by-construction) |
 
 _⚠️ **Scenario FAIL:** **gVisor** Warm-pool hit (Base image) — the row above carries a real measurement whose own scenario outcome is **FAIL** (SLA not met), not a passing warm hit. The numbers are honest data, disclosed as a miss rather than dropped or greened; a later refresh whose scenario returns to PASS clears this._
@@ -70,14 +70,14 @@ Density is per-**runtime** — constant across a runtime's activation-mode rows 
 
 Full cell-decoding key — TTFE basis, honest vs. measured zeros, the dual per-node · per-cluster throughput pair, the certification-floor `≥` figures, every `pending` flavor, and the published-with-caveat tag classes — is in [DETAILS.md](DETAILS.md#how-to-read-the-core-metrics-cells).
 
-_Kata + microVM rows are measured in a separate run on the kata node pool: cluster_substrate=gke-kata · node_count=1 · generated-at=2026-08-28T14:00:37Z._
+_Kata + microVM rows are measured in a separate run on the kata node pool: cluster_substrate=gke-kata · node_count=1 · generated-at=2026-08-31T15:22:54Z._
 
 _build: cluster_substrate=gke-sandbox · controller_digest=sha256:f7307236710399ab764439fada38b016ae474305901597200ad0f44250dc33e6 · suite_git_sha=c6d84f7443ef179d04f3fbc990e606bb979c5cce · run_id=0e4f0d72995c422d9acfa5e9dc9db9b7 · node_count=2_
 _generated-at: 2026-08-31T15:47:33Z_
 
-_**North Star** — warm-pool-hit TTFE p95 < 1s (the spec doc bar): gVisor 9.2856s (count=30) ❌ not met (8.2856s above the bar) ⚠️ **scenario FAIL**; Kata + microVM 2.6797s (count=30) ❌ not met (1.6797s above the bar). An honest ❌ prints the measured gap to the bar (tagged `within sampling noise` when the miss sits inside the sample spread — it stays a ❌, the tag never flips a miss to a pass); `pending` = unmeasured (never a guess); † marks a p95 over fewer than N=30 samples._
+_**North Star** — warm-pool-hit TTFE p95 < 1s (the spec doc bar): gVisor 9.2856s (count=30) ❌ not met (8.2856s above the bar) ⚠️ **scenario FAIL**; Kata + microVM 1.6844s (count=30) ❌ not met (0.6844s above the bar). An honest ❌ prints the measured gap to the bar (tagged `within sampling noise` when the miss sits inside the sample spread — it stays a ❌, the tag never flips a miss to a pass); `pending` = unmeasured (never a guess); † marks a p95 over fewer than N=30 samples._
 
-_**Stretch bar** — warm-pool-hit TTFE p95 < 0.5s (an aspiration above the North Star, not the North Star itself; the step-up curve grades sustained creation-rate against it — see [DETAILS.md](DETAILS.md)): gVisor 9.2856s (count=30) ❌ not met (8.7856s above the bar) ⚠️ **scenario FAIL**; Kata + microVM 2.6797s (count=30) ❌ not met (2.1797s above the bar)._
+_**Stretch bar** — warm-pool-hit TTFE p95 < 0.5s (an aspiration above the North Star, not the North Star itself; the step-up curve grades sustained creation-rate against it — see [DETAILS.md](DETAILS.md)): gVisor 9.2856s (count=30) ❌ not met (8.7856s above the bar) ⚠️ **scenario FAIL**; Kata + microVM 1.6844s (count=30) ❌ not met (1.1844s above the bar)._
 
 ### Known anomalies
 
@@ -86,7 +86,7 @@ _**Stretch bar** — warm-pool-hit TTFE p95 < 0.5s (an aspiration above the Nort
 | Scenario FAIL | [⚠️ ACTIVE](DETAILS.md#scenario-fail) |
 | Warm-slower-than-cold | [⚠️ ACTIVE](DETAILS.md#warm-slower-than-cold) |
 | Warm-cold separation below gate | [⚠️ ACTIVE](DETAILS.md#warm-cold-separation-below-gate) |
-| Cold-tier stall inflates separation ratio | [⚠️ ACTIVE](DETAILS.md#cold-tier-stall-inflates-separation-ratio) |
+| Cold-tier stall inflates separation ratio | [✅ clear](DETAILS.md#cold-tier-stall-inflates-separation-ratio) |
 | Same-build separation-ratio variance | [⚠️ ACTIVE](DETAILS.md#same-build-separation-ratio-variance) |
 | Single-fire separation verdict defensibility | [⚠️ ACTIVE](DETAILS.md#single-fire-separation-verdict-defensibility) |
 | Mixed rig within this run | [⚠️ ACTIVE](DETAILS.md#mixed-rig-within-this-run) |
