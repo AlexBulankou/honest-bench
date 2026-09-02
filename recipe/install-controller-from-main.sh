@@ -112,13 +112,44 @@ WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
 # 1. fetch upstream manifests at the requested ref ---------------------------
-TARBALL_URL="https://github.com/${UPSTREAM_REPO}/archive/${UPSTREAM_REF}.tar.gz"
-log "fetching ${UPSTREAM_REPO}@${UPSTREAM_REF}"
+# WS3 (epic #6669): resolve a SYMBOLIC UPSTREAM_REF (branch/tag — including the
+# default `main`) to a concrete commit sha BEFORE fetching, then fetch the tarball
+# BY that sha. Two reasons: (a) GitHub's branch/tag archive extracts to a dir named
+# `agent-sandbox-<ref>` (e.g. `agent-sandbox-main`), so the old `${SRC##*-}` dir-name
+# parse yielded the literal string `main` — which fails cb-measure's `^[0-9a-f]{7,40}$`
+# shape-check and left the PUBLIC page with NO `upstream_ref=` pin on every daily
+# `main` fire (the against-what-upstream-commit pin the WS3 render leg exists to show);
+# (b) pinning the fetch to the resolved sha makes the applied manifests and the reported
+# sha the SAME commit — no main-advanced-mid-build race. A caller passing a 40-hex sha
+# skips resolution unchanged; if ls-remote can't resolve, we fall back to the prior
+# fetch-by-ref + dir-name parse, so worst case is exactly the old behavior (fail-safe).
+FETCH_REF="$UPSTREAM_REF"
+RESOLVED_SHA=""
+if printf '%s' "$UPSTREAM_REF" | grep -Eq '^[0-9a-f]{40}$'; then
+  RESOLVED_SHA="$UPSTREAM_REF"
+else
+  # Unauthenticated ls-remote — public repo, no gh-app scope needed (kubernetes-sigs
+  # is outside our per-org App install).
+  LSR="$(git ls-remote "https://github.com/${UPSTREAM_REPO}" "$UPSTREAM_REF" 2>/dev/null | head -1 | cut -f1)"
+  if printf '%s' "$LSR" | grep -Eq '^[0-9a-f]{40}$'; then
+    RESOLVED_SHA="$LSR"
+    FETCH_REF="$LSR"
+    log "resolved ${UPSTREAM_REF} -> ${RESOLVED_SHA} via ls-remote"
+  else
+    log "WARN: ls-remote could not resolve ${UPSTREAM_REF} to a sha — fetching by ref, upstream_ref pin may be unshaped"
+  fi
+fi
+TARBALL_URL="https://github.com/${UPSTREAM_REPO}/archive/${FETCH_REF}.tar.gz"
+log "fetching ${UPSTREAM_REPO}@${FETCH_REF}"
 curl -fsSL "$TARBALL_URL" -o "${WORK}/src.tar.gz" || die "tarball fetch failed: $TARBALL_URL"
 tar -xzf "${WORK}/src.tar.gz" -C "$WORK"
 SRC="$(find "$WORK" -maxdepth 1 -type d -name 'agent-sandbox-*' | head -1)"
 [ -n "$SRC" ] && [ -d "${SRC}/k8s" ] || die "extracted tree has no k8s/ dir — upstream layout changed"
-RESOLVED_SHA="${SRC##*-}"
+# Fall back to the dir-name parse only when ls-remote gave us nothing (the fetch was
+# by-ref, so GitHub named the dir agent-sandbox-<ref>); when FETCH_REF was a real sha
+# the dir is agent-sandbox-<40hex> and this parse would also yield a real sha, but the
+# authoritative RESOLVED_SHA is already set above.
+[ -n "$RESOLVED_SHA" ] || RESOLVED_SHA="${SRC##*-}"
 log "resolved tree: $(basename "$SRC")"
 
 # WS3 (epic #6669, "stamp-the-pin-per-fire"): if the caller sets HB_RESOLVED_SHA_OUT,
