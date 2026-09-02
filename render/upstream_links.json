@@ -68,7 +68,7 @@
           "kind": "pr",
           "role": "fix-partial-merged",
           "status": "merged",
-          "note": "Phase-1 of #451: onResume fromData Golden, MICRO-VM only (CEL-gated to sandboxClass: microvm). Merged 2026-08-01. Does NOT touch the gVisor path #5612 runs on, so it does not land the restore-side MF-owner residual; the gVisor leg is #790 below."
+          "note": "Phase-1 of #451: onResume fromData Golden, MICRO-VM only (CEL-gated to sandboxClass: microvm). Merged 2026-08-01. Does NOT touch the gVisor path #5612 runs on, so it does not land the restore-side MF-owner residual; the gVisor leg is now the ready-for-review #1379 below (which supersedes the #790 draft)."
         },
         {
           "repo": "agent-substrate/substrate",
@@ -76,7 +76,15 @@
           "kind": "pr",
           "role": "fix-in-flight",
           "status": "open",
-          "note": "Phase-2 of #451: gVisor resume Data snapshots on the golden snapshot -- this is the leg that lands the S2/§U8 restore-side MF-owner residual for the gVisor demo path. Opened 2026-08-07; +252/-125 across 12 files incl. cmd/ateom-gvisor/{main,runsc}.go and pkg/api/v1alpha1/actortemplate_types.go. State: OPEN + DRAFT + CONFLICTING (mergeStateStatus=DIRTY), no activity since 2026-08-07 -- filed but not mergeable-as-is, so the blocker holds and no matrix cell graduates. Mirrors the #356 draft/conflicting fix-in-flight pattern."
+          "note": "Phase-2 of #451 (gVisor resume Data snapshots on the golden snapshot) -- SUPERSEDED as the restore-side vehicle by the ready-for-review #1379 below. Opened 2026-08-07; +252/-125 across 12 files incl. cmd/ateom-gvisor/{main,runsc}.go and pkg/api/v1alpha1/actortemplate_types.go. State: OPEN + DRAFT, untouched since 2026-08-07 (verified live 2026-09-02) -- the maintainer's #1379 is the more comprehensive, non-draft successor for the same #451 gap, so this draft is no longer the live adopt-on-merge target. Kept in the mapping as the superseded draft, not the current restore-side leg."
+        },
+        {
+          "repo": "agent-substrate/substrate",
+          "number": 1379,
+          "kind": "pr",
+          "role": "fix-in-flight",
+          "status": "open",
+          "note": "Ready-for-review (non-draft) successor to the #790 draft for the restore-side gVisor leg -- THIS is the live adopt-on-merge target for the S2/§U8 restore-side MF-owner residual. 'Support durable directories and combined restore for gVisor'; body ends 'Fixes #451'. OPEN + non-draft, updated 2026-09-02 (verified live). Replaces runsc fscheckpoint with durable-dir.tar archive/restore over host bind mounts for gVisor durable directories; adds SNAPSHOT_SCOPE_DATA_ON_GOLDEN in ateom-gvisor (golden guest state + latest actor durable data -- the combined restore); removes the CEL rule disallowing onResume.fromData: Golden for gVisor; and re-enables the combined-restore demo tests for gVisor (the TestMultipleDurableDirLifecycle-class path this row is red on). Unmerged, so the blocker holds and no matrix cell graduates. On merge: re-run the substrate upgrade-loop e2e, confirm TMDDL recovers, retire the TMDDL known-failure family, and graduate the restore-side residual."
         },
         {
           "repo": "agent-substrate/substrate",
@@ -92,7 +100,7 @@
           "kind": "pr",
           "role": "fix-in-flight",
           "status": "merged",
-          "note": "Final piece of the #791 5-PR plan: combined PR4 (atelet UploadPausedCheckpoint RPC) + PR5 (enable-suspend-from-PAUSED) into one PR. Merged 2026-08-11. Completes the suspend-emit path but not the restore round-trip -- the gVisor Full-capture->Data-commit conversion is deferred to #817 below, blocked on #790."
+          "note": "Final piece of the #791 5-PR plan: combined PR4 (atelet UploadPausedCheckpoint RPC) + PR5 (enable-suspend-from-PAUSED) into one PR. Merged 2026-08-11. Completes the suspend-emit path but not the restore round-trip -- the gVisor Full-capture->Data-commit conversion is deferred to #817 below, blocked on the restore-side gVisor leg (now the ready-for-review #1379, which supersedes the #790 draft)."
         },
         {
           "repo": "agent-substrate/substrate",
@@ -100,7 +108,7 @@
           "kind": "issue",
           "role": "blocks",
           "status": "open",
-          "note": "Deferred follow-up off the #791 plan: suspend-from-PAUSED gVisor Full-capture->Data-commit conversion, blocked on #790. This is the remaining gate keeping #791 open and routes to the same gVisor phase-2 leg (#790) as this class's restore-side residual. OPEN."
+          "note": "Deferred follow-up off the #791 plan: suspend-from-PAUSED gVisor Full-capture->Data-commit conversion, blocked on the restore-side gVisor leg. This is the remaining gate keeping #791 open and routes to the same gVisor phase-2 leg as this class's restore-side residual -- now the ready-for-review #1379 (which supersedes the #790 draft). OPEN."
         },
         {
           "repo": "agent-substrate/substrate",
@@ -108,7 +116,7 @@
           "kind": "pr",
           "role": "fix-in-flight",
           "status": "closed",
-          "note": "Checkpoint-side classification fix (the S2 'missing piece'): probed the runsc pause-container state on the checkpoint failure path and reported a gone-sandbox checkpoint as DataLoss + actor-crash directive, plus checkpoint idempotency so a replayed checkpoint never re-drives runsc against destroyed state. Fires the existing #353/#475 crash->worker-release recovery on the suspend/pause leg. Maintainer-authored monolithic draft; CLOSED unmerged 2026-08-25 -- NOT abandoned but SUPERSEDED: the maintainer split it into a ready-for-review stack (all 'Towards #372'). The checkpoint-side leg continues at #1139 below, so the S2 adopt-on-merge path is intact, not gone. Distinct from the restore-side gVisor-sentry leg (#790, still open)."
+          "note": "Checkpoint-side classification fix (the S2 'missing piece'): probed the runsc pause-container state on the checkpoint failure path and reported a gone-sandbox checkpoint as DataLoss + actor-crash directive, plus checkpoint idempotency so a replayed checkpoint never re-drives runsc against destroyed state. Fires the existing #353/#475 crash->worker-release recovery on the suspend/pause leg. Maintainer-authored monolithic draft; CLOSED unmerged 2026-08-25 -- NOT abandoned but SUPERSEDED: the maintainer split it into a ready-for-review stack (all 'Towards #372'). The checkpoint-side leg continues at #1139 below, so the S2 adopt-on-merge path is intact, not gone. Distinct from the restore-side gVisor-sentry leg (now the ready-for-review #1379, which supersedes the #790 draft)."
         },
         {
           "repo": "agent-substrate/substrate",
@@ -116,7 +124,7 @@
           "kind": "pr",
           "role": "fix-in-flight",
           "status": "open",
-          "note": "Ready-for-review (non-draft) successor to the closed monolithic #948, opened 2026-08-21. 'atelet: checkpoint idempotency' -- makes checkpoint idempotent across atelet+ateom via destination fast-forward + local marker replay, plus failure classification that distinguishes transient errors from unrecoverable guest crashes so the control plane can retry safely (the S2 checkpoint-side terminal-classification leg). This is the live adopt-on-merge target for S2's checkpoint side. Supporting stack (also open, ready-for-review, all 'Towards #372'): #1137 (atelet: serialize node-local operations per actor) and #1136 (microvm: find a restored actor's CH api-socket without ateom's record); #1138 (ateom: replay a completed checkpoint) CLOSED unmerged as part of the same reshuffle. Distinct from the restore-side gVisor-sentry leg (#790, still open)."
+          "note": "Ready-for-review (non-draft) successor to the closed monolithic #948, opened 2026-08-21. 'atelet: checkpoint idempotency' -- makes checkpoint idempotent across atelet+ateom via destination fast-forward + local marker replay, plus failure classification that distinguishes transient errors from unrecoverable guest crashes so the control plane can retry safely (the S2 checkpoint-side terminal-classification leg). This is the live adopt-on-merge target for S2's checkpoint side. Supporting stack (also open, ready-for-review, all 'Towards #372'): #1137 (atelet: serialize node-local operations per actor) and #1136 (microvm: find a restored actor's CH api-socket without ateom's record); #1138 (ateom: replay a completed checkpoint) CLOSED unmerged as part of the same reshuffle. Distinct from the restore-side gVisor-sentry leg (now the ready-for-review #1379, which supersedes the #790 draft)."
         }
       ]
     },
