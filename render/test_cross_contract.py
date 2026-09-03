@@ -19,6 +19,7 @@ It guards the contract two ways:
      producer/consumer divergence).
 """
 
+import inspect
 import json
 import os
 import re
@@ -2143,6 +2144,60 @@ def test_emit_to_render_vcpu_footprint_convergence():
     }
     assert render.render_vcpu_footprint(inert) == "", (
         f"a provenance emit without footprint legs must render INERT (''): {substrate_prov!r}"
+    )
+
+
+def test_emit_to_results_schema_provenance_convergence():
+    """Convergence guard: every key build_provenance() can emit must be allow-listed in
+    BOTH render/schema.py's PROVENANCE_FIELDS (checked above by the footprint test) AND
+    harness/results_schema.py's PROVENANCE_FIELDS — an INDEPENDENT tuple that is the one
+    _coerce_provenance() actually iterates when assembling the JSON written to disk. A
+    key missing from THIS tuple is silently dropped before render ever sees it, so this
+    check sits closer to the wire than the render-side one.
+
+    This is the third time this exact drift shape has bitten: hb#6682 (fork_sha /
+    fork_base_upstream_sha / fork_fix_count), hb#6828 (prior_node_count / prior_node_image
+    / prior_controller_digest / prior_suite_git_sha), and hb#799/a#6669 (upstream_ref) —
+    each time a field was joined to build_provenance() and render's PROVENANCE_FIELDS but
+    the results_schema.py copy was forgotten, because nothing asserted the three stayed in
+    sync. Rather than trust a human to remember a third allow-list on the next field add,
+    statically extract every literal key build_provenance() assigns (source inspection,
+    so it covers every branch without threading through every optional arg/env var) and
+    assert convergence against both allow-lists.
+    """
+    import schema
+
+    sys.path.insert(0, _ROOT)
+    try:
+        from harness import run as _run
+        from harness import results_schema as rs
+    except Exception as exc:  # pragma: no cover - harness has its own deps
+        print(f"  (skip: harness not importable: {exc})")
+        return
+
+    src = inspect.getsource(_run.build_provenance)
+    emitted_keys = set(re.findall(r"prov\[(?:\"|')([a-zA-Z0-9_]+)(?:\"|')\]\s*=", src))
+    assert emitted_keys, (
+        "regex found no prov[...] assignments in build_provenance's source — the "
+        "function shape changed; update this test's extraction pattern rather than "
+        "let the drift-guard go blind."
+    )
+
+    missing_from_render = sorted(k for k in emitted_keys if k not in schema.PROVENANCE_FIELDS)
+    assert not missing_from_render, (
+        f"emit/render DRIFT: build_provenance can emit {missing_from_render} but render "
+        f"schema.PROVENANCE_FIELDS does not allow-list them — _clean_provenance would "
+        f"silently drop them before the renderer ever sees them."
+    )
+
+    missing_from_results_schema = sorted(
+        k for k in emitted_keys if k not in rs.PROVENANCE_FIELDS
+    )
+    assert not missing_from_results_schema, (
+        f"emit/results_schema DRIFT: build_provenance can emit "
+        f"{missing_from_results_schema} but results_schema.PROVENANCE_FIELDS does not "
+        f"allow-list them — _coerce_provenance() would silently drop them before "
+        f"latest.json is ever written (the hb#799 bug shape)."
     )
 
 

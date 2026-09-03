@@ -227,11 +227,33 @@ PROVENANCE_FIELDS = (
     "crd_version",
     "suite_git_sha",
     "run_id",
+    # Resolved upstream ref (WS3/#6669, hb#796): build_provenance() stamps this from
+    # BENCH_UPSTREAM_REF (a symbolic ref like `main` resolved to a concrete sha by
+    # install-controller-from-main.sh) so the daily page can show what upstream commit
+    # was actually measured against. render/schema.py's PROVENANCE_FIELDS already
+    # allow-lists it (a _UPSTREAM_REF-shaped string) but this INDEPENDENT tuple — the
+    # one _coerce_provenance() below actually iterates when assembling latest.json —
+    # was never joined, so the key was silently dropped before it ever reached disk
+    # (hb#799 first-fire regression: build_provenance emitted it correctly, but it
+    # never appeared in the committed JSON). Same gap shape as the #6682 fork-provenance
+    # miss and the #6828 prior_* miss below — generic string, falls through to the
+    # passthrough branch in _coerce_provenance, no dedicated branch needed.
+    "upstream_ref",
     "node_count",
     "cold_start_mode",
     "regime",
     "warm_scaling_term",
     "runtime",
+    # Per-Sandbox Footprint / declared vCPU+mem request (#3868): build_provenance() stamps
+    # these two for sandbox-family runs next to `runtime`. render/schema.py's
+    # PROVENANCE_FIELDS already allow-lists both (int, v>=0, mirrors node_count's guard)
+    # but this tuple was never joined — same silently-dropped-before-disk gap as
+    # upstream_ref above, caught live by the same convergence test that flagged
+    # upstream_ref (the footprint block has been rendering INERT in production).
+    # Int, not string — needs its own _coerce_provenance branch (see below), mirroring
+    # node_count's isinstance guard.
+    "sandbox_cpu_request_m",
+    "sandbox_mem_request_mib",
     # Node machine shape (PR#313 review): a run-level field so a machine-class
     # change (e.g. the ephemeral hb-refresh CI cluster's e2-standard-16 vs the persistent
     # internal cluster's n2-standard-16) is stamped on every run, not just node_count.
@@ -1613,6 +1635,12 @@ def _coerce_provenance(raw: dict) -> dict:
             # Numeric (int), not string — mirrors node_count's isinstance guard;
             # the generic string passthrough below never fires for this field.
             if isinstance(v, bool) or not isinstance(v, int):
+                continue
+            out[f] = v
+        elif f in ("sandbox_cpu_request_m", "sandbox_mem_request_mib"):
+            # Numeric (int, >=0), not string — mirrors node_count's isinstance guard and
+            # render/schema.py's own predicate for these two fields.
+            if isinstance(v, bool) or not isinstance(v, int) or v < 0:
                 continue
             out[f] = v
         elif f == "fork_fix_count":
