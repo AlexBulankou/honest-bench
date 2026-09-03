@@ -113,6 +113,38 @@ def test_multiple_legs_reported_together():
     _check(len(lines) == 3, f"expected 3 downgrade lines, got {lines!r}")
 
 
+def test_downgraded_names_populated():
+    # The optional downgraded_names side-channel lets the caller
+    # recover exactly which fresh rows are about to be discarded on refusal,
+    # without re-deriving the guard's own predicate logic. One name per
+    # affected scenario even when a single scenario trips multiple legs
+    # (outcome downgrade + key loss below) — a set, not a multiset.
+    prior = [
+        {"name": "a", "outcome": "PASS", "sla_metrics": {"k1": 1.0, "k2": 2.0}},
+        {"name": "b", "outcome": "FAIL", "sla_metrics": {"k1": 1.0}},
+        {"name": "c", "outcome": "PASS", "sla_metrics": {"k1": 1.0}},
+    ]
+    raw = [
+        {"name": "a", "outcome": "pending", "sla_metrics": {"k1": 1.0}},
+        {"name": "c", "outcome": "PASS", "sla_metrics": {"k1": 1.0}},
+    ]
+    names: set = set()
+    lines = check_cell_downgrade(raw, prior, names)
+    # a: outcome downgrade + key loss (both legs, same name); b: dropped;
+    # c: clean, never added.
+    _check(names == {"a", "b"}, f"expected {{'a', 'b'}}, got {names!r}")
+    _check(len(lines) == 3, f"expected 3 downgrade lines, got {lines!r}")
+
+
+def test_downgraded_names_none_by_default():
+    # Passing no third arg must behave exactly as before (default None,
+    # no side-channel) — every pre-existing call site stays untouched.
+    prior = [{"name": "a", "outcome": "PASS", "sla_metrics": {"k1": 1.0}}]
+    raw = [{"name": "a", "outcome": "pending", "sla_metrics": {"k1": 1.0}}]
+    lines = check_cell_downgrade(raw, prior)  # no crash, no third arg
+    _check(len(lines) == 1, f"expected 1 downgrade, got {lines!r}")
+
+
 def test_measured_with_suffixes_key_loss_line():
     # hb#723: a committed row carrying measured_with makes the key-loss line
     # name the concrete envs that gated the lost key.
@@ -269,6 +301,8 @@ def main() -> int:
         test_prior_pending_never_gates,
         test_fail_to_pass_is_not_a_downgrade,
         test_multiple_legs_reported_together,
+        test_downgraded_names_populated,
+        test_downgraded_names_none_by_default,
         test_measured_with_suffixes_key_loss_line,
         test_measured_with_suffixes_outcome_downgrade_line,
         test_measured_with_suffixes_row_drop_line,
