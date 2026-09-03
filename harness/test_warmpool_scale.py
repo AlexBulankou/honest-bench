@@ -89,7 +89,7 @@ def test_pool_replicas_zero_is_a_valid_cold_burst():
 
 
 def test_fill_gate_target_capped_at_claim_count_for_oversized_pool():
-    # a#6669/a4z1: a diagnostic fire may size the pool AT OR ABOVE the claim
+    # a diagnostic fire may size the pool AT OR ABOVE the claim
     # burst (pool_replicas > claim_count) to prove pool health independent of
     # an oversubscribed burst. hb#804 already caps the POST-fire
     # classification target at claims fired; the PRE-fire fill gate must be
