@@ -88,6 +88,38 @@ def test_pool_replicas_zero_is_a_valid_cold_burst():
     assert "if ready >= target_ready:" in src, src
 
 
+def test_fill_gate_target_capped_at_claim_count_for_oversized_pool():
+    # a diagnostic fire may size the pool AT OR ABOVE the claim
+    # burst (pool_replicas > claim_count) to prove pool health independent of
+    # an oversubscribed burst. hb#804 already caps the POST-fire
+    # classification target at claims fired; the PRE-fire fill gate must be
+    # capped the same way or it blocks forever waiting for readyReplicas to
+    # reach a raw pool size the burst never drives.
+    w = _reload_with_env(
+        WARMPOOL_COLD_START_POOL_REPLICAS=45,
+        WARMPOOL_COLD_START_CLAIM_COUNT=40,
+    )
+    assert w._fill_gate_target(45, 40) == 40
+
+
+def test_fill_gate_target_unaffected_for_committed_config():
+    # Committed 30/40 config (pool_replicas < claim_count): fill gate still
+    # waits for the full raw pool size, unchanged from pre-fix behavior.
+    w = _reload_with_env(
+        WARMPOOL_COLD_START_POOL_REPLICAS=30,
+        WARMPOOL_COLD_START_CLAIM_COUNT=40,
+    )
+    assert w._fill_gate_target(30, 40) == 30
+
+
+def test_fill_gate_target_cold_baseline_untouched():
+    # pool_replicas <= 0 is cold-baseline mode -- target stays exactly
+    # pool_replicas (0 or negative), never coerced to claim_count.
+    w = _reload_with_env()
+    assert w._fill_gate_target(0, 300) == 0
+    assert w._fill_gate_target(-1, 300) == -1
+
+
 def _all_tests():
     return [
         v
