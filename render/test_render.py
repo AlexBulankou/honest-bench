@@ -347,6 +347,24 @@ def test_fork_provenance_renders_in_matrix_banner():
     assert "source=fork@79203112 (+2 fixes over upstream@2b3a4715)" in out
 
 
+def test_machine_type_renders_in_matrix_build_banner():
+    # hb#7625: the matrix build banner omitted machine_type even though render_product's
+    # per-product banner already carries it — same schema field, same INERT-when-absent
+    # discipline, just missing from this banner's own order list.
+    out = render.render_matrix(
+        _matrix_results(_full_gvisor_scenarios(), provenance={"machine_type": "n2-standard-16"})
+    )
+    foot = [l for l in out.splitlines() if l.startswith("_build: ")][0]
+    assert "machine_type=n2-standard-16" in foot
+
+
+def test_machine_type_absent_from_matrix_build_banner_when_not_provided():
+    # inert-by-default: no provenance data -> no machine_type token, matching every other
+    # omit-when-absent field in this banner.
+    out = render.render_matrix(_matrix_results(_full_gvisor_scenarios()))
+    assert "machine_type" not in out
+
+
 def test_fork_provenance_absent_renders_no_source_leg():
     # INERT-when-absent: a prebuilt-image run stamps none of the three parts ⇒ byte-unchanged
     # banner (no `source=` leg at all).

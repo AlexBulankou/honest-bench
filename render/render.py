@@ -2591,6 +2591,10 @@ def render_matrix(results, kata_results=None, include_legend=True):
         "upstream_ref",
         "run_id",
         "node_count",
+        # hb#7625: mirrors the per-product build banner's machine_type leg above —
+        # stamp the node machine shape here too so a machine-class change is visible
+        # on the matrix page, not silently folded into cluster_substrate.
+        "machine_type",
     ]
     banner = [f"{k}={prov[k]}" for k in banner_order if k in prov]
     # Fork-build source leg (WS4(c), epic #6669): mirrors the per-product build banner above —
