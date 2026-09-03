@@ -2157,7 +2157,7 @@ def test_emit_to_results_schema_provenance_convergence():
 
     This is the third time this exact drift shape has bitten: hb#6682 (fork_sha /
     fork_base_upstream_sha / fork_fix_count), hb#6828 (prior_node_count / prior_node_image
-    / prior_controller_digest / prior_suite_git_sha), and hb#799/a#6669 (upstream_ref) —
+    / prior_controller_digest / prior_suite_git_sha), and hb#799 (upstream_ref) —
     each time a field was joined to build_provenance() and render's PROVENANCE_FIELDS but
     the results_schema.py copy was forgotten, because nothing asserted the three stayed in
     sync. Rather than trust a human to remember a third allow-list on the next field add,
