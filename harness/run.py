@@ -326,9 +326,11 @@ def check_cell_downgrade(
         # Absent for cells with no such knobs (most cells) — the suffix is empty
         # then, leaving the line unchanged.
         mw = prior.get("measured_with")
+        prior_has_mw = isinstance(mw, dict) and bool(mw)
+        # committed-only suffix — used by the row-drop leg below, which has no
+        # fresh row to self-report knobs against.
         mw_suffix = (
-            f" (committed row measured_with: {mw})"
-            if isinstance(mw, dict) and mw else ""
+            f" (committed row measured_with: {mw})" if prior_has_mw else ""
         )
         fresh = fresh_by_name.get(name)
         if fresh is None:
@@ -339,11 +341,34 @@ def check_cell_downgrade(
             if downgraded_names is not None:
                 downgraded_names.add(name)
             continue
+        # hb#7678: for the two legs where a fresh row EXISTS (outcome downgrade,
+        # key loss), surface the FRESH fire's own measured_with alongside the
+        # committed row's, so an operator can tell a config-MISMATCH key-loss
+        # from a genuine SAME-config regression. A differently-configured
+        # diagnostic fire (e.g. WARMPOOL_COLD_START_POOL_REPLICAS=45 vs a
+        # committed row's 30) can short-circuit pre-metrics by design and drop
+        # ttfe keys, tripping the identical loud line a real regression would —
+        # the fresh knobs are what disambiguate. This ANNOTATES only; the gate
+        # stays fail-closed and the downgrade still fires. Emitted only when at
+        # least one side self-reported knobs (the common no-knobs cell's line is
+        # unchanged); the side lacking them reads "none reported" — that
+        # asymmetry IS the mismatch cue.
+        fmw = fresh.get("measured_with")
+        fresh_has_mw = isinstance(fmw, dict) and bool(fmw)
+        if prior_has_mw or fresh_has_mw:
+            mw_suffix_both = (
+                " (committed row measured_with: "
+                f"{mw if prior_has_mw else 'none reported'}; "
+                "fresh fire measured_with: "
+                f"{fmw if fresh_has_mw else 'none reported'})"
+            )
+        else:
+            mw_suffix_both = ""
         f_out = fresh.get("outcome")
         if not isinstance(f_out, str) or f_out.lower() == "pending":
             downgrades.append(
                 f"{name}: outcome would downgrade {p_out} -> "
-                f"{f_out if isinstance(f_out, str) else 'missing'}{mw_suffix}"
+                f"{f_out if isinstance(f_out, str) else 'missing'}{mw_suffix_both}"
             )
             if downgraded_names is not None:
                 downgraded_names.add(name)
@@ -355,7 +380,7 @@ def check_cell_downgrade(
             if lost:
                 downgrades.append(
                     f"{name}: sla_metrics key(s) lost vs committed row: "
-                    f"{', '.join(lost)}{mw_suffix}"
+                    f"{', '.join(lost)}{mw_suffix_both}"
                 )
                 if downgraded_names is not None:
                     downgraded_names.add(name)
