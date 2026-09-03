@@ -96,6 +96,26 @@ _SANDBOX_IMAGE = os.environ.get(
 _POOL_REPLICAS = int(os.environ.get("WARMPOOL_COLD_START_POOL_REPLICAS", "5"))
 _CLAIM_COUNT = int(os.environ.get("WARMPOOL_COLD_START_CLAIM_COUNT", "10"))
 
+
+def _fill_gate_target(pool_replicas: int, claim_count: int) -> int:
+    """Pre-fire fill-gate readyReplicas target.
+
+    hb#804 capped the POST-fire classification target (`warm_target` below)
+    at claims actually fired, not the raw pool size, so a diagnostic fire
+    sized AT OR ABOVE the claim burst (pool_replicas > claim_count) is
+    measured against its own genuine-hit population instead of
+    unconditionally reading as under-delivery. The PRE-fire fill gate
+    (`_wait_for_pool_warm`'s `target_ready`) had the identical uncapped
+    blind spot: it waited for readyReplicas to reach the raw pool size even
+    when that pool outsizes the burst. Mirror hb#804's fix here. Cold-
+    baseline mode (pool_replicas <= 0) is untouched -- its target stays
+    exactly pool_replicas so the negative-index neutral-cold semantics are
+    preserved.
+    """
+    if pool_replicas > 0:
+        return min(pool_replicas, claim_count)
+    return pool_replicas
+
 # Warm-tier gate (separation-based). The scenario verifies the warm pool yields
 # a DISTINCT FAST provisioning tier — not an absolute latency. PASS iff the
 # _POOL_REPLICAS fastest genuine-warm claims form a warm cluster that is EITHER
@@ -1219,19 +1239,20 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
     )
     _pool_ready_thread.start()
 
+    _gate_target = _fill_gate_target(_POOL_REPLICAS, _CLAIM_COUNT)
     try:
         log.info(
             "waiting for WarmPool %s to reach readyReplicas=%d (window=%ds)",
-            pool_name, _POOL_REPLICAS, _WARMUP_TIMEOUT_S,
+            pool_name, _gate_target, _WARMUP_TIMEOUT_S,
         )
         _wait_for_pool_warm(
             custom, pool_name=pool_name,
-            target_ready=_POOL_REPLICAS, timeout_s=_WARMUP_TIMEOUT_S,
+            target_ready=_gate_target, timeout_s=_WARMUP_TIMEOUT_S,
             stability_polls=_WARMUP_STABILITY_POLLS if _POOL_REPLICAS > 0 else 1,
         )
         log.info(
             "pool fully warm (readyReplicas=%d); firing %d claims",
-            _POOL_REPLICAS, _CLAIM_COUNT,
+            _gate_target, _CLAIM_COUNT,
         )
 
         # hb#450 provenance snapshot: capture the pre-warmed Sandbox name set
