@@ -1,7 +1,7 @@
 # Experiment lane for off-default-env fires (design note)
 
-Status: **proposed** — no code yet. Written in response to a4z1's ask-3 on
-[a#6669](https://github.com/AlexBulankou/a/issues/6669) (the sized-pool diagnostic fire).
+Status: **proposed** — no code yet. Written in response to a fleet-lead's ask-3 following
+up on the sized-pool diagnostic fire.
 This note describes the shape; implementation is a follow-up once the design is agreed.
 
 ## The gap this closes
@@ -11,7 +11,7 @@ pool-capacity diagnostic sweep, distinct from the committed matrix's default poo
 currently has exactly two outcomes when it reaches `check_cell_downgrade` (hb#206):
 
 1. **Refused.** The guard sees the off-default row's shape diverge from the committed
-   cell and treats it as a downgrade candidate. Before hb#801 (a#6669 ask-2) this silently
+   cell and treats it as a downgrade candidate. Before hb#801 this silently
    discarded the freshly computed numbers; after hb#801 the numbers survive in the build
    log, but the fire still produces **no durable, queryable artifact** — recovering them
    again means re-reading a specific build's log, or re-firing.
@@ -83,7 +83,7 @@ default-config numbers — that boundary is the whole point of this design.
 
 Today only a few scenarios (`burst_create`, `warmpool_cold_start`, `native_digest_cold`)
 emit `measured_with` at all, and none of them currently tag pool-sizing knobs
-(`WARMPOOL_POOL_REPLICAS`/`WARMPOOL_CLAIM_COUNT`/`NUM_NODES`) into it — the a#6669
+(`WARMPOOL_POOL_REPLICAS`/`WARMPOOL_CLAIM_COUNT`/`NUM_NODES`) into it — the
 diagnostic fire's own `measured_with` would need those keys added at the scenario level
 before this partition has anything to key on for that specific class of sweep. That's
 scenario-level follow-up work, not part of this note's scope.
