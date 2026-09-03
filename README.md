@@ -40,8 +40,8 @@ blocker — diagnosis plus file-ready patches and comments — is hand-maintaine
 | Runtime | Activation Mode | Throughput @ <5s TTFE (sb/s — node · cluster) | Throughput @ <1s TTFE (sb/s — node · cluster) | TTFE p50 | TTFE p95 | Execution Success (Honesty Check) |
 |---|---|---|---|---|---|---|
 | gVisor | Warm-pool hit (Base image) | 2.93 /node · 9.336 /cluster ⚠️ | 0 /node · 9.336 /cluster ⚠️ | [pending](WORK_IN_PROGRESS.md#not-yet-measured) | [pending](WORK_IN_PROGRESS.md#not-yet-measured) | [pending](WORK_IN_PROGRESS.md#not-yet-measured) |
-| gVisor | Unique-image cold (RL reality) | [pending](WORK_IN_PROGRESS.md#not-yet-measured) | 0 /node · 0 /cluster | 3.3939s (count=200) | 3.7921s (count=200) | 100% |
-| gVisor | Resume-from-suspend | [pending](WORK_IN_PROGRESS.md#not-yet-measured) | 0 /node · 0 /cluster | 4.7s (count=30) | 4.8872s (count=30) | 100% |
+| gVisor | Unique-image cold (RL reality) | [pending](WORK_IN_PROGRESS.md#not-yet-measured) | 0 /node · 0 /cluster | 3.3286s (count=200) | 4.7328s (count=200) | 100% |
+| gVisor | Resume-from-suspend | [pending](WORK_IN_PROGRESS.md#not-yet-measured) | 0 /node · 0 /cluster | 4.331s (count=30) | 4.8322s (count=30) | 100% |
 | Kata + microVM | Warm-pool hit (Base image) | 14.012 /node · 0.694 /cluster ⚠️ | 0 /node · 0 /cluster | 1.4399s (count=30) | 1.6844s (count=30) | 100% |
 | Kata + microVM | Unique-image cold (RL reality) | [pending](WORK_IN_PROGRESS.md#not-yet-measured) | 0 /node · 0 /cluster | 3.1986s (count=30) | 3.5684s (count=30) | 100% |
 | Kata + microVM | Resume-from-suspend | [N/A](WORK_IN_PROGRESS.md#na-by-construction) | [N/A](WORK_IN_PROGRESS.md#na-by-construction) | [N/A](WORK_IN_PROGRESS.md#na-by-construction) | [N/A](WORK_IN_PROGRESS.md#na-by-construction) | [N/A](WORK_IN_PROGRESS.md#na-by-construction) |
@@ -70,8 +70,8 @@ Full cell-decoding key — TTFE basis, honest vs. measured zeros, the dual per-n
 
 _Kata + microVM rows are measured in a separate run on the kata node pool: cluster_substrate=gke-kata · node_count=1 · generated-at=2026-08-31T15:22:54Z._
 
-_build: cluster_substrate=gke-sandbox · controller_digest=sha256:7a24a6db095f6bd31a89c764ab75fd3917ebdbc00ee6bf288033bbc527ba81fe · suite_git_sha=6466a9e8b572617dce8e09059ee5e420c0461d87 · upstream_ref=52618d52a1f43ccdd6decf91261f3dc1b678f591 · run_id=c0da32797c734d50908a704a8a6f2ad3 · node_count=4 · machine_type=n2-standard-16_
-_generated-at: 2026-09-03T20:56:34Z_
+_build: cluster_substrate=gke-sandbox · controller_digest=sha256:7a24a6db095f6bd31a89c764ab75fd3917ebdbc00ee6bf288033bbc527ba81fe · suite_git_sha=c1a6e3f8b42084e94f82e5c41c74220b6d40db80 · upstream_ref=52618d52a1f43ccdd6decf91261f3dc1b678f591 · run_id=5b474fee2e6547e88b80a2b41341b2e7 · node_count=4 · machine_type=n2-standard-16_
+_generated-at: 2026-09-03T21:56:28Z_
 
 _**North Star** — warm-pool-hit TTFE p95 < 1s (the spec doc bar): gVisor [pending](WORK_IN_PROGRESS.md#not-yet-measured); Kata + microVM 1.6844s (count=30) ❌ not met (0.6844s above the bar). An honest ❌ prints the measured gap to the bar (tagged `within sampling noise` when the miss sits inside the sample spread — it stays a ❌, the tag never flips a miss to a pass); `pending` = unmeasured (never a guess); † marks a p95 over fewer than N=30 samples._
 
@@ -199,12 +199,15 @@ COUNT vs the prior build; the first build is the baseline. Drive this COUNT up.
 | `sha256:671770254af1…` | 2026-09-02 | 5 | -4 † | 0.078125 | 10 | FAIL |
 | `sha256:cc11470d4fa7…` | 2026-09-03 | 10 | +5 † | 0.15625 | 10 | PASS |
 | `sha256:7a24a6db095f…` | 2026-09-03 | 8 | -2 † | 0.0625 | 10 | PASS |
+| `sha256:7a24a6db095f…` | 2026-09-03 | 2 | -6 † | 0.015625 | 10 | FAIL |
 
 _† Δ spans a build whose burst sampled fewer than N=30 claims — too few to rank build-over-build; the swing may be sampling noise, not a real move._
 
 _A FAIL Outcome means that build's burst did not clear the delivery-ratio SLA — the COUNT is still the real, measured number, not fabricated or estimated._
 
 _Density /vCPU (this build) is this single burst's own per-vCPU figure — a different, typically much smaller measurement than the Max Density table above (peak across scenarios), not a build-over-build regression._
+
+_ℹ️ **Root-caused regression (hb#737):** the trailing FAIL streak above is a confirmed upstream regression, not an open mystery — a zero-confound bisect isolated **agent-sandbox#1454** (confirmed, compounding) on top of a partial prior contribution from **agent-sandbox#1078**, both in the create/bind reconcile hot path. No fix is ours to ship; this cell stays honestly RED until the upstream fixes land._
 
 ```
 Throughput — build-over-build (sandboxes ready <1s)
@@ -221,6 +224,7 @@ Throughput — build-over-build (sandboxes ready <1s)
 2026-09-02 ██████████ 5 (FAIL)
 2026-09-03 ████████████████████ 10
 2026-09-03 ████████████████ 8
+2026-09-03 ████ 2 (FAIL)
 ```
 
 ## Which storage class should you pick?

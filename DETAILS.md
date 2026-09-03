@@ -95,9 +95,9 @@ The headline burst count is **pod-Ready** — but a pod can report Ready before 
 
 | Signal | Count |
 |---|---|
-| Pod-Ready <1s (weaker claim) | 8 |
-| Executed first-instruction <1s (TTFE, stronger claim) | 3 |
-| Ready-but-not-yet-run (gap) | 5 |
+| Pod-Ready <1s (weaker claim) | 2 |
+| Executed first-instruction <1s (TTFE, stronger claim) | 1 |
+| Ready-but-not-yet-run (gap) | 1 |
 | Execution success (Honesty Check) | 100% |
 
 _Pod-Ready ≥ executed-TTFE by construction; the gap is the over-claim a pod-Ready headline would hide._
@@ -108,21 +108,21 @@ Cold-start TTFE (create → first-instruction result) splits into **provision** 
 
 | Stage | p50 | p95 |
 |---|---|---|
-| Provision (create → Ready) | 2.8953s | 3.2807s |
-| Exec (websocket + first-instruction) | 0.4631s | 0.5902s |
-| **TTFE (total)** | **3.3939s** | **3.7921s** |
+| Provision (create → Ready) | 3.0719s | 3.9394s |
+| Exec (websocket + first-instruction) | 0.2549s | 0.8275s |
+| **TTFE (total)** | **3.3286s** | **4.7328s** |
 
 _Each row is an independently-measured value against the same shared t0 (exec is the measured residual TTFE − provision, not a subtraction of percentiles). For the single-sample cold cell the p50 and p95 are the one measured sample._
 
 ## Warm-vs-Cold Speedup
 
-A warm-pool provision is **2.82401× faster** † than a true-cold start (gVisor). The warm pool keeps a ready slot so a claim skips the fresh-node image-pull path a cold start pays in full. Both legs are measured the same way (TTFE (executed first-instruction)); but this ratio rests on only n=10 warm claims — fewer than N=30, too few to rank reliably, so treat it as provisional.
+A warm-pool provision is **1.0206× faster** † than a true-cold start (gVisor). The warm pool keeps a ready slot so a claim skips the fresh-node image-pull path a cold start pays in full. Both legs are measured the same way (TTFE (executed first-instruction)); but this ratio rests on only n=10 warm claims — fewer than N=30, too few to rank reliably, so treat it as provisional.
 
 | Leg | TTFE (p50) |
 |---|---|
-| Warm-pool hit (gVisor, n=10) | 1.2018s |
-| True-cold (unique-image) | 3.3939s |
-| Speedup (warm is N× faster) | 2.82401× † |
+| Warm-pool hit (gVisor, n=10) | 3.2614s |
+| True-cold (unique-image) | 3.3286s |
+| Speedup (warm is N× faster) | 1.0206× † |
 
 _Speedup = cold ÷ warm, computed from the displayed values over n=10 warm claims; both legs are medians (p50) — the warm leg over its warm-pool claims and the cold leg over the true-cold distribution — so half of warm claims and half of cold starts run slower than the values shown._
 
@@ -273,8 +273,8 @@ The matrix measures the **claim** side (a warm hit is sub-second). This block me
 
 | Refill latency | Value |
 |---|---|
-| Median (p50) (over 5 cycles) | 1.36788s |
-| Tail (p90) | 1.66398s |
+| Median (p50) (over 5 cycles) | 1.34612s |
+| Tail (p90) | 1.80356s |
 
 _Refill latency is measured per-cycle as the wall-clock from a claim release to the warm pool returning to full readiness; the median and tail are percentiles of the completed-cycle distribution._
 
@@ -286,8 +286,8 @@ _Capability note: this is an **administrative** (operator- or user-driven) suspe
 
 | Suspend latency | Value |
 |---|---|
-| Median (p50) | 2.2722s |
-| Tail (p90) | 2.3359s |
+| Median (p50) | 2.1108s |
+| Tail (p90) | 2.2292s |
 
 _Suspend latency is measured per-cycle as the wall-clock from the `operatingMode=Suspended` patch return to the terminal Suspended state; the median and tail are percentiles of the measured suspend distribution._
 
@@ -296,7 +296,7 @@ _Suspend latency is measured per-cycle as the wall-clock from the `operatingMode
 The tables above are the raw measurements. If you build *on* sandboxes but do not run the cluster yourself, here is what they mean in practice:
 
 - **Keep a warm pool sized to demand and a new sandbox is ready quickly** — a claim against a ready pool skips the fresh-node startup path. The exact wait to budget is in the operating envelope below once that measurement lands.
-- **A warm-pool hit is about 2.8× faster than starting cold (gVisor).** If start-up latency matters to you, the warm pool is the single biggest lever — size it for your steady demand and most claims never pay the cold path. (This ratio is the dedicated warm-vs-cold leg — a separate point-in-time measurement from the Core Metrics matrix rows above, so do not reproduce it by dividing the matrix cells.)
+- **A warm-pool hit is about 1× faster than starting cold (gVisor).** If start-up latency matters to you, the warm pool is the single biggest lever — size it for your steady demand and most claims never pay the cold path. (This ratio is the dedicated warm-vs-cold leg — a separate point-in-time measurement from the Core Metrics matrix rows above, so do not reproduce it by dividing the matrix cells.)
 - **Big simultaneous bursts still work — 300 sandboxes asked for at once settled in ~6.9s.** But that is the pool-overflow regime: the wait climbs toward the cold-start number as claims outrun ready slots, so plan the pool around your steady rate, not your worst spike.
 - **Rule of thumb for pool size:** start near your typical concurrent demand (≈0.75× of it) and tune from there. This is a planning heuristic, not one of the measured numbers above.
 - **Both runtimes are measured — choose by isolation need.** In the measurements above, warm-pool latency is comparable between them; gVisor delivers the higher per-node throughput, while Kata + microVM puts each sandbox in its own VM for hardware-grade isolation. If unsure, start with gVisor and move only the workloads that need a VM boundary to Kata.
