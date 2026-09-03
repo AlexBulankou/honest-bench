@@ -3101,21 +3101,25 @@ def _north_star_fail_caveat(rows):
     a p95 that happens to clear the bar would otherwise render a green ✅ while its own run was
     marked FAIL. Mirrors render_cluster_saturation's own outcome=FAIL headline caveat. Returns
     "" when no runtime FAILs so the caller can unconditionally append it.
+
+    Keys off outcome ALONE (not p95 presence, #7672): a scenario can FAIL for reasons that leave
+    its p95 unpublished (e.g. the SLA metric itself is absent from a FAILing run), and that is
+    NOT the same condition as a `pending` outcome — pending is its own, disjoint OUTCOME_ENUM
+    value. Requiring p95 to also be present let a genuinely-FAILing scenario with no p95 silently
+    read as "no FAIL" (the #7672 "Worst row": outcome==FAIL, p95 unpublished, rendered ✅ clear).
     """
-    failed = [
-        label
-        for label, p95, _cell, _p50, _n, outcome in rows
-        if outcome == "FAIL" and p95 is not None
-    ]
+    failed = [label for label, _p95, _cell, _p50, _n, outcome in rows if outcome == "FAIL"]
     if not failed:
         return ""
     who = ", ".join(f"**{lbl}**" for lbl in failed)
     return (
         "> ⚠️ **Scenario FAIL:** the warm-pool-hit scenario's own outcome is **FAIL** for "
-        f"{who} — the p95 above is a real measurement that MISSED its SLA, not a passing "
-        "warm hit. It is still graded against the bar and carried forward as the refresh "
-        "baseline honestly (an SLA-failing number is disclosed, never softened into a green "
-        "cell); a later refresh whose scenario returns to PASS clears this."
+        f"{who}. When a p95 is published above it is a real measurement that MISSED its SLA, "
+        "not a passing warm hit; when no p95 is published, the run still FAILed and that "
+        "outcome is disclosed regardless. It is still graded against the bar and carried "
+        "forward as the refresh baseline honestly (an SLA-failing outcome is disclosed, never "
+        "softened into a green cell); a later refresh whose scenario returns to PASS clears "
+        "this."
     )
 
 
@@ -3138,6 +3142,44 @@ def _raw_sla_p95(scenarios, name, key):
                     return v
             return None
     return None
+
+
+def _warmpool_leg_pending(results, kata_results=None, *, check_cold=False):
+    """True when any runtime's warm-pool leg (and cold leg, if check_cold) is `pending`.
+
+    Shared "unmeasured" detector for the warm-pool-derived Known-anomalies rows (#7672):
+    _warm_cold_inversion_caveat, _warmpool_separation_caveat, _cold_tier_stall_caveat, and
+    _warmpool_separation_verdict_caveat all `continue` past a pending leg inside their own
+    per-runtime loop (no real measurement to compare), so their own return value cannot
+    distinguish "measured, no anomaly" from "nothing to measure yet" -- both come back "".
+    This mirrors their exact runtime/kata source-resolution and pending gate WITHOUT computing
+    an anomaly, so the caller can render a distinct pending state instead of collapsing the two
+    into the same `✅ clear`.
+    """
+    prov = _clean_provenance(results.get("provenance"))
+    measured_runtime = prov.get("runtime") or "gvisor"
+    sources = {measured_runtime: _matrix_scenarios(results.get("scenarios"))}
+    if (
+        isinstance(kata_results, dict)
+        and kata_results.get("product") == "sandbox-kata"
+        and "kata-microvm" not in sources
+    ):
+        kp = _clean_provenance(kata_results.get("provenance"))
+        if kp.get("runtime") == "kata-microvm":
+            sources["kata-microvm"] = _matrix_scenarios(kata_results.get("scenarios"))
+
+    for rt in MATRIX_RUNTIMES:
+        rt_scen = sources.get(rt)
+        if rt_scen is None:
+            continue
+        warm = rt_scen.get("warmpool_cold_start")
+        if warm and warm.get("outcome") == "pending":
+            return True
+        if check_cold:
+            cold = rt_scen.get("native_digest_cold")
+            if cold and cold.get("outcome") == "pending":
+                return True
+    return False
 
 
 def _warm_cold_inversion_caveat(results, kata_results=None):
@@ -3872,17 +3914,27 @@ def render_known_anomalies_table(results, kata_results=None, history_rows=None):
         return ""
     rows = _north_star_rows(results, kata_results)
     fail_active = bool(_north_star_fail_caveat(rows))
+    fail_pending = any(p95 is None for _label, p95, _cell, _p50, _n, _outcome in rows)
     inversion_active = bool(_warm_cold_inversion_caveat(results, kata_results))
+    inversion_pending = _warmpool_leg_pending(results, kata_results, check_cold=True)
     separation_active = bool(_warmpool_separation_caveat(results, kata_results))
+    separation_pending = _warmpool_leg_pending(results, kata_results)
     cold_stall_active = bool(_cold_tier_stall_caveat(results, kata_results))
+    cold_stall_pending = _warmpool_leg_pending(results, kata_results)
     mixed_rig_active = bool(_mixed_rig_confound_caveat(results))
     variance_active = bool(_warmpool_separation_variance_caveat(history_rows or []))
     verdict_active = bool(
         _warmpool_separation_verdict_caveat(results, history_rows or [], kata_results)
     )
+    verdict_pending = _warmpool_leg_pending(results, kata_results)
 
-    def _cell(active, anchor):
-        marker = "⚠️ ACTIVE" if active else "✅ clear"
+    def _cell(active, anchor, pending=False):
+        if active:
+            marker = "⚠️ ACTIVE"
+        elif pending:
+            marker = "⏳ pending"
+        else:
+            marker = "✅ clear"
         return f"[{marker}](DETAILS.md#{anchor})"
 
     lines = [
@@ -3890,16 +3942,17 @@ def render_known_anomalies_table(results, kata_results=None, history_rows=None):
         "",
         "| Anomaly | Status |",
         "|---|---|",
-        f"| Scenario FAIL | {_cell(fail_active, 'scenario-fail')} |",
-        f"| Warm-slower-than-cold | {_cell(inversion_active, 'warm-slower-than-cold')} |",
+        f"| Scenario FAIL | {_cell(fail_active, 'scenario-fail', fail_pending)} |",
+        "| Warm-slower-than-cold | "
+        f"{_cell(inversion_active, 'warm-slower-than-cold', inversion_pending)} |",
         "| Warm-cold separation below gate | "
-        f"{_cell(separation_active, 'warm-cold-separation-below-gate')} |",
+        f"{_cell(separation_active, 'warm-cold-separation-below-gate', separation_pending)} |",
         "| Cold-tier stall inflates separation ratio | "
-        f"{_cell(cold_stall_active, 'cold-tier-stall-inflates-separation-ratio')} |",
+        f"{_cell(cold_stall_active, 'cold-tier-stall-inflates-separation-ratio', cold_stall_pending)} |",
         "| Same-build separation-ratio variance | "
         f"{_cell(variance_active, 'same-build-separation-ratio-variance')} |",
         "| Single-fire separation verdict defensibility | "
-        f"{_cell(verdict_active, 'single-fire-separation-verdict-defensibility')} |",
+        f"{_cell(verdict_active, 'single-fire-separation-verdict-defensibility', verdict_pending)} |",
         "| Mixed rig within this run | "
         f"{_cell(mixed_rig_active, 'mixed-rig-within-this-run')} |",
         "| Regime note | [ℹ️ standing note](DETAILS.md#regime-note) |",
@@ -3933,38 +3986,56 @@ def render_known_anomalies_detail(results, kata_results=None, history_rows=None)
         return ""
     rows = _north_star_rows(results, kata_results)
     fail_caveat = _north_star_fail_caveat(rows)
+    fail_pending = any(p95 is None for _label, p95, _cell, _p50, _n, _outcome in rows)
     inversion_caveat = _warm_cold_inversion_caveat(results, kata_results)
+    inversion_pending = _warmpool_leg_pending(results, kata_results, check_cold=True)
     separation_caveat = _warmpool_separation_caveat(results, kata_results)
+    separation_pending = _warmpool_leg_pending(results, kata_results)
     cold_stall_caveat = _cold_tier_stall_caveat(results, kata_results)
+    cold_stall_pending = _warmpool_leg_pending(results, kata_results)
     variance_caveat = _warmpool_separation_variance_caveat(history_rows or [])
     verdict_caveat = _warmpool_separation_verdict_caveat(results, history_rows or [], kata_results)
+    verdict_pending = _warmpool_leg_pending(results, kata_results)
     adjudicated_verdict = _warmpool_separation_adjudicated_verdict(history_rows or [])
     mixed_rig_caveat = _mixed_rig_confound_caveat(results)
 
     def _clear(name):
         return f"_Clear as of the latest measured refresh — no {name} currently disclosed._"
 
+    def _pending(name):
+        return (
+            f"_⏳ Pending — the underlying leg for {name} has not been measured on this "
+            "refresh yet (outcome `pending`). Not the same as clear: this is an absence of "
+            "data, not a resolved-good measurement (#4420)._"
+        )
+
+    def _fallback(name, pending):
+        return _pending(name) if pending else _clear(name)
+
     lines = ["## Known anomalies", ""]
     lines.append("### Scenario FAIL")
     lines.append("")
-    lines.append(fail_caveat if fail_caveat else _clear("scenario FAIL"))
+    lines.append(fail_caveat if fail_caveat else _fallback("scenario FAIL", fail_pending))
     lines.append("")
     lines.append("### Warm-slower-than-cold")
     lines.append("")
     lines.append(
-        inversion_caveat if inversion_caveat else _clear("warm-slower-than-cold inversion")
+        inversion_caveat if inversion_caveat
+        else _fallback("warm-slower-than-cold inversion", inversion_pending)
     )
     lines.append("")
     lines.append("### Warm-cold separation below gate")
     lines.append("")
     lines.append(
-        separation_caveat if separation_caveat else _clear("warm/cold separation shortfall")
+        separation_caveat if separation_caveat
+        else _fallback("warm/cold separation shortfall", separation_pending)
     )
     lines.append("")
     lines.append("### Cold-tier stall inflates separation ratio")
     lines.append("")
     lines.append(
-        cold_stall_caveat if cold_stall_caveat else _clear("cold-tier internal stall")
+        cold_stall_caveat if cold_stall_caveat
+        else _fallback("cold-tier internal stall", cold_stall_pending)
     )
     lines.append("")
     lines.append("### Same-build separation-ratio variance")
@@ -3977,7 +4048,7 @@ def render_known_anomalies_detail(results, kata_results=None, history_rows=None)
     lines.append("")
     lines.append(
         verdict_caveat if verdict_caveat
-        else _clear("single-fire separation verdict as indefensible")
+        else _fallback("single-fire separation verdict as indefensible", verdict_pending)
     )
     lines.append("")
     lines.append("### Adjudicated separation verdict (median-of-N)")
