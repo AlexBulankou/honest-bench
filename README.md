@@ -198,7 +198,8 @@ COUNT vs the prior build; the first build is the baseline. Drive this COUNT up.
 | `sha256:f73072367103…` | 2026-08-31 | 9 | +5 † | 0.140625 | 10 | PASS |
 | `sha256:671770254af1…` | 2026-09-02 | 5 | -4 † | 0.078125 | 10 | FAIL |
 | `sha256:cc11470d4fa7…` | 2026-09-03 | 10 | +5 † | 0.15625 | 10 | PASS |
-| `sha256:7a24a6db095f…` | 2026-09-03 | 2 | -8 † | 0.015625 | 10 | FAIL |
+| `sha256:7a24a6db095f…` | 2026-09-03 | 8 | -2 † | 0.0625 | 10 | PASS |
+| `sha256:7a24a6db095f…` | 2026-09-03 | 2 | -6 † | 0.015625 | 10 | FAIL |
 
 _† Δ spans a build whose burst sampled fewer than N=30 claims — too few to rank build-over-build; the swing may be sampling noise, not a real move._
 
@@ -222,6 +223,7 @@ Throughput — build-over-build (sandboxes ready <1s)
 2026-08-31 ██████████████████ 9
 2026-09-02 ██████████ 5 (FAIL)
 2026-09-03 ████████████████████ 10
+2026-09-03 ████████████████ 8
 2026-09-03 ████ 2 (FAIL)
 ```
 
