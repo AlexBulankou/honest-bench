@@ -114,7 +114,7 @@ def test_multiple_legs_reported_together():
 
 
 def test_downgraded_names_populated():
-    # a#6669: the optional downgraded_names side-channel lets the caller
+    # The optional downgraded_names side-channel lets the caller
     # recover exactly which fresh rows are about to be discarded on refusal,
     # without re-deriving the guard's own predicate logic. One name per
     # affected scenario even when a single scenario trips multiple legs

@@ -291,7 +291,7 @@ def check_cell_downgrade(
     is set). Optional `downgraded_names` (a caller-owned set) is populated
     with the scenario name of every flagged cell — a side channel so the
     caller can recover which fresh rows are about to be discarded on refusal
-    (a#6669) without re-deriving the same predicate logic itself, while the
+    without re-deriving the same predicate logic itself, while the
     string-list return contract (and every existing caller/test of it) is
     unchanged.
 
@@ -1810,7 +1810,7 @@ def main(argv=None) -> int:
                 "cell(s) anyway (deliberate downgrade)", len(cell_downgrades),
             )
         else:
-            # a#6669: a refusal here used to discard the freshly computed
+            # A refusal here used to discard the freshly computed
             # sla_metrics for every affected cell with no record left
             # anywhere but this process's own stdout scrollback (3rd
             # confirmed instance of the class — refuse-to-publish must never
