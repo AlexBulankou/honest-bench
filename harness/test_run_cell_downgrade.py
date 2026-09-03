@@ -200,6 +200,50 @@ def test_no_measured_with_leaves_line_unchanged():
            f"unexpected measured_with suffix with no knobs: {lines[0]!r}")
 
 
+def test_fresh_measured_with_surfaced_on_config_mismatch_key_loss():
+    # hb#7678: a config-MISMATCH diagnostic fire (pool=45) drops ttfe keys the
+    # committed row (pool=30) carried. The key-loss line must surface BOTH
+    # sides' measured_with so an operator reads it as a config difference, not a
+    # same-config regression. The gate still fires (annotate, not suppress).
+    prior = [{
+        "name": "warmpool_cold_start", "outcome": "PASS", "n": 30,
+        "sla_metrics": {"ttfe_p50_ms": 755.6, "ttfe_p95_ms": 900.0},
+        "measured_with": {"WARMPOOL_COLD_START_POOL_REPLICAS": 30},
+    }]
+    raw = [{
+        "name": "warmpool_cold_start", "outcome": "FAIL", "n": 45,
+        "sla_metrics": {},
+        "measured_with": {"WARMPOOL_COLD_START_POOL_REPLICAS": 45},
+    }]
+    lines = check_cell_downgrade(raw, prior)
+    _check(len(lines) == 1, f"expected 1 downgrade (still fires), got {lines!r}")
+    ln = lines[0]
+    _check("committed row measured_with" in ln and "fresh fire measured_with" in ln,
+           f"both measured_with sides not surfaced: {ln!r}")
+    _check("30" in ln and "45" in ln,
+           f"both pool values not surfaced: {ln!r}")
+
+
+def test_fresh_measured_with_surfaced_when_committed_has_none():
+    # Asymmetric case: only the fresh fire self-reported knobs. The committed
+    # side reads "none reported" so the asymmetry (the mismatch cue) is visible.
+    prior = [{
+        "name": "warmpool_cold_start", "outcome": "PASS",
+        "sla_metrics": {"ttfe_p50_ms": 755.6},
+    }]
+    raw = [{
+        "name": "warmpool_cold_start", "outcome": "PASS", "sla_metrics": {},
+        "measured_with": {"WARMPOOL_COLD_START_POOL_REPLICAS": 45},
+    }]
+    lines = check_cell_downgrade(raw, prior)
+    _check(len(lines) == 1, f"expected 1 downgrade, got {lines!r}")
+    ln = lines[0]
+    _check("committed row measured_with: none reported" in ln,
+           f"committed 'none reported' not surfaced: {ln!r}")
+    _check("WARMPOOL_COLD_START_POOL_REPLICAS" in ln,
+           f"fresh measured_with not surfaced: {ln!r}")
+
+
 def test_malformed_inputs_tolerated():
     _check(check_cell_downgrade([{"name": "x"}], []) == [],
            "empty prior must be a no-op")
@@ -307,6 +351,8 @@ def main() -> int:
         test_measured_with_suffixes_outcome_downgrade_line,
         test_measured_with_suffixes_row_drop_line,
         test_no_measured_with_leaves_line_unchanged,
+        test_fresh_measured_with_surfaced_on_config_mismatch_key_loss,
+        test_fresh_measured_with_surfaced_when_committed_has_none,
         test_malformed_inputs_tolerated,
         test_density_carried_onto_fresh_row,
         test_density_fresh_wins,
