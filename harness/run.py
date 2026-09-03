@@ -256,7 +256,9 @@ def check_n_regression(raw: list[dict], prior_scenarios) -> list[str]:
     return regressions
 
 
-def check_cell_downgrade(raw: list, prior_scenarios) -> list[str]:
+def check_cell_downgrade(
+    raw: list, prior_scenarios, downgraded_names: set | None = None
+) -> list[str]:
     """Detect a refresh that would silently downgrade any published cell (hb#206).
 
     check_n_regression above is scoped to one field (`n`); this is the
@@ -286,7 +288,12 @@ def check_cell_downgrade(raw: list, prior_scenarios) -> list[str]:
 
     Returns human-readable downgrade lines; empty means clean. The caller
     decides the posture (main() fails closed unless BENCH_ALLOW_CELL_DOWNGRADE
-    is set).
+    is set). Optional `downgraded_names` (a caller-owned set) is populated
+    with the scenario name of every flagged cell — a side channel so the
+    caller can recover which fresh rows are about to be discarded on refusal
+    (a#6669) without re-deriving the same predicate logic itself, while the
+    string-list return contract (and every existing caller/test of it) is
+    unchanged.
 
     Leg 2 is a pure key-SET comparison — it cannot tell "this key's value
     changed" from "this key vanished", by design (value changes never gate).
@@ -329,6 +336,8 @@ def check_cell_downgrade(raw: list, prior_scenarios) -> list[str]:
                 f"{name}: measured row (outcome={p_out}) dropped entirely from "
                 f"fresh set{mw_suffix}"
             )
+            if downgraded_names is not None:
+                downgraded_names.add(name)
             continue
         f_out = fresh.get("outcome")
         if not isinstance(f_out, str) or f_out.lower() == "pending":
@@ -336,6 +345,8 @@ def check_cell_downgrade(raw: list, prior_scenarios) -> list[str]:
                 f"{name}: outcome would downgrade {p_out} -> "
                 f"{f_out if isinstance(f_out, str) else 'missing'}{mw_suffix}"
             )
+            if downgraded_names is not None:
+                downgraded_names.add(name)
         pm = prior.get("sla_metrics")
         fm = fresh.get("sla_metrics")
         if isinstance(pm, dict):
@@ -346,6 +357,8 @@ def check_cell_downgrade(raw: list, prior_scenarios) -> list[str]:
                     f"{name}: sla_metrics key(s) lost vs committed row: "
                     f"{', '.join(lost)}{mw_suffix}"
                 )
+                if downgraded_names is not None:
+                    downgraded_names.add(name)
     return downgrades
 
 
@@ -1786,7 +1799,8 @@ def main(argv=None) -> int:
     # Runs AFTER all scenario-level carries so legitimately-carried fields
     # (cluster triples, density) never false-positive. Deliberate downgrades
     # stay possible via the explicit BENCH_ALLOW_CELL_DOWNGRADE opt-in.
-    cell_downgrades = check_cell_downgrade(raw, prior_scenarios)
+    downgraded_names: set = set()
+    cell_downgrades = check_cell_downgrade(raw, prior_scenarios, downgraded_names)
     if cell_downgrades:
         for line in cell_downgrades:
             log.error("cell-downgrade: %s", line)
@@ -1796,6 +1810,25 @@ def main(argv=None) -> int:
                 "cell(s) anyway (deliberate downgrade)", len(cell_downgrades),
             )
         else:
+            # a#6669: a refusal here used to discard the freshly computed
+            # sla_metrics for every affected cell with no record left
+            # anywhere but this process's own stdout scrollback (3rd
+            # confirmed instance of the class — refuse-to-publish must never
+            # mean refuse-to-record). Dump each downgraded cell's fresh row
+            # verbatim BEFORE returning, so a re-fire isn't the only way to
+            # recover a number that was, in fact, already computed once.
+            fresh_by_name = {
+                r["name"]: r for r in raw
+                if isinstance(r, dict) and isinstance(r.get("name"), str)
+            }
+            for name in sorted(downgraded_names):
+                fresh_row = fresh_by_name.get(name)
+                log.error(
+                    "cell-downgrade discarded-row %s: %s",
+                    name,
+                    json.dumps(fresh_row, sort_keys=True, default=str)
+                    if fresh_row is not None else "<absent from fresh set>",
+                )
             log.error(
                 "refusing to write %s: %d cell(s) would downgrade a published "
                 "value (measured->pending, lost sla_metrics key, or dropped "
