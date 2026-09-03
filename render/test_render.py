@@ -6768,12 +6768,36 @@ def test_known_anomalies_table_flags_active_scenario_fail():
 
 
 def test_known_anomalies_table_clear_when_all_pass():
+    # #7672: "all pass" must mean genuinely fully measured -- a gvisor-only fixture with no
+    # kata_results leaves the kata-microvm leg entirely unmeasured (see
+    # test_north_star_caption_unmeasured_runtime_pends: an absent companion artifact pends,
+    # it never silently reads as clear), so this fixture supplies a real all-PASS kata
+    # companion artifact to make "all pass" true across every leg the table covers.
+    kata_scen = [{
+        "name": "warmpool_cold_start", "outcome": "PASS", "n": 30,
+        "sla_metrics": {"ttfe_p50_ms": 400, "ttfe_p95_ms": 500},
+    }]
     out = render.render_known_anomalies_table(
-        _matrix_results(_full_gvisor_scenarios(), provenance={"runtime": "gvisor"})
+        _matrix_results(_full_gvisor_scenarios(), provenance={"runtime": "gvisor"}),
+        kata_results=_kata_results(
+            scenarios=kata_scen,
+            provenance={"runtime": "kata-microvm"},
+        ),
     )
     fail_line = [l for l in out.splitlines() if l.startswith("| Scenario FAIL")][0]
     assert "✅ clear" in fail_line
     assert "DETAILS.md#scenario-fail" in fail_line
+
+
+def test_known_anomalies_table_kata_unmeasured_renders_pending():
+    # #7672: the flip side -- a gvisor-only render with NO kata companion artifact at all
+    # must render the Scenario FAIL leg as pending (kata leg unmeasured), never clear.
+    out = render.render_known_anomalies_table(
+        _matrix_results(_full_gvisor_scenarios(), provenance={"runtime": "gvisor"})
+    )
+    fail_line = [l for l in out.splitlines() if l.startswith("| Scenario FAIL")][0]
+    assert "⏳ pending" in fail_line
+    assert "✅ clear" not in fail_line
 
 
 def test_known_anomalies_detail_discloses_scenario_fail():
@@ -6812,12 +6836,88 @@ def test_known_anomalies_detail_fail_overrides_green_verdict():
 
 
 def test_known_anomalies_detail_clear_sentence_when_all_pass():
+    # #7672: supply a genuine all-PASS kata companion artifact so "all pass" covers every
+    # leg the section reports on -- see test_known_anomalies_table_clear_when_all_pass.
+    kata_scen = [{
+        "name": "warmpool_cold_start", "outcome": "PASS", "n": 30,
+        "sla_metrics": {"ttfe_p50_ms": 400, "ttfe_p95_ms": 500},
+    }]
+    out = render.render_known_anomalies_detail(
+        _matrix_results(_full_gvisor_scenarios(), provenance={"runtime": "gvisor"}),
+        kata_results=_kata_results(
+            scenarios=kata_scen,
+            provenance={"runtime": "kata-microvm"},
+        ),
+    )
+    assert "### Scenario FAIL" in out
+    fail_section = out.split("### Scenario FAIL", 1)[1].split("###", 1)[0]
+    assert "Clear as of the latest measured refresh" in fail_section
+    assert "**Scenario FAIL:**" not in out
+
+
+def test_known_anomalies_detail_kata_unmeasured_renders_pending():
+    # #7672: the flip side -- no kata companion artifact at all must render the Scenario
+    # FAIL section as pending, never the generic "clear" sentence.
     out = render.render_known_anomalies_detail(
         _matrix_results(_full_gvisor_scenarios(), provenance={"runtime": "gvisor"})
     )
-    assert "### Scenario FAIL" in out
-    assert "Clear as of the latest measured refresh" in out
-    assert "**Scenario FAIL:**" not in out
+    fail_section = out.split("### Scenario FAIL", 1)[1].split("###", 1)[0]
+    assert "⏳ Pending" in fail_section
+    assert "Clear as of the latest measured refresh" not in fail_section
+
+
+def test_known_anomalies_table_pending_leg_renders_pending_not_clear():
+    # #7672: a genuinely pending warmpool_cold_start leg must render distinct from
+    # "measured and clean" -- collapsing the two into the same checkmark is the exact
+    # #4420 downgrade-rendered-as-resolved bug the docstrings claim to guard against.
+    scen = [{"name": "warmpool_cold_start", "outcome": "pending", "n": 0}]
+    out = render.render_known_anomalies_table(
+        _matrix_results(scen, provenance={"runtime": "gvisor"})
+    )
+    for prefix in (
+        "| Scenario FAIL",
+        "| Warm-slower-than-cold",
+        "| Warm-cold separation below gate",
+        "| Cold-tier stall inflates separation ratio",
+        "| Single-fire separation verdict defensibility",
+    ):
+        line = [l for l in out.splitlines() if l.startswith(prefix)][0]
+        assert "⏳ pending" in line, f"{prefix} did not render pending: {line}"
+        assert "✅ clear" not in line
+        assert "⚠️ ACTIVE" not in line
+
+
+def test_known_anomalies_detail_pending_leg_renders_pending_not_clear():
+    scen = [{"name": "warmpool_cold_start", "outcome": "pending", "n": 0}]
+    out = render.render_known_anomalies_detail(
+        _matrix_results(scen, provenance={"runtime": "gvisor"})
+    )
+    assert out.count("⏳ Pending") == 5
+    assert "Clear as of the latest measured refresh — no scenario FAIL" not in out
+
+
+def test_known_anomalies_table_fail_with_no_published_p95_still_active():
+    # #7672 "Worst row": outcome==FAIL but no sla_metrics published (p95 absent) -- the
+    # old p95-gated caveat silently read this as "no FAIL" (`✅ clear`). FAIL and pending
+    # are disjoint OUTCOME_ENUM values, so this must render ACTIVE regardless of whether
+    # a p95 was published alongside the FAIL.
+    scen = [{"name": "warmpool_cold_start", "outcome": "FAIL", "n": 0}]
+    out = render.render_known_anomalies_table(
+        _matrix_results(scen, provenance={"runtime": "gvisor"})
+    )
+    fail_line = [l for l in out.splitlines() if l.startswith("| Scenario FAIL")][0]
+    assert "⚠️ ACTIVE" in fail_line
+    assert "✅ clear" not in fail_line
+    assert "⏳ pending" not in fail_line
+
+
+def test_known_anomalies_detail_fail_with_no_published_p95_still_active():
+    scen = [{"name": "warmpool_cold_start", "outcome": "FAIL", "n": 0}]
+    out = render.render_known_anomalies_detail(
+        _matrix_results(scen, provenance={"runtime": "gvisor"})
+    )
+    assert "**Scenario FAIL:**" in out
+    assert "own outcome is **FAIL**" in out
 
 
 def test_matrix_discloses_scenario_fail():

@@ -10,7 +10,7 @@ come here when you want the guidance or to see the working.
 
 ### Scenario FAIL
 
-> ⚠️ **Scenario FAIL:** the warm-pool-hit scenario's own outcome is **FAIL** for **gVisor** — the p95 above is a real measurement that MISSED its SLA, not a passing warm hit. It is still graded against the bar and carried forward as the refresh baseline honestly (an SLA-failing number is disclosed, never softened into a green cell); a later refresh whose scenario returns to PASS clears this.
+> ⚠️ **Scenario FAIL:** the warm-pool-hit scenario's own outcome is **FAIL** for **gVisor**. When a p95 is published above it is a real measurement that MISSED its SLA, not a passing warm hit; when no p95 is published, the run still FAILed and that outcome is disclosed regardless. It is still graded against the bar and carried forward as the refresh baseline honestly (an SLA-failing outcome is disclosed, never softened into a green cell); a later refresh whose scenario returns to PASS clears this.
 
 ### Warm-slower-than-cold
 
