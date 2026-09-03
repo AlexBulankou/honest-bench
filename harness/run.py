@@ -276,7 +276,15 @@ def check_cell_downgrade(
     2. sla_metrics key loss — any key present in the measured prior's
        sla_metrics that is absent from the fresh row's (value CHANGES never
        gate — a re-measure legitimately moves numbers; key GAINS never gate —
-       new instrumentation is not a downgrade);
+       new instrumentation is not a downgrade). Scoped to config-matched rows
+       only (hb#808): if both the committed row and the fresh row explicitly
+       self-report a DIFFERENT `measured_with`, the two key-sets were never
+       comparable in the first place (a deliberately off-default fire can
+       legitimately short-circuit before producing keys a differently
+       configured baseline has) — this leg is skipped entirely and the skip
+       is logged (not silent), rather than firing a non-actionable ERROR. Any
+       other shape (either side silent, or both sides agree) is treated as
+       the ordinary same-config comparison, unchanged;
     3. row drop — a measured prior whose name is entirely absent from the fresh
        set (merge_seed_placeholders deliberately resurrects only `pending`
        priors, so a deregistered measured row would otherwise vanish silently).
@@ -344,15 +352,15 @@ def check_cell_downgrade(
         # hb#7678: for the two legs where a fresh row EXISTS (outcome downgrade,
         # key loss), surface the FRESH fire's own measured_with alongside the
         # committed row's, so an operator can tell a config-MISMATCH key-loss
-        # from a genuine SAME-config regression. A differently-configured
-        # diagnostic fire (e.g. WARMPOOL_COLD_START_POOL_REPLICAS=45 vs a
-        # committed row's 30) can short-circuit pre-metrics by design and drop
-        # ttfe keys, tripping the identical loud line a real regression would —
-        # the fresh knobs are what disambiguate. This ANNOTATES only; the gate
-        # stays fail-closed and the downgrade still fires. Emitted only when at
-        # least one side self-reported knobs (the common no-knobs cell's line is
-        # unchanged); the side lacking them reads "none reported" — that
-        # asymmetry IS the mismatch cue.
+        # from a genuine SAME-config regression. This ANNOTATES the outcome-
+        # downgrade leg only (it always fires regardless of config match — an
+        # outcome downgrade is never a false positive of the mismatch shape).
+        # The key-loss leg below now SKIPS on the same config-mismatch signal
+        # instead of merely annotating it (hb#808) — this suffix is still
+        # built here for that leg's log.warning skip message. Emitted only
+        # when at least one side self-reported knobs (the common no-knobs
+        # cell's line is unchanged); the side lacking them reads "none
+        # reported" — that asymmetry IS the mismatch cue.
         fmw = fresh.get("measured_with")
         fresh_has_mw = isinstance(fmw, dict) and bool(fmw)
         if prior_has_mw or fresh_has_mw:
@@ -375,15 +383,41 @@ def check_cell_downgrade(
         pm = prior.get("sla_metrics")
         fm = fresh.get("sla_metrics")
         if isinstance(pm, dict):
-            fm_keys = set(fm.keys()) if isinstance(fm, dict) else set()
-            lost = sorted(k for k in pm if k not in fm_keys)
-            if lost:
-                downgrades.append(
-                    f"{name}: sla_metrics key(s) lost vs committed row: "
-                    f"{', '.join(lost)}{mw_suffix_both}"
+            # hb#808 (first slice of the hb#802 experiment-lane design): a
+            # key-SET comparison across two rows measured under DIFFERENT
+            # measured_with configs is not comparable in the first place — a
+            # deliberately off-default fire (e.g. a diagnostic oversized
+            # pool) can legitimately short-circuit before producing some
+            # keys a differently-configured committed baseline has. The
+            # hb#807 fix already annotates this case in the downgrade line's
+            # mw_suffix_both; this closes the gap hb#807 explicitly left
+            # open (see check_cell_downgrade's docstring "V1,
+            # signal-clarity-only" framing) — the key-set leg now skips
+            # entirely on a config mismatch instead of firing a loud but
+            # non-actionable ERROR for a fire that was never a real
+            # candidate to replace the canonical cell.
+            #
+            # Mismatch requires BOTH sides to explicitly self-report
+            # measured_with and disagree — if either side is silent, that is
+            # still the ordinary same-config comparison (the original
+            # hb#206 regression shape must still be caught, not silently
+            # exempted just because fresh forgot to report its config).
+            mw_match = not (prior_has_mw and fresh_has_mw and mw != fmw)
+            if not mw_match:
+                log.warning(
+                    "cell-downgrade: %s: sla_metrics key-set check skipped — "
+                    "no config-matched baseline%s", name, mw_suffix_both,
                 )
-                if downgraded_names is not None:
-                    downgraded_names.add(name)
+            else:
+                fm_keys = set(fm.keys()) if isinstance(fm, dict) else set()
+                lost = sorted(k for k in pm if k not in fm_keys)
+                if lost:
+                    downgrades.append(
+                        f"{name}: sla_metrics key(s) lost vs committed row: "
+                        f"{', '.join(lost)}{mw_suffix_both}"
+                    )
+                    if downgraded_names is not None:
+                        downgraded_names.add(name)
     return downgrades
 
 
