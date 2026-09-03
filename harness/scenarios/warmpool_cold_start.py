@@ -717,6 +717,18 @@ def _classify_latencies(
         ]
         warm_eligible_count = len(warm_candidate_pairs)
 
+    # A diagnostic fire may deliberately size the pool AT OR ABOVE the total
+    # claims fired (pool_replicas > len(latencies)) to prove pool health
+    # independent of an oversubscribed claim burst — the opposite of the
+    # committed design's oversubscription (pool_replicas < claim_count). Cap
+    # the warm-tier TARGET at the claims actually fired so that regime is
+    # measurable from its own genuine-hit population instead of unconditionally
+    # reading as under-delivery merely because the configured pool outsizes the
+    # burst. Cold-baseline mode (pool_replicas <= 0) is untouched — its target
+    # stays exactly pool_replicas so the negative-index neutral-cold semantics
+    # below are preserved.
+    warm_target = min(pool_replicas, len(latencies)) if pool_replicas > 0 else pool_replicas
+
     breakdown = {
         "warm_max_s": None,
         "warm_names": [],
@@ -732,24 +744,28 @@ def _classify_latencies(
         "completed_count": len(completed),
         "warm_eligible_count": warm_eligible_count,
         "all_latencies_s": completed,
+        "warm_target": warm_target,
     }
 
     # Need a full warm cluster to even evaluate the gate. Rank-only: fewer
-    # completed claims than the pool size (under-delivery or timeouts).
-    # Provenance-gated: fewer GENUINE pre-warmed hits than the pool size — a
-    # depletion collapse can leave <pool_replicas pre-warmed adoptions even when
+    # completed claims than the (possibly capped) target (under-delivery or
+    # timeouts), or zero claims fired at all despite pool_replicas > 0.
+    # Provenance-gated: fewer GENUINE pre-warmed hits than the target — a
+    # depletion collapse can leave <warm_target pre-warmed adoptions even when
     # all claims eventually bind (cold).
-    if len(warm_candidate_pairs) < pool_replicas:
+    if pool_replicas > 0 and warm_target == 0:
+        return False, breakdown
+    if len(warm_candidate_pairs) < warm_target:
         return False, breakdown
 
-    warm_pairs = warm_candidate_pairs[:pool_replicas]
+    warm_pairs = warm_candidate_pairs[:warm_target]
     # Index the boundary element directly (NOT warm_pairs[-1]) so the
     # cold-baseline mode (pool_replicas == 0) preserves its historical semantics:
     # warm_candidate_pairs[-1] is the slowest completed claim, giving warm_max
     # under the absolute ceiling -> the neutral cold PASS record. warm_pairs would
     # be the empty slice [:0] there and crash on [-1]. For pool_replicas > 0 this
-    # is exactly warm_pairs[-1][0] (the warm-tier boundary).
-    warm_max = warm_candidate_pairs[pool_replicas - 1][0]
+    # is exactly warm_pairs[-1][0] (the warm-tier boundary, capped at warm_target).
+    warm_max = warm_candidate_pairs[warm_target - 1][0]
     # The gate's warm tier = the pool_replicas fastest-binding candidate claims.
     # Publish the member NAMES so the emit path scopes the TTFE histogram to
     # EXACTLY this set (never a re-derived sort). Same ordering as warm_max, so
@@ -1004,27 +1020,36 @@ def _under_delivery_outcome(
         return None
     completed_n = breakdown["completed_count"]
     eligible_n = breakdown.get("warm_eligible_count")
-    if eligible_n is not None and eligible_n < pool_replicas:
+    # Name the shortfall against warm_target (the pool size capped at claims
+    # actually fired, per _classify_latencies), not the raw pool_replicas
+    # config — a diagnostic fire may size the pool ABOVE claim_count, in
+    # which case "eligible_n/pool_replicas" would understate the achieved
+    # fraction (e.g. 40/40 genuine hits reads as "40/45", falsely implying a
+    # shortfall relative to the actually-fireable target).
+    warm_target = breakdown["warm_target"]
+    if eligible_n is not None and eligible_n < warm_target:
         # Provenance-gated shortfall (hb#450): claims bound, but fewer than
-        # pool_replicas adopted a GENUINELY pre-warmed Sandbox — the rest were
+        # warm_target adopted a GENUINELY pre-warmed Sandbox — the rest were
         # depletion-cold blends served by replacements created during the burst.
         # Name the genuine-hit count so the FAIL row isn't misread as a bind
-        # failure (completed_n may be >= pool_replicas here).
+        # failure (completed_n may be >= warm_target here).
         excerpt = (
-            f"WarmPool under-delivered warm slots: only {eligible_n}/{pool_replicas} "
+            f"WarmPool under-delivered warm slots: only {eligible_n}/{warm_target} "
             f"bound claims adopted a pre-warmed sandbox (genuine warm hits); "
-            f"{completed_n} claims bound in total (claims fired={claim_count}), the "
-            f"rest cold blends from replacements created mid-burst. No full warm "
-            f"cluster to measure TTFE against — controller-side warm-pool candidate. "
+            f"{completed_n} claims bound in total (claims fired={claim_count}, "
+            f"pool replicas={pool_replicas}), the rest cold blends from replacements "
+            f"created mid-burst. No full warm cluster to measure TTFE against — "
+            f"controller-side warm-pool candidate. "
             f"All latencies (s, sorted): [{all_lat_str}]. "
             f"Timeouts: {breakdown['timeouts']!r}."
         )
     else:
         excerpt = (
-            f"WarmPool under-delivered warm slots: only {completed_n}/{pool_replicas} "
-            f"claims bound into the warm tier (claims fired={claim_count}). No full "
-            f"warm cluster to measure TTFE against — controller-side warm-pool "
-            f"candidate. All latencies (s, sorted): [{all_lat_str}]. "
+            f"WarmPool under-delivered warm slots: only {completed_n}/{warm_target} "
+            f"claims bound into the warm tier (claims fired={claim_count}, pool "
+            f"replicas={pool_replicas}). No full warm cluster to measure TTFE "
+            f"against — controller-side warm-pool candidate. "
+            f"All latencies (s, sorted): [{all_lat_str}]. "
             f"Timeouts: {breakdown['timeouts']!r}."
         )
     return ("FAIL", excerpt, {})
@@ -1359,7 +1384,12 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
                 emit_names = breakdown["warm_names"]
                 # SINGLE-SOURCE ASSERT: the emitted-warm set is EXACTLY the
                 # gate-warm set — same size, every member within warm_max.
-                assert len(emit_names) == _POOL_REPLICAS and all(
+                # Compare against warm_target (not raw _POOL_REPLICAS): a
+                # diagnostic fire may size the pool ABOVE the claim count, in
+                # which case the gate-warm set is capped at the claims
+                # actually fired (see _classify_latencies), so the emitted
+                # set legitimately falls short of the raw pool size.
+                assert len(emit_names) == breakdown["warm_target"] and all(
                     latencies[n] is not None
                     and latencies[n] <= breakdown["warm_max_s"]
                     for n in emit_names
@@ -1418,7 +1448,7 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
             )
         else:
             sla_metrics = (
-                {_SLA_METRIC_KEY: warm_max * 1000.0, "n": _POOL_REPLICAS}
+                {_SLA_METRIC_KEY: warm_max * 1000.0, "n": breakdown["warm_target"]}
                 if warm_max is not None
                 else {}
             )
@@ -1496,11 +1526,16 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
                 f"Timeouts: {breakdown['timeouts']!r}.",
                 sla_metrics,
             )
+        # Report the achieved warm-tier size (warm_target, capped at claims
+        # actually fired) rather than the raw pool_replicas config value — a
+        # diagnostic fire may size the pool ABOVE claim_count, in which case
+        # "fastest 45/40" would misreport an impossible fraction.
+        warm_target = breakdown["warm_target"]
         if passed:
             return (
                 "PASS",
                 f"WarmPool provides a distinct fast tier ({clause} clause): "
-                f"warm cluster (fastest {_POOL_REPLICAS}/{_CLAIM_COUNT}) "
+                f"warm cluster (fastest {warm_target}/{_CLAIM_COUNT}) "
                 f"max={warm_max_str}, ceiling={_ABS_FAST_CEILING_S}s; "
                 f"separation={sep_str} (>= {_SEPARATION_RATIO}x), "
                 f"cold-path min={breakdown['cold_path_min_s']!r} "
@@ -1513,7 +1548,7 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
         return (
             "FAIL",
             f"WarmPool fast tier not distinct: warm cluster (fastest "
-            f"{_POOL_REPLICAS}/{_CLAIM_COUNT}) max={warm_max_str} is neither "
+            f"{warm_target}/{_CLAIM_COUNT}) max={warm_max_str} is neither "
             f"< {_ABS_FAST_CEILING_S}s nor separated >= {_SEPARATION_RATIO}x "
             f"from the next claim (separation={sep_str}). "
             f"Pool: replicas={_POOL_REPLICAS}, claims fired={_CLAIM_COUNT}, "

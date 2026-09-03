@@ -186,6 +186,70 @@ def test_under_delivery_leaves_warm_names_empty():
     assert bd["warm_names"] == []
 
 
+# ---- oversupply pool: pool_replicas > claim_count (diagnostic-fire regime) ----
+#
+# The committed benchmark design deliberately OVERSUBSCRIBES (claim_count >
+# pool_replicas, e.g. 40 claims against a 30-replica pool) so the gate can prove
+# a distinct fast tier. A diagnostic fire inverts that on purpose (e.g. pool=45,
+# claims=40) to measure pool health independent of the cold-claim count. Before
+# this fix, the raw pool_replicas was used unclamped as both the under-delivery
+# threshold and the candidate-pool slice/index size, so ANY config with
+# pool_replicas > len(latencies) unconditionally hit the `len(warm_candidate_
+# pairs) < pool_replicas` early-return -- discarding every stat (warm_max_s,
+# warm_p50_s, warm_names, ...) as None/[] even when every claim was a genuine
+# warm hit. warm_target = min(pool_replicas, len(latencies)) fixes this by
+# capping the target at what was actually fired.
+
+def test_oversupply_pool_measures_from_full_claim_population():
+    # pool_replicas (6) > claim_count (4) -- all 4 completed claims are genuine
+    # warm hits. warm_target caps at 4, so the full population becomes the warm
+    # tier instead of reading as an impossible-to-satisfy under-delivery.
+    latencies = {"c0": 0.5, "c1": 0.6, "c2": 0.7, "c3": 0.8}
+    passed, bd = cell._classify_latencies(
+        latencies, pool_replicas=6, abs_ceiling_s=2.5, separation_ratio=1.8,
+    )
+    assert passed  # warm_max 0.8 < 2.5 ceiling (absolute clause)
+    assert bd["warm_target"] == 4
+    assert bd["warm_names"] == ["c0", "c1", "c2", "c3"]
+    assert bd["warm_max_s"] == 0.8
+    assert abs(bd["warm_p50_s"] - 0.65) < 1e-9  # median(0.5, 0.6, 0.7, 0.8)
+    # No claims left over for a cold tier -- every claim is warm by construction.
+    assert bd["cold_path_min_s"] is None
+    assert bd["cold_path_max_s"] is None
+    assert bd["separation_observed"] is None
+    assert not bd["separation_ok"]
+
+
+def test_oversupply_pool_still_detects_genuine_shortfall():
+    # pool_replicas (6) > claim_count (4), but only 2 of the 4 completed claims
+    # are genuine pre-warmed hits (provenance-gated). warm_target caps at 4, and
+    # 2 < 4 is still a real shortfall -> honest under-delivery, not a phantom
+    # pass off the raw oversized pool_replicas.
+    latencies = {"c0": 0.5, "c1": 0.6, "c2": 0.7, "c3": 0.8}
+    passed, bd = cell._classify_latencies(
+        latencies, pool_replicas=6, abs_ceiling_s=2.5, separation_ratio=1.8,
+        warm_eligible={"c0", "c1"},
+    )
+    assert not passed
+    assert bd["warm_target"] == 4
+    assert bd["warm_names"] == []
+    assert bd["warm_max_s"] is None
+    assert bd["warm_eligible_count"] == 2
+
+
+def test_oversupply_pool_zero_claims_is_under_delivery_not_crash():
+    # pool_replicas > 0 but zero claims fired at all (len(latencies) == 0) caps
+    # warm_target at 0 -- must return early as under-delivery rather than index
+    # into an empty warm_candidate_pairs list.
+    passed, bd = cell._classify_latencies(
+        {}, pool_replicas=5, abs_ceiling_s=2.5, separation_ratio=1.8,
+    )
+    assert not passed
+    assert bd["warm_target"] == 0
+    assert bd["warm_names"] == []
+    assert bd["warm_max_s"] is None
+
+
 # ---- provenance gating (hb#450): the warm tier draws only from genuine hits ----
 #
 # The upstream reconciler gates warm-pool refill on a COUNT of extant sandboxes,
