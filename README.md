@@ -72,7 +72,7 @@ Full cell-decoding key — TTFE basis, honest vs. measured zeros, the dual per-n
 
 _Kata + microVM rows are measured in a separate run on the kata node pool: cluster_substrate=gke-kata · node_count=1 · generated-at=2026-08-31T15:22:54Z._
 
-_build: cluster_substrate=gke-sandbox · controller_digest=sha256:671770254af1fda38871b8a07b4f6bb9c0ea288f91d41833baac123f0f156f9a · suite_git_sha=6f6ad9fe4a325ac99282c70ac732e77fb8d247b6 · run_id=f53dcb5eea1e4da5812377616bb19e73 · node_count=2_
+_build: cluster_substrate=gke-sandbox · controller_digest=sha256:671770254af1fda38871b8a07b4f6bb9c0ea288f91d41833baac123f0f156f9a · suite_git_sha=6f6ad9fe4a325ac99282c70ac732e77fb8d247b6 · run_id=f53dcb5eea1e4da5812377616bb19e73 · node_count=2 · machine_type=n2-standard-16_
 _generated-at: 2026-09-02T15:23:26Z_
 
 _**North Star** — warm-pool-hit TTFE p95 < 1s (the spec doc bar): gVisor 15.2838s (count=30) ❌ not met (14.2838s above the bar) ⚠️ **scenario FAIL**; Kata + microVM 1.6844s (count=30) ❌ not met (0.6844s above the bar). An honest ❌ prints the measured gap to the bar (tagged `within sampling noise` when the miss sits inside the sample spread — it stays a ❌, the tag never flips a miss to a pass); `pending` = unmeasured (never a guess); † marks a p95 over fewer than N=30 samples._
