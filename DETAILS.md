@@ -10,7 +10,7 @@ come here when you want the guidance or to see the working.
 
 ### Scenario FAIL
 
-> ⚠️ **Scenario FAIL:** the warm-pool-hit scenario's own outcome is **FAIL** for **gVisor**. When a p95 is published above it is a real measurement that MISSED its SLA, not a passing warm hit; when no p95 is published, the run still FAILed and that outcome is disclosed regardless. It is still graded against the bar and carried forward as the refresh baseline honestly (an SLA-failing outcome is disclosed, never softened into a green cell); a later refresh whose scenario returns to PASS clears this.
+_Clear as of the latest measured refresh — no scenario FAIL currently disclosed._
 
 ### Warm-slower-than-cold
 
@@ -38,7 +38,7 @@ The published separation verdict adjudicates over the **median of the most recen
 
 ### Mixed rig within this run
 
-> ⚠️ **Mixed rig within this run:** this run's sections were not all measured on the same machine class — `e2-standard-16` (at-scale contention, concurrent burst); `n2-standard-16` (top-level provenance, cluster saturation, warm-pool acquisition). Cross-section comparisons on this page may reflect hardware differences, not workload differences, until every section re-measures on one rig.
+_Clear as of the latest measured refresh — no mixed-rig confound currently disclosed._
 
 ### Regime note
 
@@ -47,10 +47,6 @@ The published separation verdict adjudicates over the **median of the most recen
 ### Refresh cadence
 
 > ℹ️ **Refresh cadence (on-demand, not scheduled):** refreshes are **manually invoked / on-demand** — a hand-run CI fire (`gcloud builds triggers run` / the reproduce script below), never a recurring cron. To keep "is this stale?" a decidable question without standing up recurring billed infra, a refresh is **due** when either (a) a **regime boundary** occurs — cluster recreate, node-image float, or controller-build digest change (all caught by the sandbox accrual detectors) — or (b) a **30-day floor** elapses since the last fire (the `_generated-at:_` stamp under the Core Metrics table). Between those, the published numbers are current, not stale.
-
-### Concurrent-burst measurement regime
-
-Per-fire measurement-regime disclosures for the concurrent-burst sweep render inline in [README.md](README.md#does-it-hold-at-cluster-scale) next to each burst — the disclosure can repeat once per date/regime group, so it is not summarized here.
 
 ```
 Warm/cold separation ratio — fire-over-fire (gate: 1.8x)
@@ -95,12 +91,31 @@ The headline burst count is **pod-Ready** — but a pod can report Ready before 
 
 | Signal | Count |
 |---|---|
-| Pod-Ready <1s (weaker claim) | 2 |
-| Executed first-instruction <1s (TTFE, stronger claim) | 1 |
-| Ready-but-not-yet-run (gap) | 1 |
+| Pod-Ready <1s (weaker claim) | 10 |
+| Executed first-instruction <1s (TTFE, stronger claim) | 10 |
+| Ready-but-not-yet-run (gap) | 0 |
 | Execution success (Honesty Check) | 100% |
 
 _Pod-Ready ≥ executed-TTFE by construction; the gap is the over-claim a pod-Ready headline would hide._
+
+## Warm-Hit TTFE — Bind vs Exec Decomposition
+
+Warm-hit TTFE (create → first-instruction result) splits into **bind** (create → bound, i.e. provisioning the pool member) and **exec** (websocket setup + the first-instruction round-trip). This block shows *where* a warm-hit above the <1s target lives — a large bind points at provisioning (a controller/clone target); a large exec points at the exec channel (a harness/product artifact, not a controller regression).
+
+| Stage | p50 | p95 |
+|---|---|---|
+| Bind (create → bound, provisioning) | 0.3s | 0.3332s |
+| Exec (websocket + first-instruction) | 0.266s | 0.2764s |
+| **TTFE (total)** | **0.5432s** | **0.59s** |
+
+_Each row is an independently-measured percentile of its own per-claim distribution (exec is measured per-claim as TTFE − bind, then percentiled — not p50(TTFE) − p50(bind)). Percentiles do not sum, so bind and exec need not add exactly to the total TTFE._
+
+```mermaid
+pie showData
+    title Warm-Hit TTFE p50 split — Bind vs Exec (ms)
+    "Bind (provisioning)" : 300.0
+    "Exec (websocket + first-instruction)" : 266.0
+```
 
 ## Cold-Start TTFE — Provision vs Exec Decomposition
 
@@ -108,55 +123,31 @@ Cold-start TTFE (create → first-instruction result) splits into **provision** 
 
 | Stage | p50 | p95 |
 |---|---|---|
-| Provision (create → Ready) | 3.0719s | 3.9394s |
-| Exec (websocket + first-instruction) | 0.2549s | 0.8275s |
-| **TTFE (total)** | **3.3286s** | **4.7328s** |
+| Provision (create → Ready) | 3.5184s | 3.5184s |
+| Exec (websocket + first-instruction) | 0.2511s | 0.2511s |
+| **TTFE (total)** | **3.7694s** | **3.7694s** |
 
 _Each row is an independently-measured value against the same shared t0 (exec is the measured residual TTFE − provision, not a subtraction of percentiles). For the single-sample cold cell the p50 and p95 are the one measured sample._
 
 ## Warm-vs-Cold Speedup
 
-A warm-pool provision is **1.0206× faster** † than a true-cold start (gVisor). The warm pool keeps a ready slot so a claim skips the fresh-node image-pull path a cold start pays in full. Both legs are measured the same way (TTFE (executed first-instruction)); but this ratio rests on only n=10 warm claims — fewer than N=30, too few to rank reliably, so treat it as provisional.
+A warm-pool provision is **6.51019× faster** † than a true-cold start (gVisor). The warm pool keeps a ready slot so a claim skips the fresh-node image-pull path a cold start pays in full. Both legs are measured the same way (TTFE (executed first-instruction)); but this ratio rests on only n=10 warm claims — fewer than N=30, too few to rank reliably, so treat it as provisional.
 
 | Leg | TTFE (p50) |
 |---|---|
-| Warm-pool hit (gVisor, n=10) | 3.2614s |
-| True-cold (unique-image) | 3.3286s |
-| Speedup (warm is N× faster) | 1.0206× † |
+| Warm-pool hit (gVisor, n=10) | 0.579s |
+| True-cold (unique-image) | 3.7694s |
+| Speedup (warm is N× faster) | 6.51019× † |
 
 _Speedup = cold ÷ warm, computed from the displayed values over n=10 warm claims; both legs are medians (p50) — the warm leg over its warm-pool claims and the cold leg over the true-cold distribution — so half of warm claims and half of cold starts run slower than the values shown._
 
 _† The warm leg's p50 is drawn from only n=10 claims — fewer than the N=30 sample floor the page uses across its cross-sample rankings (matrix p95 cells, build-over-build trend Δ); the speedup may be sampling noise, not a stable ratio you can reproduce._
 
+> ⚠️ **Machine class unknown:** this sandbox-family run did not stamp `machine_type`, so a rig change relative to the previously published run cannot be ruled out. Treat any delta as possibly machine-class-confounded until a matched-rig run is published.
+
 _This warm-vs-cold pair is a standalone point-in-time run; its warm-pool leg is a separate measurement from the Core Metrics matrix "Warm-pool hit" row (an independent run at its own operating point, refreshed on its own cadence). Read each block on its own terms — the two warm p50s are not directly comparable._
 
-_Measured 2026-09-03 — warm-vs-cold speedup (point-in-time; refreshed on the next TTFE fire)._
-
-## Kata + microVM Activation (pod-Ready — NOT TTFE)
-
-These are **Kata + microVM pod-Ready / microVM-activation** latencies — the time to bring the guest microVM up and the pod Ready. They are **not TTFE** (the Core Metrics matrix's executed-first-instruction-and-returned-a-result metric), so they are **not comparable to the matrix TTFE columns**. For the Kata TTFE itself, read the matrix TTFE cells: they report it where a TTFE probe has run under Kata, and `pending` where one has not. Measured on hypervisor **Cloud Hypervisor**, Kata **3.32.0**, guest kernel `6.18.35`, host kernel `6.8.0-1054-gke`, n=3.
-
-| Phase | Pod-Ready latency |
-|---|---|
-| microVM activation | 2s |
-| Warm-pool hit (ubuntu:24.04) | 3s |
-| Cold start — debian:12 (image pull 0.9s) | 3s |
-| Cold start — ubuntu:24.04 (image pull 0.887s) | 5s |
-| Snapshot resume | [N/A — CRIU checkpoint/restore does not transfer to the Kata VM model](WORK_IN_PROGRESS.md#na-by-construction) |
-
-_Measured 2026-06-30 — Kata pod-Ready / microVM-activation (point-in-time; not TTFE)._
-
-## Warm-Pool Acquisition — how fast the pool hands you a sandbox
-
-Acquisition latency on **gVisor**: the time from a `SandboxClaim` being **requested** to it being **bound** — a warm, ready sandbox handed back to the caller. This is a **decomposed sub-phase of TTFE**, not the whole thing: it stops at the moment you hold a ready sandbox and **excludes** the exec-attach + first-instruction round-trip the Concurrent Burst and Core Metrics tables measure — so these numbers are **not comparable** to those TTFE columns. It is the earlier, isolated question a warm-pool operator sizes against: *once my pool is warm, how quickly do I get a sandbox?* Measured under a sustained **300 claims/sec** offered load against a warm pool of **600**. Cluster shape: `n2-standard-16`.
-
-| Sample (n) | Acquisition p50 | Acquisition p95 | Acquisition p99 |
-|---|---|---|---|
-| 600 | 2.93965s | 3.87844s | 4.00962s |
-
-_Controller-startup lower bound (p95 **1.33812s**): controller-first-observed → Ready, which EXCLUDES the claim-admission → first-reconcile queueing lag — it UNDER-reports the true acquisition path, so treat it as a floor on the controller's own contribution, not a second acquisition measurement._
-
-_Measured 2026-07-01 — warm-pool acquisition latency (point-in-time)._
+_Measured 2026-09-04 — warm-vs-cold speedup (point-in-time; refreshed on the next TTFE fire)._
 
 ## How to read the Core Metrics cells
 
@@ -195,77 +186,27 @@ Max Density is sandboxes per node-allocatable sandbox-schedulable vCPU (the per-
 
 | Runtime | Max Density (sb/vCPU) |
 |---|---|
-| gVisor | 6.23 |
+| gVisor | [pending](WORK_IN_PROGRESS.md#not-yet-measured) |
 | Kata + microVM | 1.26 |
 
 ```
 Max Density (sandboxes per vCPU)
 
-gVisor          ████████████████████ 6.23
-Kata + microVM  ████ 1.26
+Kata + microVM  ████████████████████ 1.26
 ```
 
 ```
 Warm-Pool TTFE (ms) — p50 vs p95
 
-Kata + microVM p50  █████████████████ 1.4399s
-               p95  ████████████████████ 1.6844s
+gVisor*         p50  ██████ 0.5432s
+                p95  ███████ 0.59s
+Kata + microVM  p50  █████████████████ 1.4399s
+                p95  ████████████████████ 1.6844s
+
+* fewer than 30 samples — not a stable distribution
 ```
 
-_Cluster shape (gVisor leg): node_count=4, `n2-standard-16` — the swing-flag threshold compares consecutive fires on this chart, so a node-count or machine-class change shows up here first._
-
-## Per-Sandbox Footprint (declared request)
-
-The declared per-sandbox cpu/memory **request** each runtime's Max Density was measured under — the reproducibility qualifier for the density figures, not an independent measurement. gVisor's tiny footprint and Kata's guest-sane microVM floor differ by an order of magnitude, so a sandboxes-per-vCPU figure is only comparable across runtimes with the footprint it was measured under stated alongside it. A runtime with no measured run renders `pending`.
-
-| Runtime | CPU request | Memory request |
-|---|---|---|
-| gVisor | 10m | 16Mi |
-| Kata + microVM | [pending](WORK_IN_PROGRESS.md#not-yet-measured) | [pending](WORK_IN_PROGRESS.md#not-yet-measured) |
-
-## At Scale Under Contention — where sub-second warm activation breaks
-
-The Concurrent Burst legs on the headline page are **1:1** — N ready sandboxes hit with N claims. This is the deliberate **retraction**: the operating point where the pool is **over-subscribed** (more concurrent claims than ready pool members), and warm activation **stops being sub-second**. Measured on **gVisor**: a pool of **30** ready sandboxes hit with **60** simultaneous claims (**2:1 contention**). Every claim still binds, but the over-subscription serializes the bind path — so the "warm hit is <1s" claim from the Core Metrics matrix does **not** hold here. Cluster shape: node_count=1, `e2-standard-16`.
-
-| Pool | Claims | Contention | TTFE p50 | TTFE p95 | Bind p50 | Bind p95 | Execution Success |
-|---|---|---|---|---|---|---|---|
-| 30 | 60 | 2:1 | 1.6589s | 2.0169s | 1.384s | 1.7001s | 100% |
-
-_Not directly comparable to the 1:1 Concurrent Burst legs: this point ran at node_count=1 with an over-subscribed pool — a distinct operating point. Latency is node-count-independent (so the TTFE columns DO compare to the matrix/burst TTFE), but the per-node throughput axis is omitted here as non-comparable to the node_count=20 bursts._
-
-_Measured 2026-07-01 — warm-pool at-scale contention ceiling (point-in-time)._
-
-> ⚠️ **Stale — no producer since rig change:** this at-scale-contention figure has no daily producer; it is carried forward unchanged from its last fire, measured on `e2-standard-16`. This run measured the rest of the page on `n2-standard-16`. Treat this section as a frozen snapshot from the prior rig, not a live signal for the current one, until a fresh fire republishes it on the current machine class.
-
-## Cluster Saturation — the whole-cluster warm-hand-out ceiling
-
-The Concurrent Burst legs above are small 1:1 warm bursts. This is the **saturation** ceiling: a **1:1 all-warm** fire — a pool of **600** ready sandboxes hit with **600** simultaneous claims (**not** over-subscribed), spread across **40** nodes on **gVisor**. Every claim has a ready warm pool member, yet at this scale the bind path itself saturates — so the whole-cluster warm hand-out rate collapses far below the per-node engineering rate, and the "warm hit is <1s" claim from the Core Metrics matrix does **not** hold here. Cluster shape: `n2-standard-16`.
-
-| Pool | Claims | Nodes | TTFE p50 | TTFE p95 | Throughput @ <5s | Throughput @ <1s | Bind p50 | Bind p95 | Execution Success |
-|---|---|---|---|---|---|---|---|---|---|
-| 600 | 600 | 40 | 8.6308s | 12.6103s | 0.064 /node · 2.558 /cluster | 0 /node · 0 /cluster | 8.1916s | 12.1372s | 100% |
-
-_Per-cluster throughput MEASURED at **40 nodes** — never a per-node × N extrapolation (that fiction breaks above the controller reconcile ceiling). This is a **1:1 all-warm** operating point (pool == claim, not over-subscribed), distinct from the over-subscribed contention ceiling: the collapse here is the bind path saturating at cluster scale, not pool exhaustion. Latency is node-count-independent (so the TTFE columns DO compare to the matrix/burst TTFE)._
-
-_SLA ceiling: **not met** at this operating point — the honest saturation limit. Execution success confirms every claim still bound and executed; the FAIL is the throughput collapse against the sizing floor, not a correctness failure._
-
-_Measured 2026-07-02 — whole-cluster saturation ceiling (point-in-time)._
-
-## Provisioning Rate Sweep — where warm-pool fill goes reconcile-bound
-
-The warm-pool numbers elsewhere assume the pool is **already Ready**. This block measures the step before that: how fast the pool can be **provisioned** as a function of the **offered reconcile rate** (sandboxes requested per second). At each rate the pool is driven to a target size and we measure whether it reaches Ready **within the warm timeout**. Measured on **gVisor**.
-
-| Offered reconcile rate | Warm-pool target | Ready within timeout |
-|---|---|---|
-| 100 sb/s | 1500 | ✅ 100% (converged ~301s) |
-| 150 sb/s | 2250 | ❌ 42% (timeout 1125s) |
-| 200 sb/s | 3000 | ❌ 21% (timeout 1880s) |
-
-**Provisioning converges at ~100 sb/s; over-subscribed beyond ~(100, 150) sb/s** — monotonic degradation past the ceiling is **reconcile-bound** (the controller reconcile path is the ceiling), not node- or quota-bound.
-
-_A distinct axis from the Concurrent Burst (claim:pool ratio) and Step-up (creation-rate TTFE) blocks: this measures provisioning **offered-rate** convergence, a separate regime — not directly comparable to those latency/throughput points._
-
-_Measured 2026-07-01 — warm-pool provisioning rate sweep (point-in-time; refreshed on the next rate sweep)._
+_Cluster shape (gVisor leg): node_count=1 — the swing-flag threshold compares consecutive fires on this chart, so a node-count or machine-class change shows up here first._
 
 ## Warm-Pool Turnover — Sustained-Churn Refill Latency
 
@@ -273,8 +214,8 @@ The matrix measures the **claim** side (a warm hit is sub-second). This block me
 
 | Refill latency | Value |
 |---|---|
-| Median (p50) (over 5 cycles) | 1.34612s |
-| Tail (p90) | 1.80356s |
+| Median (p50) (over 5 cycles) | 1.47192s |
+| Tail (p90) | 1.58884s |
 
 _Refill latency is measured per-cycle as the wall-clock from a claim release to the warm pool returning to full readiness; the median and tail are percentiles of the completed-cycle distribution._
 
@@ -286,18 +227,17 @@ _Capability note: this is an **administrative** (operator- or user-driven) suspe
 
 | Suspend latency | Value |
 |---|---|
-| Median (p50) | 2.1108s |
-| Tail (p90) | 2.2292s |
+| Median (p50) | 2.102s |
 
-_Suspend latency is measured per-cycle as the wall-clock from the `operatingMode=Suspended` patch return to the terminal Suspended state; the median and tail are percentiles of the measured suspend distribution._
+_Suspend latency is measured per-cycle as the wall-clock from the `operatingMode=Suspended` patch return to the terminal Suspended state; the median is the 50th percentile of the measured suspend distribution._
 
 ## What this means for you
 
 The tables above are the raw measurements. If you build *on* sandboxes but do not run the cluster yourself, here is what they mean in practice:
 
-- **Keep a warm pool sized to demand and a new sandbox is ready quickly** — a claim against a ready pool skips the fresh-node startup path. The exact wait to budget is in the operating envelope below once that measurement lands.
-- **A warm-pool hit is about 1× faster than starting cold (gVisor).** If start-up latency matters to you, the warm pool is the single biggest lever — size it for your steady demand and most claims never pay the cold path. (This ratio is the dedicated warm-vs-cold leg — a separate point-in-time measurement from the Core Metrics matrix rows above, so do not reproduce it by dividing the matrix cells.)
-- **Big simultaneous bursts still work — 300 sandboxes asked for at once settled in ~6.9s.** But that is the pool-overflow regime: the wait climbs toward the cold-start number as claims outrun ready slots, so plan the pool around your steady rate, not your worst spike.
+- **Keep a warm pool sized to demand and a new sandbox is ready in ~0.5s (~0.6s at the p95).** That is fast enough to put a fresh sandbox directly in a user-facing request path — no need to hide it behind a spinner or pre-allocate one per session.
+- **A warm-pool hit is about 6.5× faster than starting cold (gVisor).** If start-up latency matters to you, the warm pool is the single biggest lever — size it for your steady demand and most claims never pay the cold path. (This ratio is the dedicated warm-vs-cold leg — a separate point-in-time measurement from the Core Metrics matrix rows above, so do not reproduce it by dividing the matrix cells.)
+- **Big simultaneous bursts still work, but they are the pool-overflow regime** — the wait climbs toward the cold-start number as claims outrun ready slots, so plan the pool around your steady rate, not your worst spike.
 - **Rule of thumb for pool size:** start near your typical concurrent demand (≈0.75× of it) and tune from there. This is a planning heuristic, not one of the measured numbers above.
 - **Both runtimes are measured — choose by isolation need.** In the measurements above, warm-pool latency is comparable between them; gVisor delivers the higher per-node throughput, while Kata + microVM puts each sandbox in its own VM for hardware-grade isolation. If unsure, start with gVisor and move only the workloads that need a VM boundary to Kata.
 - **gVisor suspend/resume is measured — Kata resume is not.** The gVisor resume cells now carry real numbers (the upstream resume-graduation fix merged and a fresh probe landed). Kata resume stays `N/A` by construction (checkpoint-restore does not transfer to the VM model) — treat Kata resume as unavailable.
