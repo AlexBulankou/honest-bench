@@ -139,6 +139,25 @@ _GVISOR_RUNTIME_CLASS = "gvisor"
 _POOL_REPLICAS = int(os.environ.get("BURST_CREATE_POOL_REPLICAS", "10"))
 _CLAIM_COUNT = int(os.environ.get("BURST_CREATE_CLAIM_COUNT", str(_POOL_REPLICAS)))
 
+
+def _fill_gate_target(pool_replicas: int, claim_count: int) -> int:
+    """Pre-fire fill-gate readyReplicas target.
+
+    Default (K==K) leaves this a no-op, but BURST_CREATE_CLAIM_COUNT and
+    BURST_CREATE_POOL_REPLICAS are independently env-tunable, so a diagnostic
+    fire sized below the pool (claim_count < pool_replicas) would otherwise
+    make the pre-fire gate wait for readyReplicas to reach the raw pool size
+    even though only claim_count of those slots will ever be claimed --
+    burning warmup-timeout budget on replicas the burst never touches. Same
+    shape hb#804/hb#809 fixed in warmpool_cold_start's fill gate; mirrored
+    here. pool_replicas <= 0 is untouched (no legitimate zero/negative case
+    for this scenario, but keeps the helper total).
+    """
+    if pool_replicas > 0:
+        return min(pool_replicas, claim_count)
+    return pool_replicas
+
+
 # The sub-1s TTFI bar (seconds). alex's "<1s" headline; env-tunable for recal.
 _TTFI_CEILING_S = float(os.environ.get("BURST_CREATE_TTFI_CEILING_S", "1.0"))
 
@@ -806,18 +825,19 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
         body=_build_warmpool_manifest(pool_name, template_name, _POOL_REPLICAS),
     )
 
+    _gate_target = _fill_gate_target(_POOL_REPLICAS, _CLAIM_COUNT)
     try:
         log.info(
             "waiting for WarmPool %s to reach readyReplicas=%d (window=%ds)",
-            pool_name, _POOL_REPLICAS, _WARMUP_TIMEOUT_S,
+            pool_name, _gate_target, _WARMUP_TIMEOUT_S,
         )
         _wait_for_pool_warm(
             custom, pool_name=pool_name,
-            target_ready=_POOL_REPLICAS, timeout_s=_WARMUP_TIMEOUT_S,
+            target_ready=_gate_target, timeout_s=_WARMUP_TIMEOUT_S,
         )
         log.info(
             "pool fully warm (readyReplicas=%d); firing %d claims",
-            _POOL_REPLICAS, _CLAIM_COUNT,
+            _gate_target, _CLAIM_COUNT,
         )
 
         # Fire all claims as fast as a serial loop allows. Record t0 IMMEDIATELY
