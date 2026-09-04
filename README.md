@@ -35,13 +35,13 @@ blocker — diagnosis plus file-ready patches and comments — is hand-maintaine
 
 ## Agent Sandbox — Core Metrics
 
-**Throughput is dual — `per-node · per-cluster`.** Per-cluster figures here are a MEASURED cluster rate at 5 nodes; see the legend below for how to read the pair. (This is a different `node_count` than the one printed in each build's provenance banner below the table — that one describes the per-node fire's shape, not this per-cluster measurement.)
+**Throughput is dual — `per-node · per-cluster`.** Per-cluster figures are measured per runtime at DIFFERENT node counts — gVisor at 4 nodes; Kata + microVM at 5 nodes — so they are NOT comparable across runtimes here (different X); see the legend below. (This is a different `node_count` than the one printed in each build's provenance banner below the table — that one describes the per-node fire's shape, not this per-cluster measurement.)
 
 | Runtime | Activation Mode | Throughput @ <5s TTFE (sb/s — node · cluster) | Throughput @ <1s TTFE (sb/s — node · cluster) | TTFE p50 | TTFE p95 | Execution Success (Honesty Check) |
 |---|---|---|---|---|---|---|
-| gVisor | Warm-pool hit (Base image) | 13.217 /node · [pending (cluster-fire)](WORK_IN_PROGRESS.md#cluster-fire) | 13.217 /node · [pending (cluster-fire)](WORK_IN_PROGRESS.md#cluster-fire) | 0.5432s (count=5) † | 0.59s (count=5) † | 100% |
-| gVisor | Unique-image cold (RL reality) | [pending](WORK_IN_PROGRESS.md#not-yet-measured) | 0 /node · 0 /cluster | 3.7694s (count=1) † | 3.7694s (count=1) † | 100% |
-| gVisor | Resume-from-suspend | [pending](WORK_IN_PROGRESS.md#not-yet-measured) | 0 /node · 0 /cluster | 4.3387s (count=1) † | 4.3387s (count=1) † | 100% |
+| gVisor | Warm-pool hit (Base image) | 13.217 /node · 9.336 /cluster ⚠️ | 13.217 /node · 9.336 /cluster ⚠️ | 0.5432s (count=5) † | 0.59s (count=5) † | 100% |
+| gVisor | Unique-image cold (RL reality) | [pending](WORK_IN_PROGRESS.md#not-yet-measured) | 0 /node · 0 /cluster | 3.3286s (count=200) | 4.7328s (count=200) | 100% |
+| gVisor | Resume-from-suspend | [pending](WORK_IN_PROGRESS.md#not-yet-measured) | 0 /node · 0 /cluster | 4.331s (count=30) | 4.8322s (count=30) | 100% |
 | Kata + microVM | Warm-pool hit (Base image) | 14.012 /node · 0.694 /cluster ⚠️ | 0 /node · 0 /cluster | 1.4399s (count=30) | 1.6844s (count=30) | 100% |
 | Kata + microVM | Unique-image cold (RL reality) | [pending](WORK_IN_PROGRESS.md#not-yet-measured) | 0 /node · 0 /cluster | 3.1986s (count=30) | 3.5684s (count=30) | 100% |
 | Kata + microVM | Resume-from-suspend | [N/A](WORK_IN_PROGRESS.md#na-by-construction) | [N/A](WORK_IN_PROGRESS.md#na-by-construction) | [N/A](WORK_IN_PROGRESS.md#na-by-construction) | [N/A](WORK_IN_PROGRESS.md#na-by-construction) | [N/A](WORK_IN_PROGRESS.md#na-by-construction) |
@@ -52,7 +52,7 @@ Density is per-**runtime** — constant across a runtime's activation-mode rows 
 
 | Runtime | Max Density (sb/vCPU) |
 |---|---|
-| gVisor | [pending](WORK_IN_PROGRESS.md#not-yet-measured) |
+| gVisor | 6.23 |
 | Kata + microVM | 1.26 |
 
 **Reading the cells** — TTFE is Time-To-First-Instruction (wall-clock until your agent's first instruction returns, not merely pod-Ready). Read TTFE p50/p95 *down* a column, not across rows — activation-mode rows differ in sample size by orders of magnitude.
@@ -70,14 +70,12 @@ Full cell-decoding key — TTFE basis, honest vs. measured zeros, the dual per-n
 
 _Kata + microVM rows are measured in a separate run on the kata node pool: cluster_substrate=gke-kata · node_count=1 · generated-at=2026-08-31T15:22:54Z._
 
-_build: cluster_substrate=gke-sandbox · controller_image=us-central1-docker.pkg.dev/k8s-staging-images/agent-sandbox/agent-sandbox-controller:v20260818-v0.5.5-34-gac864a6-main · controller_digest=sha256:2926730e6554f61119d78f99f05c5fd007fc1bd9d5a3ebdd20b3fac4ab1ba76c · crd_version=v1beta1 · suite_git_sha=6f6ad9fe4a325ac99282c70ac732e77fb8d247b6 · run_id=084134ae616c4a34a5fa0fd3b906233d · node_count=1_
+_build: cluster_substrate=gke-sandbox · controller_image=us-central1-docker.pkg.dev/k8s-staging-images/agent-sandbox/agent-sandbox-controller:v20260818-v0.5.5-34-gac864a6-main · controller_digest=sha256:2926730e6554f61119d78f99f05c5fd007fc1bd9d5a3ebdd20b3fac4ab1ba76c · crd_version=v1beta1 · suite_git_sha=6f6ad9fe4a325ac99282c70ac732e77fb8d247b6 · upstream_ref=52618d52a1f43ccdd6decf91261f3dc1b678f591 · run_id=084134ae616c4a34a5fa0fd3b906233d · node_count=1 · machine_type=n2-standard-16_
 _generated-at: 2026-09-04T15:45:28Z_
 
 _**North Star** — warm-pool-hit TTFE p95 < 1s (the spec doc bar): gVisor 0.59s (count=5) † ✅ met (0.41s headroom); Kata + microVM 1.6844s (count=30) ❌ not met (0.6844s above the bar). An honest ❌ prints the measured gap to the bar (tagged `within sampling noise` when the miss sits inside the sample spread — it stays a ❌, the tag never flips a miss to a pass); `pending` = unmeasured (never a guess); † marks a p95 over fewer than N=30 samples._
 
 _**Stretch bar** — warm-pool-hit TTFE p95 < 0.5s (an aspiration above the North Star, not the North Star itself; the step-up curve grades sustained creation-rate against it — see [DETAILS.md](DETAILS.md)): gVisor 0.59s (count=5) † ❌ not met (0.09s above the bar); Kata + microVM 1.6844s (count=30) ❌ not met (1.1844s above the bar)._
-
-> ⚠️ **Machine class unknown:** this sandbox-family run did not stamp `machine_type`, so a rig change relative to the previously published run cannot be ruled out. Treat any delta as possibly machine-class-confounded until a matched-rig run is published.
 
 ### Known anomalies
 
@@ -89,9 +87,10 @@ _**Stretch bar** — warm-pool-hit TTFE p95 < 0.5s (an aspiration above the Nort
 | Cold-tier stall inflates separation ratio | [✅ clear](DETAILS.md#cold-tier-stall-inflates-separation-ratio) |
 | Same-build separation-ratio variance | [⚠️ ACTIVE](DETAILS.md#same-build-separation-ratio-variance) |
 | Single-fire separation verdict defensibility | [✅ clear](DETAILS.md#single-fire-separation-verdict-defensibility) |
-| Mixed rig within this run | [✅ clear](DETAILS.md#mixed-rig-within-this-run) |
+| Mixed rig within this run | [⚠️ ACTIVE](DETAILS.md#mixed-rig-within-this-run) |
 | Regime note | [ℹ️ standing note](DETAILS.md#regime-note) |
 | Refresh cadence | [ℹ️ standing note](DETAILS.md#refresh-cadence) |
+| Concurrent-burst measurement regime | [ℹ️ see section](DETAILS.md#concurrent-burst-measurement-regime) |
 
 **What do these numbers mean for you?** Plain-English guidance — picking a runtime, sizing a
 warm pool, what wait to budget, and why a `pending` cell is unmeasured-not-bad — is in the
@@ -104,9 +103,81 @@ Find the row closest to **your** load; the p50 is the wait to plan around. The *
 | Your load pattern | Wait to budget (p50) | Scope |
 |---|---|---|
 | Steady trickle — warm pool keeps up with demand | ~0.5s | full start → first result |
-| Bursty — pool oversubscribed (more claims than ready pool) | [pending](WORK_IN_PROGRESS.md#not-yet-measured) | full start → first result |
-| Hundreds of sandboxes requested at once (1:1 pool) | [pending](WORK_IN_PROGRESS.md#not-yet-measured) | full start → first result |
-| Sustained high-rate churn | [pending](WORK_IN_PROGRESS.md#not-yet-measured) | pool hand-off only (before exec) |
+| Bursty — pool oversubscribed 2:1 (60 claims / 30 ready) | ~1.7s | full start → first result |
+| 300 sandboxes requested at once (1:1 pool) | ~6.9s | full start → first result |
+| Sustained 300/sec churn | ~2.9s | pool hand-off only (before exec) |
+
+## Does it hold at cluster scale?
+
+Four questions a bigger cluster raises: does throughput stay flat as you add nodes (**linearity**), what does a single all-at-once burst of N claims cost (**concurrency**), where does the whole-cluster warm hand-out rate saturate (**ceiling**), and what happens when the pool is over-subscribed (**contention**)? All below, on the same TTFE spine as the headline matrix.
+
+### Linearity — throughput and density hold flat as nodes grow
+
+| Nodes Tested | Density Holds Flat? | Throughput Holds Flat? |
+|---|---|---|
+| 1 → 2 | ✅ Yes (1× · 0.63 → 0.63) | ⚠️ No (0.5×) |
+
+_The density values in this row are the per-node density retained at each node count (a linearity series — does per-node density stay flat as the cluster grows?), not the absolute Max Density per vCPU (reported separately in DETAILS)._
+
+_Measured 2026-08-26 — node-count linearity sweep (point-in-time; refreshed on the next multi-node sweep)._
+
+_Node-count 4 requested but not reached (cluster/autoscale ceiling this fire)._
+
+### Concurrent burst — TTFE at N simultaneous claims
+
+Each row is a **single all-at-once burst of N concurrent claims** (not a ramped per-second rate). TTFE is the same metric the Core Metrics matrix reports (executed-first-instruction-and-returned-a-result), so these columns **are comparable to the matrix TTFE columns**. *Warm pool* fires against a pre-provisioned pool of N ready sandboxes; *cold provision* starts from an empty pool (node-autoscaler + image-pull in the critical path). Measured on node_count=20, `e2-standard-16`.
+
+| Concurrency (N) | Activation Mode | TTFE p50 | TTFE p95 | Throughput @ <5s/node | Throughput @ <1s/node | Execution Success |
+|---|---|---|---|---|---|---|
+| 300 | Warm pool | 6.8743s | 9.393s | 0.392 | 0 | 100% |
+| 300 | Cold provision | 56.0294s | 58.4124s | 0 | 0 | 100% |
+| 500 | Warm pool | 11.188s | 15.374s | 0.052 | 0 | 100% |
+| 500 | Cold provision | 97.3988s | 99.8002s | 0 | 0 | 100% |
+| 30 | Warm pool | 2.06969s | 2.9976s | — | — | 100% |
+| 30 | Cold provision | 12.3171s | 13.1484s | — | — | 100% |
+
+_Measured 2026-06-30 — concurrent-burst TTFE (point-in-time)._
+
+> ℹ️ **Measurement regime:** this burst ran on a long-lived, **pre-warmed cluster** (warm containerd cache). Fires on or after 2026-07-20 run on cold ephemeral CI clusters and are **not directly comparable** to this baseline.
+
+> ⚠️ **Stale — no producer since rig change:** this concurrent-burst figure has no daily producer; it is carried forward unchanged from its last fire, measured on `e2-standard-16`. This run measured the rest of the page on `n2-standard-16`. Treat this section as a frozen snapshot from the prior rig, not a live signal for the current one, until a fresh fire republishes it on the current machine class.
+
+```
+Concurrent Burst — TTFE p50 vs p95 by concurrency (N)
+
+N=30 Warm pool       p50  █ 2.06969s
+                     p95  █ 2.9976s
+N=30 Cold provision  p50  ██ 12.3171s
+                     p95  ███ 13.1484s
+N=300 Warm pool      p50  █ 6.8743s
+                     p95  ██ 9.393s
+N=300 Cold provision p50  ███████████ 56.0294s
+                     p95  ████████████ 58.4124s
+N=500 Warm pool      p50  ██ 11.188s
+                     p95  ███ 15.374s
+N=500 Cold provision p50  ████████████████████ 97.3988s
+                     p95  ████████████████████ 99.8002s
+```
+
+### Saturation — the whole-cluster warm-hand-out ceiling
+
+**Saturation** ceiling — a **1:1 all-warm** fire (**600** ready sandboxes, **600** simultaneous claims, **not** over-subscribed) across **40** nodes on **gVisor**. At this scale the "warm hit is <1s" claim from the Core Metrics matrix does **not** hold here. Cluster shape: `n2-standard-16`.
+
+At **40 nodes** the cluster sustains only **2.558 claims/sec under 5s** (**0/sec under 1s**) across the whole cluster, and TTFE degrades to **8.6308s p50** / **12.6103s p95**. This is the honest per-cluster hand-out ceiling — budget for it when your claim rate can outrun the bind path, not for the sub-second per-node warm hit. Full per-node/per-cluster and bind/exec decomposition is in the deep-dive appendix, [DETAILS.md](DETAILS.md).
+
+_SLA ceiling: **not met** at this operating point — this row is the honest saturation limit, not a warm-hit guarantee. Every claim still bound and executed; the FAIL is the throughput collapse against the sizing floor, not a correctness failure._
+
+_Measured 2026-07-02 — whole-cluster saturation ceiling (point-in-time)._
+
+### Where it breaks — an over-subscribed pool
+
+The deliberate **retraction** — an **over-subscribed** pool (**30** ready sandboxes hit with **60** simultaneous claims, **2:1 contention**) on **gVisor**. Warm activation stops being sub-second: the "warm hit is <1s" claim from the Core Metrics matrix does **not** hold here. Cluster shape: node_count=1, `e2-standard-16`.
+
+Under this contention, TTFE degrades to **1.6589s p50** / **2.0169s p95** — budget for that, not the sub-second warm hit, when your claim rate can outrun your pool. Full bind/exec decomposition is in the deep-dive appendix, [DETAILS.md](DETAILS.md).
+
+_Measured 2026-07-01 — warm-pool at-scale contention ceiling (point-in-time)._
+
+> ⚠️ **Stale — no producer since rig change:** this at-scale-contention figure has no daily producer; it is carried forward unchanged from its last fire, measured on `e2-standard-16`. This run measured the rest of the page on `n2-standard-16`. Treat this section as a frozen snapshot from the prior rig, not a live signal for the current one, until a fresh fire republishes it on the current machine class.
 
 ## Throughput — build-over-build
 
