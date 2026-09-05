@@ -1,7 +1,7 @@
 {
   "_meta": {
     "seeded_from": "UPSTREAM_BLOCKERS.md (active-asks-only rewrite)",
-    "last_verified": "2026-09-03",
+    "last_verified": "2026-09-05",
     "freshness": "Rides every UPSTREAM_BLOCKERS.md refresh PR; link states hand-verified against the public GitHub API at each refresh.",
     "fork_upstreams": {},
     "commit_distance": {}
@@ -91,8 +91,8 @@
           "number": 791,
           "kind": "issue",
           "role": "blocks",
-          "status": "open",
-          "note": "Umbrella tracking issue for the suspend-lifecycle 5-PR plan. All five planned pieces are now merged: #810/#812/#813 (2026-08-08) plus #816 (2026-08-11, which combined the final atelet-upload-RPC + enable-from-PAUSED legs into one PR). Stays OPEN on one deferred follow-up, #817, so plan-completion does not by itself clear the S2 restore-side blocker."
+          "status": "closed",
+          "note": "Umbrella tracking issue for the suspend-lifecycle 5-PR plan. All five planned pieces merged: #810/#812/#813 (2026-08-08) plus #816 (2026-08-11, which combined the final atelet-upload-RPC + enable-from-PAUSED legs into one PR). CLOSED COMPLETED 2026-09-04T22:16Z once its last deferred follow-up #817 closed; the maintainer's residual janitor-retry ask (scan+retry SUSPENDING actors, not scoped to paused-origin) split off to the new #1502. Upstream plan-completion does NOT by itself graduate the S2 restore-side matrix cell -- that still holds pending a post-#1379 upgrade-loop e2e fire confirming TMDDL recovers (see #1379 note)."
         },
         {
           "repo": "agent-substrate/substrate",
@@ -107,8 +107,8 @@
           "number": 817,
           "kind": "issue",
           "role": "blocks",
-          "status": "open",
-          "note": "Deferred follow-up off the #791 plan: suspend-from-PAUSED gVisor Full-capture->Data-commit conversion, blocked on the restore-side gVisor leg. This is the remaining gate keeping #791 open and routes to the same gVisor phase-2 leg as this class's restore-side residual -- now the merged #1379 (which supersedes the #790 draft). OPEN."
+          "status": "closed",
+          "note": "Deferred follow-up off the #791 plan: suspend-from-PAUSED gVisor Full-capture->Data-commit conversion, blocked on the restore-side gVisor leg. This was the remaining gate keeping #791 open; routes to the same gVisor phase-2 leg as this class's restore-side residual. CLOSED COMPLETED 2026-09-04T21:54Z, 'Fixed in #1379' (the merged restore-side leg, which supersedes the #790 draft). Upstream-closed does NOT by itself graduate the S2 restore-side matrix cell -- that still holds pending a post-#1379 upgrade-loop e2e fire confirming TMDDL recovers (see #1379 note)."
         },
         {
           "repo": "agent-substrate/substrate",
