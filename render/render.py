@@ -3591,7 +3591,7 @@ def _warmpool_separation_variance_caveat(history_rows):
 def _adjudicated_verdict_for_substrate(clean_history, sub, min_n=WARMPOOL_ADJUDICATION_MIN_N):
     """The median-of-N adjudicated verdict for ONE `cluster_substrate`, or None if untaggable.
 
-    hb#818 GOAL 2.1 (a4z1): the single-fire caveat below used to compute its own `n_required`
+    hb#818: the single-fire caveat below used to compute its own `n_required`
     from `variance_aware_verdict([single_ratio], ...)` — i.e. it treated ONE noisy draw as a
     stable target other fires should replicate. That is unsound on a rig whose own accrued
     history shows the modal per-fire ratio swings both sides of the gate (8 of 12 node_count=2

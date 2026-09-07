@@ -8309,7 +8309,7 @@ def test_warmpool_separation_verdict_caveat_active_when_ci_straddles_gate():
     assert "gVisor" in out
     assert "σ(log)=" in out
     assert "95% band" in out
-    # hb#818 GOAL 2.1 (a4z1): must NOT claim more single-fire replication is
+    # hb#818: must NOT claim more single-fire replication is
     # the remedy — that framing is unsound on a rig whose own history swings
     # both sides of the gate (variance, not sample count, drives the spread).
     assert "consistent fires would resolve this margin" not in out
@@ -8317,11 +8317,11 @@ def test_warmpool_separation_verdict_caveat_active_when_ci_straddles_gate():
 
 
 def test_warmpool_separation_verdict_caveat_cross_references_resolved_adjudicated_verdict():
-    # hb#818 GOAL 2.1 (a4z1): when the median-of-N adjudicated verdict for the
+    # hb#818: when the median-of-N adjudicated verdict for the
     # SAME cluster_substrate has already resolved (PASS or FAIL), the caveat
     # must say so plainly instead of implying single-fire replication is an
     # open remedy. These 12 ratios are the REAL node_count=2 gke-sandbox
-    # accrual a4z1 cited (hb#818): high run-to-run variance (sigma(log) is
+    # accrual cited in hb#818: high run-to-run variance (sigma(log) is
     # large, same-digest so it pools), median 0.535x — the adjudicated verdict
     # resolves cleanly to FAIL even though any single one of these draws (or a
     # fresh one like this fire's 1.9x) is, on its own, indeterminate against
