@@ -115,21 +115,27 @@ scan_target() {
 }
 
 rc=0
+mode=""
+scanned=0
 if [ "${1:-}" = "--commits" ]; then
+  mode="commits"
   scan_commit_metadata "${2:-}" || rc=1
 elif [ "${1:-}" = "--staged" ]; then
-  while IFS= read -r f; do scan_target "$f" || rc=1; done \
+  mode="staged"
+  while IFS= read -r f; do scanned=$((scanned + 1)); scan_target "$f" || rc=1; done \
     < <(git diff --cached --name-only --diff-filter=ACM)
 elif [ "$#" -eq 0 ]; then
   # No args: fail-closed whole-tree scan. An empty tree is itself suspicious (the gate is
   # meant to run inside a populated repo), so refuse rather than print a hollow "clean".
-  scanned=0
-  while IFS= read -r f; do scanned=1; scan_target "$f" || rc=1; done < <(git ls-files)
+  mode="tree"
+  while IFS= read -r f; do scanned=$((scanned + 1)); scan_target "$f" || rc=1; done < <(git ls-files)
   if [ "$scanned" -eq 0 ]; then
     echo "check-public-safety: BLOCKED — no git-tracked files found to scan (run inside the repo)."
     exit 1
   fi
 else
+  mode="named"
+  scanned="$#"
   for f in "$@"; do scan_target "$f" || rc=1; done
 fi
 
@@ -138,5 +144,15 @@ if [ "$rc" -ne 0 ]; then
   echo "check-public-safety: BLOCKED — remove the flagged content before it lands in the public repo."
   exit 1
 fi
-echo "check-public-safety: clean"
+
+# Scope-honest verdict (#7933): "clean" on its own reads as a whole-repo guarantee even
+# when the invocation only covered commit metadata, the staged set, or a handful of named
+# files. State exactly what was scanned so the line can't be misread as broader coverage
+# than the run actually had.
+case "$mode" in
+  commits) echo "check-public-safety: clean — no forbidden corp-domain commit metadata in the scanned range." ;;
+  staged)  echo "check-public-safety: clean — ${scanned} staged file(s) scanned, no forbidden patterns found." ;;
+  tree)    echo "check-public-safety: clean — ${scanned} git-tracked file(s) scanned (whole tree), no forbidden patterns found." ;;
+  named)   echo "check-public-safety: clean — ${scanned} named file(s) scanned, no forbidden patterns found." ;;
+esac
 exit 0
