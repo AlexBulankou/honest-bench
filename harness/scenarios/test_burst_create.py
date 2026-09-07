@@ -458,6 +458,112 @@ def test_corroboration_ceiling_is_strict_less_than():
     assert corr[_KEC] == 1.0
 
 
+# ---- _wait_for_pool_warm stability gate (hb#818: port of hb#379) ----
+#
+# A single instantaneous readyReplicas>=target poll is indistinguishable from a
+# momentary peak that is already draining. warmpool_cold_start.py hardened its
+# own pool-warm gate against exactly this in hb#379; these mirror that file's
+# coverage verbatim, adapted to burst_create's module alias.
+
+class _FakeCustomOkOnce:
+    """Returns a fixed readyReplicas value on every call."""
+
+    def __init__(self, ready: int):
+        self._ready = ready
+
+    def get_namespaced_custom_object(self, group, version, namespace, plural, name):
+        return {"status": {"readyReplicas": self._ready}}
+
+
+class _FakeCustomSequence:
+    """Returns successive readyReplicas values, holding the last once exhausted."""
+
+    def __init__(self, values):
+        self._values = list(values)
+        self._i = 0
+
+    def get_namespaced_custom_object(self, group, version, namespace, plural, name):
+        idx = min(self._i, len(self._values) - 1)
+        val = self._values[idx]
+        self._i += 1
+        return {"status": {"readyReplicas": val}}
+
+
+def _no_sleep(_seconds):
+    pass
+
+
+def test_wait_for_pool_warm_returns_on_first_poll_when_stability_polls_is_one():
+    custom = _FakeCustomOkOnce(5)
+    orig_sleep = cell.time.sleep
+    cell.time.sleep = _no_sleep
+    try:
+        obj = cell._wait_for_pool_warm(
+            custom, pool_name="pool-x", target_ready=5, timeout_s=10,
+        )
+    finally:
+        cell.time.sleep = orig_sleep
+    assert obj["status"]["readyReplicas"] == 5
+
+
+def test_wait_for_pool_warm_requires_consecutive_polls_before_returning():
+    custom = _FakeCustomSequence([5, 3, 5, 5, 5])
+    orig_sleep = cell.time.sleep
+    cell.time.sleep = _no_sleep
+    try:
+        obj = cell._wait_for_pool_warm(
+            custom, pool_name="pool-x", target_ready=5, timeout_s=10,
+            stability_polls=3,
+        )
+    finally:
+        cell.time.sleep = orig_sleep
+    assert obj["status"]["readyReplicas"] == 5
+    # returned right after the 3rd consecutive at/above-target poll (index 4,
+    # the 5th call: polls at indices 2,3,4 are the 3 consecutive hits)
+    assert custom._i == 5
+
+
+def test_wait_for_pool_warm_flicker_never_sustains_times_out():
+    # Alternates below/at-target forever -> consecutive streak never reaches 2.
+    calls = {"n": 0}
+
+    class _Flicker:
+        def get_namespaced_custom_object(self, group, version, namespace, plural, name):
+            calls["n"] += 1
+            ready = 5 if calls["n"] % 2 else 4
+            return {"status": {"readyReplicas": ready}}
+
+    fake_deadline = [0.0]
+
+    def _fake_monotonic():
+        # advance by 1s per call to time.monotonic() so the while-loop's
+        # deadline check eventually trips without a real sleep.
+        fake_deadline[0] += 1.0
+        return fake_deadline[0]
+
+    orig_sleep = cell.time.sleep
+    orig_monotonic = cell.time.monotonic
+    cell.time.sleep = _no_sleep
+    cell.time.monotonic = _fake_monotonic
+    try:
+        try:
+            cell._wait_for_pool_warm(
+                _Flicker(), pool_name="pool-x", target_ready=5, timeout_s=5,
+                stability_polls=2,
+            )
+            raised = False
+        except RuntimeError as exc:
+            raised = True
+            msg = str(exc)
+    finally:
+        cell.time.sleep = orig_sleep
+        cell.time.monotonic = orig_monotonic
+
+    assert raised, "expected a flicker that never sustains 2 consecutive polls to time out"
+    assert "did not sustain readyReplicas>=5" in msg
+    assert "2 consecutive poll(s)" in msg
+
+
 def _run_all():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:

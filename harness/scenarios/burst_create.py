@@ -139,6 +139,22 @@ _GVISOR_RUNTIME_CLASS = "gvisor"
 _POOL_REPLICAS = int(os.environ.get("BURST_CREATE_POOL_REPLICAS", "10"))
 _CLAIM_COUNT = int(os.environ.get("BURST_CREATE_CLAIM_COUNT", str(_POOL_REPLICAS)))
 
+# hb#818: port of warmpool_cold_start's hb#379 stability-window gate. A single
+# instantaneous readyReplicas>=target poll is indistinguishable from a momentary
+# peak that is already draining (the upstream reconciler gates refill on a COUNT
+# of extant sandboxes, not readyReplicas, so it can stall mid-drain). Firing the
+# burst against a pool mid-drain lets some claims bind to sandboxes that are
+# Ready-condition-true but not actually settled, which shows up downstream as
+# the TTFE exec probe (run per-claim immediately after bind) taking far longer
+# than bind-latency alone would predict -- a Ready-but-not-yet-runnable gap.
+# warmpool_cold_start.py hardened its own pool-warm gate against exactly this
+# in hb#379; burst_create.py never got the same fix. Require this many
+# CONSECUTIVE 1s polls at/above target before declaring the pool warm. Only
+# applied when _POOL_REPLICAS > 0 -- see _wait_for_pool_warm's call site.
+_WARMUP_STABILITY_POLLS = int(
+    os.environ.get("BURST_CREATE_WARMUP_STABILITY_POLLS", "3")
+)
+
 
 def _fill_gate_target(pool_replicas: int, claim_count: int) -> int:
     """Pre-fire fill-gate readyReplicas target.
@@ -382,11 +398,20 @@ def _sum_node_vcpu(core_v1) -> float:
 
 def _wait_for_pool_warm(
     custom, *, pool_name: str, target_ready: int, timeout_s: int,
+    stability_polls: int = 1,
 ) -> dict:
-    """Poll WarmPool until status.readyReplicas >= target_ready, or raise."""
+    """Poll WarmPool until status.readyReplicas >= target_ready, or raise.
+
+    hb#818 (port of hb#379): a single instantaneous poll at/above target_ready
+    is indistinguishable from a momentary peak that is already draining. When
+    `stability_polls > 1`, require that many CONSECUTIVE 1s polls at/above
+    target_ready before declaring the pool warm -- any poll that drops below
+    target_ready resets the streak.
+    """
     group, version, plural = _SWP_GVR
     deadline = time.monotonic() + timeout_s
     last_status: object = "<no-status>"
+    consecutive = 0
     while time.monotonic() < deadline:
         obj = custom.get_namespaced_custom_object(
             group=group, version=version, namespace=_NAMESPACE,
@@ -396,11 +421,16 @@ def _wait_for_pool_warm(
         last_status = status
         ready = int(status.get("readyReplicas") or 0)
         if ready >= target_ready:
-            return obj
+            consecutive += 1
+            if consecutive >= stability_polls:
+                return obj
+        else:
+            consecutive = 0
         time.sleep(1.0)
     raise RuntimeError(
-        f"SandboxWarmPool {pool_name} did not reach readyReplicas>={target_ready} "
-        f"within {timeout_s}s (last status={last_status!r})"
+        f"SandboxWarmPool {pool_name} did not sustain readyReplicas>={target_ready} "
+        f"for {stability_polls} consecutive poll(s) within {timeout_s}s "
+        f"(last status={last_status!r})"
     )
 
 
@@ -834,6 +864,7 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
         _wait_for_pool_warm(
             custom, pool_name=pool_name,
             target_ready=_gate_target, timeout_s=_WARMUP_TIMEOUT_S,
+            stability_polls=_WARMUP_STABILITY_POLLS if _POOL_REPLICAS > 0 else 1,
         )
         log.info(
             "pool fully warm (readyReplicas=%d); firing %d claims",
