@@ -3588,6 +3588,53 @@ def _warmpool_separation_variance_caveat(history_rows):
     )
 
 
+def _adjudicated_verdict_for_substrate(clean_history, sub, min_n=WARMPOOL_ADJUDICATION_MIN_N):
+    """The median-of-N adjudicated verdict for ONE `cluster_substrate`, or None if untaggable.
+
+    hb#818 GOAL 2.1 (a4z1): the single-fire caveat below used to compute its own `n_required`
+    from `variance_aware_verdict([single_ratio], ...)` — i.e. it treated ONE noisy draw as a
+    stable target other fires should replicate. That is unsound on a rig whose own accrued
+    history shows the modal per-fire ratio swings both sides of the gate (8 of 12 node_count=2
+    gke-sandbox fires measured below 1.0x, median-of-33 = 0.97x) — "more fires like this one"
+    cannot resolve a margin that variance, not sample count, is driving, and the median-of-N
+    adjudicated verdict rendered separately below may have ALREADY resolved the question this
+    caveat is still describing as open. This helper factors out the SAME per-substrate
+    computation `_warmpool_separation_adjudicated_verdict` renders, so the single-fire caveat can
+    cross-check it rather than independently implying replication is the open remedy.
+
+    Returns None when `sub` is falsy or has zero accrued rows. Otherwise a dict with `resolved`
+    (True iff the adjudicated verdict is PASS or FAIL, not HELD/INDETERMINATE) and `n` (fire
+    count) always present; `verdict`/`point_ratio`/`ci_low`/`ci_high` only when resolved. Pure
+    over `clean_history`; never reads the live fire.
+    """
+    if not sub:
+        return None
+    rows = [r for r in clean_history if r.get("cluster_substrate") == sub]
+    ratios = [
+        r["separation_ratio"]
+        for r in rows
+        if isinstance(r["separation_ratio"], (int, float)) and r["separation_ratio"] > 0
+    ]
+    n = len(ratios)
+    if n == 0:
+        return None
+    if n < min_n:
+        return {"resolved": False, "n": n}
+    v = warmpool_verdict.variance_aware_verdict(
+        ratios, clean_history, threshold=WARMPOOL_SEPARATION_MIN_RATIO
+    )
+    if v["verdict"] == warmpool_verdict.INDETERMINATE:
+        return {"resolved": False, "n": n}
+    return {
+        "resolved": True,
+        "n": n,
+        "verdict": v["verdict"],
+        "point_ratio": v["point_ratio"],
+        "ci_low": v["ci_low"],
+        "ci_high": v["ci_high"],
+    }
+
+
 def _warmpool_separation_verdict_caveat(results, history_rows, kata_results=None):
     """Loud disclosure when a single-fire separation PASS/FAIL is NOT statistically defensible.
 
@@ -3617,6 +3664,7 @@ def _warmpool_separation_verdict_caveat(results, history_rows, kata_results=None
     measured_runtime = prov.get("runtime") or "gvisor"
     raw_sources = {measured_runtime: results.get("scenarios")}
     matrix_sources = {measured_runtime: _matrix_scenarios(results.get("scenarios"))}
+    substrate_by_runtime = {measured_runtime: prov.get("cluster_substrate")}
     if (
         isinstance(kata_results, dict)
         and kata_results.get("product") == "sandbox-kata"
@@ -3625,10 +3673,11 @@ def _warmpool_separation_verdict_caveat(results, history_rows, kata_results=None
         if kp.get("runtime") == "kata-microvm":
             raw_sources["kata-microvm"] = kata_results.get("scenarios")
             matrix_sources["kata-microvm"] = _matrix_scenarios(kata_results.get("scenarios"))
+            substrate_by_runtime["kata-microvm"] = kp.get("cluster_substrate")
 
     clean_history = _clean_warmpool_separation_history(history_rows or [])
 
-    refused = []  # (label, ratio, verdict_dict)
+    refused = []  # (label, ratio, verdict_dict, cluster_substrate)
     for rt in MATRIX_RUNTIMES:
         rt_scen = matrix_sources.get(rt)
         if rt_scen is None:
@@ -3652,38 +3701,57 @@ def _warmpool_separation_verdict_caveat(results, history_rows, kata_results=None
             [ratio], clean_history, threshold=WARMPOOL_SEPARATION_MIN_RATIO
         )
         if verdict["verdict"] == warmpool_verdict.INDETERMINATE:
-            refused.append((RUNTIME_LABELS[rt], ratio, verdict))
+            refused.append((RUNTIME_LABELS[rt], ratio, verdict, substrate_by_runtime.get(rt)))
     if not refused:
         return ""
 
-    def _one(lbl, ratio, v):
+    def _one(lbl, ratio, v, sub):
         if v["reason"] == "indeterminate-no-noise-floor":
-            return (
+            base = (
                 f"**{lbl}** — one fire measured {ratio:.3g}x, but the accrued history has no "
                 "same-build replication (no controller build with 2+ measurements), so the "
                 "measurement noise floor cannot be estimated and no single-fire pass/fail is "
                 "defensible."
             )
-        return (
-            f"**{lbl}** — one fire measured {ratio:.3g}x; at the measured noise floor "
-            f"(σ(log)={v['sigma_log']:.2g}, {int(v['confidence'] * 100)}% band "
-            f"{v['ci_low']:.3g}x–{v['ci_high']:.3g}x) the interval straddles the "
-            f"{WARMPOOL_SEPARATION_MIN_RATIO:g}x gate, so this single fire cannot tell a real "
-            f"pass from an unlucky draw — {v['n_required']} consistent fires would resolve this "
-            "margin."
-        )
+        else:
+            base = (
+                f"**{lbl}** — one fire measured {ratio:.3g}x; at the measured noise floor "
+                f"(σ(log)={v['sigma_log']:.2g}, {int(v['confidence'] * 100)}% band "
+                f"{v['ci_low']:.3g}x–{v['ci_high']:.3g}x) the interval straddles the "
+                f"{WARMPOOL_SEPARATION_MIN_RATIO:g}x gate, so this single fire cannot tell a real "
+                "pass from an unlucky draw."
+            )
+        adjudicated = _adjudicated_verdict_for_substrate(clean_history, sub)
+        if adjudicated is not None and adjudicated["resolved"]:
+            base += (
+                f" This is not an open question this fire's replication would close: the "
+                f"published median-of-{adjudicated['n']} adjudicated verdict for this rig has "
+                f"already resolved to **{adjudicated['verdict']}** "
+                f"({adjudicated['point_ratio']:.3g}x, {adjudicated['ci_low']:.3g}x–"
+                f"{adjudicated['ci_high']:.3g}x band — see below); more single fires would not "
+                "change that, since this rig's own history shows the per-fire ratio swings both "
+                "sides of the gate (variance, not sample count, drives the spread)."
+            )
+        elif adjudicated is not None:
+            base += (
+                f" The accrued median-of-{adjudicated['n']} history for this rig is itself still "
+                "unresolved (see the adjudicated verdict below) — accruing more fires there, not "
+                "replicating this single draw, is what would eventually settle it."
+            )
+        else:
+            base += " No accrued history is tagged for this rig, so no accrual path can be named."
+        return base
 
-    who = " ".join(_one(lbl, ratio, v) for lbl, ratio, v in refused)
+    who = " ".join(_one(lbl, ratio, v, sub) for lbl, ratio, v, sub in refused)
     return (
         "> ⚠️ **Single-fire separation verdict withheld:** the raw gate issues a pass/fail from "
         "ONE fire's separation ratio, but reconciling that ratio against the run-to-run noise "
         "floor measured across the accrued same-build history shows the noise band is wider than "
         f"the ratio's margin to the {WARMPOOL_SEPARATION_MIN_RATIO:g}x gate, so no single-fire "
-        f"verdict is defensible: {who} The verdict layer refuses to issue one and states the fires "
-        "required instead (fail-closed: it withholds the pass/fail rather than emitting the raw "
-        "single-fire one it cannot defend). See "
-        "[WARMPOOL_SEPARATION_VERDICT_PROTOCOL.md](WARMPOOL_SEPARATION_VERDICT_PROTOCOL.md). A "
-        "refresh with enough consistent fires to clear the noise band resolves this."
+        f"verdict is defensible: {who} The verdict layer refuses to issue a single-fire verdict "
+        "(fail-closed: it withholds the pass/fail rather than emitting the raw single-fire one it "
+        "cannot defend) and defers to the accrued median-of-N adjudicated verdict instead. See "
+        "[WARMPOOL_SEPARATION_VERDICT_PROTOCOL.md](WARMPOOL_SEPARATION_VERDICT_PROTOCOL.md)."
     )
 
 

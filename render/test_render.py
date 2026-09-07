@@ -8296,7 +8296,9 @@ def test_warmpool_separation_verdict_caveat_active_when_no_noise_floor():
 def test_warmpool_separation_verdict_caveat_active_when_ci_straddles_gate():
     # #6890's own flapping pair (0.27x/1.06x, same digest) yields a wide noise
     # floor; a fresh fire sitting near the gate cannot be resolved — the CI
-    # straddles 1.8x, so the verdict is withheld and states the fires required.
+    # straddles 1.8x, so the verdict is withheld. No cluster_substrate is
+    # tagged on this fire's own provenance, so it cannot be cross-referenced
+    # against the adjudicated (median-of-N) verdict for any rig.
     flapping = [_wp_row(0.27, "f1"), _wp_row(1.06, "f2")]
     out = render._warmpool_separation_verdict_caveat(
         _matrix_results(_separation_scenarios(1.9, warm_n=200),
@@ -8307,7 +8309,62 @@ def test_warmpool_separation_verdict_caveat_active_when_ci_straddles_gate():
     assert "gVisor" in out
     assert "σ(log)=" in out
     assert "95% band" in out
-    assert "consistent fires would resolve this" in out
+    # hb#818 GOAL 2.1 (a4z1): must NOT claim more single-fire replication is
+    # the remedy — that framing is unsound on a rig whose own history swings
+    # both sides of the gate (variance, not sample count, drives the spread).
+    assert "consistent fires would resolve this margin" not in out
+    assert "No accrued history is tagged for this rig" in out
+
+
+def test_warmpool_separation_verdict_caveat_cross_references_resolved_adjudicated_verdict():
+    # hb#818 GOAL 2.1 (a4z1): when the median-of-N adjudicated verdict for the
+    # SAME cluster_substrate has already resolved (PASS or FAIL), the caveat
+    # must say so plainly instead of implying single-fire replication is an
+    # open remedy. These 12 ratios are the REAL node_count=2 gke-sandbox
+    # accrual a4z1 cited (hb#818): high run-to-run variance (sigma(log) is
+    # large, same-digest so it pools), median 0.535x — the adjudicated verdict
+    # resolves cleanly to FAIL even though any single one of these draws (or a
+    # fresh one like this fire's 1.9x) is, on its own, indeterminate against
+    # that same noise floor.
+    real_gke_sandbox = [
+        _wp_row(r, f"h{i}")
+        for i, r in enumerate(
+            [0.24, 3.09, 3.83, 0.26, 0.18, 3.11, 0.59, 0.48, 0.75, 0.20, 0.35, 5.78]
+        )
+    ]
+    out = render._warmpool_separation_verdict_caveat(
+        _matrix_results(
+            _separation_scenarios(1.9, warm_n=200),
+            provenance={"runtime": "gvisor", "cluster_substrate": "gke-sandbox"},
+        ),
+        history_rows=real_gke_sandbox,
+    )
+    assert "Single-fire separation verdict withheld" in out
+    assert "already resolved to **FAIL**" in out
+    assert "not an open question this fire's replication would close" in out
+    assert "consistent fires would resolve this margin" not in out
+
+
+def test_warmpool_separation_verdict_caveat_cross_references_unresolved_adjudicated_verdict():
+    # Same substrate tag, but the accrued history for it is itself still
+    # straddling the gate (wide flapping pair) — the caveat must point at
+    # accrual, not at replicating this exact single-fire draw.
+    flapping_same_sub = [
+        _wp_row(0.27, "f1", cluster_substrate="gke-sandbox"),
+        _wp_row(1.06, "f2", cluster_substrate="gke-sandbox"),
+        _wp_row(3.5, "f3", cluster_substrate="gke-sandbox"),
+    ]
+    out = render._warmpool_separation_verdict_caveat(
+        _matrix_results(
+            _separation_scenarios(1.9, warm_n=200),
+            provenance={"runtime": "gvisor", "cluster_substrate": "gke-sandbox"},
+        ),
+        history_rows=flapping_same_sub,
+    )
+    assert "Single-fire separation verdict withheld" in out
+    assert "is itself still unresolved" in out
+    assert "accruing more fires there" in out
+    assert "consistent fires would resolve this margin" not in out
 
 
 def test_warmpool_separation_verdict_caveat_clear_when_resolvable():
