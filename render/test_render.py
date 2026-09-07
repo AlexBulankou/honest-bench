@@ -8516,8 +8516,10 @@ def test_warmpool_adjudicated_verdict_fail_when_tight_and_below_gate():
 def test_warmpool_adjudicated_verdict_held_when_ci_straddles_gate():
     # >=3 same-build fires with a wide spread (0.27x/1.06x/3.9x) -> the noise band
     # straddles 1.8x, so the median does NOT resolve which side of the gate the
-    # build is on. INDETERMINATE must never collapse to PASS/FAIL: HELD (no flip),
-    # and it must state the fires that WOULD resolve the margin.
+    # build is on. INDETERMINATE must never collapse to PASS/FAIL: renders as an
+    # explicit fail-closed NOT-MET, not a "just N more fires" false promise —
+    # it must instead point at variance reduction (the #820 stability gate)
+    # as the real lever.
     digest = "sha256:" + "c" * 64
     rows = [
         _wp_row(0.27, "s1", digest=digest, outcome="FAIL"),
@@ -8525,9 +8527,11 @@ def test_warmpool_adjudicated_verdict_held_when_ci_straddles_gate():
         _wp_row(3.9, "s3", digest=digest, outcome="PASS"),
     ]
     out = render._warmpool_separation_adjudicated_verdict(rows)
-    assert "**gke-sandbox** — **HELD** (no flip)" in out
+    assert "**gke-sandbox** — separation **NOT MET on current evidence** (HELD, no flip)" in out
     assert "straddles the 1.8x gate" in out
-    assert "consistent fires would resolve this" in out
+    assert "consistent fires would resolve this" not in out
+    assert "variance reduction" in out
+    assert "#820" in out
     # first-class INDETERMINATE: never silently collapses to a side.
     assert "**PASS**" not in out and "**FAIL**" not in out
 

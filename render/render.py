@@ -3868,13 +3868,15 @@ def _warmpool_separation_adjudicated_verdict(history_rows, *, min_n=WARMPOOL_ADJ
                 f"defensible. The prior conservative posture is retained.{rig_suffix}"
             )
         return (
-            f"**{sub}** — **HELD** (no flip): median-of-{n} = {pt:.3g}x, but at the measured "
-            f"noise floor (σ(log)={v['sigma_log']:.2g}, {conf}% band {v['ci_low']:.3g}x–"
-            f"{v['ci_high']:.3g}x) the interval straddles the {WARMPOOL_SEPARATION_MIN_RATIO:g}x "
-            f"gate, so the median does not resolve which side of the gate the build is on — "
-            f"{v['n_required']} consistent fires would resolve this margin. The prior "
-            f"conservative posture is retained rather than flipping on an unresolved margin."
-            f"{rig_suffix}"
+            f"**{sub}** — separation **NOT MET on current evidence** (HELD, no flip): "
+            f"median-of-{n} = {pt:.3g}x, but at the measured noise floor "
+            f"(σ(log)={v['sigma_log']:.2g}, {conf}% band {v['ci_low']:.3g}x–{v['ci_high']:.3g}x) "
+            f"the interval straddles the {WARMPOOL_SEPARATION_MIN_RATIO:g}x gate, so the median "
+            f"does not resolve which side of the gate the build is on. At this σ, collecting "
+            f"more fires is an impractically slow way to clear the band — the real lever is "
+            f"variance reduction (a tighter-controlled rig lowering σ, e.g. the #820 pool-ready "
+            f"stability gate), not sample count. The prior conservative posture is retained "
+            f"rather than flipping on an unresolved margin.{rig_suffix}"
         )
 
     who = " ".join(_one(sub) for sub in sorted(by_sub))
@@ -3883,7 +3885,8 @@ def _warmpool_separation_adjudicated_verdict(history_rows, *, min_n=WARMPOOL_ADJ
         f">={min_n} accrued fires** per substrate, not a single fire — a single Cloud Build draw "
         f"is noise-dominated at the {WARMPOOL_SEPARATION_MIN_RATIO:g}x bar and must not flip the "
         f"verdict. A side (PASS/FAIL) is issued only when the noise-band interval clears the gate; "
-        f"otherwise the verdict is **HELD** (no flip) and states the fires needed to resolve it. "
+        f"otherwise the verdict is **NOT MET on current evidence** (HELD, no flip) — a fail-closed "
+        f"state, not a promise that more fires alone will resolve it. "
         f"{who} See "
         "[WARMPOOL_SEPARATION_VERDICT_PROTOCOL.md](WARMPOOL_SEPARATION_VERDICT_PROTOCOL.md)."
     )

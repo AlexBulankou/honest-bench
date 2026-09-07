@@ -34,7 +34,7 @@ _Clear as of the latest measured refresh — no cold-tier internal stall current
 
 ### Adjudicated separation verdict (median-of-N)
 
-The published separation verdict adjudicates over the **median of the most recent >=3 accrued fires** per substrate, not a single fire — a single Cloud Build draw is noise-dominated at the 1.8x bar and must not flip the verdict. A side (PASS/FAIL) is issued only when the noise-band interval clears the gate; otherwise the verdict is **HELD** (no flip) and states the fires needed to resolve it. **gke-sandbox** — **FAIL**: median-of-33 = 0.969x is below the 1.8x gate (95% band 0.71x–1.32x); the shortfall is statistically defensible, not a single-fire draw. See [WARMPOOL_SEPARATION_VERDICT_PROTOCOL.md](WARMPOOL_SEPARATION_VERDICT_PROTOCOL.md).
+The published separation verdict adjudicates over the **median of the most recent >=3 accrued fires** per substrate, not a single fire — a single Cloud Build draw is noise-dominated at the 1.8x bar and must not flip the verdict. A side (PASS/FAIL) is issued only when the noise-band interval clears the gate; otherwise the verdict is **NOT MET on current evidence** (HELD, no flip) — a fail-closed state, not a promise that more fires alone will resolve it. **gke-sandbox** — **FAIL**: median-of-33 = 0.969x is below the 1.8x gate (95% band 0.71x–1.32x); the shortfall is statistically defensible, not a single-fire draw. See [WARMPOOL_SEPARATION_VERDICT_PROTOCOL.md](WARMPOOL_SEPARATION_VERDICT_PROTOCOL.md).
 
 ### Mixed rig within this run
 
