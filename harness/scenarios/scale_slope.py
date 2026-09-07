@@ -133,6 +133,18 @@ _SLOTS_PER_NODE = int(os.environ.get("SCALE_SLOPE_SLOTS_PER_NODE", "10"))
 
 _WARMUP_TIMEOUT_S = int(os.environ.get("SCALE_SLOPE_WARMUP_TIMEOUT_S", "240"))
 _BIND_TIMEOUT_S = int(os.environ.get("SCALE_SLOPE_BIND_TIMEOUT_S", "180"))
+
+# hb#823: port of burst_create's hb#818 stability-window gate (itself a port of
+# warmpool_cold_start's hb#379). A single instantaneous readyReplicas>=target
+# poll is indistinguishable from a momentary peak that is already draining (the
+# upstream reconciler gates refill on a COUNT of extant sandboxes, not
+# readyReplicas, so it can stall mid-drain). Firing the per-tier burst against a
+# pool mid-drain would corrupt this scenario's own per-tier density/throughput
+# measurement with a Ready-but-not-yet-runnable population. Require this many
+# CONSECUTIVE 1s polls at/above target before declaring the pool warm.
+_WARMUP_STABILITY_POLLS = int(
+    os.environ.get("SCALE_SLOPE_WARMUP_STABILITY_POLLS", "3")
+)
 _POLL_S = 0.05
 
 _TPL_GVR = template_gvr()
@@ -580,7 +592,7 @@ def _measure_point(custom, core_v1, *, node_count: int, claim_count: int):
             return None
         _wait_for_pool_warm(
             custom, pool_name=pool_name, target_ready=claim_count,
-            timeout_s=_WARMUP_TIMEOUT_S,
+            timeout_s=_WARMUP_TIMEOUT_S, stability_polls=_WARMUP_STABILITY_POLLS,
         )
         create_times: dict[str, float] = {}
         for name in claim_names:
@@ -605,10 +617,14 @@ def _measure_point(custom, core_v1, *, node_count: int, claim_count: int):
         )
 
 
-def _wait_for_pool_warm(custom, *, pool_name: str, target_ready: int, timeout_s: int) -> dict:
+def _wait_for_pool_warm(
+    custom, *, pool_name: str, target_ready: int, timeout_s: int,
+    stability_polls: int = 1,
+) -> dict:
     group, version, plural = _SWP_GVR
     deadline = time.monotonic() + timeout_s
     last_status: object = "<no-status>"
+    consecutive = 0
     while time.monotonic() < deadline:
         obj = custom.get_namespaced_custom_object(
             group=group, version=version, namespace=_NAMESPACE,
@@ -616,12 +632,18 @@ def _wait_for_pool_warm(custom, *, pool_name: str, target_ready: int, timeout_s:
         )
         status = (obj or {}).get("status") or {}
         last_status = status
-        if int(status.get("readyReplicas") or 0) >= target_ready:
-            return obj
+        ready = int(status.get("readyReplicas") or 0)
+        if ready >= target_ready:
+            consecutive += 1
+            if consecutive >= stability_polls:
+                return obj
+        else:
+            consecutive = 0
         time.sleep(1.0)
     raise RuntimeError(
-        f"SandboxWarmPool {pool_name} did not reach readyReplicas>={target_ready} "
-        f"within {timeout_s}s (last status={last_status!r})"
+        f"SandboxWarmPool {pool_name} did not sustain readyReplicas>={target_ready} "
+        f"for {stability_polls} consecutive poll(s) within {timeout_s}s "
+        f"(last status={last_status!r})"
     )
 
 

@@ -143,6 +143,18 @@ _REFILL_TIMEOUT_S = int(os.environ.get("SESSION_TURNOVER_REFILL_TIMEOUT_S", "180
 _SETTLE_TIMEOUT_S = int(os.environ.get("SESSION_TURNOVER_SETTLE_TIMEOUT_S", "120"))
 _POLL_S = 0.1  # pool readyReplicas poll — fine enough for a seconds-scale refill
 
+# hb#823: port of burst_create's hb#818 stability-window gate (itself a port of
+# warmpool_cold_start's hb#379). A single instantaneous readyReplicas>=target
+# poll is indistinguishable from a momentary peak that is already draining (the
+# upstream reconciler gates refill on a COUNT of extant sandboxes, not
+# readyReplicas, so it can stall mid-drain). Starting a turnover cycle against a
+# pool mid-drain would corrupt this scenario's own drop/refill edge detection.
+# Require this many CONSECUTIVE 1s polls at/above target before declaring the
+# pool warm/settled.
+_WARMUP_STABILITY_POLLS = int(
+    os.environ.get("SESSION_TURNOVER_WARMUP_STABILITY_POLLS", "3")
+)
+
 # CR coordinates.
 _TPL_GVR = template_gvr()
 _CLM_GVR = claim_gvr()
@@ -327,13 +339,20 @@ def _read_pool_ready(custom, *, pool_name: str) -> int | None:
 
 def _wait_pool_at_least(
     custom, *, pool_name: str, target: int, timeout_s: int,
+    stability_polls: int = 1,
 ) -> bool:
-    """Poll until readyReplicas >= target, or timeout. True if reached."""
+    """Poll until readyReplicas >= target for stability_polls CONSECUTIVE
+    polls, or timeout. True if sustained, False on timeout."""
     deadline = time.monotonic() + timeout_s
+    consecutive = 0
     while time.monotonic() < deadline:
         ready = _read_pool_ready(custom, pool_name=pool_name)
         if ready is not None and ready >= target:
-            return True
+            consecutive += 1
+            if consecutive >= stability_polls:
+                return True
+        else:
+            consecutive = 0
         time.sleep(1.0)
     return False
 
@@ -448,6 +467,7 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
         if not _wait_pool_at_least(
             custom, pool_name=pool_name,
             target=_POOL_REPLICAS, timeout_s=_WARMUP_TIMEOUT_S,
+            stability_polls=_WARMUP_STABILITY_POLLS,
         ):
             raise RuntimeError(
                 f"SandboxWarmPool {pool_name} did not reach "
@@ -463,6 +483,7 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
             if i > 0 and not _wait_pool_at_least(
                 custom, pool_name=pool_name,
                 target=_POOL_REPLICAS, timeout_s=_SETTLE_TIMEOUT_S,
+                stability_polls=_WARMUP_STABILITY_POLLS,
             ):
                 log.warning(
                     "cycle %d: pool did not settle back to readyReplicas=%d "
