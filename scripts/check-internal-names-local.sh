@@ -102,4 +102,8 @@ if [ "$hits" -ne 0 ]; then
   echo "  This is the same gate CI runs as specific-name-scan — fix here before pushing." >&2
   exit 1
 fi
-echo "check-internal-names-local: clean — no forbidden internal names in tree."
+if [ "$staged_mode" -eq 1 ]; then
+  echo "check-internal-names-local: clean — ${#staged_files[@]} staged file(s) scanned against ${#denylist[@]} denylist name(s), no hits."
+else
+  echo "check-internal-names-local: clean — whole git-tracked tree scanned against ${#denylist[@]} denylist name(s), no hits."
+fi
