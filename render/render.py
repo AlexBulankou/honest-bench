@@ -4080,7 +4080,62 @@ def _cross_rig_comparability_caveat(results, kata_results=None):
     )
 
 
-def render_north_star_caption(results, kata_results=None):
+def _harness_staleness_caveat(staleness):
+    """Loud disclosure when the published North Star figure was measured by a harness the repo has
+    since fixed, or "" when INERT (hb#828; Transition guards on trust surfaces, AGENTS.md #4420).
+
+    `staleness` is a pre-resolved dict from generate.resolve_harness_staleness — this function is a
+    pure reader of that already-computed data (render.py's purity contract: no git/subprocess/wall
+    clock here). Two shapes:
+
+    - `{"resolvable": True, "commit_count": N, "pr_refs": [...], ...}` — N is the number of commits
+      that touched `harness/scenarios/` since the stamped `suite_git_sha`. N == 0 means the figure
+      was measured by the current harness: INERT, no fence. N > 0 means the harness has moved since
+      this figure was measured: EMIT a fence naming the count and the commits.
+    - `{"resolvable": False, ...}` — the sha is absent, or could not be confirmed as an ancestor of
+      the current history (shallow clone, force-push, or simply missing). Fail-closed: this can
+      never be silently treated as "up to date" — EMIT a distinct "unverified" fence.
+
+    Missing `staleness` entirely (None/falsy) is treated as "not applicable to this call" rather
+    than a live trust-surface downgrade — INERT, mirroring `kata_results=None`'s existing
+    not-applicable convention. This is safe because `harness_staleness` has exactly one real
+    caller (generate.py's build_readme), which always threads a real dict produced by
+    resolve_harness_staleness — a live production run can never actually hit this branch with
+    None. The load-bearing fail-closed guarantee lives one level down, in
+    resolve_harness_staleness itself: a genuinely absent or unresolvable `suite_git_sha` in the
+    published data returns `resolvable: False`, which DOES fire the loud fence below.
+    """
+    if not staleness:
+        return ""
+    if not staleness.get("resolvable"):
+        sha = staleness.get("suite_git_sha")
+        if sha:
+            return (
+                f"> ⚠️ **Harness staleness unverified:** the stamped suite `{sha}` could not be "
+                "confirmed as an ancestor of the current measurement path (absent, shallow clone, "
+                "or rewritten history) — its freshness relative to `harness/scenarios/` cannot be "
+                "reconciled. Re-fire before treating it as current."
+            )
+        return (
+            "> ⚠️ **Harness staleness unverified:** this figure carries no `suite_git_sha` stamp, "
+            "so it cannot be reconciled against the current `harness/scenarios/` history. Re-fire "
+            "before treating it as current."
+        )
+    commit_count = staleness.get("commit_count", 0)
+    if not commit_count:
+        return ""
+    sha = staleness.get("suite_git_sha") or "?"
+    pr_refs = staleness.get("pr_refs") or []
+    subjects = ", ".join(pr_refs) if pr_refs else "unattributed"
+    plural = "s" if commit_count != 1 else ""
+    return (
+        f"> ⚠️ **Harness staleness:** this figure was measured by suite `{sha}`, which is "
+        f"**{commit_count} commit{plural} behind** the current measurement path (`{subjects}`). "
+        "Re-fire before treating it as current."
+    )
+
+
+def render_north_star_caption(results, kata_results=None, harness_staleness=None):
     """One-line measured-verdict captions for the <1s North Star + 0.5s stretch bar.
 
     hb#227 (GOAL-2.1, keep/drop DROP-2): the former full-table "How close to the North Star?"
@@ -4092,6 +4147,9 @@ def render_north_star_caption(results, kata_results=None):
     p95; the 0.5s stretch stays an explicitly-labeled aspiration, not the North Star. Derived
     entirely from the already-emitted warm-hit ttfe_p95_ms — no new emit key (the locked
     emitter⇄renderer schema contract is untouched).
+
+    `harness_staleness` is a pre-resolved dict from generate.resolve_harness_staleness (hb#828),
+    threaded in as plain data — see _harness_staleness_caveat for the fail-closed disclosure rule.
     """
     product = results.get("product")
     if product not in PRODUCTS:
@@ -4131,11 +4189,13 @@ def render_north_star_caption(results, kata_results=None):
     # regime / cadence blocks formerly appended here unconditionally now live in the
     # "Known anomalies" table (render_known_anomalies_table) + DETAILS.md
     # (render_known_anomalies_detail) — see those functions for the live-marker/link
-    # scheme. `caveat` (machine-class) and `delta_caveat` (refresh-over-refresh regression)
-    # are NOT part of that consolidation and stay wired here unchanged.
+    # scheme. `caveat` (machine-class), `delta_caveat` (refresh-over-refresh regression), and
+    # `staleness_caveat` (hb#828 harness-vs-measurement reconciliation) are NOT part of that
+    # consolidation and stay wired here unchanged.
     caveat = _machine_class_caveat(_clean_provenance(results.get("provenance")))
     delta_caveat = _north_star_delta_caveat(results, kata_results)
     xrig_caveat = _cross_rig_comparability_caveat(results, kata_results)
+    staleness_caveat = _harness_staleness_caveat(harness_staleness)
     out = north_star + "\n\n" + stretch
     if caveat:
         out += "\n\n" + caveat
@@ -4143,6 +4203,8 @@ def render_north_star_caption(results, kata_results=None):
         out += "\n\n" + delta_caveat
     if xrig_caveat:
         out += "\n\n" + xrig_caveat
+    if staleness_caveat:
+        out += "\n\n" + staleness_caveat
     return out
 
 

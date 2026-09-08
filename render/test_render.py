@@ -8996,6 +8996,151 @@ def test_cross_rig_caveat_leaks_no_agent_id():
     assert re.search(r"a4[a-z]\d", out) is None
 
 
+# hb#828 — harness-staleness fence (_harness_staleness_caveat / generate.resolve_harness_staleness).
+# The published North Star figure carries a stamped `provenance.suite_git_sha`, but nothing ever
+# reconciled that stamp against the CURRENT harness/scenarios/ history -- a figure measured by a
+# harness the repo has since fixed twice kept rendering as if it were current. generate.py live-
+# reconciles the stamp against git at render time (root, not cwd; scoped strictly to
+# harness/scenarios/ so a docs/render-only commit never raises a false fence) and threads the
+# pre-resolved result into render.py as plain data (purity contract: no git/subprocess/wall clock
+# in render.py itself). Fail-closed per AGENTS.md "Transition guards on trust surfaces" (#4420): a
+# missing stamp, an unresolvable stamp, or the argument not being threaded at all must never render
+# as "verified fresh" -- only a positively-confirmed commit_count == 0 is silent.
+# ---------------------------------------------------------------------------
+
+_STALENESS_MARK = "> ⚠️ **Harness staleness"
+
+
+def test_harness_staleness_caveat_inert_when_zero_commits_since_stamp():
+    # Positively-verified zero-drift -- the measuring harness IS the current harness. Silent.
+    out = render._harness_staleness_caveat(
+        {"resolvable": True, "suite_git_sha": "abc123", "commit_count": 0, "pr_refs": []}
+    )
+    assert out == ""
+
+
+def test_harness_staleness_caveat_fires_singular_commit():
+    out = render._harness_staleness_caveat(
+        {"resolvable": True, "suite_git_sha": "abc123", "commit_count": 1, "pr_refs": ["#820"]}
+    )
+    assert _STALENESS_MARK in out
+    assert "1 commit " in out
+    assert "1 commits" not in out
+    assert "#820" in out
+    assert "abc123" in out
+
+
+def test_harness_staleness_caveat_fires_plural_commits_with_full_sha():
+    out = render._harness_staleness_caveat(
+        {
+            "resolvable": True,
+            "suite_git_sha": "1138f37725c95bb4b22e9f4379d702c71006f46c",
+            "commit_count": 2,
+            "pr_refs": ["#824", "#820"],
+        }
+    )
+    assert _STALENESS_MARK in out
+    assert "2 commits behind" in out
+    assert "#824, #820" in out
+    # sha displayed in FULL, not truncated (repo convention: "suite_git_sha is short enough to
+    # show in full", unlike controller_digest/fork_sha which DO truncate).
+    assert "1138f37725c95bb4b22e9f4379d702c71006f46c" in out
+
+
+def test_harness_staleness_caveat_unverified_when_sha_missing():
+    out = render._harness_staleness_caveat({"resolvable": False, "suite_git_sha": None})
+    assert _STALENESS_MARK in out
+    assert "no `suite_git_sha` stamp" in out
+
+
+def test_harness_staleness_caveat_unverified_when_sha_unresolvable():
+    # Present but not confirmable as an ancestor of HEAD (shallow clone / force-push / bad sha) --
+    # distinct wording from the missing-stamp case, but the SAME fail-closed loud fence.
+    out = render._harness_staleness_caveat({"resolvable": False, "suite_git_sha": "deadbeef"})
+    assert _STALENESS_MARK in out
+    assert "deadbeef" in out
+    assert "could not be confirmed as an ancestor" in out
+    assert "no `suite_git_sha` stamp" not in out
+
+
+def test_harness_staleness_caveat_inert_when_argument_not_threaded():
+    # None/omitted is "not applicable to this call", not a live trust-surface downgrade -- mirrors
+    # kata_results=None's existing not-applicable convention. Safe because the one real caller
+    # (generate.py's build_readme) always threads a real dict from resolve_harness_staleness; THAT
+    # function is where the genuine fail-closed guarantee lives (an absent/unresolvable sha in the
+    # published data returns resolvable: False, which DOES fire the loud fence -- see the two
+    # "unverified" tests above).
+    out = render._harness_staleness_caveat(None)
+    assert out == ""
+
+
+def test_harness_staleness_caveat_leaks_no_agent_id():
+    # Public-repo safety (honest-bench): the emitted trust-surface text carries no fleet agent-id.
+    out = render._harness_staleness_caveat(
+        {"resolvable": True, "suite_git_sha": "abc123", "commit_count": 3, "pr_refs": ["#824"]}
+    )
+    assert out != ""
+    assert re.search(r"a4[a-z]\d", out) is None
+
+
+def test_harness_staleness_caveat_wired_into_north_star_caption_when_stale():
+    out = render.render_north_star_caption(
+        _xrig_gvisor(),
+        harness_staleness={
+            "resolvable": True,
+            "suite_git_sha": "abc123",
+            "commit_count": 2,
+            "pr_refs": ["#824", "#820"],
+        },
+    )
+    assert _STALENESS_MARK in out
+
+
+def test_harness_staleness_caveat_absent_from_caption_when_zero_drift():
+    out = render.render_north_star_caption(
+        _xrig_gvisor(),
+        harness_staleness={"resolvable": True, "suite_git_sha": "abc123", "commit_count": 0, "pr_refs": []},
+    )
+    assert _STALENESS_MARK not in out
+
+
+def test_harness_staleness_caveat_absent_from_caption_when_kwarg_omitted():
+    # Every other North Star caption test in this file calls render_north_star_caption() without
+    # harness_staleness -- omitting it must stay a no-op for those tests (not-applicable, per the
+    # inert-on-None test above), not a newly-loud fence on every unrelated caption assertion.
+    out = render.render_north_star_caption(_xrig_gvisor())
+    assert _STALENESS_MARK not in out
+
+
+def test_pr_ref_label_extracts_trailing_pr_reference():
+    from generate import _pr_ref_label
+
+    subject = "fix(pool-warm): close the single-poll defect class (hb#823) (#824)"
+    assert _pr_ref_label(subject) == "#824"
+
+
+def test_pr_ref_label_falls_back_to_raw_subject_without_pr_suffix():
+    from generate import _pr_ref_label
+
+    subject = "docs: tidy up the README wording"
+    assert _pr_ref_label(subject) == subject
+
+
+def test_resolve_harness_staleness_missing_sha_is_unresolvable():
+    from generate import resolve_harness_staleness
+
+    out = resolve_harness_staleness("/tmp/does-not-matter", None)
+    assert out == {"resolvable": False, "suite_git_sha": None}
+
+
+def test_resolve_harness_staleness_bad_sha_is_unresolvable():
+    from generate import resolve_harness_staleness, _repo_root
+
+    out = resolve_harness_staleness(_repo_root(), "0" * 40)
+    assert out["resolvable"] is False
+    assert out["suite_git_sha"] == "0" * 40
+
+
 def _run_all():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:
