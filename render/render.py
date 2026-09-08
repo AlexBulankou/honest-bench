@@ -36,6 +36,7 @@ from schema import (
     MATRIX_RUNTIMES,
     METRIC_LABELS,
     NON_PUBLIC,
+    NORTH_STAR_FLIP_REASONS,
     OUTCOMES,
     PENDING_REASONS,
     PRODUCTS,
@@ -2882,6 +2883,23 @@ def _hb621_swing_disposition_addendum(prov):
     return ""
 
 
+# Render-time prose for the NORTH_STAR_FLIP_REASONS closed enum (hb#827, schema.py).
+# Keyed 1:1 with the enum so an out-of-enum value (already dropped by the schema guard)
+# never reaches this lookup. Composes the "· adjudicated: <text> ([NORTH-STAR-FLIP-OK])"
+# clause appended to a flagged runtime's delta-flag string in _north_star_delta_caveat
+# below, mirroring the existing "· <field> X→Y" confound-clause idiom in
+# _north_star_delta_flag.
+NORTH_STAR_FLIP_REASON_TEXT = {
+    "machine-class-change": "a machine-class change (rig swap) between the prior and current published run",
+    "node-count-change": "a warm-pool node-count change between the prior and current published run",
+    "node-image-change": "a node-image (kernel/kubelet) float between the prior and current published run",
+    "build-lineage-change": "a controller/suite build-lineage change (rebuild) between the prior and current published run",
+    "fork-lineage-change": "a fork-lineage change (fork rebase/rebuild) between the prior and current published run",
+    "measurement-variance": "measurement variance/flakiness rather than a durable substrate regression",
+    "confirmed-regression": "a confirmed, reproducible substrate regression the team is choosing to surface honestly rather than suppress",
+}
+
+
 def _north_star_delta_caveat(results, kata_results=None):
     """Refresh-over-refresh delta/verdict-flip caveat for the North Star cell (hb#5414).
 
@@ -2892,7 +2910,11 @@ def _north_star_delta_caveat(results, kata_results=None):
     `prior_suite_git_sha` fields (#6828, same "only if it differs" stamping gate) and the
     `prior_fork_sha` / `prior_fork_fix_count` fields (hb#665, same gate) so a build-lineage
     or fork-lineage confound self-disambiguates on-page alongside the existing
-    machine_type/node_count/node_image confound clauses. Pure function of (results,
+    machine_type/node_count/node_image confound clauses. Also reads the
+    `north_star_flip_ack_*` fields (hb#827): when a [NORTH-STAR-FLIP-OK] override has been
+    stamped for the EXACT prior->current p95 pair this caveat is rendering, the flagged
+    runtime's clause cross-references the adjudication instead of leaving the swing/flip as
+    an open question the override already answered. Pure function of (results,
     kata_results); returns "" when nothing to flag so callers can unconditionally
     append it.
     """
@@ -2914,6 +2936,9 @@ def _north_star_delta_caveat(results, kata_results=None):
     current_fs_by_runtime = {}
     prior_ffc_by_runtime = {}
     current_ffc_by_runtime = {}
+    ack_prior_by_runtime = {}
+    ack_current_by_runtime = {}
+    ack_reason_by_runtime = {}
     prov = _clean_provenance(results.get("provenance"))
     measured_runtime = prov.get("runtime") or "gvisor"
     prior_p95 = prov.get("prior_warmpool_ttfe_p95_ms")
@@ -2951,6 +2976,16 @@ def _north_star_delta_caveat(results, kata_results=None):
         prov.get("prior_fork_fix_count"), bool
     ):
         prior_ffc_by_runtime[measured_runtime] = prov["prior_fork_fix_count"]
+    if isinstance(prov.get("north_star_flip_ack_prior_ttfe_p95_ms"), (int, float)) and not isinstance(
+        prov.get("north_star_flip_ack_prior_ttfe_p95_ms"), bool
+    ):
+        ack_prior_by_runtime[measured_runtime] = prov["north_star_flip_ack_prior_ttfe_p95_ms"]
+    if isinstance(prov.get("north_star_flip_ack_current_ttfe_p95_ms"), (int, float)) and not isinstance(
+        prov.get("north_star_flip_ack_current_ttfe_p95_ms"), bool
+    ):
+        ack_current_by_runtime[measured_runtime] = prov["north_star_flip_ack_current_ttfe_p95_ms"]
+    if prov.get("north_star_flip_ack_reason") in NORTH_STAR_FLIP_REASONS:
+        ack_reason_by_runtime[measured_runtime] = prov["north_star_flip_ack_reason"]
     if isinstance(kata_results, dict):
         kp = _clean_provenance(kata_results.get("provenance"))
         if kp.get("runtime") == "kata-microvm":
@@ -2989,8 +3024,23 @@ def _north_star_delta_caveat(results, kata_results=None):
                 kp.get("prior_fork_fix_count"), bool
             ):
                 prior_ffc_by_runtime["kata-microvm"] = kp["prior_fork_fix_count"]
+            if isinstance(
+                kp.get("north_star_flip_ack_prior_ttfe_p95_ms"), (int, float)
+            ) and not isinstance(kp.get("north_star_flip_ack_prior_ttfe_p95_ms"), bool):
+                ack_prior_by_runtime["kata-microvm"] = kp[
+                    "north_star_flip_ack_prior_ttfe_p95_ms"
+                ]
+            if isinstance(
+                kp.get("north_star_flip_ack_current_ttfe_p95_ms"), (int, float)
+            ) and not isinstance(kp.get("north_star_flip_ack_current_ttfe_p95_ms"), bool):
+                ack_current_by_runtime["kata-microvm"] = kp[
+                    "north_star_flip_ack_current_ttfe_p95_ms"
+                ]
+            if kp.get("north_star_flip_ack_reason") in NORTH_STAR_FLIP_REASONS:
+                ack_reason_by_runtime["kata-microvm"] = kp["north_star_flip_ack_reason"]
 
     flags = []
+    acked_labels = []
     for label, p95, _cell, _p50, _n, _outcome in rows:
         if p95 is None:
             continue
@@ -3015,8 +3065,29 @@ def _north_star_delta_caveat(results, kata_results=None):
             current_fork_fix_count=current_ffc_by_runtime.get(rt),
             prior_fork_fix_count=prior_ffc_by_runtime.get(rt),
         )
-        if flag:
-            flags.append(flag)
+        if not flag:
+            continue
+        # hb#827: a [NORTH-STAR-FLIP-OK] override stamp cross-references this exact
+        # flagged swing ONLY when it pins the SAME prior->current p95 pair being
+        # rendered right now -- a stamp left over from a different (already-superseded)
+        # pair is silently ignored, so the ack can never carry forward onto a swing it
+        # didn't actually adjudicate.
+        ack_prior = ack_prior_by_runtime.get(rt)
+        ack_current = ack_current_by_runtime.get(rt)
+        ack_reason = ack_reason_by_runtime.get(rt)
+        if (
+            ack_reason in NORTH_STAR_FLIP_REASONS
+            and isinstance(ack_prior, (int, float))
+            and isinstance(ack_current, (int, float))
+            and ack_prior == prior
+            and ack_current == p95
+        ):
+            flag += (
+                f" · adjudicated: {NORTH_STAR_FLIP_REASON_TEXT[ack_reason]} "
+                "([NORTH-STAR-FLIP-OK])"
+            )
+            acked_labels.append(label)
+        flags.append(flag)
 
     if not flags:
         return ""
@@ -3029,7 +3100,19 @@ def _north_star_delta_caveat(results, kata_results=None):
     build_lineage_disclosed = (
         "· suite_git_sha " in joined or "· controller_digest " in joined
     )
-    if build_lineage_disclosed:
+    # hb#827: when EVERY flagged runtime carries a matching [NORTH-STAR-FLIP-OK] ack, the
+    # open-question hunt-list is moot -- each flag already cross-references its own
+    # adjudication inline. A PARTIAL ack (some runtimes acked, some not) deliberately falls
+    # through to the existing hunt-list branches below: the un-acked runtime still needs the
+    # open question posed, and the acked runtime's own inline clause already reads clearly
+    # without a dedicated tail, so no third partial-ack tail is built.
+    if acked_labels and len(acked_labels) == len(flags):
+        tail = (
+            ". Adjudicated via the [NORTH-STAR-FLIP-OK] override — see the inline "
+            "'adjudicated' clause(s) above; no further investigation needed for the "
+            "acknowledged runtime(s)."
+        )
+    elif build_lineage_disclosed:
         tail = (
             ". A swing this large, or a bar-crossing flip, between consecutive published runs "
             "is flagged for a second look before trusting it as a substrate signal — check for "

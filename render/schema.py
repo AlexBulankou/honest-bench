@@ -80,6 +80,34 @@ BADGE_SCOPES = {"control-plane", "enforced"}
 # standard-NP-with-label-propagation mechanism and never conflates it with managed-gke-sandbox NP.
 BADGE_CONSTRUCTIONS = {"standard-np", "managed-np", "footprint-overshoot"}
 
+# north_star_flip_ack_reason (hb#827) names WHY a human is exercising the
+# [NORTH-STAR-FLIP-OK] override on the cross-lane North Star flip gate
+# (scripts/check_north_star_flip.py) to let a PASS->FAIL verdict downgrade
+# merge. The override trailer alone tells a reader THAT the flip was
+# permitted, not WHY -- this closed enum lets the delta caveat cross-reference
+# the adjudication on the rendered page itself instead of re-posing the open
+# question the override already answered. A closed set (not free text) for
+# the same reason as WARM_SCALING_TERMS above: the render guard is SECONDARY
+# (the gate's --write-stamp path fail-closes on an out-of-enum --reason
+# first), so an out-of-enum value here is simply dropped and the caveat
+# reverts to today's unqualified delta banner. The first six values name the
+# same confound categories _north_star_delta_flag already discloses inline
+# (machine_type / node_count / node_image / controller_digest+suite_git_sha /
+# fork_sha+fork_fix_count / plain variance); "confirmed-regression" covers the
+# override's other documented use (cloudbuild-north-star-flip-gate.yaml: "a
+# real upstream regression the team is choosing to surface"). No
+# "confirmed-fix" value exists: this gate only ever guards a PASS->FAIL
+# downgrade, so an upgrade never needs an override to explain.
+NORTH_STAR_FLIP_REASONS = {
+    "machine-class-change",
+    "node-count-change",
+    "node-image-change",
+    "build-lineage-change",
+    "fork-lineage-change",
+    "measurement-variance",
+    "confirmed-regression",
+}
+
 # storage_class (#4164) is the storage backend of a sandbox's storage-bearing measurement
 # path — the axis behind the "Which storage class should you pick?" customer-guidance section.
 # "ephemeral" = node-local, non-persistent storage; "pd" = a persistent-disk-backed volume;
@@ -299,6 +327,30 @@ PROVENANCE_FIELDS = {
     "prior_fork_fix_count": lambda v: isinstance(v, int)
     and not isinstance(v, bool)
     and 0 < v < 1000,
+    # North Star flip-ack stamp (hb#827). Stamped ONLY by a one-time, hand-run
+    # `check_north_star_flip.py --write-stamp --reason <enum>` invocation at
+    # [NORTH-STAR-FLIP-OK] override time -- the automated refresh harness's
+    # build_provenance NEVER stamps these, so an automated re-fire that
+    # doesn't repeat the exact override omits them by construction (no code
+    # path un-stamps them; they simply aren't written). `..._prior_ttfe_p95_ms`
+    # / `..._current_ttfe_p95_ms` pin the EXACT p95 pair the adjudication
+    # covers; the North Star refresh-delta caveat only applies the ack when
+    # both values match the pair it is currently rendering, so a later fire
+    # that changes either number silently drops the stale ack instead of
+    # carrying a "don't worry about this" forward onto a different swing --
+    # the same auto-clearing shape as prior_fork_sha/prior_fork_fix_count
+    # above, keyed on value-match instead of run_id. `..._reason` is the
+    # NORTH_STAR_FLIP_REASONS closed enum naming why the override was used;
+    # an out-of-enum value is dropped by the render guard (SECONDARY -- the
+    # gate's --write-stamp path fail-closes on an invalid --reason first).
+    "north_star_flip_ack_prior_ttfe_p95_ms": lambda v: isinstance(v, (int, float))
+    and not isinstance(v, bool)
+    and v > 0,
+    "north_star_flip_ack_current_ttfe_p95_ms": lambda v: isinstance(v, (int, float))
+    and not isinstance(v, bool)
+    and v > 0,
+    "north_star_flip_ack_reason": lambda v: isinstance(v, str)
+    and v in NORTH_STAR_FLIP_REASONS,
 }
 
 # scenario internal-name -> public display label. A scenario whose name is not in this
