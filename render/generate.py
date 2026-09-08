@@ -29,6 +29,8 @@ import glob
 import importlib.util
 import json
 import os
+import re
+import subprocess
 import sys
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -241,6 +243,56 @@ def _repo_root():
     return os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
+_PR_REF_RE = re.compile(r"\(#(\d+)\)\s*$")
+
+
+def _pr_ref_label(subject):
+    """Extract a compact `#NNN` label from a squash-merge commit subject, else the raw subject."""
+    m = _PR_REF_RE.search(subject)
+    return f"#{m.group(1)}" if m else subject
+
+
+def _run_git(root, args):
+    return subprocess.run(
+        ["git", "-C", root] + args, capture_output=True, text=True, check=True
+    ).stdout
+
+
+def resolve_harness_staleness(root, suite_git_sha):
+    """Live-reconcile a stamped `provenance.suite_git_sha` against the current git history (hb#828).
+
+    Scoped strictly to the `harness/scenarios/` path so a docs/render-only commit never raises a
+    false staleness fence. Fail-closed per AGENTS.md's "Transition guards on trust surfaces"
+    (#4420): any state this can't positively verify (absent sha, sha not an ancestor of HEAD —
+    e.g. a shallow clone or a force-push rewrote history) returns `resolvable: False`, and the
+    caller (render._harness_staleness_caveat) must EMIT a loud fence for that case, never suppress
+    it. Only a positively-verified `commit_count == 0` is silent.
+
+    Returns a plain dict (this module's data output, threaded into render.py as an argument —
+    render.py itself must never shell out to git; see the module docstring's purity contract).
+    """
+    if not suite_git_sha:
+        return {"resolvable": False, "suite_git_sha": suite_git_sha}
+    try:
+        _run_git(root, ["merge-base", "--is-ancestor", suite_git_sha, "HEAD"])
+    except (subprocess.CalledProcessError, OSError):
+        return {"resolvable": False, "suite_git_sha": suite_git_sha}
+    try:
+        log = _run_git(
+            root,
+            ["log", "--format=%s", f"{suite_git_sha}..HEAD", "--", "harness/scenarios/"],
+        )
+    except (subprocess.CalledProcessError, OSError):
+        return {"resolvable": False, "suite_git_sha": suite_git_sha}
+    subjects = [line for line in log.splitlines() if line.strip()]
+    return {
+        "resolvable": True,
+        "suite_git_sha": suite_git_sha,
+        "commit_count": len(subjects),
+        "pr_refs": [_pr_ref_label(s) for s in subjects],
+    }
+
+
 def _load_history(root):
     """Read sandbox/results/history.jsonl into a list of dicts (malformed lines dropped); [] if absent.
 
@@ -328,7 +380,11 @@ def build_readme(root=None):
         # _p95_verdict grading, so the per-runtime verdicts are byte-identical to the retired
         # scorecard; derived entirely from the matrix's already-emitted warm-hit p95 (zero
         # emit-key change; the locked schema contract untouched).
-        north_star = render_north_star_caption(results, kata_results=kr)
+        # hb#828: live-reconcile the stamped suite_git_sha against harness/scenarios/ history at
+        # render time (root, not just cwd) — the git subprocess call belongs here, never in
+        # render.py (purity contract).
+        staleness = resolve_harness_staleness(root, results.get("provenance", {}).get("suite_git_sha"))
+        north_star = render_north_star_caption(results, kata_results=kr, harness_staleness=staleness)
         if north_star.strip():
             sections.append(north_star.rstrip())
         # WS1 (epic #6669): the 6 standalone anomaly banners (Scenario FAIL, warm-slower-than-
