@@ -32,6 +32,19 @@
 # Cloud Build does NOT re-fire on label-only events (adding/removing a label is a
 # silent no-op on the check), whereas a commit-trailer is re-evaluated on every push.
 #
+# hb#827: the trailer ALONE is no longer sufficient. The trailer only lifts the
+# gate's own exit code; the render layer had no record of WHY a flip was allowed,
+# so the customer-facing caption re-posed the same open question the override
+# had already answered — a silent information loss on a trust surface (the
+# fleet's "transition guards on trust surfaces" idiom). `--allow-flip` now also
+# requires a `north_star_flip_ack_*` stamp on the PR's latest.json whose
+# (prior, current) ttfe_p95_ms pair matches the flip actually being merged —
+# write one with `python3 scripts/check_north_star_flip.py --write-stamp
+# --base <base.json> --pr <pr.json> --reason <one of NORTH_STAR_FLIP_REASONS>`
+# before pushing the override commit. A stamp pinned to a superseded pair (the
+# swing moved since it was written) does not cover the fresh flip and the gate
+# still fails closed — the stamp is single-use per swing, not a standing waiver.
+#
 # AUTH: runs as a native Cloud Build service account — no WIF, no long-lived keys,
 # no repo secrets. Offline: leak scan + a git fetch of main + stdlib-only checker
 # (render.py imports only local modules). No cluster access, no GitHub token.
@@ -93,7 +106,7 @@ steps:
              | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' \
              | grep -qxF '[NORTH-STAR-FLIP-OK]'; then
           allow="--allow-flip"
-          echo "[flip-gate] HEAD commit carries [NORTH-STAR-FLIP-OK] — flips will be permitted (loud warn, non-blocking)."
+          echo "[flip-gate] HEAD commit carries [NORTH-STAR-FLIP-OK] — flips permitted IFF a matching north_star_flip_ack stamp is present (hb#827); still blocked otherwise."
         fi
 
         # Auto-discover every product latest.json in the PR working tree.

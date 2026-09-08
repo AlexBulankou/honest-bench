@@ -6033,6 +6033,104 @@ def test_north_star_delta_caveat_joins_multiple_flags():
     assert "; " in caveat_line
 
 
+def test_north_star_delta_caveat_ack_stamp_cross_references_adjudication():
+    # hb#827: a north_star_flip_ack stamp whose (prior, current) pair matches the flagged
+    # swing EXACTLY cross-references the adjudication inline instead of leaving the reader
+    # to re-derive it, and replaces the generic hunt-list tail with a closed-loop message.
+    scen = [{
+        "name": "warmpool_cold_start", "outcome": "PASS", "n": 200,
+        "sla_metrics": {"ttfe_p95_ms": 1800},
+    }]
+    out = render.render_north_star_caption(_matrix_results(
+        scen, provenance={
+            "runtime": "gvisor",
+            "prior_warmpool_ttfe_p95_ms": 900.0,
+            "north_star_flip_ack_prior_ttfe_p95_ms": 900.0,
+            "north_star_flip_ack_current_ttfe_p95_ms": 1800,
+            "north_star_flip_ack_reason": "confirmed-regression",
+        },
+    ))
+    assert (
+        "· adjudicated: a confirmed, reproducible substrate regression the team is choosing "
+        "to surface honestly rather than suppress ([NORTH-STAR-FLIP-OK])"
+    ) in out
+    assert (
+        "Adjudicated via the [NORTH-STAR-FLIP-OK] override — see the inline 'adjudicated' "
+        "clause(s) above; no further investigation needed for the acknowledged runtime(s)."
+    ) in out
+    # the generic hunt-list tail must NOT also render once every flag is acked
+    assert "check for a machine-class change" not in out
+
+
+def test_north_star_delta_caveat_ack_stamp_absent_unchanged_behavior():
+    # Baseline (no ack fields at all): byte-identical to pre-hb#827 behavior.
+    scen = [{
+        "name": "warmpool_cold_start", "outcome": "PASS", "n": 200,
+        "sla_metrics": {"ttfe_p95_ms": 1800},
+    }]
+    out = render.render_north_star_caption(_matrix_results(
+        scen, provenance={"runtime": "gvisor", "prior_warmpool_ttfe_p95_ms": 900.0}
+    ))
+    assert "adjudicated" not in out
+    assert "[NORTH-STAR-FLIP-OK]" not in out
+    assert "check for a machine-class change" in out
+
+
+def test_north_star_delta_caveat_ack_stamp_stale_pair_auto_clears():
+    # hb#827: a stamp pinned to a DIFFERENT (already-superseded) prior->current pair must
+    # be silently ignored -- it can never carry forward onto a swing it didn't adjudicate.
+    scen = [{
+        "name": "warmpool_cold_start", "outcome": "PASS", "n": 200,
+        "sla_metrics": {"ttfe_p95_ms": 1800},
+    }]
+    out = render.render_north_star_caption(_matrix_results(
+        scen, provenance={
+            "runtime": "gvisor",
+            "prior_warmpool_ttfe_p95_ms": 900.0,
+            # stamp adjudicated a *different* prior->current pair (e.g. an earlier flip)
+            "north_star_flip_ack_prior_ttfe_p95_ms": 800.0,
+            "north_star_flip_ack_current_ttfe_p95_ms": 1700,
+            "north_star_flip_ack_reason": "confirmed-regression",
+        },
+    ))
+    assert "adjudicated" not in out
+    assert "[NORTH-STAR-FLIP-OK]" not in out
+    assert "check for a machine-class change" in out
+
+
+def test_north_star_delta_caveat_ack_stamp_partial_ack_keeps_generic_tail():
+    # Two flagged runtimes, only one carries a matching ack -- per the deliberate scoping
+    # decision, a PARTIAL ack still falls through to the existing generic hunt-list tail
+    # (the all-acked short-circuit only fires when every flag is covered).
+    gv_scen = [{
+        "name": "warmpool_cold_start", "outcome": "PASS", "n": 200,
+        "sla_metrics": {"ttfe_p95_ms": 1800},
+    }]
+    kata_scen = [{
+        "name": "warmpool_cold_start", "outcome": "PASS", "n": 30,
+        "sla_metrics": {"ttfe_p95_ms": 1800},
+    }]
+    out = render.render_north_star_caption(
+        _matrix_results(gv_scen, provenance={
+            "runtime": "gvisor",
+            "prior_warmpool_ttfe_p95_ms": 900.0,
+            "north_star_flip_ack_prior_ttfe_p95_ms": 900.0,
+            "north_star_flip_ack_current_ttfe_p95_ms": 1800,
+            "north_star_flip_ack_reason": "confirmed-regression",
+        }),
+        kata_results=_kata_results(
+            scenarios=kata_scen,
+            provenance={"runtime": "kata-microvm", "prior_warmpool_ttfe_p95_ms": 900.0},
+        ),
+    )
+    assert "**gVisor** regressed" in out
+    assert "**Kata + microVM** regressed" in out
+    assert "· adjudicated:" in out  # gVisor's clause carries the cross-reference
+    # but the kata leg is unacked, so the generic hunt-list tail is still needed
+    assert "check for a machine-class change" in out
+    assert "no further investigation needed for the acknowledged runtime(s)" not in out
+
+
 def test_north_star_delta_flag_node_count_clause_on_flagged_delta():
     # A flagged delta that ALSO spans a node_count change carries the confound clause,
     # after the verdict-flip clause (mirrors today's real kata flip: 2 nodes -> 1 node).

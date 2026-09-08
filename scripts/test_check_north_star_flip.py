@@ -106,8 +106,92 @@ def main():
         pr = _write(tmp, "pr.json", _results(1500, "PASS"))
         expect(g.main(["--base", base, "--pr", pr]) == 3,
                "un-overridden flip via main() exits 3")
+        expect(g.main(["--base", base, "--pr", pr, "--allow-flip"]) == 3,
+               "hb#827: --allow-flip with NO ack stamp still fails closed (exit 3)")
+
+    # hb#827: _find_flip_p95 -------------------------------------------------
+    base_r = _results(500, "PASS")
+    pr_r = _results(1500, "PASS")
+    label, prior, current = g._find_flip_p95(base_r, pr_r)
+    expect((label, prior, current) == ("gVisor", 500, 1500),
+           "_find_flip_p95 resolves the single flipped label + its p95 pair")
+
+    try:
+        g._find_flip_p95(_results(500, "PASS"), _results(500, "PASS"))
+        expect(False, "_find_flip_p95 on PASS->PASS should raise ValueError (no flip)")
+    except ValueError:
+        pass
+
+    try:
+        g._find_flip_p95(_results(500, "PASS"), _results(1500, "PASS"), runtime_label="Kata + microVM")
+        expect(False, "_find_flip_p95 with a --runtime not in the flip set should raise ValueError")
+    except ValueError:
+        pass
+
+    # hb#827: write_stamp ------------------------------------------------------
+    with tempfile.TemporaryDirectory() as tmp:
+        base = _write(tmp, "base.json", _results(500, "PASS"))
+        pr = _write(tmp, "pr.json", _results(1500, "PASS"))
+        try:
+            g.write_stamp(base, pr, "not-a-real-reason")
+            expect(False, "write_stamp with an out-of-enum reason should raise ValueError")
+        except ValueError:
+            pass
+
+        label, prior, current = g.write_stamp(base, pr, "confirmed-regression")
+        expect((label, prior, current) == ("gVisor", 500, 1500),
+               "write_stamp returns the (label, prior, current) triple it stamped")
+
+        stamped = json.load(open(pr))
+        prov = stamped.get("provenance", {})
+        expect(prov.get("north_star_flip_ack_prior_ttfe_p95_ms") == 500,
+               "write_stamp persists the prior p95")
+        expect(prov.get("north_star_flip_ack_current_ttfe_p95_ms") == 1500,
+               "write_stamp persists the current p95")
+        expect(prov.get("north_star_flip_ack_reason") == "confirmed-regression",
+               "write_stamp persists the reason")
+        expect(prov.get("runtime") == "gvisor",
+               "write_stamp preserves pre-existing provenance keys")
+
+        # --allow-flip now succeeds once the stamp matches the live flip.
         expect(g.main(["--base", base, "--pr", pr, "--allow-flip"]) == 0,
-               "[NORTH-STAR-FLIP-OK] override (--allow-flip) downgrades flip to warn (exit 0)")
+               "hb#827: --allow-flip WITH a matching ack stamp permits the flip (exit 0)")
+
+    # hb#827: write_stamp with no flip present (nothing to adjudicate) ------
+    with tempfile.TemporaryDirectory() as tmp:
+        base = _write(tmp, "base.json", _results(500, "PASS"))
+        pr = _write(tmp, "pr.json", _results(500, "PASS"))
+        try:
+            g.write_stamp(base, pr, "confirmed-regression")
+            expect(False, "write_stamp with no PASS->FAIL flip should raise ValueError")
+        except ValueError:
+            pass
+
+    # hb#827: _stamp_covers_flips mismatch (auto-clear) ----------------------
+    with tempfile.TemporaryDirectory() as tmp:
+        base = _write(tmp, "base.json", _results(500, "PASS"))
+        pr = _write(tmp, "pr.json", _results(1500, "PASS"))
+        g.write_stamp(base, pr, "confirmed-regression")
+
+        # Now superscede the PR's measured p95 without re-stamping -- the
+        # committed stamp no longer matches the pair actually being flipped,
+        # so it must NOT cover the (now-different) flip.
+        stale_pr_obj = _results(1600, "PASS")
+        stamped = json.load(open(pr))
+        stale_pr_obj["provenance"].update(
+            {
+                "north_star_flip_ack_prior_ttfe_p95_ms": stamped["provenance"][
+                    "north_star_flip_ack_prior_ttfe_p95_ms"
+                ],
+                "north_star_flip_ack_current_ttfe_p95_ms": stamped["provenance"][
+                    "north_star_flip_ack_current_ttfe_p95_ms"
+                ],
+                "north_star_flip_ack_reason": stamped["provenance"]["north_star_flip_ack_reason"],
+            }
+        )
+        pr2 = _write(tmp, "pr2.json", stale_pr_obj)
+        expect(g.main(["--base", base, "--pr", pr2, "--allow-flip"]) == 3,
+               "hb#827: a stamp pinned to a superseded p95 pair does not cover a fresh flip")
 
     if failures:
         print("FAIL:")
