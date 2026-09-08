@@ -8670,6 +8670,173 @@ def test_warmpool_separation_trend_chart_leaks_no_agent_id():
     assert re.search(r"a4[a-z]\d", out) is None
 
 
+# ---------------------------------------------------------------------------
+# hb#825 — cross-runtime comparability fence (_cross_rig_comparability_caveat).
+# The North Star caption prints the gVisor and Kata + microVM warm-pool p95 in ONE
+# comparative sentence; the fence auto-emits a marker when the two figures are not
+# confirmed to share a rig (machine_type + node_count) AND a freshness window
+# (generated_at delta between the two fires, pure — no wall clock). Fail-closed per
+# AGENTS.md "Transition guards on trust surfaces" (#4420): a missing value is never
+# treated as a matching one. Models hb#824's class-fence (auto-emit, not Nth patch).
+# ---------------------------------------------------------------------------
+
+_XRIG_MARK = "> ⚠️ **Cross-runtime comparability:**"
+
+
+def _xrig_gvisor(machine_type="n2-standard-16", node_count=1,
+                 generated_at="2026-09-04T15:45:28Z"):
+    prov = {"runtime": "gvisor"}
+    if machine_type is not None:
+        prov["machine_type"] = machine_type
+    if node_count is not None:
+        prov["node_count"] = node_count
+    top = {}
+    if generated_at is not None:
+        top["generated_at"] = generated_at
+    return _matrix_results(_full_gvisor_scenarios(), provenance=prov, **top)
+
+
+def _xrig_kata(machine_type="n2-standard-16", node_count=1,
+               generated_at="2026-09-02T10:00:00Z", runtime="kata-microvm"):
+    prov = {"runtime": runtime}
+    if machine_type is not None:
+        prov["machine_type"] = machine_type
+    if node_count is not None:
+        prov["node_count"] = node_count
+    top = {}
+    if generated_at is not None:
+        top["generated_at"] = generated_at
+    return _kata_results(provenance=prov, **top)
+
+
+def test_cross_rig_caveat_inert_same_rig_same_window():
+    # BOTH present, same machine class + node count, generated_at within the window -> silent.
+    assert render._cross_rig_comparability_caveat(_xrig_gvisor(), _xrig_kata()) == ""
+
+
+def test_cross_rig_caveat_inert_without_kata():
+    # A substrate / single-runtime render has no cross-runtime sentence, so the guard never trips.
+    assert render._cross_rig_comparability_caveat(_xrig_gvisor(), None) == ""
+    assert render._cross_rig_comparability_caveat(_xrig_gvisor(), "not-a-dict") == ""
+
+
+def test_cross_rig_caveat_inert_when_runtime_not_the_two_guarded():
+    # The fence guards ONLY the gVisor-vs-Kata comparative sentence; a companion whose provenance
+    # is not kata-microvm is not that sentence, so no marker (guard, don't false-fire).
+    other = _xrig_kata(runtime="gvisor", machine_type="n2-standard-4",
+                       generated_at="2026-01-01T00:00:00Z")
+    assert render._cross_rig_comparability_caveat(_xrig_gvisor(), other) == ""
+
+
+def test_cross_rig_caveat_fires_when_machine_type_unattributed():
+    # Fail-closed (#4420): kata did not stamp machine_type -> a rig difference cannot be ruled out.
+    out = render._cross_rig_comparability_caveat(
+        _xrig_gvisor(), _xrig_kata(machine_type=None))
+    assert out.startswith(_XRIG_MARK)
+    assert "cannot be confirmed to share a machine class" in out
+    assert "Kata + microVM did not stamp `machine_type`" in out
+    # rig matched on node_count and window is fresh -> only the one clause
+    assert "different node counts" not in out
+    assert "co-measurement window" not in out
+
+
+def test_cross_rig_caveat_fires_when_both_machine_types_unattributed():
+    out = render._cross_rig_comparability_caveat(
+        _xrig_gvisor(machine_type=None), _xrig_kata(machine_type=None))
+    assert out.startswith(_XRIG_MARK)
+    assert "gVisor and Kata + microVM did not stamp `machine_type`" in out
+
+
+def test_cross_rig_caveat_fires_on_different_machine_class():
+    out = render._cross_rig_comparability_caveat(
+        _xrig_gvisor(machine_type="n2-standard-16"),
+        _xrig_kata(machine_type="n2-standard-4"))
+    assert out.startswith(_XRIG_MARK)
+    assert ("different machine classes (gVisor on `n2-standard-16`, "
+            "Kata + microVM on `n2-standard-4`)") in out
+    assert "the p95 gap may be hardware, not runtime" in out
+
+
+def test_cross_rig_caveat_fires_on_different_node_count():
+    out = render._cross_rig_comparability_caveat(
+        _xrig_gvisor(node_count=2), _xrig_kata(node_count=1))
+    assert out.startswith(_XRIG_MARK)
+    assert "different node counts (gVisor at 2, Kata + microVM at 1)" in out
+    # machine class matched -> no machine-class clause rode along
+    assert "different machine classes" not in out
+
+
+def test_cross_rig_caveat_fires_on_stale_freshness_window():
+    # 2026-08-20T10:00 -> 2026-09-04T15:45 is 15d5h -> int() truncates to "15 days apart",
+    # matching the two printed calendar dates a reader would subtract.
+    out = render._cross_rig_comparability_caveat(
+        _xrig_gvisor(generated_at="2026-09-04T15:45:28Z"),
+        _xrig_kata(generated_at="2026-08-20T10:00:00Z"))
+    assert out.startswith(_XRIG_MARK)
+    assert ("measured 15 days apart (gVisor 2026-09-04, Kata + microVM 2026-08-20)") in out
+    assert "beyond the 7-day co-measurement window" in out
+
+
+def test_cross_rig_caveat_inert_at_window_boundary():
+    # Exactly at the threshold (<= STALE_THRESHOLD_DAYS) is INERT — only strictly beyond fires.
+    out = render._cross_rig_comparability_caveat(
+        _xrig_gvisor(generated_at="2026-09-08T00:00:00Z"),
+        _xrig_kata(generated_at="2026-09-01T00:00:00Z"))  # exactly 7 days
+    assert out == ""
+
+
+def test_cross_rig_caveat_fires_when_generated_at_unparseable():
+    # Fail-closed: a missing/unparseable stamp on either side -> window cannot be confirmed.
+    out = render._cross_rig_comparability_caveat(
+        _xrig_gvisor(generated_at=None), _xrig_kata())
+    assert out.startswith(_XRIG_MARK)
+    assert "co-measurement window cannot be confirmed" in out
+    assert "gVisor has no parseable `generated_at`" in out
+
+
+def test_cross_rig_caveat_composes_multiple_clauses():
+    # Different machine class AND different node count AND stale window -> all three, joined "; ".
+    out = render._cross_rig_comparability_caveat(
+        _xrig_gvisor(machine_type="n2-standard-16", node_count=2,
+                     generated_at="2026-09-04T15:45:28Z"),
+        _xrig_kata(machine_type="n2-standard-4", node_count=1,
+                   generated_at="2026-08-20T10:00:00Z"))
+    assert out.startswith(_XRIG_MARK)
+    assert "different machine classes" in out
+    assert "different node counts" in out
+    assert "beyond the 7-day co-measurement window" in out
+    assert "; " in out
+
+
+def test_cross_rig_caveat_wired_into_north_star_caption():
+    # End-to-end: the fence auto-emits into the caption via render_north_star_caption
+    # (auto-emit, not a hand-placed Nth-site disclosure). Live-shaped data: kata's
+    # machine_type is unstamped, so the rig-unattributed clause fires.
+    out = render.render_north_star_caption(
+        _xrig_gvisor(generated_at="2026-09-04T15:45:28Z"),
+        kata_results=_xrig_kata(machine_type=None, generated_at="2026-08-31T15:22:54Z"),
+    )
+    assert _XRIG_MARK in out
+
+
+def test_cross_rig_caveat_absent_from_caption_when_rig_matched_and_fresh():
+    # The wiring must stay silent when the two fires ARE comparable — no marker in the caption.
+    out = render.render_north_star_caption(
+        _xrig_gvisor(generated_at="2026-09-04T15:45:28Z"),
+        kata_results=_xrig_kata(generated_at="2026-09-02T10:00:00Z"),
+    )
+    assert _XRIG_MARK not in out
+
+
+def test_cross_rig_caveat_leaks_no_agent_id():
+    # Public-repo safety (honest-bench): the emitted trust-surface text carries no fleet agent-id.
+    out = render._cross_rig_comparability_caveat(
+        _xrig_gvisor(machine_type=None, generated_at="2026-09-04T15:45:28Z"),
+        _xrig_kata(machine_type=None, generated_at="2026-08-01T10:00:00Z"))
+    assert out != ""
+    assert re.search(r"a4[a-z]\d", out) is None
+
+
 def _run_all():
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
     for fn in fns:

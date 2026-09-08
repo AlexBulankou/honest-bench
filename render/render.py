@@ -3821,6 +3821,111 @@ def _warmpool_separation_adjudicated_verdict(history_rows, *, min_n=WARMPOOL_ADJ
     )
 
 
+def _cross_rig_comparability_caveat(results, kata_results=None):
+    """Loud disclosure when the two runtimes printed side-by-side in the North Star caption were
+    not measured on a shared rig AND within a shared freshness window, or "" when INERT (hb#825;
+    Transition guards on trust surfaces, AGENTS.md #4420).
+
+    The North Star caption (render_north_star_caption) prints the gVisor and Kata + microVM
+    warm-pool-hit TTFE p95 in ONE comparative sentence, which a reader reads as co-measured. But
+    the two figures come from two independent fires (sandbox/results vs sandbox-kata/results),
+    each with its own provenance and its own generated_at. Nothing on the caption asserted the
+    two shared a rig or a freshness window, so a machine-class gap or a multi-week measurement
+    gap between them rendered silently as if the numbers were directly comparable — the
+    "figures presented as co-measured that are not" display defect this fence closes, and the
+    same "downgrades trust quietly" failure the trust-surface idiom forbids. Models hb#824's
+    class-fence pattern: an assertion over provenance the renderer already holds (a check over
+    existing data, not new instrumentation), auto-emitting the marker instead of hand-placing an
+    Nth disclosure.
+
+    Two independent axes, either of which trips the marker:
+
+    1. **Rig axis (machine class + node count).** Both runtimes must be measured on the same
+       ``machine_type`` and the same ``node_count`` for the p95 comparison to be a substrate
+       signal rather than a hardware one. ``cluster_substrate`` is deliberately NOT compared — it
+       is the per-runtime node-pool label (``gke-sandbox`` vs ``gke-kata``) and differs by
+       construction, so comparing it would false-fire every run. Fail-closed (#4420): if EITHER
+       side's ``machine_type`` is absent the rigs cannot be confirmed matched, so the marker fires
+       with a "rig un-attributed" clause — a missing value is never treated as a matching one
+       (same guard-then-fill precedent as `_stale_carry_forward_caveat`).
+    2. **Freshness axis (co-measurement window).** The two fires' ``generated_at`` stamps must sit
+       within STALE_THRESHOLD_DAYS of EACH OTHER. This is a delta between the two committed data
+       files, NOT a wall-clock comparison — the renderer stays a pure function of its inputs so
+       the byte-pinned golden test (test_readme_fresh.py) remains reproducible, the same contract
+       render_stale_banner documents. Fail-closed: if either stamp is missing/unparseable the
+       window cannot be confirmed, so the marker fires.
+
+    Returns "" (INERT) only when BOTH runtimes are present with a confirmed-equal rig AND a
+    confirmed in-window freshness delta — mirroring the sibling caveats' "no claim without a
+    comparable, validated value" shape. Requires kata_results to be a dict carrying the
+    kata-microvm runtime alongside a gvisor `results`; a substrate/single-runtime render has no
+    cross-runtime sentence and so never trips this guard.
+    """
+    if not isinstance(kata_results, dict):
+        return ""
+    gp = _clean_provenance(results.get("provenance"))
+    kp = _clean_provenance(kata_results.get("provenance"))
+    # Guards only the gVisor-vs-Kata comparative sentence; both sides must be the expected runtime.
+    if gp.get("runtime") != "gvisor" or kp.get("runtime") != "kata-microvm":
+        return ""
+
+    clauses = []
+
+    # (1) Rig axis — machine class.
+    g_mt = gp.get("machine_type")
+    k_mt = kp.get("machine_type")
+    if not g_mt or not k_mt:
+        missing = [name for name, mt in (("gVisor", g_mt), ("Kata + microVM", k_mt)) if not mt]
+        clauses.append(
+            "the two figures cannot be confirmed to share a machine class — "
+            + " and ".join(missing)
+            + " did not stamp `machine_type`, so a rig difference between them cannot be ruled out"
+        )
+    elif g_mt != k_mt:
+        clauses.append(
+            f"the two figures were measured on different machine classes (gVisor on `{g_mt}`, "
+            f"Kata + microVM on `{k_mt}`), so the p95 gap may be hardware, not runtime"
+        )
+
+    # (1b) Rig axis — node count (only comparable when both sides stamped an int).
+    g_nc = gp.get("node_count")
+    k_nc = kp.get("node_count")
+    if isinstance(g_nc, int) and isinstance(k_nc, int) and g_nc != k_nc:
+        clauses.append(
+            f"the two figures were measured at different node counts (gVisor at {g_nc}, "
+            f"Kata + microVM at {k_nc})"
+        )
+
+    # (2) Freshness axis — generated_at delta BETWEEN the two fires (pure, no wall clock).
+    g_at = _parse_generated_at(results)
+    k_at = _parse_generated_at(kata_results)
+    if g_at is None or k_at is None:
+        missing = [name for name, at in (("gVisor", g_at), ("Kata + microVM", k_at)) if at is None]
+        clauses.append(
+            "the co-measurement window cannot be confirmed — "
+            + " and ".join(missing)
+            + " has no parseable `generated_at`"
+        )
+    else:
+        delta_days = abs((g_at - k_at).total_seconds()) / 86400.0
+        if delta_days > STALE_THRESHOLD_DAYS:
+            clauses.append(
+                f"the two figures were measured {int(delta_days)} days apart (gVisor "
+                f"{g_at.date().isoformat()}, Kata + microVM {k_at.date().isoformat()}), beyond the "
+                f"{STALE_THRESHOLD_DAYS}-day co-measurement window"
+            )
+
+    if not clauses:
+        return ""
+    return (
+        "> ⚠️ **Cross-runtime comparability:** the North Star gVisor and Kata + microVM p95 "
+        "figures are drawn from two independent fires and are not directly co-measured — "
+        + "; ".join(clauses)
+        + ". Read the cross-runtime p95 gap as provisional until both runtimes republish on a "
+        "matched rig within one freshness window."
+    )
+
+
 def render_north_star_caption(results, kata_results=None):
     """One-line measured-verdict captions for the <1s North Star + 0.5s stretch bar.
 
@@ -3876,11 +3981,14 @@ def render_north_star_caption(results, kata_results=None):
     # are NOT part of that consolidation and stay wired here unchanged.
     caveat = _machine_class_caveat(_clean_provenance(results.get("provenance")))
     delta_caveat = _north_star_delta_caveat(results, kata_results)
+    xrig_caveat = _cross_rig_comparability_caveat(results, kata_results)
     out = north_star + "\n\n" + stretch
     if caveat:
         out += "\n\n" + caveat
     if delta_caveat:
         out += "\n\n" + delta_caveat
+    if xrig_caveat:
+        out += "\n\n" + xrig_caveat
     return out
 
 

@@ -77,6 +77,8 @@ _**North Star** — warm-pool-hit TTFE p95 < 1s (the spec doc bar): gVisor 0.59s
 
 _**Stretch bar** — warm-pool-hit TTFE p95 < 0.5s (an aspiration above the North Star, not the North Star itself; the step-up curve grades sustained creation-rate against it — see [DETAILS.md](DETAILS.md)): gVisor 0.59s (count=5) † ❌ not met (0.09s above the bar); Kata + microVM 1.6844s (count=30) ❌ not met (1.1844s above the bar)._
 
+> ⚠️ **Cross-runtime comparability:** the North Star gVisor and Kata + microVM p95 figures are drawn from two independent fires and are not directly co-measured — the two figures cannot be confirmed to share a machine class — Kata + microVM did not stamp `machine_type`, so a rig difference between them cannot be ruled out. Read the cross-runtime p95 gap as provisional until both runtimes republish on a matched rig within one freshness window.
+
 ### Known anomalies
 
 | Anomaly | Status |
