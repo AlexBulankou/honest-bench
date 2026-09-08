@@ -648,6 +648,136 @@ def test_min_ready_during_burst_all_failed_polls_returns_none():
     assert result is None
 
 
+# ---- _ready_dip_duration_s: hb#835 lever-3 dip-DURATION companion to
+# _min_ready_during_burst's dip-DEPTH above. Left-Riemann step sum over
+# consecutive in-burst sample pairs whose leading value was below target;
+# excludes the unbounded trailing interval after the last sample. ----
+
+def test_ready_dip_duration_sums_consecutive_below_target_gaps():
+    # target=3; in-burst samples (abs t): 100(2) 105(2) 110(4) 115(1) 120(4)
+    # below-target LEADING samples: 100->105 (2<3, +5s), 105->110 (2<3, +5s),
+    # 110->115 (4, not <3, skip), 115->120 (1<3, +5s)
+    samples = [(0.0, 2), (5.0, 2), (10.0, 4), (15.0, 1), (20.0, 4)]
+    result = cell._ready_dip_duration_s(samples, sampler_t0=100.0, burst_start_abs=100.0, target_ready=3)
+    assert result == 15.0
+
+
+def test_ready_dip_duration_excludes_trailing_unbounded_interval():
+    # Last sample is below target but there's no next sample to bound the
+    # interval -- the trailing gap must NOT be counted (never overstate).
+    samples = [(0.0, 5), (5.0, 1)]
+    result = cell._ready_dip_duration_s(samples, sampler_t0=0.0, burst_start_abs=0.0, target_ready=3)
+    assert result == 0.0
+
+
+def test_ready_dip_duration_excludes_pre_burst_samples():
+    samples = [(0.0, 0), (1.0, 0), (2.0, 5), (3.0, 5)]
+    result = cell._ready_dip_duration_s(samples, sampler_t0=0.0, burst_start_abs=2.0, target_ready=3)
+    assert result == 0.0
+
+
+def test_ready_dip_duration_excludes_failed_polls():
+    samples = [(0.0, 1), (1.0, -1), (2.0, 1)]
+    result = cell._ready_dip_duration_s(samples, sampler_t0=0.0, burst_start_abs=0.0, target_ready=3)
+    # after filtering -1, in-burst pairs are just (0,1)->(2,1): below target, 2s
+    assert result == 2.0
+
+
+def test_ready_dip_duration_no_gap_below_target_returns_zero():
+    samples = [(0.0, 5), (5.0, 5), (10.0, 5)]
+    result = cell._ready_dip_duration_s(samples, sampler_t0=0.0, burst_start_abs=0.0, target_ready=3)
+    assert result == 0.0
+
+
+def test_ready_dip_duration_fewer_than_two_in_burst_samples_returns_none():
+    samples = [(0.0, 1)]
+    result = cell._ready_dip_duration_s(samples, sampler_t0=0.0, burst_start_abs=0.0, target_ready=3)
+    assert result is None
+
+
+def test_ready_dip_duration_empty_samples_returns_none():
+    result = cell._ready_dip_duration_s([], sampler_t0=0.0, burst_start_abs=0.0, target_ready=3)
+    assert result is None
+
+
+# ---- _ready_at_or_before: most-recent valid reading at-or-before a given
+# absolute time, excluding failed polls. Helper for _ttfe_by_dip_state. ----
+
+def test_ready_at_or_before_returns_most_recent_match():
+    samples = [(0.0, 5), (5.0, 3), (10.0, 1)]
+    result = cell._ready_at_or_before(samples, sampler_t0=100.0, at_abs=108.0)
+    assert result == 3  # last sample at-or-before abs 108 is abs 105 -> ready=3
+
+
+def test_ready_at_or_before_boundary_included():
+    samples = [(0.0, 4)]
+    result = cell._ready_at_or_before(samples, sampler_t0=10.0, at_abs=10.0)
+    assert result == 4
+
+
+def test_ready_at_or_before_excludes_failed_polls():
+    samples = [(0.0, 5), (1.0, -1)]
+    result = cell._ready_at_or_before(samples, sampler_t0=0.0, at_abs=1.0)
+    assert result == 5  # the -1 poll at t=1 is excluded; falls back to t=0
+
+
+def test_ready_at_or_before_no_sample_before_returns_none():
+    samples = [(10.0, 5)]
+    result = cell._ready_at_or_before(samples, sampler_t0=0.0, at_abs=5.0)
+    assert result is None
+
+
+def test_ready_at_or_before_empty_samples_returns_none():
+    result = cell._ready_at_or_before([], sampler_t0=0.0, at_abs=0.0)
+    assert result is None
+
+
+# ---- _ttfe_by_dip_state: hb#835 lever-3 -- bucket each claim's TTFE by the
+# pool's readyReplicas state at THAT CLAIM'S OWN create time (not bind time,
+# to avoid circularity). ----
+
+def test_ttfe_by_dip_state_splits_into_both_buckets():
+    ttfe_by_name = {"a": 100.0, "b": 200.0, "c": 50.0}
+    create_times = {"a": 0.0, "b": 5.0, "c": 10.0}
+    # target=3; readyReplicas at t=0 -> 1 (dip), at t=5 -> 1 (dip), at t=10 -> 5 (full)
+    samples = [(0.0, 1), (5.0, 1), (10.0, 5)]
+    result = cell._ttfe_by_dip_state(ttfe_by_name, create_times, samples, sampler_t0=0.0, target_ready=3)
+    assert result["during_dip"] == {"n": 2, "median_ms": 150.0}
+    assert result["at_full_supply"] == {"n": 1, "median_ms": 50.0}
+
+
+def test_ttfe_by_dip_state_missing_create_time_excluded():
+    ttfe_by_name = {"a": 100.0}
+    create_times = {}  # "a" has no recorded create time
+    samples = [(0.0, 5)]
+    result = cell._ttfe_by_dip_state(ttfe_by_name, create_times, samples, sampler_t0=0.0, target_ready=3)
+    assert result["during_dip"] is None
+    assert result["at_full_supply"] is None
+
+
+def test_ttfe_by_dip_state_missing_ttfe_excluded():
+    ttfe_by_name = {"a": None}
+    create_times = {"a": 0.0}
+    samples = [(0.0, 5)]
+    result = cell._ttfe_by_dip_state(ttfe_by_name, create_times, samples, sampler_t0=0.0, target_ready=3)
+    assert result["during_dip"] is None
+    assert result["at_full_supply"] is None
+
+
+def test_ttfe_by_dip_state_no_ready_reading_at_create_time_excluded():
+    ttfe_by_name = {"a": 100.0}
+    create_times = {"a": 0.0}
+    samples = [(10.0, 5)]  # only a reading AFTER a's create time
+    result = cell._ttfe_by_dip_state(ttfe_by_name, create_times, samples, sampler_t0=0.0, target_ready=3)
+    assert result["during_dip"] is None
+    assert result["at_full_supply"] is None
+
+
+def test_ttfe_by_dip_state_empty_inputs_returns_both_none():
+    result = cell._ttfe_by_dip_state({}, {}, [], sampler_t0=0.0, target_ready=3)
+    assert result == {"during_dip": None, "at_full_supply": None}
+
+
 # ---- hb#379: _wait_for_pool_warm stability-window (reject a single-tick flicker) ----
 
 class _FakeCustomSequence:
