@@ -928,15 +928,20 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
 
         # ADDITIVE literal-TTFE corroboration (#3954). The Ready+bound count above
         # stays the SOLE published headline — these fields ride ALONGSIDE it,
-        # never replace it. Emit only when (a) TTFE was enabled, AND (b) the
-        # headline measured at least one Ready+bound delivery (count_under > 0):
-        # an exec count of 0 is then a REAL measurement ("Ready but none usable
-        # under 1s"), so it is honest to publish. On a genuine zero-delivery
-        # burst there is nothing to corroborate, so the page stays byte-unchanged.
-        # NOTE: gate on breakdown["count_under"], not sla_metrics truthiness —
-        # sla_metrics is now ALWAYS a non-empty dict (hb#709, zero is a value),
-        # so a bare `and sla_metrics` check would no longer distinguish this case.
-        if _TTFE_EXEC and breakdown["count_under"] > 0:
+        # never replace it. Emit whenever (a) TTFE was enabled, AND (b) there was
+        # at least one claim to probe (claim_names non-empty) — that is the real
+        # "was anything attempted" signal, and it is what `_classify_exec_corroboration`
+        # itself already keys its empty-return on (`exec_oks` empty). A slow-but-
+        # bound claim (Ready+bound, but TTFI over the ceiling) still has a real
+        # exec measurement worth publishing even though it contributes 0 to
+        # count_under — gating on `count_under > 0` (hb#831) silently dropped the
+        # whole corroboration key-set on exactly those marginal-miss fires, not
+        # just zeroed it, which then tripped the cell-downgrade fence for the
+        # wrong reason. On a genuine claim_names-empty run there is nothing to
+        # corroborate, so the page stays byte-unchanged — `_assemble_probe_results`
+        # guarantees `len(exec_oks) == len(claim_names)`, so that case is still
+        # caught by the callee's own `if not exec_oks: return {}` guard.
+        if _TTFE_EXEC and claim_names:
             ttfe_ms_samples, exec_oks = _assemble_probe_results(
                 claim_names, ttfe_results,
             )

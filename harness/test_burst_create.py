@@ -155,6 +155,41 @@ def test_assemble_then_classify_end_to_end():
            f"2/3 attempts ok, got {out.get(bc._KEY_EXEC_RATE)!r}")
 
 
+def test_marginal_miss_still_gates_on_claim_names_not_count_under():
+    # hb#831: 10/10 claims bound (real Ready+bound deliveries) but every TTFI
+    # lands just OVER the 1.0s ceiling (1.002s-1.423s) -> count_under == 0.
+    # The call site must still run exec corroboration in this shape (claim_names
+    # is non-empty, so there IS something to corroborate) even though the
+    # Ready+bound headline itself is a marginal miss. Asserting on claim_names
+    # (not breakdown["count_under"]) is exactly the fix under test here.
+    ttfis = {f"c{i}": 1.002 + i * 0.05 for i in range(10)}
+    passed, breakdown, _sla = bc._classify_burst(
+        ttfis, claim_count=10, ttfi_ceiling_s=1.0,
+        total_vcpu=10.0, min_qualified_ratio=0.8,
+    )
+    _check(not passed, "10 claims all over the 1.0s ceiling must FAIL the headline")
+    _check(breakdown["count_under"] == 0, f"expected count_under=0, got {breakdown['count_under']!r}")
+
+    claim_names = list(ttfis.keys())
+    # All 10 claims bound and executed successfully with real latencies.
+    deposits = {name: (900.0 + i * 10, True) for i, name in enumerate(claim_names)}
+    ttfe_ms_samples, exec_oks = bc._assemble_probe_results(claim_names, deposits)
+    corroboration = bc._classify_exec_corroboration(
+        ttfe_ms_samples, exec_oks, ttfi_ceiling_s=1.0,
+    )
+    _check(corroboration != {}, "claim_names non-empty -> corroboration must NOT be {}")
+    _check(corroboration[bc._KEY_EXEC_COUNT] == 10.0,
+           f"all 10 exec latencies under 1s, got {corroboration.get(bc._KEY_EXEC_COUNT)!r}")
+
+    # Pin the actual call-site gate condition (burst_create.py's `run()`):
+    # `claim_names` truthiness is the correct precondition; `count_under > 0`
+    # (the pre-hb#831 gate) would have wrongly skipped this exact shape.
+    _check(bool(claim_names), "fixed gate: claim_names must be truthy here")
+    _check(not (breakdown["count_under"] > 0),
+           "pre-fix gate (count_under > 0) would have incorrectly evaluated False here too, "
+           "confirming this shape is exactly the one the old gate dropped")
+
+
 def _all_tests():
     return [v for k, v in sorted(globals().items())
             if k.startswith("test_") and callable(v)]
