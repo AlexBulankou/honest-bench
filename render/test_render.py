@@ -7289,13 +7289,17 @@ def test_warm_cold_inversion_caveat_bind_absent_falls_back_to_ttfe():
 # ---------------------------------------------------------------------------
 
 def _separation_scenarios(ratio, warm_n=30, warm_max=None, cold_min=None,
-                          outcome="PASS", min_ready=None):
+                          outcome="PASS", min_ready=None, dip_duration_s=None,
+                          ttfe_dip_median=None, ttfe_dip_n=None,
+                          ttfe_supply_median=None, ttfe_supply_n=None):
     # gVisor scenario list carrying the three warmpool_gate_* keys in the RAW
     # warmpool_cold_start sla_metrics. warm_max/cold_min are optional so the
     # bounds-omitted-gracefully path can be exercised. ratio=None omits the key
     # entirely (the absent-metric no-false-fire case). min_ready is optional so
     # the hb#588 drain-mechanism disclosure path can be exercised independently
-    # of the bounds clause.
+    # of the bounds clause. The dip_duration_s/ttfe_* params are optional so the
+    # hb#835 lever-3 evidence-extension path can be exercised independently of
+    # the min_ready-based drain-mechanism clause it appends to.
     warm_m = {"ttfe_p50_ms": 400, "ttfe_p95_ms": 8500}
     if ratio is not None:
         warm_m["warmpool_gate_separation_ratio"] = ratio
@@ -7305,6 +7309,16 @@ def _separation_scenarios(ratio, warm_n=30, warm_max=None, cold_min=None,
         warm_m["warmpool_gate_cold_min_ms"] = cold_min
     if min_ready is not None:
         warm_m["warmpool_gate_min_ready_during_burst"] = min_ready
+    if dip_duration_s is not None:
+        warm_m["warmpool_gate_ready_dip_duration_s"] = dip_duration_s
+    if ttfe_dip_median is not None:
+        warm_m["warmpool_gate_ttfe_during_dip_median_ms"] = ttfe_dip_median
+    if ttfe_dip_n is not None:
+        warm_m["warmpool_gate_ttfe_during_dip_n"] = ttfe_dip_n
+    if ttfe_supply_median is not None:
+        warm_m["warmpool_gate_ttfe_at_supply_median_ms"] = ttfe_supply_median
+    if ttfe_supply_n is not None:
+        warm_m["warmpool_gate_ttfe_at_supply_n"] = ttfe_supply_n
     return [
         {
             "name": "warmpool_cold_start", "outcome": outcome, "n": warm_n,
@@ -7349,6 +7363,43 @@ def test_warmpool_separation_caveat_names_drain_mechanism_when_min_ready_present
     assert "hb#450's provenance gate already excludes blends" in out
     assert "blending genuinely-cold claims" not in out
     assert "cause is not asserted" not in out
+
+
+def test_warmpool_separation_caveat_names_dip_duration_and_ttfe_correlation_when_present():
+    # hb#835 lever-3: when the dip-duration/TTFE-by-dip-state keys are emitted
+    # alongside min_ready, append the corroborating evidence to the existing
+    # drain-mechanism sentence rather than replacing or contradicting it.
+    out = render._warmpool_separation_caveat(
+        _matrix_results(
+            _separation_scenarios(0.6608058, warm_n=30,
+                                  warm_max=1979.968, cold_min=1308.374,
+                                  min_ready=0.0, dip_duration_s=12.5,
+                                  ttfe_dip_median=850.4, ttfe_dip_n=18,
+                                  ttfe_supply_median=410.2, ttfe_supply_n=12),
+            provenance={"runtime": "gvisor"},
+        )
+    )
+    assert "supply-constrained pool draining under load" in out
+    assert "hb#835 lever-3:" in out
+    assert "dip lasted 12.5s" in out
+    assert "TTFE during dip median=850ms (n=18)" in out
+    assert "TTFE at full supply median=410ms (n=12)" in out
+
+
+def test_warmpool_separation_caveat_no_dip_duration_extension_when_absent():
+    # backward-compat / graceful-degradation: cells that predate the hb#835
+    # lever-3 emit (only min_ready present) render the drain-mechanism
+    # sentence unchanged, with no "hb#835 lever-3:" suffix at all.
+    out = render._warmpool_separation_caveat(
+        _matrix_results(
+            _separation_scenarios(0.6608058, warm_n=30,
+                                  warm_max=1979.968, cold_min=1308.374,
+                                  min_ready=0.0),
+            provenance={"runtime": "gvisor"},
+        )
+    )
+    assert "supply-constrained pool draining under load" in out
+    assert "hb#835 lever-3:" not in out
 
 
 def test_warmpool_separation_caveat_falls_back_when_min_ready_absent():

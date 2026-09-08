@@ -3439,7 +3439,18 @@ def _warmpool_separation_caveat(results, kata_results=None):
         warm_max = _raw_sla_p95(raw, "warmpool_cold_start", "warmpool_gate_warm_max_ms")
         cold_min = _raw_sla_p95(raw, "warmpool_cold_start", "warmpool_gate_cold_min_ms")
         min_ready = _raw_sla_p95(raw, "warmpool_cold_start", "warmpool_gate_min_ready_during_burst")
-        failing.append((RUNTIME_LABELS[rt], warm_n, ratio, warm_max, cold_min, min_ready))
+        # hb#835 lever-3: dip DURATION (companion to min_ready's dip DEPTH above) plus a
+        # TTFE-by-dip-state split. Evidence-gathering only -- these are read-only disclosure
+        # additions to the existing caveat, not a new gate/threshold.
+        dip_duration_s = _raw_sla_p95(raw, "warmpool_cold_start", "warmpool_gate_ready_dip_duration_s")
+        ttfe_dip_median = _raw_sla_p95(raw, "warmpool_cold_start", "warmpool_gate_ttfe_during_dip_median_ms")
+        ttfe_dip_n = _raw_sla_p95(raw, "warmpool_cold_start", "warmpool_gate_ttfe_during_dip_n")
+        ttfe_supply_median = _raw_sla_p95(raw, "warmpool_cold_start", "warmpool_gate_ttfe_at_supply_median_ms")
+        ttfe_supply_n = _raw_sla_p95(raw, "warmpool_cold_start", "warmpool_gate_ttfe_at_supply_n")
+        failing.append((
+            RUNTIME_LABELS[rt], warm_n, ratio, warm_max, cold_min, min_ready,
+            dip_duration_s, ttfe_dip_median, ttfe_dip_n, ttfe_supply_median, ttfe_supply_n,
+        ))
     if not failing:
         return ""
 
@@ -3460,7 +3471,7 @@ def _warmpool_separation_caveat(results, kata_results=None):
 
     who = "; ".join(
         f"**{lbl}** (warm count={wn}): {ratio:.3g}x{_bounds(wmax, cmin)}"
-        for lbl, wn, ratio, wmax, cmin, _min_ready in failing
+        for lbl, wn, ratio, wmax, cmin, *_rest in failing
     )
     # hb#588: warmpool_gate_min_ready_during_burst (hb#379) directly evidences the drain
     # mechanism when present -- readyReplicas dropping below the configured pool target
@@ -3471,8 +3482,17 @@ def _warmpool_separation_caveat(results, kata_results=None):
     # this caveat fires on. Older cells that predate the min_ready emit fall back to a
     # cause description that no longer names the refuted blend hypothesis.
     drained = [
-        (lbl, min_ready) for lbl, _wn, _ratio, _wmax, _cmin, min_ready in failing
+        (lbl, min_ready) for lbl, _wn, _ratio, _wmax, _cmin, min_ready, *_rest in failing
         if isinstance(min_ready, (int, float))
+    ]
+    # hb#835 lever-3: dip DURATION (companion evidence to min_ready's dip DEPTH) plus a
+    # TTFE-by-dip-state split, when present. Read-only disclosure addition -- does not
+    # change the cause assertion above, only appends corroborating evidence when the new
+    # metrics happen to be populated (older cells that predate this emit render unchanged).
+    dip_evidence = [
+        (lbl, dur, tdm, tdn, tsm, tsn)
+        for lbl, _wn, _ratio, _wmax, _cmin, _mr, dur, tdm, tdn, tsm, tsn in failing
+        if isinstance(dur, (int, float)) or isinstance(tdm, (int, float)) or isinstance(tsm, (int, float))
     ]
     if drained:
         evidence = "; ".join(f"**{lbl}** min readyReplicas={mr:g} during the burst" for lbl, mr in drained)
@@ -3482,6 +3502,18 @@ def _warmpool_separation_caveat(results, kata_results=None):
             f"warm hits): {evidence} — remaining warm-tier binds queue behind the drain rather "
             "than being served pre-warmed."
         )
+        if dip_evidence:
+            dip_parts = []
+            for lbl, dur, tdm, tdn, tsm, tsn in dip_evidence:
+                bits = [f"**{lbl}**"]
+                if isinstance(dur, (int, float)):
+                    bits.append(f"dip lasted {dur:.3g}s")
+                if isinstance(tdm, (int, float)) and isinstance(tdn, (int, float)):
+                    bits.append(f"TTFE during dip median={tdm:.3g}ms (n={tdn:g})")
+                if isinstance(tsm, (int, float)) and isinstance(tsn, (int, float)):
+                    bits.append(f"TTFE at full supply median={tsm:.3g}ms (n={tsn:g})")
+                dip_parts.append(" ".join(bits))
+            cause += " hb#835 lever-3: " + "; ".join(dip_parts) + "."
     else:
         cause = (
             "The cause is not asserted here (the pool may be under-delivering ready replicas "

@@ -908,6 +908,122 @@ def _min_ready_during_burst(
     return min(ready_during_burst) if ready_during_burst else None
 
 
+def _ready_dip_duration_s(
+    samples: list[tuple[float, int]],
+    sampler_t0: float,
+    burst_start_abs: float,
+    target_ready: int,
+) -> float | None:
+    """Cumulative wall-clock seconds readyReplicas held BELOW `target_ready` during the burst.
+
+    hb#835 lever-3: `_min_ready_during_burst` above answers "how deep did the dip
+    go" but not "how long did it last" — a 1-sample instantaneous blip to
+    readyReplicas=0 and a dip that HOLDS at 0 for 30s both read identically as
+    `min_ready=0`, yet only the latter is consistent with a sustained capacity
+    wall (vs. a single missed poll or a momentary reconcile lag). This walks the
+    same in-burst-and-valid sample series `_min_ready_during_burst` uses (same
+    filtering: `ready >= 0`, `sampler_t0 + rel_t >= burst_start_abs`) and sums
+    the wall-clock gap between each CONSECUTIVE pair of in-burst samples whose
+    LEADING sample's readyReplicas was below target — a left-Riemann-style step
+    approximation (the reading holds from when it was observed until the next
+    poll). This deliberately EXCLUDES the trailing interval after the last
+    sample (unbounded — the sampler may still be running when this is computed,
+    per `_min_ready_during_burst`'s own snapshot-via-list(...) comment), so the
+    true dip duration is >= the returned value, never overstated.
+
+    Returns None when there are fewer than 2 valid in-burst samples (can't form
+    an interval), same "insufficient evidence" contract as `_min_ready_during_burst`.
+    """
+    in_burst = sorted(
+        (sampler_t0 + rel_t, ready)
+        for rel_t, ready in samples
+        if ready >= 0 and (sampler_t0 + rel_t) >= burst_start_abs
+    )
+    if len(in_burst) < 2:
+        return None
+    duration = 0.0
+    for (t0, ready0), (t1, _ready1) in zip(in_burst, in_burst[1:]):
+        if ready0 < target_ready:
+            duration += t1 - t0
+    return duration
+
+
+def _ready_at_or_before(
+    samples: list[tuple[float, int]], sampler_t0: float, at_abs: float,
+) -> int | None:
+    """Most recent valid readyReplicas reading at-or-before `at_abs`, or None.
+
+    Helper for `_ttfe_by_dip_state`: to bucket a claim's TTFE by "was the pool
+    dipped at the moment this claim entered the queue", we need the sampler's
+    last-known readyReplicas value AS OF that claim's own create time — not the
+    burst-wide min, and not a reading from AFTER the claim was already queued.
+    Excludes failed polls (ready == -1), same convention as the two functions
+    above. Returns None when no valid sample exists at-or-before `at_abs` (e.g.
+    the claim created before the sampler's first successful poll) — the caller
+    then leaves that claim unbucketed rather than guessing.
+    """
+    candidates = [
+        (sampler_t0 + rel_t, ready)
+        for rel_t, ready in samples
+        if ready >= 0 and (sampler_t0 + rel_t) <= at_abs
+    ]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda pair: pair[0])[1]
+
+
+def _ttfe_by_dip_state(
+    ttfe_by_name: dict[str, float],
+    create_times: dict[str, float],
+    samples: list[tuple[float, int]],
+    sampler_t0: float,
+    target_ready: int,
+) -> dict:
+    """Split per-claim TTFE(ms) into during-dip vs. at-full-supply buckets.
+
+    hb#835 lever-3's second half: `_ready_dip_duration_s` above establishes
+    THAT a dip happened and for how long, but says nothing about whether claims
+    caught in the dip actually paid a latency cost — the dip and the TTFE
+    degradation could be coincidental (both caused by a third factor) rather
+    than causal. This buckets each claim's own measured TTFE by the pool's
+    readyReplicas state AT THAT CLAIM'S OWN CREATE TIME (not bind time — bind
+    time is the outcome we're trying to explain, so bucketing by it would be
+    circular): a claim created while readyReplicas < target_ready enters
+    `during_dip`, ready >= target_ready enters `at_full_supply`. A claim
+    missing a create time, a TTFE sample, or a readyReplicas reading at its
+    create time is silently excluded from both buckets (insufficient evidence
+    for that one claim, not a reason to fail the whole computation).
+
+    Returns {"during_dip": summary_or_None, "at_full_supply": summary_or_None}
+    where each summary is {"n": int, "median_ms": float} or None when its
+    bucket is empty. Two disjoint buckets rather than a correlation
+    coefficient, on purpose: a median-vs-median comparison is the honest,
+    directly-readable shape for a single-fire disclosure — a real correlation
+    coefficient wants many fires' worth of (dip-state, ttfe) pairs to be
+    statistically meaningful, which is future work, not this PR's scope.
+    """
+    during_dip: list[float] = []
+    at_full_supply: list[float] = []
+    for name, ttfe_ms in ttfe_by_name.items():
+        create_t = create_times.get(name)
+        if create_t is None or ttfe_ms is None:
+            continue
+        ready = _ready_at_or_before(samples, sampler_t0, create_t)
+        if ready is None:
+            continue
+        (during_dip if ready < target_ready else at_full_supply).append(ttfe_ms)
+
+    def _summarize(vals: list[float]) -> dict | None:
+        if not vals:
+            return None
+        return {"n": len(vals), "median_ms": statistics.median(vals)}
+
+    return {
+        "during_dip": _summarize(during_dip),
+        "at_full_supply": _summarize(at_full_supply),
+    }
+
+
 def _activation_window_s(
     create_times: dict[str, float], bound_at: dict[str, float],
 ) -> float | None:
@@ -1493,6 +1609,38 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
             )
             if min_ready is not None:
                 sla_metrics["warmpool_gate_min_ready_during_burst"] = min_ready
+            # hb#835 lever-3: dip DURATION (this session's addition to the
+            # existing dip DEPTH metric above) plus a TTFE-by-dip-state
+            # correlation. Evidence-gathering only, per hb#835's own scope
+            # ("investigation + a scoped fix proposal — not asking for an
+            # immediate threshold change") — these are disclosure-only
+            # sla_metrics keys, not a gate/threshold change.
+            dip_duration_s = _ready_dip_duration_s(
+                list(_pool_ready_samples),
+                _pool_ready_sampler_t0,
+                min(create_times.values()),
+                _gate_target,
+            )
+            if dip_duration_s is not None:
+                sla_metrics["warmpool_gate_ready_dip_duration_s"] = dip_duration_s
+            ttfe_by_name = {
+                name: result[0]
+                for name, result in ttfe_results.items()
+                if result[0] is not None
+            }
+            dip_state = _ttfe_by_dip_state(
+                ttfe_by_name,
+                create_times,
+                list(_pool_ready_samples),
+                _pool_ready_sampler_t0,
+                _gate_target,
+            )
+            if dip_state["during_dip"] is not None:
+                sla_metrics["warmpool_gate_ttfe_during_dip_median_ms"] = dip_state["during_dip"]["median_ms"]
+                sla_metrics["warmpool_gate_ttfe_during_dip_n"] = dip_state["during_dip"]["n"]
+            if dip_state["at_full_supply"] is not None:
+                sla_metrics["warmpool_gate_ttfe_at_supply_median_ms"] = dip_state["at_full_supply"]["median_ms"]
+                sla_metrics["warmpool_gate_ttfe_at_supply_n"] = dip_state["at_full_supply"]["n"]
         # hb#723: self-report the env knobs that gate which sla_metrics keys
         # this fire emits (pool size flips cold-baseline vs warm-tier mode
         # entirely, changing the key set) so check_cell_downgrade's remediation
@@ -1606,6 +1754,20 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
                 max(ready_counts) if ready_counts else "<all-failed>",
                 [(round(t, 1), c) for t, c in _pool_ready_samples],
             )
+        # hb#835 lever-3: log the dip-duration/TTFE-correlation keys (if any
+        # landed in sla_metrics) for local diagnosis. Reads back from
+        # sla_metrics rather than recomputing, so a `finally` that runs after
+        # an early exception (before sla_metrics or create_times/_gate_target
+        # exist) never raises NameError here.
+        if "sla_metrics" in locals() and isinstance(sla_metrics, dict):
+            dip_keys = {
+                k: v for k, v in sla_metrics.items()
+                if k.startswith("warmpool_gate_ready_dip_duration")
+                or k.startswith("warmpool_gate_ttfe_during_dip")
+                or k.startswith("warmpool_gate_ttfe_at_supply")
+            }
+            if dip_keys:
+                log.info("hb#835 lever-3 dip-duration/TTFE diagnostic: %s", dip_keys)
         _cleanup(
             custom, claim_names=claim_names,
             pool_name=pool_name, template_name=template_name,
