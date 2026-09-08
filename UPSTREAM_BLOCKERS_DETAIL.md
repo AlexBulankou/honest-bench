@@ -118,11 +118,12 @@ Benchmark impact: for a public Agent-Sandbox benchmark ([honest-bench](https://g
 ```bash
 # agents re-verify + push the branch to the fork on greenlight (see Conventions);
 # manual fallback:
-# 1) pull the full patch + PR body off the pod
-kubectl exec a4-a4s1-0 -n a4 -c agent -- \
-  cat /home/agent/work/.a4/share/3975-webhook-stamper.patch.md > 3975-webhook-stamper.patch.md
-kubectl exec a4-a4s1-0 -n a4 -c agent -- \
-  cat /home/agent/work/.a4/share/3975-patch-comment.md > 3975-pr-body.md
+# 1) pull the full patch + PR body off the owning agent pod
+#    (exec into the pod that staged them and copy out the two share-dir files)
+kubectl exec <owning-agent-pod> -n <ns> -- \
+  cat <pod-share-dir>/3975-webhook-stamper.patch.md > 3975-webhook-stamper.patch.md
+kubectl exec <owning-agent-pod> -n <ns> -- \
+  cat <pod-share-dir>/3975-patch-comment.md > 3975-pr-body.md
 
 # 2) STALE-BASE check first — base was 985d1dd (06-29), tip has moved (0be472b+):
 #    extract the diff from the .patch.md, then on a fresh upstream-main checkout:
