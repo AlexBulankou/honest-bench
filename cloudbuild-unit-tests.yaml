@@ -116,6 +116,20 @@ steps:
   # build HEAD==origin/main, so the range is empty and this is a clean no-op. Fetch
   # main first (the PR checkout may not carry it); if the base can't be resolved the
   # scanner fails CLOSED rather than silently skipping a security gate.
+  #
+  # Full unshallow, not a fixed --depth (hb#830 fix): render/generate.py's
+  # resolve_harness_staleness (hb#828) runs `git merge-base --is-ancestor
+  # <stamped suite_git_sha> HEAD` against whatever this checkout's local commit
+  # graph contains — an older stamped sha older than the fetch depth reads as
+  # "unresolvable" (fail-closed "unverified" fence) even when it genuinely IS
+  # an ancestor, purely because the object isn't present locally yet. That
+  # surfaced live: CI's --depth=50 fetch didn't reach the stamped sha, so the
+  # freshly-rendered README (unverified) diverged from the committed one
+  # (rendered locally against full history, "2 commits behind") and
+  # render/test_readme_fresh.py correctly flagged the mismatch. The repo is
+  # tiny (single-digit MB, <1000 commits) so a full unshallow is cheap and
+  # removes the depth-heuristic guesswork entirely; `--unshallow` errors on an
+  # already-complete repo, so fall back to a plain fetch in that case.
   - name: python:3.12
     id: commit-metadata
     entrypoint: bash
@@ -124,7 +138,9 @@ steps:
       - -c
       - |
         set -uo pipefail
-        git fetch --no-tags --depth=50 origin main >/dev/null 2>&1 || true
+        git fetch --no-tags --unshallow origin main >/dev/null 2>&1 \
+          || git fetch --no-tags origin main >/dev/null 2>&1 \
+          || true
         bash scripts/check-public-safety.sh --commits origin/main..HEAD
 
   # Discover-all + run every test_*.py. Mirrors the workflow's discover-all glob
