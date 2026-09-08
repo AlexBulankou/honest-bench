@@ -79,6 +79,8 @@ _**Stretch bar** — warm-pool-hit TTFE p95 < 0.5s (an aspiration above the Nort
 
 > ⚠️ **Refresh delta:** **gVisor** regressed by 4.7388s (0.59s → 5.3288s, 9.0x) · verdict flip ✅→❌ · node_count 1→2 · node_image v1.36.3-gke.1640000→v1.36.3-gke.1767000 · controller_digest `sha256:2926730e6554…` → `sha256:72751e44e114…` · suite_git_sha `6f6ad9fe4a325ac99282c70ac732e77fb8d247b6`→`1138f37725c95bb4b22e9f4379d702c71006f46c`. A swing this large, or a bar-crossing flip, between consecutive published runs is flagged for a second look before trusting it as a substrate signal — check for a machine-class change, a node-count change, a node-image change, a broken measurement, or a real regression/fix. Note: a build-lineage change (controller/suite rebuild) is already disclosed inline above — weigh that rebuild as the leading confound before reading this swing as a substrate regression.
 
+> ⚠️ **Cross-runtime comparability:** the North Star gVisor and Kata + microVM p95 figures are drawn from two independent fires and are not directly co-measured — the two figures cannot be confirmed to share a machine class — Kata + microVM did not stamp `machine_type`, so a rig difference between them cannot be ruled out. Read the cross-runtime p95 gap as provisional until both runtimes republish on a matched rig within one freshness window.
+
 ### Known anomalies
 
 | Anomaly | Status |
