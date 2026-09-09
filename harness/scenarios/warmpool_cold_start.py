@@ -950,26 +950,52 @@ def _add_gate_diagnostic_metrics(
     describe: pool_replicas == 0 (cold-baseline mode, no gate applies),
     sla_metrics isn't a dict, or warm_max is None (under-delivery — the gate
     already emits its own honest-FAIL triple with empty sla_metrics).
+
+    The cold tier can be legitimately EMPTY (every completed claim landed in the
+    warm set — e.g. a pool-readiness dip pushed every claim into the during-dip/
+    at-supply bucket, leaving no true-cold sample) or the warm p50 can be
+    degenerate (<= 0, an unmeasurable separation denominator). Both are real,
+    documented conditions, not defects. But the guard-then-fill idiom
+    (AGENTS.md's "Transition guards on trust surfaces", #4420) forbids silently
+    DROPPING a key a committed prior row carried — harness/run.py's
+    check_cell_downgrade compares raw key membership, so an omitted key reads
+    as an undifferentiated "downgrade" even when the omission is legitimate.
+    So cold_min_ms / cold_p50_ms / separation_ratio are ALWAYS emitted (never
+    omitted): explicit `None` plus a closed-set `warmpool_gate_cold_absent_reason`
+    when unpopulated, so the guard can tell "re-measured to null, legitimately"
+    from "silently regressed".
     """
     if pool_replicas <= 0 or not isinstance(sla_metrics, dict) or warm_max is None:
         return sla_metrics
     sla_metrics["warmpool_gate_warm_max_ms"] = warm_max * 1000.0
-    if breakdown["cold_path_min_s"] is not None:
-        sla_metrics["warmpool_gate_cold_min_ms"] = (
-            breakdown["cold_path_min_s"] * 1000.0
-        )
     # p50-vs-p50 separation diagnostics (#6743): the two medians the separation
     # ratio is now computed from. Emitted alongside the retained min/max keys so a
     # committed FAIL row shows both the new ratio's inputs and the absolute clause's
-    # warm_max. Present only when a warm tier exists (skipped in cold-baseline).
+    # warm_max. warm_p50_ms is guaranteed present whenever warm_max is (warm_pairs
+    # is non-empty by construction once warm_max is computed) — no absent-reason
+    # needed for this key.
     if breakdown.get("warm_p50_s") is not None:
         sla_metrics["warmpool_gate_warm_p50_ms"] = breakdown["warm_p50_s"] * 1000.0
-    if breakdown.get("cold_p50_s") is not None:
-        sla_metrics["warmpool_gate_cold_p50_ms"] = breakdown["cold_p50_s"] * 1000.0
-    if breakdown["separation_observed"] is not None:
-        sla_metrics["warmpool_gate_separation_ratio"] = (
-            breakdown["separation_observed"]
-        )
+
+    cold_min_s = breakdown["cold_path_min_s"]
+    cold_p50_s = breakdown["cold_p50_s"]
+    separation = breakdown["separation_observed"]
+    if cold_min_s is None:
+        # remainder is empty: no true-cold-tier claim exists to measure at all.
+        sla_metrics["warmpool_gate_cold_min_ms"] = None
+        sla_metrics["warmpool_gate_cold_p50_ms"] = None
+        sla_metrics["warmpool_gate_separation_ratio"] = None
+        sla_metrics["warmpool_gate_cold_absent_reason"] = "no_true_cold_bucket_claims"
+    else:
+        sla_metrics["warmpool_gate_cold_min_ms"] = cold_min_s * 1000.0
+        sla_metrics["warmpool_gate_cold_p50_ms"] = cold_p50_s * 1000.0
+        if separation is not None:
+            sla_metrics["warmpool_gate_separation_ratio"] = separation
+        else:
+            # cold tier is real but warm_p50_s <= 0 — a degenerate (unmeasurable)
+            # separation denominator. cold_min/cold_p50 stay real; only the ratio nulls.
+            sla_metrics["warmpool_gate_separation_ratio"] = None
+            sla_metrics["warmpool_gate_cold_absent_reason"] = "degenerate_warm_p50"
     return sla_metrics
 
 

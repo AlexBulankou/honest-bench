@@ -241,6 +241,162 @@ def test_same_config_key_loss_still_fires():
     _check("ttfe_p95_ms" in lines[0], f"unexpected line: {lines[0]!r}")
 
 
+def test_null_transition_with_recognized_reason_passes():
+    # #4420 guard-then-fill: a registered key that STAYS PRESENT but nulls out
+    # is not a downgrade when the fresh row's sibling reason field names a
+    # recognized absent-reason (e.g. no true cold-tier claims this fire).
+    prior = [{
+        "name": "warmpool_cold_start", "outcome": "PASS",
+        "sla_metrics": {"warmpool_gate_cold_min_ms": 5000.0},
+    }]
+    raw = [{
+        "name": "warmpool_cold_start", "outcome": "PASS",
+        "sla_metrics": {
+            "warmpool_gate_cold_min_ms": None,
+            "warmpool_gate_cold_absent_reason": "no_true_cold_bucket_claims",
+        },
+    }]
+    _check(check_cell_downgrade(raw, prior) == [],
+           "recognized-reason null transition must not gate")
+
+
+def test_null_transition_without_reason_fails_closed():
+    # Same null transition, but the fresh row carries NO sibling reason field
+    # at all -- must fail closed like any other information-reducing
+    # transition, not silently pass just because the key is still "present".
+    prior = [{
+        "name": "warmpool_cold_start", "outcome": "PASS",
+        "sla_metrics": {"warmpool_gate_cold_min_ms": 5000.0},
+    }]
+    raw = [{
+        "name": "warmpool_cold_start", "outcome": "PASS",
+        "sla_metrics": {"warmpool_gate_cold_min_ms": None},
+    }]
+    lines = check_cell_downgrade(raw, prior)
+    _check(len(lines) == 1, f"expected 1 downgrade, got {lines!r}")
+    _check("nulled without a recognized absent-reason" in lines[0]
+           and "warmpool_gate_cold_min_ms" in lines[0],
+           f"unexpected line: {lines[0]!r}")
+
+
+def test_null_transition_with_unrecognized_reason_fails_closed():
+    # Closed-set enforcement: a reason string outside
+    # _RECOGNIZED_ABSENT_REASONS (a future typo, or an unhandled new condition
+    # class) must fail closed exactly like a missing reason -- the vocabulary
+    # is closed, not "any non-empty string".
+    prior = [{
+        "name": "warmpool_cold_start", "outcome": "PASS",
+        "sla_metrics": {"warmpool_gate_cold_min_ms": 5000.0},
+    }]
+    raw = [{
+        "name": "warmpool_cold_start", "outcome": "PASS",
+        "sla_metrics": {
+            "warmpool_gate_cold_min_ms": None,
+            "warmpool_gate_cold_absent_reason": "some_future_typo",
+        },
+    }]
+    lines = check_cell_downgrade(raw, prior)
+    _check(len(lines) == 1, f"expected 1 downgrade, got {lines!r}")
+    _check("warmpool_gate_cold_min_ms" in lines[0],
+           f"unexpected line: {lines[0]!r}")
+
+
+def test_null_transition_wrong_type_reason_fails_closed():
+    # A non-string reason value (e.g. the field left as JSON null, or
+    # accidentally serialized as a number) must also fail closed -- the
+    # isinstance(reason_val, str) check is load-bearing, not incidental.
+    prior = [{
+        "name": "warmpool_cold_start", "outcome": "PASS",
+        "sla_metrics": {"warmpool_gate_separation_ratio": 1.8},
+    }]
+    raw = [{
+        "name": "warmpool_cold_start", "outcome": "PASS",
+        "sla_metrics": {
+            "warmpool_gate_separation_ratio": None,
+            "warmpool_gate_cold_absent_reason": None,
+        },
+    }]
+    lines = check_cell_downgrade(raw, prior)
+    _check(len(lines) == 1, f"expected 1 downgrade, got {lines!r}")
+    _check("warmpool_gate_separation_ratio" in lines[0],
+           f"unexpected line: {lines[0]!r}")
+
+
+def test_null_transition_recognized_reason_covers_all_registered_keys():
+    # The closed-set registry applies uniformly to all three registered keys,
+    # not just cold_min_ms -- exercise cold_p50_ms and separation_ratio too,
+    # all nulled together under one recognized reason (the real emitter shape
+    # for the "no true cold tier" condition: all three null out at once).
+    prior = [{
+        "name": "warmpool_cold_start", "outcome": "PASS",
+        "sla_metrics": {
+            "warmpool_gate_cold_min_ms": 5000.0,
+            "warmpool_gate_cold_p50_ms": 5200.0,
+            "warmpool_gate_separation_ratio": 3.1,
+        },
+    }]
+    raw = [{
+        "name": "warmpool_cold_start", "outcome": "PASS",
+        "sla_metrics": {
+            "warmpool_gate_cold_min_ms": None,
+            "warmpool_gate_cold_p50_ms": None,
+            "warmpool_gate_separation_ratio": None,
+            "warmpool_gate_cold_absent_reason": "no_true_cold_bucket_claims",
+        },
+    }]
+    _check(check_cell_downgrade(raw, prior) == [],
+           "all three registered keys nulled under one recognized reason must not gate")
+
+
+def test_null_transition_partial_null_unrecognized_reason_flags_only_that_key():
+    # degenerate_warm_p50 shape: only separation_ratio nulls out (cold_min/p50
+    # stay real numbers) -- an unrecognized reason must flag exactly the
+    # nulled key, not the still-populated siblings.
+    prior = [{
+        "name": "warmpool_cold_start", "outcome": "PASS",
+        "sla_metrics": {
+            "warmpool_gate_cold_min_ms": 5000.0,
+            "warmpool_gate_cold_p50_ms": 5000.0,
+            "warmpool_gate_separation_ratio": 3.1,
+        },
+    }]
+    raw = [{
+        "name": "warmpool_cold_start", "outcome": "PASS",
+        "sla_metrics": {
+            "warmpool_gate_cold_min_ms": 5000.0,
+            "warmpool_gate_cold_p50_ms": 5000.0,
+            "warmpool_gate_separation_ratio": None,
+            "warmpool_gate_cold_absent_reason": "not_a_real_reason",
+        },
+    }]
+    lines = check_cell_downgrade(raw, prior)
+    _check(len(lines) == 1, f"expected 1 downgrade, got {lines!r}")
+    _check("warmpool_gate_separation_ratio" in lines[0]
+           and "warmpool_gate_cold_min_ms" not in lines[0],
+           f"unexpected line: {lines[0]!r}")
+
+
+def test_null_transition_skipped_on_config_mismatch():
+    # The null-transition check lives inside the same mw_match-gated branch as
+    # the key-loss leg (hb#808) -- a config-mismatched fire skips the whole
+    # leg, including the null-transition sub-check, not just key-loss.
+    prior = [{
+        "name": "warmpool_cold_start", "outcome": "PASS", "n": 30,
+        "sla_metrics": {"warmpool_gate_cold_min_ms": 5000.0},
+        "measured_with": {"WARMPOOL_COLD_START_POOL_REPLICAS": 30},
+    }]
+    raw = [{
+        "name": "warmpool_cold_start", "outcome": "PASS", "n": 45,
+        "sla_metrics": {
+            "warmpool_gate_cold_min_ms": None,
+            "warmpool_gate_cold_absent_reason": "bogus_unrecognized",
+        },
+        "measured_with": {"WARMPOOL_COLD_START_POOL_REPLICAS": 45},
+    }]
+    _check(check_cell_downgrade(raw, prior) == [],
+           "config-mismatched fire must skip the null-transition sub-check too")
+
+
 def test_fresh_measured_with_surfaced_when_committed_has_none():
     # Asymmetric case: only the fresh fire self-reported knobs. The committed
     # side reads "none reported" so the asymmetry (the mismatch cue) is visible.
@@ -370,6 +526,13 @@ def main() -> int:
         test_no_measured_with_leaves_line_unchanged,
         test_config_mismatch_key_loss_skipped_not_flagged,
         test_same_config_key_loss_still_fires,
+        test_null_transition_with_recognized_reason_passes,
+        test_null_transition_without_reason_fails_closed,
+        test_null_transition_with_unrecognized_reason_fails_closed,
+        test_null_transition_wrong_type_reason_fails_closed,
+        test_null_transition_recognized_reason_covers_all_registered_keys,
+        test_null_transition_partial_null_unrecognized_reason_flags_only_that_key,
+        test_null_transition_skipped_on_config_mismatch,
         test_fresh_measured_with_surfaced_when_committed_has_none,
         test_malformed_inputs_tolerated,
         test_density_carried_onto_fresh_row,

@@ -379,9 +379,11 @@ def test_gate_diagnostics_adds_all_three_keys_when_cold_tier_present():
     assert sla_metrics["warmpool_gate_cold_p50_ms"] == 7000.0
 
 
-def test_gate_diagnostics_omits_cold_and_separation_keys_when_no_cold_tier():
+def test_gate_diagnostics_nulls_cold_and_separation_keys_when_no_cold_tier():
     # claim_count == pool_replicas: no overflow claims, so no cold tier to
-    # separate from. warm_max still reported; cold/separation keys absent.
+    # separate from. warm_max still reported; cold/separation keys are ALWAYS
+    # emitted now (guard-then-fill, #4420) -- present-but-null, with a
+    # closed-set reason, rather than omitted.
     latencies = {"c0": 1.5, "c1": 0.8, "c2": 1.2}
     _, bd = cell._classify_latencies(
         latencies, pool_replicas=3, abs_ceiling_s=2.5, separation_ratio=1.8,
@@ -390,8 +392,30 @@ def test_gate_diagnostics_omits_cold_and_separation_keys_when_no_cold_tier():
         {}, bd, warm_max=bd["warm_max_s"], pool_replicas=3,
     )
     assert sla_metrics["warmpool_gate_warm_max_ms"] == 1500.0
-    assert "warmpool_gate_cold_min_ms" not in sla_metrics
-    assert "warmpool_gate_separation_ratio" not in sla_metrics
+    assert sla_metrics["warmpool_gate_cold_min_ms"] is None
+    assert sla_metrics["warmpool_gate_cold_p50_ms"] is None
+    assert sla_metrics["warmpool_gate_separation_ratio"] is None
+    assert sla_metrics["warmpool_gate_cold_absent_reason"] == "no_true_cold_bucket_claims"
+
+
+def test_gate_diagnostics_nulls_only_separation_key_when_warm_p50_degenerate():
+    # A cold tier IS present (c2 lands outside the warm set) but the warm
+    # tier's two fastest binds are both 0.0s -> warm_p50_s == 0.0, an
+    # unmeasurable (degenerate) separation denominator. cold_min/cold_p50
+    # stay real numbers; only the ratio nulls out, with its own reason.
+    latencies = {"c0": 0.0, "c1": 0.0, "c2": 5.0}
+    _, bd = cell._classify_latencies(
+        latencies, pool_replicas=2, abs_ceiling_s=2.5, separation_ratio=1.8,
+    )
+    assert bd["warm_p50_s"] == 0.0
+    assert bd["cold_path_min_s"] == 5.0
+    sla_metrics = cell._add_gate_diagnostic_metrics(
+        {}, bd, warm_max=bd["warm_max_s"], pool_replicas=2,
+    )
+    assert sla_metrics["warmpool_gate_cold_min_ms"] == 5000.0
+    assert sla_metrics["warmpool_gate_cold_p50_ms"] == 5000.0
+    assert sla_metrics["warmpool_gate_separation_ratio"] is None
+    assert sla_metrics["warmpool_gate_cold_absent_reason"] == "degenerate_warm_p50"
 
 
 def test_gate_diagnostics_noop_on_under_delivery():

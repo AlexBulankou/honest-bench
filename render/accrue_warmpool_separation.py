@@ -74,11 +74,16 @@ def _repo_root():
 def _warmpool_separation_cell(results):
     """Return (ratio, n, outcome, ttfe_p95_ms) from a MEASURED warmpool_cold_start cell, or None.
 
-    "Measurable" means sla_metrics carries warmpool_gate_separation_ratio — NOT
+    "Measurable" means sla_metrics carries a NON-NULL warmpool_gate_separation_ratio — NOT
     outcome == "PASS". The scenario surfaces the ratio on BOTH PASS and FAIL (a below-gate ratio
-    is exactly what FAILs the scenario and exactly the signal this store exists to chart); only a
-    scenario run that never computed the gate metric at all (sla_metrics absent/empty, or present
-    without the key) emits nothing to chart.
+    is exactly what FAILs the scenario and exactly the signal this store exists to chart); a
+    scenario run that never computed the gate metric at all (sla_metrics absent/empty), or that
+    legitimately couldn't (present but explicit-null — e.g. no true-cold-tier claim this fire, or
+    a degenerate warm p50 — hb#379/#4420's warmpool_gate_cold_absent_reason case), emits nothing
+    to chart. Checked by VALUE (`.get(...) is None`), not by key presence: the emitter always
+    emits the key now (guard-then-fill, #4420), so a presence-only check would misclassify every
+    legitimate no-cold-tier fire as CASE 2 below (a measured-but-unanchorable ratio) instead of
+    the benign CASE 1 skip it actually is.
 
     hb#727 follow-up: ttfe_p95_ms is read from the SAME cell, on a best-effort basis — its
     absence never suppresses the row (the ratio is still the required, gating measurement); a
@@ -90,7 +95,7 @@ def _warmpool_separation_cell(results):
         if not isinstance(s, dict) or s.get("name") != "warmpool_cold_start":
             continue
         m = s.get("sla_metrics")
-        if not isinstance(m, dict) or "warmpool_gate_separation_ratio" not in m:
+        if not isinstance(m, dict) or m.get("warmpool_gate_separation_ratio") is None:
             return None
         ratio = m.get("warmpool_gate_separation_ratio")
         n = s.get("n")
