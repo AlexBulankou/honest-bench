@@ -7463,6 +7463,23 @@ def test_warmpool_separation_caveat_absent_metric_no_false_fire():
     assert out == ""
 
 
+def test_warmpool_separation_caveat_null_metric_no_false_fire():
+    # hb#379/#4420 guard-then-fill: the emitter now ALWAYS emits the key --
+    # a legitimate no-cold-tier/degenerate-warm-p50 fire carries the key
+    # present but explicitly None (plus warmpool_gate_cold_absent_reason).
+    # Same no-op as the absent-key case above, exercised directly against
+    # the realistic live-fire shape rather than the older omitted-key one.
+    scenarios = _separation_scenarios(None, warm_n=200)
+    scenarios[0]["sla_metrics"]["warmpool_gate_separation_ratio"] = None
+    scenarios[0]["sla_metrics"]["warmpool_gate_cold_absent_reason"] = (
+        "no_true_cold_bucket_claims"
+    )
+    out = render._warmpool_separation_caveat(
+        _matrix_results(scenarios, provenance={"runtime": "gvisor"})
+    )
+    assert out == ""
+
+
 def test_warmpool_separation_caveat_bounds_omitted_gracefully():
     # ratio below gate but the warm_max/cold_min bound keys are absent — the
     # ratio-only line still renders (no bounds clause, no crash).
@@ -7668,6 +7685,24 @@ def test_cold_tier_stall_caveat_absent_metric_no_false_fire():
             provenance={"runtime": "gvisor"},
         )
     ) == ""
+
+
+def test_cold_tier_stall_caveat_null_metric_no_false_fire():
+    # hb#379/#4420 guard-then-fill: the emitter now ALWAYS emits cold_min_ms/
+    # cold_p50_ms -- a legitimate no-cold-tier fire carries them present but
+    # explicitly None (plus warmpool_gate_cold_absent_reason), not omitted.
+    # Same no-op as the absent-key case above, exercised against the
+    # realistic live-fire shape.
+    scenarios = _stall_scenarios(None, None, warm_n=200)
+    scenarios[0]["sla_metrics"]["warmpool_gate_cold_min_ms"] = None
+    scenarios[0]["sla_metrics"]["warmpool_gate_cold_p50_ms"] = None
+    scenarios[0]["sla_metrics"]["warmpool_gate_cold_absent_reason"] = (
+        "no_true_cold_bucket_claims"
+    )
+    out = render._cold_tier_stall_caveat(
+        _matrix_results(scenarios, provenance={"runtime": "gvisor"})
+    )
+    assert out == ""
 
 
 def test_cold_tier_stall_caveat_flags_kata_independently():

@@ -58,8 +58,24 @@ def test_extract_row_happy_path():
 
 
 def test_extract_row_honest_skip_when_ratio_never_measured():
-    # CASE 1: sla_metrics=={} — the gate metric was never computed, so nothing to chart.
+    # CASE 1a: sla_metrics=={} — the gate metric was never computed at all (e.g. the
+    # under-delivery no-op path), so nothing to chart.
     assert accrue_warmpool_separation.extract_row(_latest(ratio=None)) is None
+
+
+def test_extract_row_honest_skip_when_ratio_present_but_null():
+    # CASE 1b (hb#379/#4420 guard-then-fill): the emitter now ALWAYS emits the key —
+    # a legitimate no-cold-tier or degenerate-warm-p50 fire carries the key present but
+    # explicitly None, plus warmpool_gate_cold_absent_reason. Checked by VALUE, not key
+    # presence, so this is still an honest skip, not a measured-but-unanchorable ratio.
+    row = _latest(ratio=1.0)  # seed a real dict, then null out the ratio explicitly
+    row["scenarios"][0]["sla_metrics"] = {
+        "warmpool_gate_separation_ratio": None,
+        "warmpool_gate_cold_min_ms": None,
+        "warmpool_gate_cold_p50_ms": None,
+        "warmpool_gate_cold_absent_reason": "no_true_cold_bucket_claims",
+    }
+    assert accrue_warmpool_separation.extract_row(row) is None
 
 
 def test_extract_row_charts_fail_outcome_with_measured_ratio():

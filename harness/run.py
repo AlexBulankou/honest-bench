@@ -256,6 +256,38 @@ def check_n_regression(raw: list[dict], prior_scenarios) -> list[str]:
     return regressions
 
 
+# hb#379/#4420 (guard-then-fill): sla_metrics keys that a producer is allowed to
+# NULL OUT (rather than omit) when the underlying condition is legitimately
+# unmeasurable, provided the sibling reason-field names a value from the closed
+# set below. Registering a key here narrows check_cell_downgrade's new
+# null-transition check to exactly these producers — every other scenario's
+# sla_metrics keeps leg 2's ordinary "value changes never gate" behavior
+# unchanged. warmpool_cold_start's cold-tier trio (harness/scenarios/
+# warmpool_cold_start.py's _add_gate_diagnostic_metrics) is the first adopter:
+# the cold tier can be legitimately empty (no true-cold claim) or the warm p50
+# can be degenerate (<=0), and both must be disclosed as an explicit null +
+# reason rather than a silently-dropped key.
+_NULLABLE_METRIC_REASON_FIELD = {
+    "warmpool_gate_cold_min_ms": "warmpool_gate_cold_absent_reason",
+    "warmpool_gate_cold_p50_ms": "warmpool_gate_cold_absent_reason",
+    "warmpool_gate_separation_ratio": "warmpool_gate_cold_absent_reason",
+}
+
+# Closed set of recognized absent-reason values. A null transition on a
+# registered key above whose sibling reason field holds anything outside this
+# set (missing, wrong type, or an unrecognized string — e.g. a future typo or
+# an unhandled new condition class) FAILS CLOSED like any other key loss,
+# rather than silently passing.
+_RECOGNIZED_ABSENT_REASONS = {
+    # remainder (the cold-tier claim list) is empty — every completed claim
+    # landed in the warm set, so there is no true-cold sample to measure.
+    "no_true_cold_bucket_claims",
+    # the cold tier is real (cold_min/cold_p50 are populated) but warm_p50_s
+    # is <= 0 — an unmeasurable (degenerate) separation-ratio denominator.
+    "degenerate_warm_p50",
+}
+
+
 def check_cell_downgrade(
     raw: list, prior_scenarios, downgraded_names: set | None = None
 ) -> list[str]:
@@ -284,7 +316,12 @@ def check_cell_downgrade(
        configured baseline has) — this leg is skipped entirely and the skip
        is logged (not silent), rather than firing a non-actionable ERROR. Any
        other shape (either side silent, or both sides agree) is treated as
-       the ordinary same-config comparison, unchanged;
+       the ordinary same-config comparison, unchanged. A registered key (see
+       `_NULLABLE_METRIC_REASON_FIELD`) that stays PRESENT but transitions
+       value->null is a narrower case this leg also polices (#4420
+       guard-then-fill): permitted only when the fresh row's sibling
+       reason field names a value from `_RECOGNIZED_ABSENT_REASONS` —
+       missing, wrong-typed, or unrecognized reason still fails closed;
     3. row drop — a measured prior whose name is entirely absent from the fresh
        set (merge_seed_placeholders deliberately resurrects only `pending`
        priors, so a deregistered measured row would otherwise vanish silently).
@@ -415,6 +452,36 @@ def check_cell_downgrade(
                     downgrades.append(
                         f"{name}: sla_metrics key(s) lost vs committed row: "
                         f"{', '.join(lost)}{mw_suffix_both}"
+                    )
+                    if downgraded_names is not None:
+                        downgraded_names.add(name)
+                # #4420 guard-then-fill: a registered key that stayed present
+                # but nulled out is permitted ONLY when the fresh row's
+                # sibling reason field names a recognized absent-reason.
+                # Keys already caught by the `lost` leg above (removed
+                # entirely, not just nulled) are skipped here — that is a
+                # stronger, already-flagged violation.
+                nulled_bad_reason = []
+                for k in sorted(pm):
+                    if k not in _NULLABLE_METRIC_REASON_FIELD:
+                        continue
+                    if k not in fm_keys:
+                        continue
+                    if pm.get(k) is None or fm.get(k) is not None:
+                        continue
+                    reason_field = _NULLABLE_METRIC_REASON_FIELD[k]
+                    reason_val = fm.get(reason_field) if isinstance(fm, dict) else None
+                    if (
+                        isinstance(reason_val, str)
+                        and reason_val in _RECOGNIZED_ABSENT_REASONS
+                    ):
+                        continue
+                    nulled_bad_reason.append(f"{k} (reason={reason_val!r})")
+                if nulled_bad_reason:
+                    downgrades.append(
+                        f"{name}: sla_metrics key(s) nulled without a recognized "
+                        f"absent-reason vs committed row: "
+                        f"{', '.join(nulled_bad_reason)}{mw_suffix_both}"
                     )
                     if downgraded_names is not None:
                         downgraded_names.add(name)
