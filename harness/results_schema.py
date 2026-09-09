@@ -350,6 +350,52 @@ _MACHINE_TYPE_RE = re.compile(
 # the cluster_saturation run_id field into the public page. Present-but-non-matching ⇒ dropped.
 _RUN_ID_RE = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 
+# hb#379/#4420 (guard-then-fill) — single source of truth for which sla_metrics keys a
+# producer may legitimately NULL OUT (rather than omit) when the underlying condition is
+# unmeasurable, provided the sibling reason field names a value from the closed set below.
+# `harness/run.py`'s `check_cell_downgrade` imports this SAME dict (not an independent
+# copy) to gate its null-transition check, so the persistence layer here and the
+# refresh-time guard there can never drift out of sync on which keys/reasons are valid —
+# unlike the deliberately-independent render/harness enum pairs elsewhere in this module,
+# there is no cross-boundary reason to duplicate this one (run.py already imports
+# results_schema). warmpool_cold_start.py is the sole producer today: the cold-tier trio
+# (_add_gate_diagnostic_metrics) and the dip-state TTFE pairs (_ttfe_by_dip_state's
+# during_dip/at_full_supply buckets) can each be legitimately empty for a given fire.
+_NULLABLE_METRIC_REASON_FIELD = {
+    "warmpool_gate_cold_min_ms": "warmpool_gate_cold_absent_reason",
+    "warmpool_gate_cold_p50_ms": "warmpool_gate_cold_absent_reason",
+    "warmpool_gate_separation_ratio": "warmpool_gate_cold_absent_reason",
+    "warmpool_gate_ttfe_during_dip_median_ms": "warmpool_gate_ttfe_during_dip_absent_reason",
+    "warmpool_gate_ttfe_during_dip_n": "warmpool_gate_ttfe_during_dip_absent_reason",
+    "warmpool_gate_ttfe_at_supply_median_ms": "warmpool_gate_ttfe_at_supply_absent_reason",
+    "warmpool_gate_ttfe_at_supply_n": "warmpool_gate_ttfe_at_supply_absent_reason",
+}
+
+# Closed set of recognized absent-reason values. A null transition on a registered key
+# above whose sibling reason field holds anything outside this set (missing, wrong type,
+# or an unrecognized string) is rejected — by check_cell_downgrade's refresh-time guard,
+# AND by _coerce_sla_metrics below at persistence time (a null with no valid reason must
+# never reach a published results.json; that would be silent information loss with no
+# recorded cause, exactly what #4420 forbids).
+_RECOGNIZED_ABSENT_REASONS = {
+    # warmpool_cold_start: the cold-tier claim list is empty — every completed claim
+    # landed in the warm set, so there is no true-cold sample to measure.
+    "no_true_cold_bucket_claims",
+    # warmpool_cold_start: the cold tier is real but warm_p50_s is <= 0 — an
+    # unmeasurable (degenerate) separation-ratio denominator.
+    "degenerate_warm_p50",
+    # warmpool_cold_start (hb#835 lever-3): no claim was created while the pool was
+    # below its ready-target — the during-dip TTFE bucket has no members.
+    "no_dip_observed",
+    # warmpool_cold_start (hb#835 lever-3): no claim was created once the pool reached
+    # full ready-target supply — the at-full-supply TTFE bucket has no members.
+    "no_full_supply_claims",
+}
+
+# Reverse index (reason-field name -> True) used by _coerce_sla_metrics to recognize a
+# reason-field key without needing a second pass over the registry above.
+_REASON_FIELD_NAMES = set(_NULLABLE_METRIC_REASON_FIELD.values())
+
 
 def _coerce_sla_metrics(raw) -> dict:
     """Keep only {safe-key: finite-number}; drop everything else.
@@ -385,6 +431,35 @@ def _coerce_sla_metrics(raw) -> dict:
                 )
             out[k] = v
             continue
+        # hb#379/#4420 (guard-then-fill) — a reason-field key carries a CLOSED-ENUM
+        # string naming why its sibling nullable metric is legitimately absent. Gated
+        # the same way as the basis keys above: present-but-unrecognized is silently
+        # dropped (not raised) here, because the actual enforcement — "a null metric
+        # must have a recognized reason" — lives in the paired check right below, keyed
+        # off the metric side. A reason field with no corresponding null metric (or a
+        # metric that coerced to a real number) is harmless disclosure metadata.
+        if k in _REASON_FIELD_NAMES:
+            if isinstance(v, str) and v in _RECOGNIZED_ABSENT_REASONS:
+                out[k] = v
+            continue
+        # hb#379/#4420 (guard-then-fill) — a registered nullable metric key may
+        # legitimately persist as None, but ONLY when its sibling reason field (looked
+        # up in the RAW pre-coercion dict, since the reason field itself may not have
+        # been visited yet by this loop) names a recognized absent-reason. A null with
+        # no valid reason is exactly the silent-information-loss shape #4420 forbids —
+        # fail closed (raise), never drop-and-stay-quiet.
+        if k in _NULLABLE_METRIC_REASON_FIELD and v is None:
+            reason_field = _NULLABLE_METRIC_REASON_FIELD[k]
+            reason_val = raw.get(reason_field)
+            if isinstance(reason_val, str) and reason_val in _RECOGNIZED_ABSENT_REASONS:
+                out[k] = None
+                continue
+            raise ValueError(
+                f"sla_metrics.{k} is null without a recognized absent-reason "
+                f"(sibling {reason_field}={reason_val!r}); guard-then-fill "
+                f"(#4420) requires an explicit, closed-set reason alongside "
+                f"any legitimately-null nullable metric"
+            )
         # thpt_slo_measured_at (hb#554): the ISO-8601 instant the sweep that produced
         # the per-cluster SLO triple actually ran. Mirrors the `measured_at` carve-out
         # used by every other point-in-time block (scale_proof, warm_vs_cold, cluster
