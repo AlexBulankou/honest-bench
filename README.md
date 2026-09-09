@@ -42,8 +42,8 @@ blocker — diagnosis plus file-ready patches and comments — is hand-maintaine
 | gVisor | Warm-pool hit (Base image) ⚠️ FAIL | 2.962 /node · 9.336 /cluster ⚠️ | 0 /node · 9.336 /cluster ⚠️ | 2.7928s (count=30) | 3.1345s (count=30) | 100% |
 | gVisor | Unique-image cold (RL reality) | [pending](WORK_IN_PROGRESS.md#not-yet-measured) | 0 /node · 0 /cluster | 4.0318s (count=200) | 4.5553s (count=200) | 100% |
 | gVisor | Resume-from-suspend | [pending](WORK_IN_PROGRESS.md#not-yet-measured) | 0 /node · 0 /cluster | 4.7021s (count=30) | 4.9227s (count=30) | 100% |
-| Kata + microVM | Warm-pool hit (Base image) | 14.012 /node · 0.694 /cluster ⚠️ | 0 /node · 0 /cluster | 1.4399s (count=30) | 1.6844s (count=30) | 100% |
-| Kata + microVM | Unique-image cold (RL reality) | [pending](WORK_IN_PROGRESS.md#not-yet-measured) | 0 /node · 0 /cluster | 3.1986s (count=30) | 3.5684s (count=30) | 100% |
+| Kata + microVM | Warm-pool hit (Base image) | 8.321 /node · 0.694 /cluster ⚠️ | 0.925 /node ‡ · [pending (cluster-fire)](WORK_IN_PROGRESS.md#cluster-fire) | 1.9468s (count=30) | 3.2046s (count=30) | 90% (27/30) ⚠️ |
+| Kata + microVM | Unique-image cold (RL reality) | [pending](WORK_IN_PROGRESS.md#not-yet-measured) | 0 /node · 0 /cluster | 3.4621s (count=30) | 3.968s (count=30) | 100% |
 | Kata + microVM | Resume-from-suspend | [N/A](WORK_IN_PROGRESS.md#na-by-construction) | [N/A](WORK_IN_PROGRESS.md#na-by-construction) | [N/A](WORK_IN_PROGRESS.md#na-by-construction) | [N/A](WORK_IN_PROGRESS.md#na-by-construction) | [N/A](WORK_IN_PROGRESS.md#na-by-construction) |
 
 _⚠️ **Scenario FAIL:** **gVisor** Warm-pool hit (Base image) — the row above carries a real measurement whose own scenario outcome is **FAIL** (SLA not met), not a passing warm hit. The numbers are honest data, disclosed as a miss rather than dropped or greened; a later refresh whose scenario returns to PASS clears this._
@@ -70,18 +70,18 @@ Density is per-**runtime** — constant across a runtime's activation-mode rows 
 
 Full cell-decoding key — TTFE basis, honest vs. measured zeros, the dual per-node · per-cluster throughput pair, the certification-floor `≥` figures, every `pending` flavor, and the published-with-caveat tag classes — is in [DETAILS.md](DETAILS.md#how-to-read-the-core-metrics-cells).
 
-_Kata + microVM rows are measured in a separate run on the kata node pool: cluster_substrate=gke-kata · node_count=1 · generated-at=2026-08-31T15:22:54Z._
+_Kata + microVM rows are measured in a separate run on the kata node pool: cluster_substrate=gke-kata · node_count=1 · generated-at=2026-09-09T16:39:43Z._
 
 _build: cluster_substrate=gke-sandbox · controller_digest=sha256:0aad9461883dde7a2e82b08a5c7f59192bd87f8cab37d297c8a4650649398b5a · suite_git_sha=7a2783f43d237d6c45fc00c0f1e6d6da32980430 · upstream_ref=e87bc38cba073809e8f790b0af18d378fc76b49d · run_id=dc23309d430247bb9c0c2ab51346cb5e · node_count=2 · machine_type=n2-standard-16_
 _generated-at: 2026-09-09T02:07:40Z_
 
-_**North Star** — warm-pool-hit TTFE p95 < 1s (the spec doc bar): gVisor 3.1345s (count=30) ❌ not met (2.1345s above the bar) ⚠️ **scenario FAIL**; Kata + microVM 1.6844s (count=30) ❌ not met (0.6844s above the bar). An honest ❌ prints the measured gap to the bar (tagged `within sampling noise` when the miss sits inside the sample spread — it stays a ❌, the tag never flips a miss to a pass); `pending` = unmeasured (never a guess); † marks a p95 over fewer than N=30 samples._
+_**North Star** — warm-pool-hit TTFE p95 < 1s (the spec doc bar): gVisor 3.1345s (count=30) ❌ not met (2.1345s above the bar) ⚠️ **scenario FAIL**; Kata + microVM 3.2046s (count=30) ❌ not met (2.2046s above the bar). An honest ❌ prints the measured gap to the bar (tagged `within sampling noise` when the miss sits inside the sample spread — it stays a ❌, the tag never flips a miss to a pass); `pending` = unmeasured (never a guess); † marks a p95 over fewer than N=30 samples._
 
-_**Stretch bar** — warm-pool-hit TTFE p95 < 0.5s (an aspiration above the North Star, not the North Star itself; the step-up curve grades sustained creation-rate against it — see [DETAILS.md](DETAILS.md)): gVisor 3.1345s (count=30) ❌ not met (2.6345s above the bar) ⚠️ **scenario FAIL**; Kata + microVM 1.6844s (count=30) ❌ not met (1.1844s above the bar)._
+_**Stretch bar** — warm-pool-hit TTFE p95 < 0.5s (an aspiration above the North Star, not the North Star itself; the step-up curve grades sustained creation-rate against it — see [DETAILS.md](DETAILS.md)): gVisor 3.1345s (count=30) ❌ not met (2.6345s above the bar) ⚠️ **scenario FAIL**; Kata + microVM 3.2046s (count=30) ❌ not met (2.7046s above the bar)._
 
-> ⚠️ **Cross-runtime comparability:** the North Star gVisor and Kata + microVM p95 figures are drawn from two independent fires and are not directly co-measured — the two figures cannot be confirmed to share a machine class — Kata + microVM did not stamp `machine_type`, so a rig difference between them cannot be ruled out; the two figures were measured at different node counts (gVisor at 2, Kata + microVM at 1); the two figures were measured 8 days apart (gVisor 2026-09-09, Kata + microVM 2026-08-31), beyond the 7-day co-measurement window. Read the cross-runtime p95 gap as provisional until both runtimes republish on a matched rig within one freshness window.
+> ⚠️ **Cross-runtime comparability:** the North Star gVisor and Kata + microVM p95 figures are drawn from two independent fires and are not directly co-measured — the two figures cannot be confirmed to share a machine class — Kata + microVM did not stamp `machine_type`, so a rig difference between them cannot be ruled out; the two figures were measured at different node counts (gVisor at 2, Kata + microVM at 1). Read the cross-runtime p95 gap as provisional until both runtimes republish on a matched rig within one freshness window.
 
-> ⚠️ **Harness staleness:** this figure was measured by suite `7a2783f43d237d6c45fc00c0f1e6d6da32980430`, which is **1 commit behind** the current measurement path (`#844`). Re-fire before treating it as current.
+> ⚠️ **Harness staleness unverified:** the stamped suite `7a2783f43d237d6c45fc00c0f1e6d6da32980430` could not be confirmed as an ancestor of the current measurement path (absent, shallow clone, or rewritten history) — its freshness relative to `harness/scenarios/` cannot be reconciled. Re-fire before treating it as current.
 
 ### Known anomalies
 
