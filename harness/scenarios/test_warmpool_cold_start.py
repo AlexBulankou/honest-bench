@@ -926,6 +926,103 @@ def test_patch_warmpool_replicas_sends_scalar_merge_patch():
     assert call["namespace"] == cell._NAMESPACE
 
 
+# ---- hb#843: lever-2 fail-safe fallback (_prescale_pool_with_fallback) ----
+# hb#835's inline prescale-and-wait crashed the whole scenario (zero claims
+# fired, zero published data) whenever the prescale target exceeded a
+# structural capacity ceiling (kata's 2-node cap, ~42 pods) -- confirmed via
+# a real failed build (see honest-bench#835's corrected root-cause comment).
+# This helper wraps the same prescale-and-wait but degrades instead of
+# raising when the wait times out, so the burst still fires.
+
+class _FakePatchAndGet:
+    """Combined fake: records patch calls, returns readyReplicas from `get_seq`.
+
+    `get_seq` is consumed one value per `get_namespaced_custom_object` call
+    (mirrors `_FakeCustomSequence`), holding the last value once exhausted.
+    """
+
+    def __init__(self, get_seq: list[int]):
+        self._seq = list(get_seq)
+        self._i = 0
+        self.patch_calls: list[dict] = []
+
+    def get_namespaced_custom_object(self, group, version, namespace, plural, name):
+        ready = self._seq[min(self._i, len(self._seq) - 1)]
+        self._i += 1
+        return {"status": {"readyReplicas": ready}}
+
+    def patch_namespaced_custom_object(self, group, version, namespace, plural, name, body):
+        self.patch_calls.append({"name": name, "body": body})
+
+
+def test_prescale_with_fallback_noop_in_cold_baseline_mode():
+    custom = _FakePatchAndGet([0])
+    degraded = cell._prescale_pool_with_fallback(
+        custom, pool_name="pool-x", pool_replicas=0, claim_count=10,
+        headroom=5, timeout_s=10, stability_polls=1,
+    )
+    assert degraded is False
+    assert custom.patch_calls == []
+
+
+def test_prescale_with_fallback_noop_when_pool_already_covers_burst():
+    custom = _FakePatchAndGet([20])
+    degraded = cell._prescale_pool_with_fallback(
+        custom, pool_name="pool-x", pool_replicas=20, claim_count=10,
+        headroom=5, timeout_s=10, stability_polls=1,
+    )
+    assert degraded is False
+    assert custom.patch_calls == []
+
+
+def test_prescale_with_fallback_succeeds_patches_and_returns_not_degraded():
+    # Undersized pool (10) vs. claim_count+headroom (15): patches to 15, then
+    # the get-sequence immediately reports 15 ready -> clean success.
+    custom = _FakePatchAndGet([15, 15])
+    orig_sleep = cell.time.sleep
+    cell.time.sleep = lambda _s: None
+    try:
+        degraded = cell._prescale_pool_with_fallback(
+            custom, pool_name="pool-x", pool_replicas=10, claim_count=10,
+            headroom=5, timeout_s=10, stability_polls=2,
+        )
+    finally:
+        cell.time.sleep = orig_sleep
+    assert degraded is False
+    assert len(custom.patch_calls) == 1
+    assert custom.patch_calls[0] == {"name": "pool-x", "body": {"spec": {"replicas": 15}}}
+
+
+def test_prescale_with_fallback_degrades_instead_of_raising_on_timeout():
+    # Undersized pool (30) vs. claim_count+headroom (45): patches to 45, but
+    # the pool structurally never gets past 30 (e.g. a 2-node kata capacity
+    # ceiling, hb#843) -- must degrade (return True), NOT raise.
+    custom = _FakePatchAndGet([30])
+    fake_deadline = [0.0]
+
+    def _fake_monotonic():
+        fake_deadline[0] += 1.0
+        return fake_deadline[0]
+
+    orig_sleep = cell.time.sleep
+    orig_monotonic = cell.time.monotonic
+    cell.time.sleep = lambda _s: None
+    cell.time.monotonic = _fake_monotonic
+    try:
+        degraded = cell._prescale_pool_with_fallback(
+            custom, pool_name="pool-x", pool_replicas=30, claim_count=40,
+            headroom=5, timeout_s=5, stability_polls=3,
+        )
+    finally:
+        cell.time.sleep = orig_sleep
+        cell.time.monotonic = orig_monotonic
+    assert degraded is True
+    # Best-effort: the patch to the higher target was still attempted and is
+    # NOT reverted -- partial prescale is still better burst headroom.
+    assert len(custom.patch_calls) == 1
+    assert custom.patch_calls[0]["body"] == {"spec": {"replicas": 45}}
+
+
 # ---- hb#411: _cleanup batch-retry rides out the IAM-strike window ----
 # The finally-block cleanup can run inside the sub-92s a4-hb-refresh@ IAM strip,
 # where every delete 403s. A single best-effort pass then leaks the pool + 30
