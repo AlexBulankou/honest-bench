@@ -117,12 +117,37 @@ substitutions:
   _ALLOW_CELL_DOWNGRADE: ""
 
 steps:
+  # hb#850 / hb#830 precedent (same reasoning as cloudbuild-render-autoheal.yaml
+  # and cloudbuild-unit-tests.yaml): resolve_harness_staleness's
+  # `git merge-base --is-ancestor <stamped-suite-sha> HEAD` check needs the full
+  # commit graph. The refresh trigger's source checkout is shallow, so without
+  # this deepen the kata page's harness-staleness disclosure reads a GENUINE
+  # ancestor suite as "unverified ancestry" purely because the object isn't
+  # present locally — a permanently-lit fence that no re-fire can clear. Deepen
+  # here so render.generate (in the measure step below, shared /workspace/.git)
+  # can downgrade the caveat to a precise "N commits behind" or clear it. Public
+  # repo ⇒ the fetch needs no auth (bot-identity git auth isn't configured until
+  # the open-pr step). Best-effort: resolve_harness_staleness already fails
+  # closed, so a fetch that can't complete leaves the disclosure exactly as it is
+  # today, never worse.
+  - name: python:3.12
+    id: unshallow
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -uo pipefail
+        git fetch --no-tags --unshallow origin main >/dev/null 2>&1 \
+          || git fetch --no-tags origin main >/dev/null 2>&1 \
+          || true
+
   # Single orchestration step: auth -> preconditions -> cold-honesty guard ->
   # sweep -> graduation refresh -> render -> public-safety. No cluster create and
   # no teardown trap (this runs against the standing cluster, which this build must
   # never provision or delete) — the only trap kills the background node sampler.
   - name: gcr.io/google.com/cloudsdktool/cloud-sdk
     id: measure
+    waitFor: ['unshallow']
     entrypoint: bash
     env:
       # Full kata graduation shape (recipe/REPRODUCE.md, "Refreshing published
