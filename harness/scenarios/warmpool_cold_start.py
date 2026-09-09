@@ -96,6 +96,18 @@ _SANDBOX_IMAGE = os.environ.get(
 _POOL_REPLICAS = int(os.environ.get("WARMPOOL_COLD_START_POOL_REPLICAS", "5"))
 _CLAIM_COUNT = int(os.environ.get("WARMPOOL_COLD_START_CLAIM_COUNT", "10"))
 
+# hb#835 lever-2: burst-aware pre-scale headroom. A claim burst sized close to
+# (or above) the nominal pool can transiently drain readyReplicas toward 0
+# mid-burst, waiting for steady-state autoscale to catch up rather than
+# serving from an already-warm pool (hb#835's confirmed mechanism). Prescale
+# the live WarmPool to `claim_count + headroom` (never below the nominal
+# `_POOL_REPLICAS`) immediately before the burst so supply comfortably
+# exceeds demand throughout, instead of tuning a bigger static floor for
+# today's burst shape. 0 disables the lever entirely (opt-out, not the
+# default — lever-2 is launched-by-default per the fleet's no-dormant-
+# features doctrine).
+_PRESCALE_HEADROOM = int(os.environ.get("WARMPOOL_COLD_START_PRESCALE_HEADROOM", "5"))
+
 
 def _fill_gate_target(pool_replicas: int, claim_count: int) -> int:
     """Pre-fire fill-gate readyReplicas target.
@@ -488,6 +500,36 @@ def _wait_for_pool_warm(
         f"SandboxWarmPool {pool_name} did not sustain readyReplicas>={target_ready} "
         f"for {stability_polls} consecutive poll(s) within {timeout_s}s "
         f"(last status={last_status!r})"
+    )
+
+
+def _prescale_pool_target(pool_replicas: int, claim_count: int, headroom: int) -> int:
+    """hb#835 lever-2: readyReplicas target to prescale the WarmPool to.
+
+    Never below the nominal `pool_replicas` (this is a burst-headroom lever,
+    not a resize-down) -- the caller additionally gates on
+    `pool_replicas > 0` (cold-baseline mode never prescales) and on the
+    result exceeding `pool_replicas` (a no-op prescale is skipped, not
+    patched-to-itself). Pure so it's testable off fixtures like
+    `_fill_gate_target` above; deliberately separate from `_gate_target`,
+    which stays capped at `min(pool, claims)` per hb#804 and must not move
+    when this lever fires.
+    """
+    return max(pool_replicas, claim_count + headroom)
+
+
+def _patch_warmpool_replicas(custom, *, pool_name: str, replicas: int) -> None:
+    """Merge-patch spec.replicas on an already-created WarmPool.
+
+    hb#835 lever-2: one scalar field, so the client's default merge-patch is
+    correct (no array-merge needed) — same shape as suspend_resume.py's
+    `_patch_lifecycle`.
+    """
+    group, version, plural = _SWP_GVR
+    custom.patch_namespaced_custom_object(
+        group=group, version=version, namespace=_NAMESPACE,
+        plural=plural, name=pool_name,
+        body={"spec": {"replicas": replicas}},
     )
 
 
@@ -1371,6 +1413,40 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
             _gate_target, _CLAIM_COUNT,
         )
 
+        # hb#835 lever-2: prescale the pool ahead of the known burst size so
+        # readyReplicas has comfortable headroom over demand throughout the
+        # burst, instead of relying on steady-state autoscale to react fast
+        # enough mid-burst (the confirmed mechanism behind the readyReplicas
+        # floor-drain this issue's lever-3 instrumentation measured). No-op
+        # in cold-baseline mode or when the nominal pool already covers the
+        # burst + headroom. Deliberately independent of `_gate_target`
+        # (which stays capped at min(pool, claims) per hb#804) and of
+        # `_POOL_REPLICAS` itself (never reassigned) — the classification
+        # and lever-3 dip-detection math below keys off both of those
+        # UNCHANGED, so this prescale cannot silently move the gate.
+        _prescale_target = _prescale_pool_target(
+            _POOL_REPLICAS, _CLAIM_COUNT, _PRESCALE_HEADROOM,
+        )
+        if _POOL_REPLICAS > 0 and _prescale_target > _POOL_REPLICAS:
+            log.info(
+                "hb#835 lever-2: prescaling WarmPool %s %d -> %d "
+                "(claim_count=%d + headroom=%d) ahead of burst",
+                pool_name, _POOL_REPLICAS, _prescale_target,
+                _CLAIM_COUNT, _PRESCALE_HEADROOM,
+            )
+            _patch_warmpool_replicas(
+                custom, pool_name=pool_name, replicas=_prescale_target,
+            )
+            _wait_for_pool_warm(
+                custom, pool_name=pool_name,
+                target_ready=_prescale_target, timeout_s=_WARMUP_TIMEOUT_S,
+                stability_polls=_WARMUP_STABILITY_POLLS,
+            )
+            log.info(
+                "hb#835 lever-2: pool prescaled to readyReplicas=%d",
+                _prescale_target,
+            )
+
         # hb#450 provenance snapshot: capture the pre-warmed Sandbox name set
         # IMMEDIATELY before the burst. A claim adopting one of these is a genuine
         # warm hit; a claim adopting a sandbox absent from this set (a depletion
@@ -1488,6 +1564,7 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
             under[2]["measured_with"] = {
                 "WARMPOOL_COLD_START_POOL_REPLICAS": _POOL_REPLICAS,
                 "WARMPOOL_COLD_START_CLAIM_COUNT": _CLAIM_COUNT,
+                "WARMPOOL_COLD_START_PRESCALE_HEADROOM": _PRESCALE_HEADROOM,
             }
             return under
         # Emit-key assembly. Two paths, gated by BENCH_TTFE_EXEC:
@@ -1649,6 +1726,7 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
         sla_metrics["measured_with"] = {
             "WARMPOOL_COLD_START_POOL_REPLICAS": _POOL_REPLICAS,
             "WARMPOOL_COLD_START_CLAIM_COUNT": _CLAIM_COUNT,
+            "WARMPOOL_COLD_START_PRESCALE_HEADROOM": _PRESCALE_HEADROOM,
         }
         sep = breakdown["separation_observed"]
         sep_str = f"{sep:.2f}x" if sep is not None else "<no-cold-tier>"
