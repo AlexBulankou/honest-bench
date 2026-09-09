@@ -1,0 +1,153 @@
+# Post-merge auto-heal for render/generate.py's self-referential staleness bug
+# (hb#846, follow-up to hb#845) — Cloud Build PUSH-trigger config.
+#
+# THE BUG (hb#845 root cause): a squash-merge rewrites BOTH the SHA and the
+# subject line of the merged commit. resolve_harness_staleness() computes its
+# caption pre-merge, reading the PR's own branch-tip commit — so any PR that
+# touches harness/scenarios/ bakes a caption into README.md derived from a
+# commit GitHub is about to squash-rewrite. No pre-merge caption (subject- or
+# SHA-based) can ever match what a fresh generate() run against the TRUE
+# post-merge main HEAD would produce. hb#845 fixed the one instance this
+# surfaced as (PR #844, by hand); this config is the structural fix for every
+# future recurrence: re-run render.generate() against main's real post-merge
+# HEAD right after any push touching harness/scenarios/, and open a follow-up
+# PR iff the regen diverges from what's already committed.
+#
+# WHY POST-MERGE, NOT A PR-TIME GATE: a PR-time check runs on the PR's own
+# branch tip — exactly the state about to be rewritten by the squash — so it
+# structurally cannot see the post-squash truth. Only a run AFTER the squash
+# lands (this trigger, on push to main) can compute the caption GitHub's
+# rewrite actually produced. hb-unit-tests-main (existing push-to-main gate)
+# already DETECTS this drift today via render/test_readme_fresh.py — this
+# trigger is the automated FIX for what that gate could only flag red.
+#
+# SCOPE: included-files=harness/scenarios/** only. That path is the sole
+# caption input resolve_harness_staleness() derives from commit metadata
+# (subject/SHA of the touching commit) — a push that doesn't touch it cannot
+# produce this class of staleness, so scoping here keeps the trigger silent
+# on unrelated main pushes rather than re-running generate() on every one
+# (the broader push-to-main gate already exists: hb-unit-tests-main).
+#
+# NO SEPARATE LEAK SCAN: this trigger's own bot-opened PR is re-scanned by
+# hb-unit-tests (the PR gate, path-unfiltered) before it can merge — running
+# check-public-safety.sh again here would be pure duplication, since the
+# regenerated content is derived only from data already committed on main.
+#
+# Fleet rule: NO GitHub Actions — Cloud Build ONLY.
+#
+# TRUSTED-REF re-bake (edits here require re-baking the live inline trigger
+# from THIS file via user-ADC — the trusted-gate boundary): see
+# scripts/setup-cloud-build-triggers.sh for the concrete create/update
+# command (--service-account/--project kept out of this public file, same
+# convention as the repo's other Cloud Build configs).
+
+steps:
+  # Full unshallow (hb#830 precedent, same reasoning as
+  # cloudbuild-unit-tests.yaml's commit-metadata step): resolve_harness_staleness's
+  # `git merge-base --is-ancestor` check needs the full commit graph to
+  # correctly resolve an older stamped suite_git_sha — a shallow/partial
+  # clone can read a genuine ancestor as "unresolvable" purely because the
+  # object isn't present locally yet.
+  - name: python:3.12
+    id: unshallow
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -uo pipefail
+        git fetch --no-tags --unshallow origin main >/dev/null 2>&1 \
+          || git fetch --no-tags origin main >/dev/null 2>&1 \
+          || true
+
+  # Re-render against the true post-merge main HEAD. Fail LOUD (not
+  # fail-open) on a nonzero exit: render.generate.main() already fails closed
+  # on its own trust-surface downgrade guard (_render_downgrades) before
+  # writing anything, so a nonzero exit here is either that guard tripping (a
+  # real regression worth surfacing, never silently swallowed) or a genuine
+  # script error — never "safe to ignore and PR nothing".
+  - name: python:3.12
+    id: regenerate
+    entrypoint: bash
+    waitFor: ['unshallow']
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        python3 -m render.generate
+
+  # Open the follow-up PR iff the regen diverges from what main already has
+  # committed. Modeled on cloudbuild-refresh-gke-sandbox.yaml's open-pr step
+  # (bot-identity mint via scripts/mint-gh-app-token.sh, per-fire-unique
+  # branch, REST PR-open with existing-open-PR dedup) — see that file's
+  # comments for the full rationale on each piece; only the file-set and
+  # commit/PR text differ here.
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    id: open-pr
+    entrypoint: bash
+    waitFor: ['regenerate']
+    secretEnv: ['GH_APP_PEM']
+    args:
+      - -c
+      - |
+        set -euo pipefail
+
+        GH_APP_ID="3832349"
+        GH_APP_ACCOUNT="AlexBulankou"
+        MINT_BOT_IDENTITY=1
+        source scripts/mint-gh-app-token.sh
+
+        # No divergence -> nothing to heal.
+        if git diff --quiet -- README.md DETAILS.md WORK_IN_PROGRESS.md; then
+          echo "Regenerated output matches committed state — no staleness to heal."
+          exit 0
+        fi
+
+        # $$ escapes CB's substitution engine so GITHUB_TOKEN/BOT_LOGIN/BOT_EMAIL
+        # are read at runtime from the sourced script's exports, not consumed as
+        # build substitutions at submit time (the #1474 foot-gun).
+        git config --global url."https://x-access-token:$${GITHUB_TOKEN}@github.com/".insteadOf "https://github.com/"
+        git config --global user.name "$${BOT_LOGIN}"
+        git config --global user.email "$${BOT_EMAIL}"
+
+        # Unique branch per fire (hb#682 precedent): this trigger can fire
+        # repeatedly across consecutive qualifying pushes before a prior
+        # auto-heal PR is reviewed; a shared mutable branch would force-push
+        # over — and silently drop — that unreviewed predecessor's diff.
+        BRANCH="auto/render-autoheal-$BUILD_ID"
+        git checkout -b "$$BRANCH"
+        git add README.md DETAILS.md WORK_IN_PROGRESS.md
+        git commit -m "fix(render): auto-heal post-merge caption staleness (hb#846)"
+        git push origin "$$BRANCH"
+
+        BODY="Automated post-merge re-render (Cloud Build push trigger, hb#846). A push touching harness/scenarios/ landed on main; render.generate() was re-run against the true post-merge HEAD and diverged from the committed README.md/DETAILS.md/WORK_IN_PROGRESS.md — most commonly because a squash-merge rewrote the merged commit's subject/SHA after a pre-merge caption was already baked in (hb#845's root cause). Review the diff before merge."
+        api="https://api.github.com/repos/AlexBulankou/honest-bench/pulls"
+        existing=$(curl -sS -H "Authorization: Bearer $${GITHUB_TOKEN}" \
+          "$api?head=AlexBulankou:$$BRANCH&state=open")
+        existing_url=$(echo "$existing" | python3 -c 'import sys,json; d=json.load(sys.stdin); print(d[0]["html_url"] if d else "")')
+        if [ -n "$existing_url" ]; then
+          echo "A PR for $$BRANCH is already open — pushed the update to it."
+          exit 0
+        fi
+        payload=$(python3 -c 'import json,sys; print(json.dumps({"title":"fix(render): auto-heal post-merge caption staleness (hb#846)","head":sys.argv[1],"base":"main","body":sys.argv[2]}))' "$$BRANCH" "$$BODY")
+        pr_response=$(curl -sS -X POST -H "Authorization: Bearer $${GITHUB_TOKEN}" \
+          -H "Accept: application/vnd.github+json" "$api" -d "$payload")
+        echo "$pr_response"
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+
+availableSecrets:
+  secretManager:
+    # $PROJECT_ID is a Cloud Build built-in substitution resolved at build
+    # time, so the concrete project id never ships in this public file (same
+    # pattern as the repo's other Cloud Build configs). hb-unit-tests-ci@ (the
+    # SA this trigger runs as — see scripts/setup-cloud-build-triggers.sh) was
+    # granted Secret Accessor on this secret alongside the pre-existing
+    # a4-hb-refresh@ grant, least-privilege: this trigger needs zero cluster
+    # access, unlike the refresh triggers that also hold this secret.
+    - versionName: projects/$PROJECT_ID/secrets/hb-refresh-gh-app-pem/versions/latest
+      env: GH_APP_PEM
+
+# Cheap: no cluster, no pip install, offline regen + a git push + one REST
+# call. 300s is ample headroom over the sub-minute expected runtime.
+timeout: 300s

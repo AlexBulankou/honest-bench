@@ -19,7 +19,10 @@
 #      the migration's enabler and why the migration PR stays a draft (held) until
 #      the connection is live.
 #   2. CLOUDBUILD_SA — a low-privilege CB runtime SA for the OFFLINE unit-tests
-#      trigger (no cluster, no GitHub token needed).
+#      trigger (no cluster, no GitHub token needed). Also needs Secret Accessor
+#      on hb-refresh-gh-app-pem for the [5/7] render-autoheal trigger (least-
+#      privilege reuse of the per-agent GitHub App PEM to mint a bot-identity
+#      token for its PR-open step — no cluster access, unlike REFRESH_SA below).
 #   3. REFRESH_SA — a DEDICATED least-privilege SA for the refresh trigger, with on
 #      PROJECT: roles/container.admin + roles/iam.serviceAccountUser +
 #      roles/compute.viewer + roles/logging.logWriter, plus Secret Accessor on
@@ -48,7 +51,7 @@ sa_path() { case "$1" in */*) printf '%s' "$1";; *) printf 'projects/%s/serviceA
 CLOUDBUILD_SA="$(sa_path "$CLOUDBUILD_SA")"
 REFRESH_SA="$(sa_path "$REFRESH_SA")"
 
-echo "==> [1/6] unit-tests PR gate (fires on PRs targeting main; FAIL-CLOSED merge gate)"
+echo "==> [1/7] unit-tests PR gate (fires on PRs targeting main; FAIL-CLOSED merge gate)"
 # COMMENTS_DISABLED is REQUIRED — the `github` subcommand with --pull-request-pattern
 # silently defaults to COMMENTS_ENABLED, gating every build behind /gcbrun. The flag
 # is identical on create and update, so it survives the re-bake path below.
@@ -70,7 +73,7 @@ gcloud builds triggers create github --name=hb-unit-tests \
     --service-account="$CLOUDBUILD_SA" \
     --project="$PROJECT"
 
-echo "==> [2/6] north-star cross-lane PASS->FAIL flip gate (fires on PRs targeting main; FAIL-CLOSED merge gate)"
+echo "==> [2/7] north-star cross-lane PASS->FAIL flip gate (fires on PRs targeting main; FAIL-CLOSED merge gate)"
 # hb#623: blocks a PR whose latest.json flips the customer headline PASS->FAIL vs
 # main's currently-merged latest.json (the cross-lane overwrite render.py's own
 # delta caveat structurally can't see). Same offline CLOUDBUILD_SA as the unit
@@ -94,7 +97,7 @@ gcloud builds triggers create github --name=hb-north-star-flip-gate \
     --service-account="$CLOUDBUILD_SA" \
     --project="$PROJECT"
 
-echo "==> [3/6] diagnostic-lineage merge gate (fires on PRs targeting main; FAIL-CLOSED merge gate)"
+echo "==> [3/7] diagnostic-lineage merge gate (fires on PRs targeting main; FAIL-CLOSED merge gate)"
 # hb#646: blocks a PR whose latest.json carries a diagnostic-lineage
 # fork-build signature (fork_fix_count==0, or fork_sha==fork_base_upstream_sha —
 # the hb#643/#644 shape that silently overwrote the validated production pin
@@ -122,7 +125,7 @@ gcloud builds triggers create github --name=hb-diagnostic-lineage-gate \
     --service-account="$CLOUDBUILD_SA" \
     --project="$PROJECT"
 
-echo "==> [4/6] unit-tests post-merge gate (fires on push to main)"
+echo "==> [4/7] unit-tests post-merge gate (fires on push to main)"
 # Gates post-merge main so a bad merge is caught even if branch protection is not
 # (yet) wired to require the PR check. create-or-note-exists (idempotent re-run).
 gcloud builds triggers create github --name=hb-unit-tests-main \
@@ -133,7 +136,35 @@ gcloud builds triggers create github --name=hb-unit-tests-main \
   --project="$PROJECT" \
   || echo "   (already exists — re-run with: gcloud builds triggers update github hb-unit-tests-main --inline-config=cloudbuild-unit-tests.yaml ...)"
 
-echo "==> [5/6] gke-sandbox refresh (MANUAL only — no branch/PR/schedule; spend-gated by invocation)"
+echo "==> [5/7] render post-merge auto-heal (fires on push to main touching harness/scenarios/**; hb#846)"
+# Structural fix for the hb#845 squash-merge caption-staleness class: a push that
+# touches harness/scenarios/ re-runs render.generate() against main's true
+# post-merge HEAD and opens a follow-up PR iff the regen diverges from what's
+# already committed. Same offline CLOUDBUILD_SA as [1/7]/[4/7] — this trigger
+# also needs zero cluster access (a git fetch + offline regen + one REST call) —
+# now additionally granted Secret Accessor on hb-refresh-gh-app-pem (least-
+# privilege: reuses the existing per-agent GitHub App PEM to mint a bot-identity
+# token for the PR-open step, same mint path cloudbuild-refresh-gke-sandbox.yaml
+# uses, rather than provisioning a second credential). --included-files scopes
+# the trigger to the sole caption-input path so unrelated main pushes never
+# re-run generate() (that broader gate is [4/7]'s job). create-or-update
+# re-bakes the inline-config (trusted-ref boundary).
+gcloud builds triggers create github --name=hb-render-autoheal \
+  --inline-config=cloudbuild-render-autoheal.yaml \
+  --repo-owner="$OWNER" --repo-name="$REPO" \
+  --branch-pattern='^main$' \
+  --included-files='harness/scenarios/**' \
+  --service-account="$CLOUDBUILD_SA" \
+  --project="$PROJECT" \
+  || gcloud builds triggers update github hb-render-autoheal \
+    --inline-config=cloudbuild-render-autoheal.yaml \
+    --repo-owner="$OWNER" --repo-name="$REPO" \
+    --branch-pattern='^main$' \
+    --included-files='harness/scenarios/**' \
+    --service-account="$CLOUDBUILD_SA" \
+    --project="$PROJECT"
+
+echo "==> [6/7] gke-sandbox refresh (MANUAL only — no branch/PR/schedule; spend-gated by invocation)"
 # --branch is REQUIRED by gcloud whenever --repo is set on a manual trigger (API
 # contract, not optional) — it only pins which ref is checked out as build
 # context; the build STEPS still come from inline-config, so this is not a
@@ -157,7 +188,7 @@ gcloud builds triggers create manual --name=hb-refresh-gke-sandbox \
   --project="$PROJECT" \
   || echo "   (already exists — re-run with: PROJECT=$PROJECT bash scripts/rebake-manual-trigger.sh hb-refresh-gke-sandbox cloudbuild-refresh-gke-sandbox.yaml)"
 
-echo "==> [6/6] gke-kata cold true_ttfe refresh (MANUAL, ON-DEMAND — no branch/PR/schedule; spend-gated by invocation)"
+echo "==> [7/7] gke-kata cold true_ttfe refresh (MANUAL, ON-DEMAND — no branch/PR/schedule; spend-gated by invocation)"
 # Same MANUAL shape as [5/6] and the same dedicated REFRESH_SA — this refresh runs
 # against the PERSISTENT kata scenarios cluster (no ephemeral create/teardown), so
 # it needs no extra IAM beyond container.admin + serviceAccountUser + compute.viewer
