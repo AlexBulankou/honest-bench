@@ -519,10 +519,14 @@ headline without a local cluster and read the build log to see every command:
   `_SUSPEND_RESUME_CYCLE_COUNT` fire needs a correspondingly larger `_BUILD_TIMEOUT`
   and accepts that a mid-run failure loses every accumulated sample.
 - **gke-kata (Kata + microVM) path** — [`cloudbuild-refresh-gke-kata.yaml`](../cloudbuild-refresh-gke-kata.yaml).
-  Same shape, `kata-clh` RuntimeClass, scoped to the Kata scenarios. Fire it:
+  Same shape, `kata-clh` RuntimeClass, scoped to the Kata scenarios. Unlike the
+  gVisor path above, this one runs against your OWN existing, persistent cluster
+  (no create/teardown), so `_CLUSTER` and `_MACHINE_TYPE` are required substitutions
+  with no default — the build fails closed (FATAL) if either is empty. Fire it:
 
   ```bash
-  gcloud builds triggers run hb-refresh-gke-kata --project=<PROJECT>
+  gcloud builds triggers run hb-refresh-gke-kata --project=<PROJECT> \
+    --substitutions=_CLUSTER=<your-kata-scenarios-cluster>,_MACHINE_TYPE=<kata-pool-machine-type>,_REGION=us-central1
   ```
 
 **Manual is the spend-arm.** Each GKE refresh binds to a trigger with **no
