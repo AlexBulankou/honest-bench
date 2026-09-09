@@ -1781,12 +1781,28 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
                 _pool_ready_sampler_t0,
                 _gate_target,
             )
+            # hb#835 lever-3 / #4420 (guard-then-fill): either bucket can be
+            # legitimately empty for a given fire (no claim was created while the pool
+            # was below target, or none once it reached full supply) — that's a real,
+            # documented condition, not a defect. Per the same idiom applied to the
+            # cold-tier trio above, ALWAYS emit both keys (never omit): explicit `None`
+            # plus a closed-set absent-reason when unpopulated, so
+            # check_cell_downgrade's key-membership check can tell "re-measured to
+            # null, legitimately" from "silently regressed".
             if dip_state["during_dip"] is not None:
                 sla_metrics["warmpool_gate_ttfe_during_dip_median_ms"] = dip_state["during_dip"]["median_ms"]
                 sla_metrics["warmpool_gate_ttfe_during_dip_n"] = dip_state["during_dip"]["n"]
+            else:
+                sla_metrics["warmpool_gate_ttfe_during_dip_median_ms"] = None
+                sla_metrics["warmpool_gate_ttfe_during_dip_n"] = None
+                sla_metrics["warmpool_gate_ttfe_during_dip_absent_reason"] = "no_dip_observed"
             if dip_state["at_full_supply"] is not None:
                 sla_metrics["warmpool_gate_ttfe_at_supply_median_ms"] = dip_state["at_full_supply"]["median_ms"]
                 sla_metrics["warmpool_gate_ttfe_at_supply_n"] = dip_state["at_full_supply"]["n"]
+            else:
+                sla_metrics["warmpool_gate_ttfe_at_supply_median_ms"] = None
+                sla_metrics["warmpool_gate_ttfe_at_supply_n"] = None
+                sla_metrics["warmpool_gate_ttfe_at_supply_absent_reason"] = "no_full_supply_claims"
         # hb#723: self-report the env knobs that gate which sla_metrics keys
         # this fire emits (pool size flips cold-baseline vs warm-tier mode
         # entirely, changing the key set) so check_cell_downgrade's remediation

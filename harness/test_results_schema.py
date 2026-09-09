@@ -317,6 +317,116 @@ def test_sla_unsafe_keys_and_values_dropped():
            f"only safe numeric sla kept (underscore + hyphen), got {sla}")
 
 
+def test_sla_nullable_metric_with_recognized_reason_persists():
+    # hb#379/#4420 guard-then-fill: a registered key (warmpool_cold_start's
+    # cold-tier trio) may persist as an explicit None when its sibling reason
+    # field names a value from the closed set — this is the disclosure the
+    # producer relies on to avoid a silent key-drop reading as a downgrade.
+    r = rs.build_results(
+        [{"name": "x", "outcome": "pass", "sla_metrics": {
+            "warmpool_gate_cold_min_ms": None,
+            "warmpool_gate_cold_p50_ms": None,
+            "warmpool_gate_separation_ratio": None,
+            "warmpool_gate_cold_absent_reason": "no_true_cold_bucket_claims",
+        }}],
+        _prov(), GEN_AT,
+    )
+    sla = r["scenarios"][0]["sla_metrics"]
+    _check(
+        sla == {
+            "warmpool_gate_cold_min_ms": None,
+            "warmpool_gate_cold_p50_ms": None,
+            "warmpool_gate_separation_ratio": None,
+            "warmpool_gate_cold_absent_reason": "no_true_cold_bucket_claims",
+        },
+        f"null + recognized reason survives verbatim, got {sla}",
+    )
+
+
+def test_sla_nullable_metric_with_missing_reason_raises():
+    # A registered key nulled out with NO sibling reason field is exactly the
+    # silent-information-loss shape #4420 forbids — fail closed, never drop.
+    try:
+        rs.build_results(
+            [{"name": "x", "outcome": "pass", "sla_metrics": {
+                "warmpool_gate_cold_min_ms": None,
+            }}],
+            _prov(), GEN_AT,
+        )
+    except ValueError:
+        pass
+    else:
+        raise AssertionError(
+            "null nullable-metric with no reason field must raise (fail-closed)"
+        )
+
+
+def test_sla_nullable_metric_with_unrecognized_reason_raises():
+    # A reason value outside the closed set is treated the same as no reason
+    # at all — a future typo or unhandled condition class must not silently
+    # legitimize a null.
+    try:
+        rs.build_results(
+            [{"name": "x", "outcome": "pass", "sla_metrics": {
+                "warmpool_gate_cold_min_ms": None,
+                "warmpool_gate_cold_absent_reason": "some_new_unregistered_reason",
+            }}],
+            _prov(), GEN_AT,
+        )
+    except ValueError:
+        pass
+    else:
+        raise AssertionError(
+            "null nullable-metric with an unrecognized reason must raise "
+            "(fail-closed)"
+        )
+
+
+def test_sla_reason_field_unrecognized_value_dropped_not_raised():
+    # A reason-field key is disclosure metadata, not itself a measurement — an
+    # unrecognized value with NO corresponding null metric is harmless and is
+    # silently dropped (not raised), mirroring the module's other optional
+    # disclosure fields (e.g. thpt_slo_measured_at).
+    r = rs.build_results(
+        [{"name": "x", "outcome": "pass", "sla_metrics": {
+            "warmpool_gate_cold_min_ms": 12.0,
+            "warmpool_gate_cold_absent_reason": "not_a_real_reason",
+        }}],
+        _prov(), GEN_AT,
+    )
+    sla = r["scenarios"][0]["sla_metrics"]
+    _check(
+        sla == {"warmpool_gate_cold_min_ms": 12.0},
+        f"unrecognized reason with a real (non-null) metric is dropped, got {sla}",
+    )
+
+
+def test_sla_dip_state_nullable_keys_persist_with_reason():
+    # hb#835 lever-3: the during-dip/at-full-supply TTFE pairs are the second
+    # adopter of the same registry (warmpool_cold_start's _ttfe_by_dip_state).
+    r = rs.build_results(
+        [{"name": "x", "outcome": "pass", "sla_metrics": {
+            "warmpool_gate_ttfe_during_dip_median_ms": None,
+            "warmpool_gate_ttfe_during_dip_n": None,
+            "warmpool_gate_ttfe_during_dip_absent_reason": "no_dip_observed",
+            "warmpool_gate_ttfe_at_supply_median_ms": 42.0,
+            "warmpool_gate_ttfe_at_supply_n": 3.0,
+        }}],
+        _prov(), GEN_AT,
+    )
+    sla = r["scenarios"][0]["sla_metrics"]
+    _check(
+        sla == {
+            "warmpool_gate_ttfe_during_dip_median_ms": None,
+            "warmpool_gate_ttfe_during_dip_n": None,
+            "warmpool_gate_ttfe_during_dip_absent_reason": "no_dip_observed",
+            "warmpool_gate_ttfe_at_supply_median_ms": 42.0,
+            "warmpool_gate_ttfe_at_supply_n": 3.0,
+        },
+        f"dip-state null+reason and real values both survive, got {sla}",
+    )
+
+
 def test_measured_with_scalar_dict_survives():
     # hb#723: a scenario's self-reported env-knob dict survives when every
     # value is a plain scalar.
