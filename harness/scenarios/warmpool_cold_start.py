@@ -533,6 +533,57 @@ def _patch_warmpool_replicas(custom, *, pool_name: str, replicas: int) -> None:
     )
 
 
+def _prescale_pool_with_fallback(
+    custom, *, pool_name: str, pool_replicas: int, claim_count: int,
+    headroom: int, timeout_s: int, stability_polls: int,
+) -> bool:
+    """hb#835 lever-2, made fail-safe: prescale ahead of the burst, degrading
+    to the already-warm nominal pool instead of crashing the whole scenario
+    when the prescale target is unreachable (e.g. a structural per-nodepool
+    capacity ceiling smaller than claim_count + headroom — see hb#843).
+
+    No-op (returns False) in cold-baseline mode or when the nominal pool
+    already covers the burst + headroom, same gate as the original inline
+    block. Otherwise patches spec.replicas up and waits for it to land; on a
+    `_wait_for_pool_warm` timeout the WarmPool is left at whatever
+    readyReplicas it actually reached (never patched back down — a partial
+    prescale is still strictly better burst headroom than the nominal size)
+    and this returns True so the caller can disclose the degrade rather than
+    silently proceeding as if the full prescale had landed (#4420: a
+    downgrade must never be a silent no-op).
+
+    Returns True iff the prescale was attempted AND did not reach its target
+    within timeout_s (degraded); False when no prescale was needed, or the
+    prescale fully succeeded.
+    """
+    prescale_target = _prescale_pool_target(pool_replicas, claim_count, headroom)
+    if pool_replicas <= 0 or prescale_target <= pool_replicas:
+        return False
+    log.info(
+        "hb#835 lever-2: prescaling WarmPool %s %d -> %d "
+        "(claim_count=%d + headroom=%d) ahead of burst",
+        pool_name, pool_replicas, prescale_target, claim_count, headroom,
+    )
+    _patch_warmpool_replicas(custom, pool_name=pool_name, replicas=prescale_target)
+    try:
+        _wait_for_pool_warm(
+            custom, pool_name=pool_name,
+            target_ready=prescale_target, timeout_s=timeout_s,
+            stability_polls=stability_polls,
+        )
+    except RuntimeError as exc:
+        log.warning(
+            "hb#835 lever-2: prescale to %d did not land within %ds (%s); "
+            "firing the burst against whatever readyReplicas the pool "
+            "actually reached instead of crashing the scenario — degrade "
+            "will be disclosed via sla_metrics['lever2_prescale_degraded']",
+            prescale_target, timeout_s, exc,
+        )
+        return True
+    log.info("hb#835 lever-2: pool prescaled to readyReplicas=%d", prescale_target)
+    return False
+
+
 def _watch_one_claim(*, claim_name: str, deadline: float,
                      bound_at: dict[str, float],
                      sandbox_names: dict[str, str],
@@ -1424,28 +1475,18 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
         # `_POOL_REPLICAS` itself (never reassigned) — the classification
         # and lever-3 dip-detection math below keys off both of those
         # UNCHANGED, so this prescale cannot silently move the gate.
-        _prescale_target = _prescale_pool_target(
-            _POOL_REPLICAS, _CLAIM_COUNT, _PRESCALE_HEADROOM,
+        #
+        # hb#843: prescale_target can exceed a structural per-nodepool
+        # capacity ceiling (e.g. kata's 2-node cap), in which case the wait
+        # below degrades rather than raising — see
+        # `_prescale_pool_with_fallback`'s docstring. The degrade is
+        # disclosed via `_lever2_degraded` below, never silent.
+        _lever2_degraded = _prescale_pool_with_fallback(
+            custom, pool_name=pool_name,
+            pool_replicas=_POOL_REPLICAS, claim_count=_CLAIM_COUNT,
+            headroom=_PRESCALE_HEADROOM, timeout_s=_WARMUP_TIMEOUT_S,
+            stability_polls=_WARMUP_STABILITY_POLLS,
         )
-        if _POOL_REPLICAS > 0 and _prescale_target > _POOL_REPLICAS:
-            log.info(
-                "hb#835 lever-2: prescaling WarmPool %s %d -> %d "
-                "(claim_count=%d + headroom=%d) ahead of burst",
-                pool_name, _POOL_REPLICAS, _prescale_target,
-                _CLAIM_COUNT, _PRESCALE_HEADROOM,
-            )
-            _patch_warmpool_replicas(
-                custom, pool_name=pool_name, replicas=_prescale_target,
-            )
-            _wait_for_pool_warm(
-                custom, pool_name=pool_name,
-                target_ready=_prescale_target, timeout_s=_WARMUP_TIMEOUT_S,
-                stability_polls=_WARMUP_STABILITY_POLLS,
-            )
-            log.info(
-                "hb#835 lever-2: pool prescaled to readyReplicas=%d",
-                _prescale_target,
-            )
 
         # hb#450 provenance snapshot: capture the pre-warmed Sandbox name set
         # IMMEDIATELY before the burst. A claim adopting one of these is a genuine
@@ -1566,6 +1607,8 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
                 "WARMPOOL_COLD_START_CLAIM_COUNT": _CLAIM_COUNT,
                 "WARMPOOL_COLD_START_PRESCALE_HEADROOM": _PRESCALE_HEADROOM,
             }
+            if _lever2_degraded:
+                under[2]["lever2_prescale_degraded"] = True
             return under
         # Emit-key assembly. Two paths, gated by BENCH_TTFE_EXEC:
         #
@@ -1728,6 +1771,8 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
             "WARMPOOL_COLD_START_CLAIM_COUNT": _CLAIM_COUNT,
             "WARMPOOL_COLD_START_PRESCALE_HEADROOM": _PRESCALE_HEADROOM,
         }
+        if _lever2_degraded:
+            sla_metrics["lever2_prescale_degraded"] = True
         sep = breakdown["separation_observed"]
         sep_str = f"{sep:.2f}x" if sep is not None else "<no-cold-tier>"
         clause = (
