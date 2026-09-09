@@ -503,6 +503,21 @@ def _wait_for_pool_warm(
     )
 
 
+def _prescale_pool_target(pool_replicas: int, claim_count: int, headroom: int) -> int:
+    """hb#835 lever-2: readyReplicas target to prescale the WarmPool to.
+
+    Never below the nominal `pool_replicas` (this is a burst-headroom lever,
+    not a resize-down) -- the caller additionally gates on
+    `pool_replicas > 0` (cold-baseline mode never prescales) and on the
+    result exceeding `pool_replicas` (a no-op prescale is skipped, not
+    patched-to-itself). Pure so it's testable off fixtures like
+    `_fill_gate_target` above; deliberately separate from `_gate_target`,
+    which stays capped at `min(pool, claims)` per hb#804 and must not move
+    when this lever fires.
+    """
+    return max(pool_replicas, claim_count + headroom)
+
+
 def _patch_warmpool_replicas(custom, *, pool_name: str, replicas: int) -> None:
     """Merge-patch spec.replicas on an already-created WarmPool.
 
@@ -1409,7 +1424,9 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
         # `_POOL_REPLICAS` itself (never reassigned) — the classification
         # and lever-3 dip-detection math below keys off both of those
         # UNCHANGED, so this prescale cannot silently move the gate.
-        _prescale_target = max(_POOL_REPLICAS, _CLAIM_COUNT + _PRESCALE_HEADROOM)
+        _prescale_target = _prescale_pool_target(
+            _POOL_REPLICAS, _CLAIM_COUNT, _PRESCALE_HEADROOM,
+        )
         if _POOL_REPLICAS > 0 and _prescale_target > _POOL_REPLICAS:
             log.info(
                 "hb#835 lever-2: prescaling WarmPool %s %d -> %d "
@@ -1547,6 +1564,7 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
             under[2]["measured_with"] = {
                 "WARMPOOL_COLD_START_POOL_REPLICAS": _POOL_REPLICAS,
                 "WARMPOOL_COLD_START_CLAIM_COUNT": _CLAIM_COUNT,
+                "WARMPOOL_COLD_START_PRESCALE_HEADROOM": _PRESCALE_HEADROOM,
             }
             return under
         # Emit-key assembly. Two paths, gated by BENCH_TTFE_EXEC:
@@ -1708,6 +1726,7 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
         sla_metrics["measured_with"] = {
             "WARMPOOL_COLD_START_POOL_REPLICAS": _POOL_REPLICAS,
             "WARMPOOL_COLD_START_CLAIM_COUNT": _CLAIM_COUNT,
+            "WARMPOOL_COLD_START_PRESCALE_HEADROOM": _PRESCALE_HEADROOM,
         }
         sep = breakdown["separation_observed"]
         sep_str = f"{sep:.2f}x" if sep is not None else "<no-cold-tier>"

@@ -874,6 +874,58 @@ def test_wait_for_pool_warm_flicker_never_sustains_times_out():
     assert "2 consecutive poll(s)" in msg
 
 
+# ---- hb#835 lever-2: burst-aware pool prescale ----
+
+def test_prescale_pool_target_adds_headroom_over_burst_when_pool_undersized():
+    # pool=5, claims=10, headroom=5 -> prescale to 10+5=15 (well above pool).
+    assert cell._prescale_pool_target(5, 10, 5) == 15
+
+
+def test_prescale_pool_target_never_drops_below_nominal_pool_size():
+    # pool=20 already covers claims(10)+headroom(5)=15 -> target stays at
+    # the larger nominal pool, never resized down.
+    assert cell._prescale_pool_target(20, 10, 5) == 20
+
+
+def test_prescale_pool_target_zero_headroom_is_burst_size_or_pool():
+    assert cell._prescale_pool_target(5, 10, 0) == 10
+    assert cell._prescale_pool_target(20, 10, 0) == 20
+
+
+def test_prescale_pool_target_cold_baseline_pool_still_computed():
+    # Pure function has no cold-baseline special case (that gate lives in the
+    # caller, which also requires pool_replicas > 0 before acting on this
+    # value) -- with pool_replicas<=0 it still returns claim_count+headroom.
+    assert cell._prescale_pool_target(0, 10, 5) == 15
+
+
+class _FakePatchRecorder:
+    """Records the single patch_namespaced_custom_object call it receives."""
+
+    def __init__(self):
+        self.calls: list[dict] = []
+
+    def patch_namespaced_custom_object(self, group, version, namespace, plural, name, body):
+        self.calls.append({
+            "group": group, "version": version, "namespace": namespace,
+            "plural": plural, "name": name, "body": body,
+        })
+
+
+def test_patch_warmpool_replicas_sends_scalar_merge_patch():
+    custom = _FakePatchRecorder()
+    cell._patch_warmpool_replicas(custom, pool_name="pool-x", replicas=15)
+    assert len(custom.calls) == 1
+    call = custom.calls[0]
+    assert call["name"] == "pool-x"
+    assert call["body"] == {"spec": {"replicas": 15}}
+    group, version, plural = cell._SWP_GVR
+    assert call["group"] == group
+    assert call["version"] == version
+    assert call["plural"] == plural
+    assert call["namespace"] == cell._NAMESPACE
+
+
 # ---- hb#411: _cleanup batch-retry rides out the IAM-strike window ----
 # The finally-block cleanup can run inside the sub-92s a4-hb-refresh@ IAM strip,
 # where every delete 403s. A single best-effort pass then leaks the pool + 30
