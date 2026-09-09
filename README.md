@@ -81,7 +81,7 @@ _**Stretch bar** — warm-pool-hit TTFE p95 < 0.5s (an aspiration above the Nort
 
 > ⚠️ **Cross-runtime comparability:** the North Star gVisor and Kata + microVM p95 figures are drawn from two independent fires and are not directly co-measured — the two figures cannot be confirmed to share a machine class — Kata + microVM did not stamp `machine_type`, so a rig difference between them cannot be ruled out; the two figures were measured at different node counts (gVisor at 2, Kata + microVM at 1). Read the cross-runtime p95 gap as provisional until both runtimes republish on a matched rig within one freshness window.
 
-> ⚠️ **Harness staleness unverified:** the stamped suite `7a2783f43d237d6c45fc00c0f1e6d6da32980430` could not be confirmed as an ancestor of the current measurement path (absent, shallow clone, or rewritten history) — its freshness relative to `harness/scenarios/` cannot be reconciled. Re-fire before treating it as current.
+> ⚠️ **Harness staleness:** this figure was measured by suite `7a2783f43d237d6c45fc00c0f1e6d6da32980430`, which is **1 commit behind** the current measurement path (`#844`). Re-fire before treating it as current.
 
 ### Known anomalies
 
