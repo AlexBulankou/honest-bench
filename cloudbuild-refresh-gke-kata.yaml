@@ -5,7 +5,7 @@
 # Fleet rule: NO GitHub Actions — Cloud Build ONLY. This config binds to a MANUAL
 # trigger (no branch/PR/schedule wiring), so nothing fires unattended. Fire by hand:
 #   gcloud builds triggers run hb-refresh-gke-kata --project=<PROJECT> \
-#     --substitutions=_CLUSTER=<kata-scenarios-cluster>,_REGION=us-central1
+#     --substitutions=_CLUSTER=<kata-scenarios-cluster>,_MACHINE_TYPE=<kata-pool-machine-type>,_REGION=us-central1
 #
 # ON-DEMAND, NOT STANDING — and NOT ephemeral. Unlike the gVisor refresh (which
 # spins a FRESH ephemeral cluster per fire), this refresh authenticates to the
@@ -75,6 +75,17 @@ substitutions:
   # internal cluster name never ships in the repo. The measure step fails closed
   # (FATAL) if this is empty.
   _CLUSTER: ""
+  # hb#835: the kata node pool's machine type. Unlike the gVisor refresh (which
+  # pins a fixed "n2-standard-16" default, since that ephemeral cluster's shape is
+  # this repo's own choice), the kata pool lives on the persistent, shared scenarios
+  # cluster whose machine type is NOT recorded anywhere in this public repo — so,
+  # same reasoning as _CLUSTER above, this is intentionally EMPTY-defaulted rather
+  # than guessed or hardcoded. Pass the pool's actual machine type at fire time; the
+  # measure step fails closed (FATAL) if this is empty. Stamped into BENCH_MACHINE_TYPE
+  # below so a rendered cell is self-describing on a machine-class change rather than
+  # silently comparing against a different rig (the gap hb#825's comparability fence
+  # flagged — see the render-time cross-runtime check in render/render.py).
+  _MACHINE_TYPE: ""
   _REGION: "us-central1"
   # hb#379: the warmpool_cold_start graduation-shape knobs (default = the committed
   # published shape, 30 resident / 40 fired — unchanged default behavior). Overridable
@@ -118,6 +129,12 @@ steps:
       # cells" — Kata block). A refresh without these knobs would re-measure the
       # graduated cells at n=5 / n=1, which the harness refuses (check_n_regression).
       - "BENCH_CLUSTER_SUBSTRATE=gke-kata"
+      # hb#835 (mirrors cloudbuild-refresh-gke-sandbox.yaml): stamp the rig's actual
+      # machine type into provenance so the page is self-describing on a
+      # machine-class change, not just a substrate label. Reads the same
+      # substitution the operator supplies at fire time, so it can never drift
+      # from the actual pool.
+      - "BENCH_MACHINE_TYPE=${_MACHINE_TYPE}"
       - "WARMPOOL_COLD_START_RUNTIME_CLASS=kata-clh"
       - "WARMPOOL_COLD_START_POOL_REPLICAS=${_WARMPOOL_POOL_REPLICAS}"
       - "WARMPOOL_COLD_START_CLAIM_COUNT=${_WARMPOOL_CLAIM_COUNT}"
@@ -158,11 +175,18 @@ steps:
         # every local bash variable below is dereferenced with a DOUBLED leading
         # dollar sign (CB-escaped -> a single dollar at runtime), never a single one.
         CLUSTER="${_CLUSTER}"
+        MACHINE_TYPE="${_MACHINE_TYPE}"
         REGION="${_REGION}"
         if [ -z "$$CLUSTER" ]; then
           echo "==> FATAL: _CLUSTER substitution is empty. Pass the kata scenarios cluster name at fire time:"
-          echo "==>   gcloud builds triggers run hb-refresh-gke-kata --project=<PROJECT> --substitutions=_CLUSTER=<cluster>,_REGION=us-central1"
+          echo "==>   gcloud builds triggers run hb-refresh-gke-kata --project=<PROJECT> --substitutions=_CLUSTER=<cluster>,_MACHINE_TYPE=<machine-type>,_REGION=us-central1"
           echo "==> (the internal cluster name is intentionally not shipped in this public config.)"
+          exit 1
+        fi
+        if [ -z "$$MACHINE_TYPE" ]; then
+          echo "==> FATAL: _MACHINE_TYPE substitution is empty. Pass the kata pool's machine type at fire time:"
+          echo "==>   gcloud builds triggers run hb-refresh-gke-kata --project=<PROJECT> --substitutions=_CLUSTER=<cluster>,_MACHINE_TYPE=<machine-type>,_REGION=us-central1"
+          echo "==> (hb#835: without this stamp, a rendered cell can't be compared against a different rig's cell without drifting silently.)"
           exit 1
         fi
 
