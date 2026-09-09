@@ -30,7 +30,7 @@ _Clear as of the latest measured refresh — no cold-tier internal stall current
 
 ### Single-fire separation verdict defensibility
 
-> ⚠️ **Single-fire separation verdict withheld:** the raw gate issues a pass/fail from ONE fire's separation ratio, but reconciling that ratio against the run-to-run noise floor measured across the accrued same-build history shows the noise band is wider than the ratio's margin to the 1.8x gate, so no single-fire verdict is defensible: **gVisor** — one fire measured 1.26x; at the measured noise floor (σ(log)=0.94, 95% band 0.199x–7.95x) the interval straddles the 1.8x gate, so this single fire cannot tell a real pass from an unlucky draw. This is not an open question this fire's replication would close: the published median-of-36 adjudicated verdict for this rig has already resolved to **FAIL** (1.01x, 0.746x–1.38x band — see below); more single fires would not change that, since this rig's own history shows the per-fire ratio swings both sides of the gate (variance, not sample count, drives the spread). **Kata + microVM** — one fire measured 1.96x; at the measured noise floor (σ(log)=0.94, 95% band 0.311x–12.4x) the interval straddles the 1.8x gate, so this single fire cannot tell a real pass from an unlucky draw. No accrued history is tagged for this rig, so no accrual path can be named. The verdict layer refuses to issue a single-fire verdict (fail-closed: it withholds the pass/fail rather than emitting the raw single-fire one it cannot defend) and defers to the accrued median-of-N adjudicated verdict instead. See [WARMPOOL_SEPARATION_VERDICT_PROTOCOL.md](WARMPOOL_SEPARATION_VERDICT_PROTOCOL.md).
+> ⚠️ **Single-fire separation verdict withheld:** the raw gate issues a pass/fail from ONE fire's separation ratio, but reconciling that ratio against the run-to-run noise floor measured across the accrued same-build history shows the noise band is wider than the ratio's margin to the 1.8x gate, so no single-fire verdict is defensible: **gVisor** — one fire measured 1.26x; at the measured noise floor (σ(log)=0.94, 95% band 0.199x–7.95x) the interval straddles the 1.8x gate, so this single fire cannot tell a real pass from an unlucky draw. This is not an open question this fire's replication would close: the published median-of-36 adjudicated verdict for this rig has already resolved to **FAIL** (1.01x, 0.746x–1.38x band — see below); more single fires would not change that, since this rig's own history shows the per-fire ratio swings both sides of the gate (variance, not sample count, drives the spread). **Kata + microVM** — one fire measured 2.25x; at the measured noise floor (σ(log)=0.94, 95% band 0.356x–14.2x) the interval straddles the 1.8x gate, so this single fire cannot tell a real pass from an unlucky draw. No accrued history is tagged for this rig, so no accrual path can be named. The verdict layer refuses to issue a single-fire verdict (fail-closed: it withholds the pass/fail rather than emitting the raw single-fire one it cannot defend) and defers to the accrued median-of-N adjudicated verdict instead. See [WARMPOOL_SEPARATION_VERDICT_PROTOCOL.md](WARMPOOL_SEPARATION_VERDICT_PROTOCOL.md).
 
 ### Adjudicated separation verdict (median-of-N)
 
@@ -231,10 +231,10 @@ Kata + microVM  ████ 1.26
 ```
 Warm-Pool TTFE (ms) — p50 vs p95
 
-gVisor         p50  █████████████████ 2.7928s
+gVisor         p50  ██████████████████ 2.7928s
                p95  ████████████████████ 3.1345s
-Kata + microVM p50  ████████████ 1.9468s
-               p95  ████████████████████ 3.2046s
+Kata + microVM p50  ██████████ 1.5168s
+               p95  ████████████████ 2.5467s
 ```
 
 _Cluster shape (gVisor leg): node_count=2, `n2-standard-16` — the swing-flag threshold compares consecutive fires on this chart, so a node-count or machine-class change shows up here first._
