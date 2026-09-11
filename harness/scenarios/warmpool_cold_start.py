@@ -108,6 +108,18 @@ _CLAIM_COUNT = int(os.environ.get("WARMPOOL_COLD_START_CLAIM_COUNT", "10"))
 # features doctrine).
 _PRESCALE_HEADROOM = int(os.environ.get("WARMPOOL_COLD_START_PRESCALE_HEADROOM", "5"))
 
+# hb#843: some nodepools carry a hard structural capacity ceiling below
+# claim_count + headroom (e.g. kata's 2-node pool tops out around 42 pods,
+# while claim_count=40 + headroom=5 asks for 45) -- lever-2 would then patch
+# spec.replicas to an unreachable target every fire, guaranteeing a timeout
+# and a degraded/disclosed prescale on every single run instead of only the
+# rare genuine-contention case the fallback exists for. 0 disables clamping
+# entirely (opt-out default, matches gVisor's much larger ceiling where this
+# never binds); set to the nodepool's real per-scenario pod ceiling (e.g. 42
+# for kata) to cap the prescale target at that value instead of computing an
+# always-unreachable one.
+_PRESCALE_CEILING = int(os.environ.get("WARMPOOL_COLD_START_PRESCALE_CEILING", "0"))
+
 
 def _fill_gate_target(pool_replicas: int, claim_count: int) -> int:
     """Pre-fire fill-gate readyReplicas target.
@@ -503,7 +515,9 @@ def _wait_for_pool_warm(
     )
 
 
-def _prescale_pool_target(pool_replicas: int, claim_count: int, headroom: int) -> int:
+def _prescale_pool_target(
+    pool_replicas: int, claim_count: int, headroom: int, ceiling: int = 0,
+) -> int:
     """hb#835 lever-2: readyReplicas target to prescale the WarmPool to.
 
     Never below the nominal `pool_replicas` (this is a burst-headroom lever,
@@ -514,8 +528,17 @@ def _prescale_pool_target(pool_replicas: int, claim_count: int, headroom: int) -
     `_fill_gate_target` above; deliberately separate from `_gate_target`,
     which stays capped at `min(pool, claims)` per hb#804 and must not move
     when this lever fires.
+
+    hb#843: `ceiling` (0 = disabled) caps the target at a structural
+    per-nodepool capacity limit -- e.g. kata's ~42-pod cap versus a naive
+    claim_count=40 + headroom=5 = 45 target that can never land. The ceiling
+    is clamped to never go below `pool_replicas` itself, so a misconfigured
+    ceiling smaller than the nominal pool can't request a resize-down.
     """
-    return max(pool_replicas, claim_count + headroom)
+    target = max(pool_replicas, claim_count + headroom)
+    if ceiling > 0:
+        target = min(target, max(ceiling, pool_replicas))
+    return target
 
 
 def _patch_warmpool_replicas(custom, *, pool_name: str, replicas: int) -> None:
@@ -535,7 +558,7 @@ def _patch_warmpool_replicas(custom, *, pool_name: str, replicas: int) -> None:
 
 def _prescale_pool_with_fallback(
     custom, *, pool_name: str, pool_replicas: int, claim_count: int,
-    headroom: int, timeout_s: int, stability_polls: int,
+    headroom: int, timeout_s: int, stability_polls: int, ceiling: int = 0,
 ) -> bool:
     """hb#835 lever-2, made fail-safe: prescale ahead of the burst, degrading
     to the already-warm nominal pool instead of crashing the whole scenario
@@ -552,11 +575,19 @@ def _prescale_pool_with_fallback(
     silently proceeding as if the full prescale had landed (#4420: a
     downgrade must never be a silent no-op).
 
+    `ceiling` (0 = disabled, hb#843) caps the computed target at a known
+    structural per-nodepool capacity limit before the patch is even
+    attempted, so a nodepool with a hard ceiling below claim_count +
+    headroom prescales to its actual reachable maximum instead of
+    guaranteeing a timeout/degrade on every single fire.
+
     Returns True iff the prescale was attempted AND did not reach its target
     within timeout_s (degraded); False when no prescale was needed, or the
     prescale fully succeeded.
     """
-    prescale_target = _prescale_pool_target(pool_replicas, claim_count, headroom)
+    prescale_target = _prescale_pool_target(
+        pool_replicas, claim_count, headroom, ceiling,
+    )
     if pool_replicas <= 0 or prescale_target <= pool_replicas:
         return False
     log.info(
@@ -1511,7 +1542,7 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
             custom, pool_name=pool_name,
             pool_replicas=_POOL_REPLICAS, claim_count=_CLAIM_COUNT,
             headroom=_PRESCALE_HEADROOM, timeout_s=_WARMUP_TIMEOUT_S,
-            stability_polls=_WARMUP_STABILITY_POLLS,
+            stability_polls=_WARMUP_STABILITY_POLLS, ceiling=_PRESCALE_CEILING,
         )
 
         # hb#450 provenance snapshot: capture the pre-warmed Sandbox name set
@@ -1632,6 +1663,7 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
                 "WARMPOOL_COLD_START_POOL_REPLICAS": _POOL_REPLICAS,
                 "WARMPOOL_COLD_START_CLAIM_COUNT": _CLAIM_COUNT,
                 "WARMPOOL_COLD_START_PRESCALE_HEADROOM": _PRESCALE_HEADROOM,
+                "WARMPOOL_COLD_START_PRESCALE_CEILING": _PRESCALE_CEILING,
             }
             if _lever2_degraded:
                 under[2]["lever2_prescale_degraded"] = True
@@ -1812,6 +1844,7 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
             "WARMPOOL_COLD_START_POOL_REPLICAS": _POOL_REPLICAS,
             "WARMPOOL_COLD_START_CLAIM_COUNT": _CLAIM_COUNT,
             "WARMPOOL_COLD_START_PRESCALE_HEADROOM": _PRESCALE_HEADROOM,
+            "WARMPOOL_COLD_START_PRESCALE_CEILING": _PRESCALE_CEILING,
         }
         if _lever2_degraded:
             sla_metrics["lever2_prescale_degraded"] = True
