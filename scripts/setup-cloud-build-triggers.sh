@@ -20,7 +20,7 @@
 #      the connection is live.
 #   2. CLOUDBUILD_SA — a low-privilege CB runtime SA for the OFFLINE unit-tests
 #      trigger (no cluster, no GitHub token needed). Also needs Secret Accessor
-#      on hb-refresh-gh-app-pem for the [5/7] render-autoheal trigger (least-
+#      on hb-refresh-gh-app-pem for the [5/8] render-autoheal trigger (least-
 #      privilege reuse of the per-agent GitHub App PEM to mint a bot-identity
 #      token for its PR-open step — no cluster access, unlike REFRESH_SA below).
 #   3. REFRESH_SA — a DEDICATED least-privilege SA for the refresh trigger, with on
@@ -31,6 +31,12 @@
 #      without it every fire dies at step 0 with an empty log.
 #   4. Secret Manager secret `hb-refresh-github-token` — a narrow GitHub token
 #      (contents:write + pull-requests:write on the repo) for the auto-refresh PR.
+#   5. TRIGGER_REBAKER_SA — a DEDICATED SA for the [8/8] auto-rebake trigger
+#      (hb#8239), scoped to exactly cloudbuild.builds.get + cloudbuild.builds.update
+#      on PROJECT (Cloud Build has no triggers-specific IAM permission — a
+#      BuildTrigger's get/patch rides the builds permission namespace) plus
+#      Secret Accessor on hb-sdev-webhook (its notify step). No build-submit/
+#      cluster access of any kind — narrower than CLOUDBUILD_SA/REFRESH_SA above.
 #
 # Edits to the trigger CONFIG files (cloudbuild-*.yaml) require re-running the
 # matching `triggers update` below — inline-config is the trusted-ref boundary, so
@@ -40,6 +46,7 @@ set -euo pipefail
 : "${PROJECT:?set PROJECT to the target GCP project id}"
 : "${CLOUDBUILD_SA:?set CLOUDBUILD_SA to the offline-CI Cloud Build service account}"
 : "${REFRESH_SA:?set REFRESH_SA to the dedicated GKE-refresh service account}"
+: "${TRIGGER_REBAKER_SA:?set TRIGGER_REBAKER_SA to the dedicated trigger-rebake service account}"
 OWNER="AlexBulankou"
 REPO="honest-bench"
 
@@ -50,8 +57,9 @@ REPO="honest-bench"
 sa_path() { case "$1" in */*) printf '%s' "$1";; *) printf 'projects/%s/serviceAccounts/%s' "$PROJECT" "$1";; esac; }
 CLOUDBUILD_SA="$(sa_path "$CLOUDBUILD_SA")"
 REFRESH_SA="$(sa_path "$REFRESH_SA")"
+TRIGGER_REBAKER_SA="$(sa_path "$TRIGGER_REBAKER_SA")"
 
-echo "==> [1/7] unit-tests PR gate (fires on PRs targeting main; FAIL-CLOSED merge gate)"
+echo "==> [1/8] unit-tests PR gate (fires on PRs targeting main; FAIL-CLOSED merge gate)"
 # COMMENTS_DISABLED is REQUIRED — the `github` subcommand with --pull-request-pattern
 # silently defaults to COMMENTS_ENABLED, gating every build behind /gcbrun. The flag
 # is identical on create and update, so it survives the re-bake path below.
@@ -73,12 +81,12 @@ gcloud builds triggers create github --name=hb-unit-tests \
     --service-account="$CLOUDBUILD_SA" \
     --project="$PROJECT"
 
-echo "==> [2/7] north-star cross-lane PASS->FAIL flip gate (fires on PRs targeting main; FAIL-CLOSED merge gate)"
+echo "==> [2/8] north-star cross-lane PASS->FAIL flip gate (fires on PRs targeting main; FAIL-CLOSED merge gate)"
 # hb#623: blocks a PR whose latest.json flips the customer headline PASS->FAIL vs
 # main's currently-merged latest.json (the cross-lane overwrite render.py's own
 # delta caveat structurally can't see). Same offline CLOUDBUILD_SA as the unit
 # gate (no cluster, no token — a git fetch of main + a stdlib-only checker).
-# COMMENTS_DISABLED required (same /gcbrun default footgun as [1/6]). create-or-update
+# COMMENTS_DISABLED required (same /gcbrun default footgun as [1/8]). create-or-update
 # re-bakes the inline-config (trusted-ref boundary). No post-merge twin: on push to
 # main HEAD==origin/main, so the checker self-compares and can never see a flip — a
 # post-merge flip trigger would be a guaranteed no-op, so it is deliberately omitted.
@@ -97,16 +105,16 @@ gcloud builds triggers create github --name=hb-north-star-flip-gate \
     --service-account="$CLOUDBUILD_SA" \
     --project="$PROJECT"
 
-echo "==> [3/7] diagnostic-lineage merge gate (fires on PRs targeting main; FAIL-CLOSED merge gate)"
+echo "==> [3/8] diagnostic-lineage merge gate (fires on PRs targeting main; FAIL-CLOSED merge gate)"
 # hb#646: blocks a PR whose latest.json carries a diagnostic-lineage
 # fork-build signature (fork_fix_count==0, or fork_sha==fork_base_upstream_sha —
 # the hb#643/#644 shape that silently overwrote the validated production pin
-# for ~1.9h). Unlike [2/6] this signature is intrinsically bad on the PR's own
+# for ~1.9h). Unlike [2/8] this signature is intrinsically bad on the PR's own
 # terms, so no origin/main fetch is needed — same offline CLOUDBUILD_SA (no
 # cluster, no token — a stdlib-only checker on the PR's own tree). COMMENTS_DISABLED
-# required (same /gcbrun default footgun as [1/6]/[2/6]). create-or-update
+# required (same /gcbrun default footgun as [1/8]/[2/8]). create-or-update
 # re-bakes the inline-config (trusted-ref boundary). No post-merge twin, same
-# rationale as [2/6]: on push to main the PR IS main, so a self-compare (if it
+# rationale as [2/8]: on push to main the PR IS main, so a self-compare (if it
 # needed one) or a self-check of an already-merged pin can never re-detect a
 # signature that already passed at merge time — a post-merge trigger would be a
 # guaranteed no-op.
@@ -125,7 +133,7 @@ gcloud builds triggers create github --name=hb-diagnostic-lineage-gate \
     --service-account="$CLOUDBUILD_SA" \
     --project="$PROJECT"
 
-echo "==> [4/7] unit-tests post-merge gate (fires on push to main)"
+echo "==> [4/8] unit-tests post-merge gate (fires on push to main)"
 # Gates post-merge main so a bad merge is caught even if branch protection is not
 # (yet) wired to require the PR check. create-or-note-exists (idempotent re-run).
 gcloud builds triggers create github --name=hb-unit-tests-main \
@@ -136,18 +144,18 @@ gcloud builds triggers create github --name=hb-unit-tests-main \
   --project="$PROJECT" \
   || echo "   (already exists — re-run with: gcloud builds triggers update github hb-unit-tests-main --inline-config=cloudbuild-unit-tests.yaml ...)"
 
-echo "==> [5/7] render post-merge auto-heal (fires on push to main touching harness/scenarios/**; hb#846)"
+echo "==> [5/8] render post-merge auto-heal (fires on push to main touching harness/scenarios/**; hb#846)"
 # Structural fix for the hb#845 squash-merge caption-staleness class: a push that
 # touches harness/scenarios/ re-runs render.generate() against main's true
 # post-merge HEAD and opens a follow-up PR iff the regen diverges from what's
-# already committed. Same offline CLOUDBUILD_SA as [1/7]/[4/7] — this trigger
+# already committed. Same offline CLOUDBUILD_SA as [1/8]/[4/8] — this trigger
 # also needs zero cluster access (a git fetch + offline regen + one REST call) —
 # now additionally granted Secret Accessor on hb-refresh-gh-app-pem (least-
 # privilege: reuses the existing per-agent GitHub App PEM to mint a bot-identity
 # token for the PR-open step, same mint path cloudbuild-refresh-gke-sandbox.yaml
 # uses, rather than provisioning a second credential). --included-files scopes
 # the trigger to the sole caption-input path so unrelated main pushes never
-# re-run generate() (that broader gate is [4/7]'s job). create-or-update
+# re-run generate() (that broader gate is [4/8]'s job). create-or-update
 # re-bakes the inline-config (trusted-ref boundary).
 gcloud builds triggers create github --name=hb-render-autoheal \
   --inline-config=cloudbuild-render-autoheal.yaml \
@@ -164,7 +172,7 @@ gcloud builds triggers create github --name=hb-render-autoheal \
     --service-account="$CLOUDBUILD_SA" \
     --project="$PROJECT"
 
-echo "==> [6/7] gke-sandbox refresh (MANUAL only — no branch/PR/schedule; spend-gated by invocation)"
+echo "==> [6/8] gke-sandbox refresh (MANUAL only — no branch/PR/schedule; spend-gated by invocation)"
 # --branch is REQUIRED by gcloud whenever --repo is set on a manual trigger (API
 # contract, not optional) — it only pins which ref is checked out as build
 # context; the build STEPS still come from inline-config, so this is not a
@@ -188,15 +196,15 @@ gcloud builds triggers create manual --name=hb-refresh-gke-sandbox \
   --project="$PROJECT" \
   || echo "   (already exists — re-run with: PROJECT=$PROJECT bash scripts/rebake-manual-trigger.sh hb-refresh-gke-sandbox cloudbuild-refresh-gke-sandbox.yaml)"
 
-echo "==> [7/7] gke-kata cold true_ttfe refresh (MANUAL, ON-DEMAND — no branch/PR/schedule; spend-gated by invocation)"
-# Same MANUAL shape as [5/6] and the same dedicated REFRESH_SA — this refresh runs
+echo "==> [7/8] gke-kata cold true_ttfe refresh (MANUAL, ON-DEMAND — no branch/PR/schedule; spend-gated by invocation)"
+# Same MANUAL shape as [6/8] and the same dedicated REFRESH_SA — this refresh runs
 # against the PERSISTENT kata scenarios cluster (no ephemeral create/teardown), so
 # it needs no extra IAM beyond container.admin + serviceAccountUser + compute.viewer
 # + logging.logWriter + Secret Accessor already granted for the gVisor refresh. --branch pins only the
 # checked-out ref; steps come from inline-config. The internal kata cluster name is
 # NOT baked here — it is passed at fire time via the _CLUSTER substitution (kept out
 # of the public config). Re-bake with scripts/rebake-manual-trigger.sh, NOT the
-# broken `triggers update manual --inline-config` path (see [5/6] note).
+# broken `triggers update manual --inline-config` path (see [6/8] note).
 gcloud builds triggers create manual --name=hb-refresh-gke-kata \
   --inline-config=cloudbuild-refresh-gke-kata.yaml \
   --repo="https://github.com/${OWNER}/${REPO}" \
@@ -205,6 +213,39 @@ gcloud builds triggers create manual --name=hb-refresh-gke-kata \
   --service-account="$REFRESH_SA" \
   --project="$PROJECT" \
   || echo "   (already exists — re-run with: PROJECT=$PROJECT bash scripts/rebake-manual-trigger.sh hb-refresh-gke-kata cloudbuild-refresh-gke-kata.yaml)"
+
+echo "==> [8/8] auto-rebake manual/frozen-inline triggers on merge (fires on push to main touching cloudbuild-*.yaml; hb#8239)"
+# The last manual step in the trigger-drift fix cycle: check-hb-trigger-drift.py
+# (read-only) ALARMS when a merged cloudbuild-*.yaml edit hasn't been re-baked
+# into its live MANUAL/frozen-inline trigger yet; this trigger is the automated
+# FIX, invoking scripts/rebake-manual-trigger.sh for every mapped pair so nobody
+# has to remember the manual step. scripts/manual-trigger-rebake-map.py is the
+# explicit file->trigger(s) mapping (kept in sync by hand with the upstream
+# drift detector's own TRIGGERS dict, cross-repo). --included-files scopes this
+# trigger to only fire on a cloudbuild-*.yaml change — cloudbuild-rebake-manual-
+# triggers.yaml itself then diffs HEAD^..HEAD to figure out exactly which
+# mapped trigger(s), if any, actually need a rebake (not every cloudbuild-*.yaml
+# maps to a rebakeable trigger — see the map's own exclusions). Runs as the
+# dedicated TRIGGER_REBAKER_SA (exactly cloudbuild.builds.get + .update — no
+# build-submit/cluster/secret access beyond the notify webhook secret) rather
+# than CLOUDBUILD_SA/REFRESH_SA above, since a get+patch-only identity is
+# narrower than either. create-or-update re-bakes the inline-config (trusted-
+# ref boundary) — this IS the trigger whose own job is re-baking OTHER
+# triggers, so it re-bakes itself the same way on every re-run of this script.
+gcloud builds triggers create github --name=hb-rebake-manual-triggers \
+  --inline-config=cloudbuild-rebake-manual-triggers.yaml \
+  --repo-owner="$OWNER" --repo-name="$REPO" \
+  --branch-pattern='^main$' \
+  --included-files='cloudbuild-*.yaml' \
+  --service-account="$TRIGGER_REBAKER_SA" \
+  --project="$PROJECT" \
+  || gcloud builds triggers update github hb-rebake-manual-triggers \
+    --inline-config=cloudbuild-rebake-manual-triggers.yaml \
+    --repo-owner="$OWNER" --repo-name="$REPO" \
+    --branch-pattern='^main$' \
+    --included-files='cloudbuild-*.yaml' \
+    --service-account="$TRIGGER_REBAKER_SA" \
+    --project="$PROJECT"
 
 cat <<EOF
 
