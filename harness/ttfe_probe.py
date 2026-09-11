@@ -36,9 +36,30 @@ The I/O wrapper NEVER raises on that: it returns ``(None, False)`` so the
 caller records a failed execution (dragging exec_success_rate down) rather than
 crashing the whole scenario. It raises only on a programming error in its own
 arguments (e.g. a negative monotonic span), never on cluster/exec conditions.
+
+The (None, False) return is deliberately undifferentiated — but the *reason*
+for the failure is not lost, only kept out of the return value. Each of the
+three collapse points (client-import failure, exec-channel error/timeout, and
+wrong/empty stdout) logs a single WARNING line via the ``honest-bench.ttfe-probe``
+logger before returning, tagged with a ``class=`` field
+(``import-error`` / ``exec-channel`` / ``bad-stdout``) plus the exception type
+or a truncated stdout excerpt. This is diagnostic-only — it never changes the
+returned tuple or introduces a raise — and exists so a post-hoc log grep can
+attribute a batch of exec failures to a failure class (e.g. distinguishing a
+timeout storm from an RBAC regression from a genuinely broken probe command)
+instead of every failure looking identical after the fact.
 """
 
 from __future__ import annotations
+
+import logging
+
+# Diagnostic-only: never gates behavior. The probe's "never raise" contract
+# (see module docstring above) means every exec-failure class collapses to
+# the same (None, False) return; this logger is the sole way to tell a
+# timeout apart from an RBAC denial apart from a wrong/empty-stdout mismatch
+# after the fact, without changing what the caller sees.
+log = logging.getLogger("honest-bench.ttfe-probe")
 
 # A trivial, side-effect-free instruction whose stdout is a fixed sentinel. We
 # assert the sentinel is present rather than merely that exec returned, so a
@@ -152,9 +173,16 @@ def probe_first_instruction(
 
     try:
         from kubernetes.stream import stream as _k8s_stream
-    except Exception:
+    except Exception as e:
         # Client not installed / import broke — treat as a failed execution
         # rather than crashing a caller that only wanted the best-effort probe.
+        log.warning(
+            "ttfe-probe exec-fail pod=%s ns=%s class=import-error reason=%s: %s",
+            pod_name,
+            namespace,
+            type(e).__name__,
+            e,
+        )
         return None, False
 
     argv, token = first_instruction()
@@ -176,10 +204,31 @@ def probe_first_instruction(
             namespace,
             **exec_kwargs,
         )
-    except Exception:
+    except Exception as e:
         # Exec channel failed to open / errored / timed out — failed execution.
+        log.warning(
+            "ttfe-probe exec-fail pod=%s ns=%s class=exec-channel reason=%s: %s",
+            pod_name,
+            namespace,
+            type(e).__name__,
+            e,
+        )
         return None, False
 
     # t1: the instant the instruction's result is in hand.
     result_monotonic = time.monotonic()
-    return resolve_probe_result(stdout, token, create_monotonic, result_monotonic)
+    ttfe_ms_or_none, exec_ok = resolve_probe_result(
+        stdout, token, create_monotonic, result_monotonic
+    )
+    if not exec_ok:
+        # The exec channel opened and returned cleanly, but stdout didn't carry
+        # the sentinel — a wrong/empty-stdout failure, distinct from the two
+        # exception classes above (no exception was ever raised here).
+        excerpt = stdout if isinstance(stdout, str) else repr(stdout)
+        log.warning(
+            "ttfe-probe exec-fail pod=%s ns=%s class=bad-stdout stdout_excerpt=%r",
+            pod_name,
+            namespace,
+            excerpt[:200],
+        )
+    return ttfe_ms_or_none, exec_ok
