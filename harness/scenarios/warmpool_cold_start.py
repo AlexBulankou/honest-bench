@@ -1666,7 +1666,13 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
                 "WARMPOOL_COLD_START_PRESCALE_CEILING": _PRESCALE_CEILING,
             }
             if _lever2_degraded:
-                under[2]["lever2_prescale_degraded"] = True
+                # _coerce_sla_metrics (results_schema.py) silently drops any
+                # bool value (`isinstance(v, bool)` exclusion, no raise/warn)
+                # — a real `True` here vanishes before ever reaching
+                # latest.json, defeating this disclosure per #4420. Emit a
+                # finite-number sentinel instead; presence-of-key is the
+                # signal (this key is never emitted false/absent-degraded).
+                under[2]["lever2_prescale_degraded"] = 1.0
             return under
         # Emit-key assembly. Two paths, gated by BENCH_TTFE_EXEC:
         #
@@ -1847,7 +1853,9 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
             "WARMPOOL_COLD_START_PRESCALE_CEILING": _PRESCALE_CEILING,
         }
         if _lever2_degraded:
-            sla_metrics["lever2_prescale_degraded"] = True
+            # See the matching under-delivery branch above: bool is silently
+            # dropped by _coerce_sla_metrics, so this must be a finite number.
+            sla_metrics["lever2_prescale_degraded"] = 1.0
         sep = breakdown["separation_observed"]
         sep_str = f"{sep:.2f}x" if sep is not None else "<no-cold-tier>"
         clause = (
