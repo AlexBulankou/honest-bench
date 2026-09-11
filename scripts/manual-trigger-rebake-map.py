@@ -15,7 +15,7 @@ one-line diff here.
 
 DELIBERATELY EXCLUDED: cloudbuild-refresh-gke-sandbox.yaml / hb-refresh-gke-sandbox.
 That trigger was permanently converted to `filename`-mode (repo file read at
-fire time, no inline `build`) via AlexBulankou/a#6711 (2026-08-14) — it can
+fire time, no inline `build`) via a prior change (2026-08-14) — it can
 never drift, so it has nothing to rebake. cloudbuild-render-autoheal.yaml is
 also excluded: it isn't a manual/frozen-inline trigger at all (a plain
 push-triggered inline-config trigger that already re-bakes itself via

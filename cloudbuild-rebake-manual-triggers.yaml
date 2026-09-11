@@ -18,8 +18,8 @@
 # that decides which of those changes actually needs a rebake). Two
 # cloudbuild-*.yaml files are deliberately absent from that map and are
 # therefore silently no-ops here: cloudbuild-refresh-gke-sandbox.yaml
-# (permanently converted to filename-mode by a#6711 — reads the repo file
-# at fire time, nothing to rebake) and cloudbuild-render-autoheal.yaml (a
+# (permanently converted to filename-mode by a prior change — reads the
+# repo file at fire time, nothing to rebake) and cloudbuild-render-autoheal.yaml (a
 # plain push-triggered inline-config trigger that already re-bakes itself on
 # every scripts/setup-cloud-build-triggers.sh re-run, same as the PR-gate
 # triggers — not a manual/frozen-inline trigger at all).
