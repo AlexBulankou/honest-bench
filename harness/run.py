@@ -275,6 +275,14 @@ def check_n_regression(raw: list[dict], prior_scenarios) -> list[str]:
 _NULLABLE_METRIC_REASON_FIELD = results_schema._NULLABLE_METRIC_REASON_FIELD
 _RECOGNIZED_ABSENT_REASONS = results_schema._RECOGNIZED_ABSENT_REASONS
 
+# hb#866: single source of truth (imported, not duplicated — see
+# results_schema.py's definition) for sla_metrics keys whose ABSENCE in a fresh
+# row denotes an improvement (a degraded condition healed), not a lost
+# measurement. The key-loss leg below skips these when they vanish entirely
+# from the fresh row, mirroring the null->value upgrade exemption just above
+# for reason-field keys but via presence (not null) semantics.
+_PRESENT_ONLY_DISCLOSURE_KEYS = results_schema._PRESENT_ONLY_DISCLOSURE_KEYS
+
 # Inverse of _NULLABLE_METRIC_REASON_FIELD: reason-field name -> set of sibling
 # metric keys whose null it explains. Used by the key-loss leg to distinguish a
 # reason-field that legitimately VANISHES on a null->value upgrade (the emitter
@@ -322,7 +330,13 @@ def check_cell_downgrade(
        value->null is a narrower case this leg also polices (#4420
        guard-then-fill): permitted only when the fresh row's sibling
        reason field names a value from `_RECOGNIZED_ABSENT_REASONS` —
-       missing, wrong-typed, or unrecognized reason still fails closed;
+       missing, wrong-typed, or unrecognized reason still fails closed. A
+       registered PRESENT-ONLY disclosure key (see
+       `_PRESENT_ONLY_DISCLOSURE_KEYS`, hb#866) is exempt from the key-loss
+       check entirely when it vanishes — unlike the reason-field exemption
+       above (which fires on a *sibling metric* being re-populated), this one
+       fires on the key's own disappearance, because the key itself is only
+       ever emitted while its underlying condition is degraded;
     3. row drop — a measured prior whose name is entirely absent from the fresh
        set (merge_seed_placeholders deliberately resurrects only `pending`
        priors, so a deregistered measured row would otherwise vanish silently).
@@ -451,6 +465,16 @@ def check_cell_downgrade(
                 lost = []
                 for k in sorted(pm):
                     if k in fm_keys:
+                        continue
+                    # hb#866 present-only disclosure key exemption: a registered
+                    # key (see _PRESENT_ONLY_DISCLOSURE_KEYS) is emitted ONLY
+                    # while a degraded condition holds and is correctly ABSENT
+                    # once the fire is healthy. Its vanishing from the fresh row
+                    # is therefore the signal of a degrade->heal improvement,
+                    # never a lost measurement — unlike an ordinary metric key,
+                    # whose disappearance always means the producer stopped
+                    # measuring something it used to.
+                    if k in _PRESENT_ONLY_DISCLOSURE_KEYS:
                         continue
                     # #4420 null->value UPGRADE exemption: a reason-field key
                     # legitimately disappears when at least one sibling metric
