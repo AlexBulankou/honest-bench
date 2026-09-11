@@ -1,0 +1,164 @@
+# Auto-rebake for manual/frozen-inline Cloud Build triggers (hb#8239) — Cloud
+# Build PUSH-trigger config.
+#
+# THE GAP (hb#843/hb#774 root cause, restated): several triggers carry a
+# FROZEN INLINE `build` config baked at rebake time (the "trusted-ref
+# boundary" — see scripts/check-hb-trigger-drift.py's header for the full
+# rationale). A push to `main` that edits one of those triggers' backing
+# cloudbuild-*.yaml updates the REPO file immediately but leaves the LIVE
+# trigger definition unchanged until someone runs
+# scripts/rebake-manual-trigger.sh by hand. hb#843 traced a case where the
+# evidence->PR->review->merge cycle closed in under 2h but the live trigger
+# stayed stale for days because nobody remembered the manual rebake step.
+# scripts/check-hb-trigger-drift.py (read-only) catches this AFTER the fact;
+# this trigger is the automated FIX that keeps it from happening at all.
+#
+# SCOPE: included-files=cloudbuild-*.yaml (broad glob — see
+# scripts/manual-trigger-rebake-map.py for the exact file->trigger mapping
+# that decides which of those changes actually needs a rebake). Two
+# cloudbuild-*.yaml files are deliberately absent from that map and are
+# therefore silently no-ops here: cloudbuild-refresh-gke-sandbox.yaml
+# (permanently converted to filename-mode by a prior change — reads the
+# repo file at fire time, nothing to rebake) and cloudbuild-render-autoheal.yaml (a
+# plain push-triggered inline-config trigger that already re-bakes itself on
+# every scripts/setup-cloud-build-triggers.sh re-run, same as the PR-gate
+# triggers — not a manual/frozen-inline trigger at all).
+#
+# WHY POST-MERGE, NOT A PR-TIME GATE: the live trigger can only safely be
+# updated with content that has already cleared review on `main` — rebaking
+# from an unreviewed PR branch would let an unmerged, unreviewed `build`
+# config become live, defeating the trusted-ref boundary this whole
+# mechanism exists to protect. Only a run AFTER merge (this trigger, on push
+# to main) rebakes from vetted content.
+#
+# IDEMPOTENT BY CONSTRUCTION: rebake-manual-trigger.sh always PATCHes the
+# full live resource from the current repo file — re-running it against an
+# already-in-sync trigger is a no-op PATCH (same bytes in, same bytes out).
+# A double-fire (e.g. two qualifying pushes land close together) is
+# harmless.
+#
+# THIS NEVER FIRES A BUILD: rebake-manual-trigger.sh only updates a
+# trigger's stored `build` definition via the Cloud Build REST API — it
+# never calls `gcloud builds triggers run` or `gcloud builds submit`. The
+# manual triggers stay exactly as manual as before; only their frozen
+# content catches up to `main`.
+#
+# Fleet rule: NO GitHub Actions — Cloud Build ONLY.
+#
+# TRUSTED-REF re-bake (edits here require re-baking the live inline trigger
+# from THIS file via user-ADC — the trusted-gate boundary): see
+# scripts/setup-cloud-build-triggers.sh for the concrete create/update
+# command (--service-account/--project kept out of this public file, same
+# convention as the repo's other Cloud Build configs). Runs as the
+# dedicated a4-hb-trigger-rebaker@ service account, scoped to exactly
+# cloudbuild.builds.get + cloudbuild.builds.update (Cloud Build has no
+# triggers-specific IAM permission — trigger get/patch rides the builds
+# permission namespace) — no build-submit/cluster access of any kind.
+
+steps:
+  # Full unshallow (same idiom as cloudbuild-render-autoheal.yaml /
+  # cloudbuild-unit-tests.yaml / cloudbuild-refresh-gke-kata.yaml): the
+  # diff step below needs HEAD^, which a shallow single-commit checkout
+  # doesn't have.
+  - name: python:3.12
+    id: unshallow
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -uo pipefail
+        git fetch --no-tags --unshallow origin main >/dev/null 2>&1 \
+          || git fetch --no-tags origin main >/dev/null 2>&1 \
+          || true
+
+  # Rebake every mapped trigger whose backing file changed in this push.
+  # gcr.io/google.com/cloudsdktool/cloud-sdk for gcloud+curl (both required
+  # by rebake-manual-trigger.sh); PyYAML isn't preinstalled on this image so
+  # it's pip-installed explicitly (--break-system-packages: this image's
+  # system python3 is PEP668-managed, container is ephemeral — safe, same
+  # pattern as cloudbuild-refresh-gke-kata.yaml's harness/requirements.txt
+  # install).
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    id: rebake
+    entrypoint: bash
+    waitFor: ['unshallow']
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        pip install --quiet --no-cache-dir --break-system-packages pyyaml
+
+        mapfile -t changed < <(git diff --name-only HEAD^ HEAD -- 'cloudbuild-*.yaml')
+        if [ "${#changed[@]}" -eq 0 ]; then
+          echo "No cloudbuild-*.yaml changed in this push — nothing to rebake."
+          : > /workspace/rebaked.txt
+          exit 0
+        fi
+        echo "Changed cloudbuild-*.yaml files: ${changed[*]}"
+
+        mapfile -t pairs < <(python3 scripts/manual-trigger-rebake-map.py "${changed[@]}")
+        if [ "${#pairs[@]}" -eq 0 ]; then
+          echo "None of the changed files map to a rebakeable trigger — nothing to do."
+          : > /workspace/rebaked.txt
+          exit 0
+        fi
+
+        : > /workspace/rebaked.txt
+        for pair in "${pairs[@]}"; do
+          file="${pair%% *}"
+          trigger="${pair#* }"
+          echo "==> rebaking $trigger from $file"
+          PROJECT="$PROJECT_ID" bash scripts/rebake-manual-trigger.sh "$trigger" "$file"
+          echo "$trigger <- $file" >> /workspace/rebaked.txt
+        done
+
+  # Best-effort completion receipt, silent when nothing rebaked. Mirrors
+  # cloudbuild-refresh-gke-sandbox.yaml's sdev-delta-notify: a webhook
+  # failure must never fail this step — the real work (the rebake above)
+  # already landed by the time this runs.
+  - name: python:3.12
+    id: sdev-notify
+    entrypoint: bash
+    waitFor: ['rebake']
+    secretEnv: ['HB_SDEV_WEBHOOK']
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        if [ ! -s /workspace/rebaked.txt ]; then
+          echo "No triggers rebaked this run — nothing to notify."
+          exit 0
+        fi
+        python3 <<'PYEOF'
+        import json
+        import os
+        import urllib.request
+
+        with open("/workspace/rebaked.txt") as f:
+            lines = [ln.strip() for ln in f if ln.strip()]
+        text = "hb#8239 auto-rebake: refreshed " + str(len(lines)) + " trigger(s) after merge to main:\n" + "\n".join(lines)
+        body = json.dumps({"text": text}).encode()
+        req = urllib.request.Request(
+            os.environ["HB_SDEV_WEBHOOK"], data=body, headers={"Content-Type": "application/json"}
+        )
+        try:
+            urllib.request.urlopen(req, timeout=15)
+            print("Posted rebake receipt to #s-dev.")
+        except Exception as exc:
+            print("WARNING: rebake receipt chat post failed (non-fatal): %s" % exc)
+        PYEOF
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+
+availableSecrets:
+  secretManager:
+    # $PROJECT_ID is a Cloud Build built-in substitution resolved at build
+    # time, so the concrete project id never ships in this public file (same
+    # pattern as the repo's other Cloud Build configs).
+    - versionName: projects/$PROJECT_ID/secrets/hb-sdev-webhook/versions/latest
+      env: HB_SDEV_WEBHOOK
+
+# Cheap: no cluster, a handful of REST PATCH calls, one webhook POST. 300s
+# is ample headroom over the sub-minute expected runtime.
+timeout: 300s
