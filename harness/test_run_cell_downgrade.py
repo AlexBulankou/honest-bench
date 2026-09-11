@@ -595,6 +595,74 @@ def test_density_not_carried_onto_empty_zero_delivery_sla():
            f"{raw[0]['sla_metrics']!r}")
 
 
+def test_present_only_disclosure_key_vanishing_on_heal_passes():
+    # hb#866: lever2_prescale_degraded is emitted ONLY while the lever-2
+    # prescale ceiling is unreached (hb#863: as 1.0, since a bare bool is
+    # dropped). A later fire that reaches a healthy ceiling correctly stops
+    # emitting the key at all -- that is a degrade->heal IMPROVEMENT, not a
+    # lost measurement, and must not gate.
+    prior = [{
+        "name": "warmpool_cold_start", "outcome": "PASS",
+        "sla_metrics": {
+            "lever2_prescale_degraded": 1.0,
+            "warmpool_gate_cold_min_ms": 5000.0,
+        },
+    }]
+    raw = [{
+        "name": "warmpool_cold_start", "outcome": "PASS",
+        "sla_metrics": {
+            "warmpool_gate_cold_min_ms": 5000.0,
+        },
+    }]
+    _check(check_cell_downgrade(raw, prior) == [],
+           "a present-only disclosure key vanishing on heal must not gate")
+
+
+def test_present_only_disclosure_key_exemption_does_not_cover_other_keys():
+    # Guard the exemption's boundary: the same fire that healthily drops
+    # lever2_prescale_degraded must NOT get a free pass on an unrelated,
+    # genuinely lost metric key.
+    prior = [{
+        "name": "warmpool_cold_start", "outcome": "PASS",
+        "sla_metrics": {
+            "lever2_prescale_degraded": 1.0,
+            "warmpool_gate_cold_min_ms": 5000.0,
+        },
+    }]
+    raw = [{
+        "name": "warmpool_cold_start", "outcome": "PASS",
+        "sla_metrics": {},
+    }]
+    lines = check_cell_downgrade(raw, prior)
+    _check(len(lines) == 1, f"expected 1 downgrade, got {lines!r}")
+    _check("warmpool_gate_cold_min_ms" in lines[0]
+           and "lever2_prescale_degraded" not in lines[0],
+           f"unexpected line: {lines[0]!r}")
+
+
+def test_non_registered_present_only_key_still_fires_on_loss():
+    # Control: an ordinary metric key that happens to vanish is NOT exempt
+    # merely by superficial resemblance (e.g. sharing a scenario with a
+    # registered present-only key) -- only keys actually enumerated in
+    # _PRESENT_ONLY_DISCLOSURE_KEYS get the pass.
+    prior = [{
+        "name": "warmpool_cold_start", "outcome": "PASS",
+        "sla_metrics": {
+            "lever2_prescale_degraded": 1.0,
+            "lever2_prescale_ceiling_reached": 1.0,
+        },
+    }]
+    raw = [{
+        "name": "warmpool_cold_start", "outcome": "PASS",
+        "sla_metrics": {},
+    }]
+    lines = check_cell_downgrade(raw, prior)
+    _check(len(lines) == 1, f"expected 1 downgrade, got {lines!r}")
+    _check("lever2_prescale_ceiling_reached" in lines[0]
+           and "lever2_prescale_degraded" not in lines[0],
+           f"unexpected line: {lines[0]!r}")
+
+
 def main() -> int:
     tests = [
         test_key_loss_detected,
@@ -630,6 +698,9 @@ def main() -> int:
         test_density_invalid_values_not_carried,
         test_density_malformed_inputs_tolerated,
         test_density_not_carried_onto_empty_zero_delivery_sla,
+        test_present_only_disclosure_key_vanishing_on_heal_passes,
+        test_present_only_disclosure_key_exemption_does_not_cover_other_keys,
+        test_non_registered_present_only_key_still_fires_on_loss,
     ]
     failed = 0
     for t in tests:

@@ -396,6 +396,25 @@ _RECOGNIZED_ABSENT_REASONS = {
 # reason-field key without needing a second pass over the registry above.
 _REASON_FIELD_NAMES = set(_NULLABLE_METRIC_REASON_FIELD.values())
 
+# hb#866 (a variant of the #4420 guard-then-fill class, via a different mechanism
+# than the nullable-metric registry above): single source of truth for sla_metrics
+# keys that are PRESENT-ONLY disclosures — emitted while a degraded/abnormal
+# condition holds, and correctly ABSENT once the fire is healthy. For these keys,
+# absence in a fresh row is an IMPROVEMENT (degrade -> heal), never a loss.
+# `harness/run.py`'s `check_cell_downgrade` imports this SAME set (not an
+# independent copy) so the key-loss leg can distinguish "the fire healed and
+# rightly stopped disclosing this" from genuine key loss, without the schema and
+# the refresh-time guard ever drifting apart on which keys carry this semantics.
+#
+# warmpool_cold_start.py (_add_gate_diagnostic_metrics's lever-2 branch) is the
+# sole producer today: `lever2_prescale_degraded` is emitted (as 1.0, per hb#863 —
+# a bare bool is dropped by _coerce_sla_metrics below) only while the lever-2
+# prescale ceiling was not reached; a fire that later reaches a healthy ceiling
+# does not emit the key at all.
+_PRESENT_ONLY_DISCLOSURE_KEYS = {
+    "lever2_prescale_degraded",
+}
+
 
 def _coerce_sla_metrics(raw) -> dict:
     """Keep only {safe-key: finite-number}; drop everything else.
