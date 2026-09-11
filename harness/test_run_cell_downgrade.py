@@ -376,6 +376,92 @@ def test_null_transition_partial_null_unrecognized_reason_flags_only_that_key():
            f"unexpected line: {lines[0]!r}")
 
 
+def test_reason_field_vanishes_on_null_to_value_upgrade_passes():
+    # The gVisor-refresh false-positive (build 560b8492, 09-11): the committed
+    # row observed NO dip, so it carried during_dip metrics=null + the sibling
+    # absent_reason="no_dip_observed". A later fire OBSERVED the dip, so it
+    # populated during_dip median/n (non-null) and the emitter dropped the
+    # now-unneeded absent_reason. The key-loss leg saw the reason field vanish
+    # and flagged it as a downgrade -- but it is the correct consequence of a
+    # null->value UPGRADE, not a downgrade. It must NOT gate.
+    prior = [{
+        "name": "warmpool_cold_start", "outcome": "PASS",
+        "sla_metrics": {
+            "warmpool_gate_ttfe_during_dip_median_ms": None,
+            "warmpool_gate_ttfe_during_dip_n": None,
+            "warmpool_gate_ttfe_during_dip_absent_reason": "no_dip_observed",
+        },
+    }]
+    raw = [{
+        "name": "warmpool_cold_start", "outcome": "PASS",
+        "sla_metrics": {
+            "warmpool_gate_ttfe_during_dip_median_ms": 2632.93,
+            "warmpool_gate_ttfe_during_dip_n": 14,
+        },
+    }]
+    _check(check_cell_downgrade(raw, prior) == [],
+           "reason field vanishing on a null->value upgrade must not gate")
+
+
+def test_reason_field_lost_without_sibling_repopulation_still_fires():
+    # Guard the exemption's boundary: a reason field that vanishes while EVERY
+    # sibling metric it explains stays null (or absent) is NOT an upgrade -- it
+    # is a genuine loss of the recorded cause for a still-absent bucket, and
+    # must still gate. (A null metric with no recognized reason is exactly the
+    # information-loss shape #4420 forbids.)
+    prior = [{
+        "name": "warmpool_cold_start", "outcome": "PASS",
+        "sla_metrics": {
+            "warmpool_gate_ttfe_during_dip_median_ms": None,
+            "warmpool_gate_ttfe_during_dip_n": None,
+            "warmpool_gate_ttfe_during_dip_absent_reason": "no_dip_observed",
+        },
+    }]
+    raw = [{
+        "name": "warmpool_cold_start", "outcome": "PASS",
+        "sla_metrics": {
+            "warmpool_gate_ttfe_during_dip_median_ms": None,
+            "warmpool_gate_ttfe_during_dip_n": None,
+        },
+    }]
+    lines = check_cell_downgrade(raw, prior)
+    _check(len(lines) == 1, f"expected 1 downgrade, got {lines!r}")
+    _check("warmpool_gate_ttfe_during_dip_absent_reason" in lines[0],
+           f"unexpected line: {lines[0]!r}")
+
+
+def test_reason_field_exempt_only_covers_its_own_siblings():
+    # The exemption is per-reason-field: re-populating a during_dip metric must
+    # NOT exempt the loss of the cold-tier reason field (different sibling set).
+    # cold metrics stay null AND the cold reason vanishes -> that leg still fires,
+    # even though the unrelated during_dip bucket was upgraded in the same fire.
+    prior = [{
+        "name": "warmpool_cold_start", "outcome": "PASS",
+        "sla_metrics": {
+            "warmpool_gate_ttfe_during_dip_median_ms": None,
+            "warmpool_gate_ttfe_during_dip_n": None,
+            "warmpool_gate_ttfe_during_dip_absent_reason": "no_dip_observed",
+            "warmpool_gate_cold_min_ms": None,
+            "warmpool_gate_cold_p50_ms": None,
+            "warmpool_gate_cold_absent_reason": "no_true_cold_bucket_claims",
+        },
+    }]
+    raw = [{
+        "name": "warmpool_cold_start", "outcome": "PASS",
+        "sla_metrics": {
+            "warmpool_gate_ttfe_during_dip_median_ms": 2632.93,
+            "warmpool_gate_ttfe_during_dip_n": 14,
+            "warmpool_gate_cold_min_ms": None,
+            "warmpool_gate_cold_p50_ms": None,
+        },
+    }]
+    lines = check_cell_downgrade(raw, prior)
+    _check(len(lines) == 1, f"expected 1 downgrade, got {lines!r}")
+    _check("warmpool_gate_cold_absent_reason" in lines[0]
+           and "warmpool_gate_ttfe_during_dip_absent_reason" not in lines[0],
+           f"unexpected line: {lines[0]!r}")
+
+
 def test_null_transition_skipped_on_config_mismatch():
     # The null-transition check lives inside the same mw_match-gated branch as
     # the key-loss leg (hb#808) -- a config-mismatched fire skips the whole
@@ -532,6 +618,9 @@ def main() -> int:
         test_null_transition_wrong_type_reason_fails_closed,
         test_null_transition_recognized_reason_covers_all_registered_keys,
         test_null_transition_partial_null_unrecognized_reason_flags_only_that_key,
+        test_reason_field_vanishes_on_null_to_value_upgrade_passes,
+        test_reason_field_lost_without_sibling_repopulation_still_fires,
+        test_reason_field_exempt_only_covers_its_own_siblings,
         test_null_transition_skipped_on_config_mismatch,
         test_fresh_measured_with_surfaced_when_committed_has_none,
         test_malformed_inputs_tolerated,
