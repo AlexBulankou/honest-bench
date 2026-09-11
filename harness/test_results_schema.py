@@ -95,6 +95,34 @@ def test_excerpt_never_emitted():
     _check(sentinel not in repr(s), "no leaked string anywhere in emitted scenario")
 
 
+def test_lever2_prescale_degraded_bool_dropped_numeric_survives():
+    # hb#843 lever-2 disclosure regression: _coerce_sla_metrics silently drops
+    # ANY bool value (isinstance(v, bool) exclusion, no raise/warn) since bool
+    # is a subclass of int. warmpool_cold_start.py originally emitted this key
+    # as a literal `True` -- a real degrade fired in production (a genuine
+    # WARNING in the build log) but the disclosure never reached latest.json,
+    # a #4420 drop-and-stay-quiet failure with zero error anywhere in the
+    # pipeline. The fix is scenario-side (emit a finite-number sentinel, since
+    # this is the only bool-shaped sla_metrics key in the codebase); this test
+    # pins BOTH halves so the bug can't quietly come back from either side.
+    r_bool = rs.build_results(
+        [{"name": "x", "outcome": "pass",
+          "sla_metrics": {"lever2_prescale_degraded": True}}],
+        _prov(), GEN_AT,
+    )
+    _check("lever2_prescale_degraded" not in r_bool["scenarios"][0].get("sla_metrics", {}),
+           "bool lever2_prescale_degraded must be dropped, not silently kept as 1")
+
+    r_num = rs.build_results(
+        [{"name": "x", "outcome": "pass",
+          "sla_metrics": {"lever2_prescale_degraded": 1.0}}],
+        _prov(), GEN_AT,
+    )
+    s = r_num["scenarios"][0]["sla_metrics"]
+    _check(s.get("lever2_prescale_degraded") == 1.0 and not isinstance(s.get("lever2_prescale_degraded"), bool),
+           f"numeric lever2_prescale_degraded must survive as a float, got {s}")
+
+
 def test_non_schema_keys_dropped():
     r = rs.build_results(
         [{"name": "x", "outcome": "pass", "internal_pod_ip": "10.4.2.7",
