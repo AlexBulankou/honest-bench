@@ -923,6 +923,31 @@ def test_prescale_pool_target_cold_baseline_pool_still_computed():
     assert cell._prescale_pool_target(0, 10, 5) == 15
 
 
+# ---- hb#843: prescale target ceiling clamp ----
+
+def test_prescale_pool_target_ceiling_disabled_by_default_matches_prior_behavior():
+    # ceiling defaults to 0 (disabled) -- identical to the pre-hb#843 shape.
+    assert cell._prescale_pool_target(30, 40, 5) == 45
+
+
+def test_prescale_pool_target_ceiling_clamps_unreachable_target():
+    # Real kata numbers from hb#843: pool=30, claims=40, headroom=5 ->
+    # naive target 45 exceeds the ~42-pod nodepool ceiling -> clamp to 42.
+    assert cell._prescale_pool_target(30, 40, 5, ceiling=42) == 42
+
+
+def test_prescale_pool_target_ceiling_is_noop_when_target_already_under_it():
+    # target(15) < ceiling(42) -> ceiling never lowers an already-reachable
+    # target.
+    assert cell._prescale_pool_target(5, 10, 5, ceiling=42) == 15
+
+
+def test_prescale_pool_target_ceiling_never_drops_below_nominal_pool():
+    # A misconfigured ceiling smaller than the nominal pool must never
+    # request a resize-down -- clamped up to pool_replicas instead.
+    assert cell._prescale_pool_target(50, 10, 5, ceiling=42) == 50
+
+
 class _FakePatchRecorder:
     """Records the single patch_namespaced_custom_object call it receives."""
 
@@ -1045,6 +1070,26 @@ def test_prescale_with_fallback_degrades_instead_of_raising_on_timeout():
     # NOT reverted -- partial prescale is still better burst headroom.
     assert len(custom.patch_calls) == 1
     assert custom.patch_calls[0]["body"] == {"spec": {"replicas": 45}}
+
+
+def test_prescale_with_fallback_ceiling_avoids_degrade_on_reachable_target():
+    # Same real kata numbers as the timeout test above (pool=30, claims=40,
+    # headroom=5), but with ceiling=42 -- the clamped target (42) IS what the
+    # nodepool can actually reach, so the pool lands cleanly and the fire no
+    # longer degrades on every single run.
+    custom = _FakePatchAndGet([42, 42])
+    orig_sleep = cell.time.sleep
+    cell.time.sleep = lambda _s: None
+    try:
+        degraded = cell._prescale_pool_with_fallback(
+            custom, pool_name="pool-x", pool_replicas=30, claim_count=40,
+            headroom=5, timeout_s=5, stability_polls=2, ceiling=42,
+        )
+    finally:
+        cell.time.sleep = orig_sleep
+    assert degraded is False
+    assert len(custom.patch_calls) == 1
+    assert custom.patch_calls[0]["body"] == {"spec": {"replicas": 42}}
 
 
 # ---- hb#411: _cleanup batch-retry rides out the IAM-strike window ----
