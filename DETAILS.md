@@ -22,7 +22,7 @@ come here when you want the guidance or to see the working.
 
 ### Cold-tier stall inflates separation ratio
 
-> ⚠️ **Cold-tier stall inflates separation ratio:** the cold-tier median bind latency is 10x or more above the fastest cold bind in the same fire for **Kata + microVM**: fastest cold bind 3.20995s vs median cold bind 206.74s (64.4x spread), inflating the published separation ratio to 156x — this large an internal spread means a substantial share of cold claims individually stalled well beyond a normal cold-start boot time, not that the cold tier as a whole is uniformly slow. Any separation ratio computed against this cold-tier median (cold_p50 / warm_p50, hb#6743) reads as wide separation but is at least partly a cold-tier stall artifact rather than evidence the warm tier is unusually fast. The cause of the stall is not asserted here. A later refresh whose cold-tier spread returns under the threshold clears this.
+_Clear as of the latest measured refresh — no cold-tier internal stall currently disclosed._
 
 ### Same-build separation-ratio variance
 
@@ -30,7 +30,7 @@ come here when you want the guidance or to see the working.
 
 ### Single-fire separation verdict defensibility
 
-> ⚠️ **Single-fire separation verdict withheld:** the raw gate issues a pass/fail from ONE fire's separation ratio, but reconciling that ratio against the run-to-run noise floor measured across the accrued same-build history shows the noise band is wider than the ratio's margin to the 1.8x gate, so no single-fire verdict is defensible: **gVisor** — one fire measured 1.51x; at the measured noise floor (σ(log)=0.94, 95% band 0.24x–9.56x) the interval straddles the 1.8x gate, so this single fire cannot tell a real pass from an unlucky draw. This is not an open question this fire's replication would close: the published median-of-37 adjudicated verdict for this rig has already resolved to **FAIL** (1.06x, 0.783x–1.43x band — see below); more single fires would not change that, since this rig's own history shows the per-fire ratio swings both sides of the gate (variance, not sample count, drives the spread). The verdict layer refuses to issue a single-fire verdict (fail-closed: it withholds the pass/fail rather than emitting the raw single-fire one it cannot defend) and defers to the accrued median-of-N adjudicated verdict instead. See [WARMPOOL_SEPARATION_VERDICT_PROTOCOL.md](WARMPOOL_SEPARATION_VERDICT_PROTOCOL.md).
+> ⚠️ **Single-fire separation verdict withheld:** the raw gate issues a pass/fail from ONE fire's separation ratio, but reconciling that ratio against the run-to-run noise floor measured across the accrued same-build history shows the noise band is wider than the ratio's margin to the 1.8x gate, so no single-fire verdict is defensible: **gVisor** — one fire measured 1.51x; at the measured noise floor (σ(log)=0.94, 95% band 0.24x–9.56x) the interval straddles the 1.8x gate, so this single fire cannot tell a real pass from an unlucky draw. This is not an open question this fire's replication would close: the published median-of-37 adjudicated verdict for this rig has already resolved to **FAIL** (1.06x, 0.783x–1.43x band — see below); more single fires would not change that, since this rig's own history shows the per-fire ratio swings both sides of the gate (variance, not sample count, drives the spread). **Kata + microVM** — one fire measured 1.9x; at the measured noise floor (σ(log)=0.94, 95% band 0.302x–12x) the interval straddles the 1.8x gate, so this single fire cannot tell a real pass from an unlucky draw. No accrued history is tagged for this rig, so no accrual path can be named. The verdict layer refuses to issue a single-fire verdict (fail-closed: it withholds the pass/fail rather than emitting the raw single-fire one it cannot defend) and defers to the accrued median-of-N adjudicated verdict instead. See [WARMPOOL_SEPARATION_VERDICT_PROTOCOL.md](WARMPOOL_SEPARATION_VERDICT_PROTOCOL.md).
 
 ### Adjudicated separation verdict (median-of-N)
 
@@ -234,8 +234,8 @@ Warm-Pool TTFE (ms) — p50 vs p95
 
 gVisor         p50  ██████████████ 3.1744s
                p95  ████████████████████ 4.3855s
-Kata + microVM p50  █████████ 1.8658s
-               p95  ███████████████ 3.3838s
+Kata + microVM p50  █████████ 2.0522s
+               p95  ██████████████ 3.1202s
 ```
 
 _Cluster shape (gVisor leg): node_count=2, `n2-standard-16` — the swing-flag threshold compares consecutive fires on this chart, so a node-count or machine-class change shows up here first._
