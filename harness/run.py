@@ -275,6 +275,19 @@ def check_n_regression(raw: list[dict], prior_scenarios) -> list[str]:
 _NULLABLE_METRIC_REASON_FIELD = results_schema._NULLABLE_METRIC_REASON_FIELD
 _RECOGNIZED_ABSENT_REASONS = results_schema._RECOGNIZED_ABSENT_REASONS
 
+# Inverse of _NULLABLE_METRIC_REASON_FIELD: reason-field name -> set of sibling
+# metric keys whose null it explains. Used by the key-loss leg to distinguish a
+# reason-field that legitimately VANISHES on a null->value upgrade (the emitter
+# stops emitting an absent_reason once the metric it explained is re-populated)
+# from genuine key loss. This is the guard-side counterpart to the emitter's
+# documented asymmetry: warmpool_cold_start.py emits the absent_reason ONLY in
+# the null branch, so a fire that observes the previously-absent bucket drops the
+# reason field as the correct consequence of populating the metric — not a
+# downgrade. Derived from the same single-source registry, so it can never drift.
+_REASON_FIELD_SIBLING_METRICS: dict[str, set[str]] = {}
+for _metric_key, _reason_field in _NULLABLE_METRIC_REASON_FIELD.items():
+    _REASON_FIELD_SIBLING_METRICS.setdefault(_reason_field, set()).add(_metric_key)
+
 
 def check_cell_downgrade(
     raw: list, prior_scenarios, downgraded_names: set | None = None
@@ -435,7 +448,30 @@ def check_cell_downgrade(
                 )
             else:
                 fm_keys = set(fm.keys()) if isinstance(fm, dict) else set()
-                lost = sorted(k for k in pm if k not in fm_keys)
+                lost = []
+                for k in sorted(pm):
+                    if k in fm_keys:
+                        continue
+                    # #4420 null->value UPGRADE exemption: a reason-field key
+                    # legitimately disappears when at least one sibling metric
+                    # it explains is re-populated (non-null) in the fresh row.
+                    # The emitter carries the absent_reason ONLY while the metric
+                    # is null (warmpool_cold_start.py's dip/at_supply/cold
+                    # branches), so a fire that now observes the bucket drops the
+                    # reason field as the correct consequence of the upgrade, not
+                    # a downgrade. Genuine loss is still caught: a dropped METRIC
+                    # key is not a reason-field (no exemption here), and a metric
+                    # nulled WITHOUT a reason is caught by the nulled_bad_reason
+                    # leg below. Requires fm to be a dict — a wholesale-missing
+                    # sla_metrics is a real downgrade, never exempt.
+                    siblings = _REASON_FIELD_SIBLING_METRICS.get(k)
+                    if (
+                        siblings
+                        and isinstance(fm, dict)
+                        and any(fm.get(m) is not None for m in siblings)
+                    ):
+                        continue
+                    lost.append(k)
                 if lost:
                     downgrades.append(
                         f"{name}: sla_metrics key(s) lost vs committed row: "
