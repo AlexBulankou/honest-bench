@@ -1,12 +1,25 @@
 {
   "_meta": {
     "seeded_from": "UPSTREAM_BLOCKERS.md (active-asks-only rewrite)",
-    "last_verified": "2026-09-11",
+    "last_verified": "2026-09-12",
     "freshness": "Rides every UPSTREAM_BLOCKERS.md refresh PR; link states hand-verified against the public GitHub API at each refresh.",
     "fork_upstreams": {},
     "commit_distance": {}
   },
   "classes": {
+    "substrate-capacity-report-resync-race": {
+      "renders_at": "mapping-only (freshness-verifier seed for the substrate workercache resync ready-race; blocker page S1)",
+      "refs": [
+        {
+          "repo": "agent-substrate/substrate",
+          "number": 1283,
+          "kind": "pr",
+          "role": "blocks",
+          "status": "merged",
+          "note": "'multi-actor worker API' -- merged 2026-09-04T04:19:22Z, mergeCommit 2c429a9906bd388e9003964877cc6c8498ab57c8. INTRODUCED the regression (this is the causing change, NOT a fix): made worker capacity async-reported through a watch-backed cache in cmd/ateapi/internal/workercache/workercache.go, whose watch-disconnect path unconditionally flips ready=false for the entire resync window (worst case ~31s, matches the observed 27-37s activation-latency band) while the sibling periodic-relist-failure path tolerates identical staleness by serving last-known-good. Reference fix (serve last-known-good during resync + regression test TestCache_StaysReadyDuringResync) verified clean against upstream main 0b3d2d078f647cc3ad1c8e204705d626e681fab6 and staged on an integration fork branch; no upstream PR opened (pending per-PR upstream-PR authorization). Distinct from the closed cold-start 'no free workers' race (section U7): same symptom string, different mechanism/onset/fix. Tracking + full mechanism: blocker page S1 / detail section U11."
+        }
+      ]
+    },
     "substrate-listactors-brick": {
       "renders_at": "archive-only (RESOLVED upstream by substrate#940, merged 2026-08-25 -- ateredis removed, atepg/postgres is the sole ate-system store backend so the proto-rename brick cannot occur upstream; blocker archive, was page S1)",
       "refs": [
