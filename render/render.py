@@ -609,6 +609,35 @@ def resolve_default_as_of():
     return _parse_as_of(_UPSTREAM_META.get("last_verified") if isinstance(_UPSTREAM_META, dict) else None)
 
 
+# Carried per-cluster figures (matrix /cluster triples, whole-cluster saturation ceiling) are
+# point-in-time numbers lifted from an occasional manual step-up sweep, not this run's daily
+# refresh — they carry their own provenance date (`thpt_slo_measured_at`, `measured_at`) and are
+# re-used verbatim across many daily renders. Unlike render_stale_banner (whole-page calendar age)
+# they have no freshness ratchet of their own, so a frozen cell reads as current indefinitely.
+# This threshold + helper append an advisory age tag once a carried figure falls far enough behind
+# the page's committed freshness anchor. Same trust-surface idiom as the banner (AGENTS.md
+# "Transition guards on trust surfaces"): the downgrade direction (stale) surfaces LOUD; the fresh
+# direction stays silent. PURE — reads committed provenance dates only, never the wall clock.
+CLUSTER_STALE_THRESHOLD_DAYS = 14
+
+
+def _carried_stale_days(measured_at, as_of, threshold_days=CLUSTER_STALE_THRESHOLD_DAYS):
+    """Whole days a carried point-in-time figure is behind the freshness anchor IF that gap
+    exceeds threshold_days, else None. PURE (no wall clock): both inputs are committed data —
+    `measured_at` a `YYYY-MM-DD[...]` provenance string, `as_of` the anchor from
+    resolve_default_as_of(). None (fresh, or anchor/date missing/unparseable) → the disclosure
+    renders exactly as before (guard-then-fill: loud on the stale downgrade, silent otherwise).
+    """
+    if as_of is None or not isinstance(measured_at, str) or not measured_at:
+        return None
+    d = _parse_as_of(measured_at[:10])
+    if d is None:
+        return None
+    anchor = as_of if as_of.tzinfo else as_of.replace(tzinfo=datetime.timezone.utc)
+    delta = (anchor - d).days
+    return delta if delta > threshold_days else None
+
+
 # WS3 (epic #6669) — commit-distance-behind-upstream-head staleness.
 # A page can be CALENDAR-fresh (re-fired today, so render_stale_banner stays silent) yet built
 # on a fork base many commits behind upstream HEAD — the measured numbers then don't reflect the
@@ -2485,8 +2514,15 @@ def render_matrix(results, kata_results=None, include_legend=True):
     # Without this, a frozen cluster figure reads as fresh forever across every daily
     # single-node refresh, exactly the silent-trust-downgrade class #4420 forbids.
     if stale_triple_cells:
+        _as_of = resolve_default_as_of()
+
+        def _triple_label(rt, mode, date):
+            age = _carried_stale_days(date, _as_of)
+            suffix = f" — {age} days stale" if age is not None else ""
+            return f"**{rt}** {mode} ({date}{suffix})"
+
         who = "; ".join(
-            f"**{rt}** {mode} ({date})" for rt, mode, date in stale_triple_cells
+            _triple_label(rt, mode, date) for rt, mode, date in stale_triple_cells
         )
         lines.append(
             f"_📅 **Cluster figure point-in-time:** {who} — the `/cluster` half above is "
@@ -6562,7 +6598,9 @@ def render_cluster_saturation(results, heading="### Saturation — the whole-clu
                 "failure._")
             lines.append("")
         if cs.get("measured_at"):
-            lines.append(f"_Measured {cs['measured_at'][:10]} — whole-cluster saturation ceiling (point-in-time)._")
+            _age = _carried_stale_days(cs["measured_at"], resolve_default_as_of())
+            _tag = f" ({_age} days stale)" if _age is not None else ""
+            lines.append(f"_Measured {cs['measured_at'][:10]}{_tag} — whole-cluster saturation ceiling (point-in-time)._")
             lines.append("")
         return "\n".join(lines)
     # Detail path: the full per-node + per-cluster throughput triple + bind/exec decomposition.
@@ -6613,7 +6651,9 @@ def render_cluster_saturation(results, heading="### Saturation — the whole-clu
             "throughput collapse against the sizing floor, not a correctness failure._")
         lines.append("")
     if cs.get("measured_at"):
-        lines.append(f"_Measured {cs['measured_at'][:10]} — whole-cluster saturation ceiling (point-in-time)._")
+        _age = _carried_stale_days(cs["measured_at"], resolve_default_as_of())
+        _tag = f" ({_age} days stale)" if _age is not None else ""
+        lines.append(f"_Measured {cs['measured_at'][:10]}{_tag} — whole-cluster saturation ceiling (point-in-time)._")
         lines.append("")
     return "\n".join(lines)
 

@@ -543,6 +543,43 @@ def test_resolve_default_as_of_reads_committed_anchor():
     assert dt.tzinfo is not None
 
 
+def test_carried_stale_days_fresh_within_threshold_is_none():
+    # A carried figure within CLUSTER_STALE_THRESHOLD_DAYS is fresh ⇒ None (no age tag).
+    # Freshness is the silent, expected state per the trust-surface idiom.
+    assert render._carried_stale_days(_dt(5), _NOW) is None
+
+
+def test_carried_stale_days_boundary_exactly_threshold_is_fresh():
+    # delta == threshold is NOT stale (strict `>`): a figure exactly 14d behind still reads fresh.
+    assert render._carried_stale_days(_dt(14), _NOW) is None
+
+
+def test_carried_stale_days_over_threshold_returns_days_behind():
+    # One day past threshold trips; the returned value is the full days-behind count (what the
+    # tag renders), not the excess-over-threshold.
+    assert render._carried_stale_days(_dt(15), _NOW) == 15
+    assert render._carried_stale_days(_dt(30), _NOW) == 30
+
+
+def test_carried_stale_days_accepts_date_prefix_of_timestamp():
+    # Provenance strings (thpt_slo_measured_at / measured_at) may carry a time suffix; only the
+    # YYYY-MM-DD prefix is judged. 2026-07-01 → 2026-08-14 is 44 whole days.
+    assert render._carried_stale_days("2026-07-01T09:30:00Z", _NOW) == 44
+
+
+def test_carried_stale_days_none_anchor_is_none():
+    # No committed anchor ⇒ cannot judge ⇒ None. The disclosure renders exactly as before —
+    # never a silent wall-clock fallback (that would red the byte-pinned golden daily).
+    assert render._carried_stale_days(_dt(30), None) is None
+
+
+def test_carried_stale_days_missing_or_malformed_measured_at_is_none():
+    assert render._carried_stale_days(None, _NOW) is None
+    assert render._carried_stale_days("", _NOW) is None
+    assert render._carried_stale_days("not-a-date", _NOW) is None
+    assert render._carried_stale_days("2026-13-01", _NOW) is None  # impossible month
+
+
 # --- commit-distance banner (WS3, epic #6669) ------------------------------------------------
 #
 # Second, orthogonal freshness axis to calendar age: how far behind upstream HEAD the fork base
@@ -4912,7 +4949,14 @@ def test_cluster_saturation_renders_table():
     # per-cluster figure MEASURED at node_count, never a per-node × N extrapolation.
     assert "MEASURED at **40 nodes**" in out
     assert "never a per-node × N" in out
-    assert "_Measured 2026-07-02 — whole-cluster saturation ceiling (point-in-time)._" in out
+    # hb#879: the fixture's 2026-07-02 figure is carried far past the live committed anchor, so
+    # the caption gains an advisory age tag. The exact day count tracks the anchor (which advances
+    # with each freshness stamp), so match its SHAPE, not a frozen number, to stay drift-robust.
+    assert re.search(
+        r"_Measured 2026-07-02 \(\d+ days stale\) — "
+        r"whole-cluster saturation ceiling \(point-in-time\)\._",
+        out,
+    )
     assert "SLA ceiling: **not met**" in out
 
 
