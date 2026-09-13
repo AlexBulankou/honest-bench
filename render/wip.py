@@ -42,7 +42,7 @@ _HB = "https://github.com/AlexBulankou/honest-bench/issues"
 #   trace     — tracking links (public hb# / plain-English upstream / internal a# prose)
 WIP_CATALOG = {
     "cluster-fire": {
-        "title": "Per-cluster throughput saturation-fire mechanism (`cluster-fire`, no live cell today)",
+        "title": "Per-cluster throughput saturation-fire mechanism (`cluster-fire`)",
         "what": (
             "The per-**cluster** sustained creation throughput — how many sandboxes/sec the "
             "whole cluster holds under that row's SLO bar. It is the second half of each dual "
@@ -62,42 +62,45 @@ WIP_CATALOG = {
             f"acquire-side-uncorroborated ≥0.133/cluster; the most recent refresh "
             f"([hb#587]({_HB}/587), 2026-08-14) moved it again to the current 0.75/cluster — see "
             "the live Core Metrics table for today's figure. 0.75 sits below the cluster sizing "
-            "target, hence the ⚠️ flag on that cell. **Kata warm-pool `<1s` cell — CLOSED, no "
-            "fire needed.** The warm-pool-hit TTFE is p50≈3.07s / p95≈3.97s, both well over the "
-            "`<1s` bar, so `thpt_under_1s_per_node` is a measured 0. Zero qualifying starts per "
-            "node × N nodes = 0 across the cluster — the one exact case where the cluster half "
-            "follows arithmetically from the measured per-node 0 (NOT a per-node × N "
-            "extrapolation), so the cell now renders a measured-floor `0 /cluster` via the "
-            f"[hb#142.1]({_HB}/142) derivable-0 rule rather than an open-ended "
-            "`pending (cluster-fire)`. This is measured and honestly missed, not unmeasured. Not "
-            "gated by "
+            "target, hence the ⚠️ flag on that cell. **Kata warm-pool `<1s` cell — RE-OPENED as "
+            "of the 2026-09-13 refresh (see below).** A prior refresh's measured p50/p95 sat well "
+            "over the `<1s` bar, so `thpt_under_1s_per_node` read a measured 0 and the cluster "
+            "half derived arithmetically to `0 /cluster` under the "
+            f"[hb#142.1]({_HB}/142) derivable-0 rule. The 2026-09-13 refresh moved the warm-path "
+            "p50/p95 down (1.5704s / 2.7915s), which pulled a nonzero fraction of samples under "
+            "the `<1s` bar: `thpt_under_1s_per_node` is now a measured **1.696 /node** (marked "
+            "`‡` in the Core Metrics table — see "
+            "[DETAILS.md](DETAILS.md#how-to-read-the-core-metrics-cells) for the per-node-rate-"
+            "vs-p95-percentile note). A positive per-node rate is NOT the derivable-0 case, so "
+            "the per-node × N extrapolation refusal applies again: the cluster half reverts to "
+            "an honest `pending (cluster-fire)` until a real per-mode cluster-saturation fire "
+            "measures it directly. Not gated by "
             "[agent-sandbox#940](https://github.com/kubernetes-sigs/agent-sandbox/issues/940) "
             "(the warm-pool-only controller-histogram trust gate below) or by any rung-ladder "
             "defect — the ladder ran cleanly and reported honestly."
         ),
         "in_flight": (
             "The per-activation-mode cluster-throughput fire that emits the per-cluster fields is "
-            "the deliverable that graduates any still-pending half. The Kata `<1s` cell is no "
-            "longer among them — it closed as a measured-floor `0 /cluster` (see `why`), no fire "
-            "required. This entry stays live because the mechanism still governs any FUTURE cell "
-            "with a positive per-node figure but no landed cluster fire: such a cell would "
-            "legitimately render `pending (cluster-fire)` until a real per-mode saturation fire "
-            "lands its `thpt_*_per_cluster` field. There are zero such live cells in today's "
-            "matrix."
+            "the deliverable that graduates any still-pending half. The Kata `<1s` cell is now "
+            "one of them again — its per-node figure moved off the measured-0 floor, so the cell "
+            "has reverted from the closed measured-floor `0 /cluster` state to "
+            "`pending (cluster-fire)` (see `why`). This entry stays live because the mechanism "
+            "governs any cell with a positive per-node figure but no landed cluster fire, and "
+            "the Kata `<1s` cell is currently a live instance of exactly that case."
         ),
         "eta": (
             f"No open blocker — [hb#132]({_HB}/132) shipped the dual per-node/per-cluster "
-            "mechanism (closed 2026-07-11; gVisor's per-cluster cells already use it). No "
-            "outstanding cell awaits a fire today: the Kata warm-pool `<1s` cell closed via the "
-            f"[hb#142.1]({_HB}/142) measured-floor derivation. If a future positive-per-node cell "
-            "appears without a landed cluster fire, the graduating step is a manually-invoked, "
+            "mechanism (closed 2026-07-11; gVisor's per-cluster cells already use it). One cell "
+            "awaits a fire today: the Kata warm-pool `<1s` cell, re-opened by the 2026-09-13 "
+            "refresh's positive per-node rate. The graduating step is a manually-invoked, "
             "collision-acked per-mode saturation fire on the shared cluster — no scheduled date, "
-            "run when such a cell arises."
+            "run when capacity allows."
         ),
         "trace": (
             f"[hb#132]({_HB}/132) (dual per-node + per-cluster throughput, closed/shipped); "
-            f"[hb#359]({_HB}/359) (2026-07-23 true-TTFE adoption fire that produced the "
-            "current honest-miss state on the Kata `<1s` cell; internal tracking a#5396 box-4)."
+            f"[hb#359]({_HB}/359) (2026-07-23 true-TTFE adoption fire); the 2026-09-13 warm-path "
+            "latency-gain refresh (this PR) is the fire that moved the per-node rate off 0 and "
+            "re-opened the cluster half."
         ),
     },
     "trust-gate": {
