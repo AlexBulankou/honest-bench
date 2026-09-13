@@ -105,17 +105,19 @@ def test_ttfe_ms_negative_span_raises():
 
 def test_resolve_success():
     _, token = tp.first_instruction()
-    ttfe, ok = tp.resolve_probe_result(token, token, 100.0, 101.0)
+    ttfe, ok, reason = tp.resolve_probe_result(token, token, 100.0, 101.0)
     _check("resolve exec_ok true on token present", ok is True)
     _check("resolve ttfe_ms 1000 on success", ttfe == 1000.0)
+    _check("resolve reason None on success", reason is None)
 
 
 def test_resolve_failure_drops_latency():
     _, token = tp.first_instruction()
-    ttfe, ok = tp.resolve_probe_result("garbled", token, 100.0, 100.9)
+    ttfe, ok, reason = tp.resolve_probe_result("garbled", token, 100.0, 100.9)
     _check("resolve exec_ok false on wrong stdout", ok is False)
     _check("resolve ttfe_ms None on failed exec (dropped from histogram)",
            ttfe is None)
+    _check("resolve reason bad-stdout on wrong stdout", reason == "bad-stdout")
 
 
 def test_resolve_failure_still_validates_clock():
@@ -128,9 +130,10 @@ def test_resolve_failure_still_validates_clock():
 
 def test_resolve_non_string_stdout_failure():
     _, token = tp.first_instruction()
-    ttfe, ok = tp.resolve_probe_result(None, token, 5.0, 5.5)
+    ttfe, ok, reason = tp.resolve_probe_result(None, token, 5.0, 5.5)
     _check("resolve exec_ok false on None stdout", ok is False)
     _check("resolve ttfe_ms None on None stdout", ttfe is None)
+    _check("resolve reason bad-stdout on None stdout", reason == "bad-stdout")
 
 
 def main():

@@ -375,8 +375,8 @@ def test_verify_raises_when_claim_has_no_bound_sandbox():
 
 # ---- _assemble_probe_results (#3954: concurrent-probe flatten, pure) ----
 #
-# Walks the fired-claim list and flattens each claim's (ttfe_ms|None, exec_ok)
-# into the two parallel lists the corroboration classifier consumes. One exec_oks
+# Walks the fired-claim list and flattens each claim's (ttfe_ms|None, exec_ok,
+# reason_or_None) into the two parallel lists the corroboration classifier consumes. One exec_oks
 # entry PER CLAIM FIRED (attempt total). A latency sample is appended only when the
 # probe returned a non-None ttfe_ms.
 
@@ -384,16 +384,16 @@ def test_assemble_absent_claim_counts_as_failed_attempt_no_sample():
     # a claim that never bound (absent from ttfe_results) drags exec_success_rate
     # as an attempted-never-executed False, and contributes NO latency sample.
     samples, oks = cell._assemble_probe_results(
-        ["c0", "c1"], {"c0": (300.0, True)},
+        ["c0", "c1"], {"c0": (300.0, True, None)},
     )
     assert oks == [True, False]            # c1 absent -> False
     assert samples == [300.0]             # only c0 contributed a sample
 
 
 def test_assemble_present_with_none_latency_is_failed_exec_no_sample():
-    # bound but exec failed/blocked: (None, False) -> exec_ok False, no sample.
+    # bound but exec failed/blocked: (None, False, "exec-channel") -> exec_ok False, no sample.
     samples, oks = cell._assemble_probe_results(
-        ["c0", "c1"], {"c0": (300.0, True), "c1": (None, False)},
+        ["c0", "c1"], {"c0": (300.0, True, None), "c1": (None, False, "exec-channel")},
     )
     assert oks == [True, False]
     assert samples == [300.0]             # c1 has no honest latency
@@ -401,7 +401,7 @@ def test_assemble_present_with_none_latency_is_failed_exec_no_sample():
 
 def test_assemble_present_with_latency_is_success_plus_sample():
     samples, oks = cell._assemble_probe_results(
-        ["c0", "c1"], {"c0": (300.0, True), "c1": (700.0, True)},
+        ["c0", "c1"], {"c0": (300.0, True, None), "c1": (700.0, True, None)},
     )
     assert oks == [True, True]
     assert sorted(samples) == [300.0, 700.0]

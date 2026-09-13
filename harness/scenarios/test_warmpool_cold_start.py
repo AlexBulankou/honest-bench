@@ -33,9 +33,9 @@ def _names(n):
 def test_all_bound_and_ok_every_sample_kept():
     names = _names(3)
     results = {
-        "claim00": (300.0, True),
-        "claim01": (420.5, True),
-        "claim02": (510.0, True),
+        "claim00": (300.0, True, None),
+        "claim01": (420.5, True, None),
+        "claim02": (510.0, True, None),
     }
     samples, oks = cell._assemble_probe_results(names, results)
     assert oks == [True, True, True]
@@ -48,8 +48,8 @@ def test_never_bound_claim_is_false_with_no_sample():
     # claim01 never bound -> absent from ttfe_results entirely.
     names = _names(3)
     results = {
-        "claim00": (300.0, True),
-        "claim02": (510.0, True),
+        "claim00": (300.0, True, None),
+        "claim02": (510.0, True, None),
     }
     samples, oks = cell._assemble_probe_results(names, results)
     assert oks == [True, False, True]
@@ -58,12 +58,12 @@ def test_never_bound_claim_is_false_with_no_sample():
 
 
 def test_failed_exec_drags_rate_but_drops_from_histogram():
-    # claim01 bound but the probe failed: (None, False) -> exec_ok False, no sample.
+    # claim01 bound but the probe failed: (None, False, "exec-channel") -> exec_ok False, no sample.
     names = _names(3)
     results = {
-        "claim00": (300.0, True),
-        "claim01": (None, False),
-        "claim02": (510.0, True),
+        "claim00": (300.0, True, None),
+        "claim01": (None, False, "exec-channel"),
+        "claim02": (510.0, True, None),
     }
     samples, oks = cell._assemble_probe_results(names, results)
     assert oks == [True, False, True]
@@ -75,9 +75,9 @@ def test_order_follows_claim_names_not_dict_insertion():
     # ttfe_results inserted out of order; output must follow claim_names order.
     names = _names(3)
     results = {
-        "claim02": (3.0, True),
-        "claim00": (1.0, True),
-        "claim01": (2.0, True),
+        "claim02": (3.0, True, None),
+        "claim00": (1.0, True, None),
+        "claim01": (2.0, True, None),
     }
     samples, oks = cell._assemble_probe_results(names, results)
     assert samples == [1.0, 2.0, 3.0]
@@ -87,8 +87,8 @@ def test_order_follows_claim_names_not_dict_insertion():
 def test_all_failed_zero_samples_full_false_vector():
     names = _names(4)
     results = {
-        "claim00": (None, False),
-        "claim01": (None, False),
+        "claim00": (None, False, "exec-channel"),
+        "claim01": (None, False, "exec-channel"),
         # claim02, claim03 never bound
     }
     samples, oks = cell._assemble_probe_results(names, results)
@@ -107,7 +107,7 @@ def test_zero_latency_sample_is_kept_not_treated_as_falsy():
     # A genuine 0.0ms TTFE (degenerate but valid) must NOT be dropped — the gate
     # is `is not None`, not truthiness.
     names = _names(1)
-    results = {"claim00": (0.0, True)}
+    results = {"claim00": (0.0, True, None)}
     samples, oks = cell._assemble_probe_results(names, results)
     assert samples == [0.0]
     assert oks == [True]
@@ -118,11 +118,11 @@ def test_n_equals_claim_count_across_mixed_outcomes():
     # attempt total no matter the mix of ok / failed / never-bound.
     names = _names(10)
     results = {
-        "claim00": (100.0, True),
-        "claim01": (None, False),     # bound, exec failed
-        "claim03": (250.0, True),
-        "claim07": (None, False),     # bound, exec failed
-        "claim09": (180.0, True),
+        "claim00": (100.0, True, None),
+        "claim01": (None, False, "exec-channel"),     # bound, exec failed
+        "claim03": (250.0, True, None),
+        "claim07": (None, False, "exec-channel"),     # bound, exec failed
+        "claim09": (180.0, True, None),
         # claim02,04,05,06,08 never bound
     }
     samples, oks = cell._assemble_probe_results(names, results)
@@ -162,8 +162,8 @@ def test_warm_scope_excludes_cold_overflow_from_histogram():
         latencies, pool_replicas=3, abs_ceiling_s=2.5, separation_ratio=1.8,
     )
     ttfe_results = {
-        "c0": (1799.0, True), "c1": (1009.0, True), "c2": (1400.0, True),
-        "c3": (5200.0, True), "c4": (9800.0, True),   # cold overflow
+        "c0": (1799.0, True, None), "c1": (1009.0, True, None), "c2": (1400.0, True, None),
+        "c3": (5200.0, True, None), "c4": (9800.0, True, None),   # cold overflow
     }
     warm_samples, warm_oks = cell._assemble_probe_results(
         bd["warm_names"], ttfe_results,

@@ -210,9 +210,12 @@ def _opt_float(name: str) -> float | None:
 #
 # gated: default-off until the runner ServiceAccount carries pods/exec RBAC and
 # the fire path flips it ON in the SAME change that grants the verb. The probe
-# (ttfe_probe.probe_first_instruction) collapses an RBAC-denied exec and a
-# genuine exec-failure to the same (None, False) — it cannot tell them apart —
-# so an ungated default-on would publish a false 0% exec-success + empty TTFE
+# (ttfe_probe.probe_first_instruction) still collapses exec_ok to (None, False)
+# either way — an RBAC-denied exec and a genuine exec-channel failure (timeout,
+# websocket error) both land under reason="exec-channel" (hb#874 added a
+# `reason` value distinguishing exec-channel failures from bad-stdout ones, but
+# does not split RBAC denial out from the rest of exec-channel) — so an
+# ungated default-on would still publish a false 0% exec-success + empty TTFE
 # histograms before the grant lands. Flip-issue: #3944.
 _TTFE_EXEC = _env_flag("BENCH_TTFE_EXEC")
 
@@ -696,7 +699,7 @@ def _measure_claim_latencies(
     each resolved claim to its monotonic bind-observation time, pending is the set
     that never bound within `timeout_s`, sandbox_names maps each bound claim to its
     backing pod name (the exec target for the TTFE probe), and ttfe_results maps
-    each probed claim to its (ttfe_ms_or_None, exec_ok) tuple.
+    each probed claim to its (ttfe_ms_or_None, exec_ok, reason_or_None) tuple.
 
     When `ttfe_enabled`, each watcher thread runs the first-instruction TTFE probe
     inline the instant its own claim binds (see `_watch_one_claim`), so the probe
@@ -1248,9 +1251,11 @@ def _assemble_probe_results(
 
     Pure assembly — no I/O. The probes already ran CONCURRENTLY inside each
     claim's watcher thread (see `_watch_one_claim`), depositing each claim's
-    (ttfe_ms_or_None, exec_ok) into `ttfe_results` at that claim's own bind moment.
-    This walks the fired-claim list in order and flattens those into the two
-    parallel lists the metrics core consumes.
+    (ttfe_ms_or_None, exec_ok, reason) into `ttfe_results` at that claim's own
+    bind moment (the hb#874 `reason` value is not yet threaded into this cell's
+    own histogram inputs — deferred to a follow-up issue — so it is discarded
+    here). This walks the fired-claim list in order and flattens those into the
+    two parallel lists the metrics core consumes.
 
     One exec_oks entry per claim FIRED (the locked contract: attempt total ==
     len(exec_oks) == n == len(claim_names)). A claim absent from `ttfe_results`
@@ -1268,7 +1273,7 @@ def _assemble_probe_results(
         if result is None:
             exec_oks.append(False)
             continue
-        ttfe_ms_sample, exec_ok = result
+        ttfe_ms_sample, exec_ok, _reason = result
         exec_oks.append(exec_ok)
         if ttfe_ms_sample is not None:
             ttfe_ms_samples.append(ttfe_ms_sample)
