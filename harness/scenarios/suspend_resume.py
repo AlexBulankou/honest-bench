@@ -146,10 +146,13 @@ def _env_int(name: str, default: int, *, minimum: int = 1) -> int:
 #
 # gated: default-off until the runner ServiceAccount carries pods/exec RBAC and
 # the fire path flips it ON in the SAME change that grants the verb. The probe
-# (ttfe_probe.probe_first_instruction) collapses an RBAC-denied exec and a
-# genuine exec-failure to the same (None, False) — it cannot tell them apart — so
-# an ungated default-on would publish a false 0% exec-success before the grant
-# lands. Flip-issue: #3944.
+# (ttfe_probe.probe_first_instruction) still collapses exec_ok to (None, False)
+# either way — an RBAC-denied exec and a genuine exec-channel failure (timeout,
+# websocket error) both land under reason="exec-channel" (hb#874 added a
+# `reason` value distinguishing exec-channel failures from bad-stdout ones, but
+# does not split RBAC denial out from the rest of exec-channel) — so an
+# ungated default-on would still publish a false 0% exec-success before the
+# grant lands. Flip-issue: #3944.
 _TTFE_EXEC = _env_flag("BENCH_TTFE_EXEC")
 
 # Resume-cycle-count knob. DEFAULT 1 = a single suspend->resume cycle (the legacy
@@ -625,7 +628,13 @@ def _run_suspend_resume_cycle(custom, core_v1, *, sandbox_name, pre_uid):
     # resumed Pod exists; its backing Pod is named for the CR (pod == sandbox).
     ttfe_ms, exec_ok = None, False
     if _TTFE_EXEC:
-        ttfe_ms, exec_ok = ttfe_probe.probe_first_instruction(
+        # hb#874: probe_first_instruction now returns a 3rd `reason` value
+        # (import-error/exec-channel/bad-stdout/None) distinguishing the
+        # failure class. Not yet threaded into this cell's own per-cycle
+        # bookkeeping/sla_metrics — deferred to a follow-up issue — so it is
+        # discarded here; only the (ttfe_ms, exec_ok) shape this cell already
+        # accumulates across cycles is kept.
+        ttfe_ms, exec_ok, _reason = ttfe_probe.probe_first_instruction(
             core_v1,
             pod_name=sandbox_name,
             namespace=_NAMESPACE,

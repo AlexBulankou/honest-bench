@@ -178,10 +178,13 @@ def _env_flag(name: str) -> bool:
 #
 # gated: default-off until the runner ServiceAccount carries pods/exec RBAC and
 # the fire path flips it ON in the SAME change that grants the verb. The probe
-# (ttfe_probe.probe_first_instruction) collapses an RBAC-denied exec and a
-# genuine exec-failure to the same (None, False) — it cannot tell them apart — so
-# an ungated default-on would publish a false 0% exec-success before the grant
-# lands. Flip-issue: #3944.
+# (ttfe_probe.probe_first_instruction) still collapses exec_ok to (None, False)
+# either way — an RBAC-denied exec and a genuine exec-channel failure (timeout,
+# websocket error) both land under reason="exec-channel" (hb#874 added a
+# `reason` value distinguishing exec-channel failures from bad-stdout ones, but
+# does not split RBAC denial out from the rest of exec-channel) — so an
+# ungated default-on would still publish a false 0% exec-success before the
+# grant lands. Flip-issue: #3944.
 _TTFE_EXEC = _env_flag("BENCH_TTFE_EXEC")
 
 
@@ -378,7 +381,12 @@ def _one_cold_sample(
             # The bare Sandbox's backing pod is named for the CR (pod name ==
             # sandbox_name); t0 = create return, so ttfe is create->first-
             # instruction-result against the same clock as cold_start_s.
-            ttfe_ms, exec_ok = ttfe_probe.probe_first_instruction(
+            # hb#874: probe_first_instruction now returns a 3rd `reason` value
+            # (import-error/exec-channel/bad-stdout/None) distinguishing the
+            # failure class. Not yet threaded into this cell's own return shape
+            # or sla_metrics — deferred to a follow-up issue — so it is
+            # discarded here.
+            ttfe_ms, exec_ok, _reason = ttfe_probe.probe_first_instruction(
                 core_v1,
                 pod_name=sandbox_name,
                 namespace=_NAMESPACE,

@@ -20,7 +20,8 @@ The classification and timing arithmetic is pure and fully offline-testable:
   - ``first_instruction()``      — the canonical (argv, expected-token) pair.
   - ``classify_exec()``          — did the instruction's stdout carry the token?
   - ``ttfe_ms()``                — monotonic span create->result, in ms.
-  - ``resolve_probe_result()``   — combine the two into (ttfe_ms_or_None, exec_ok),
+  - ``resolve_probe_result()``   — combine the two into
+                                   (ttfe_ms_or_None, exec_ok, reason_or_None),
                                    the exact shape a scenario feeds the metrics core.
 
 Only ``probe_first_instruction()`` touches the cluster, and it lazily imports
@@ -37,17 +38,17 @@ caller records a failed execution (dragging exec_success_rate down) rather than
 crashing the whole scenario. It raises only on a programming error in its own
 arguments (e.g. a negative monotonic span), never on cluster/exec conditions.
 
-The (None, False) return is deliberately undifferentiated — but the *reason*
-for the failure is not lost, only kept out of the return value. Each of the
-three collapse points (client-import failure, exec-channel error/timeout, and
-wrong/empty stdout) logs a single WARNING line via the ``honest-bench.ttfe-probe``
-logger before returning, tagged with a ``class=`` field
-(``import-error`` / ``exec-channel`` / ``bad-stdout``) plus the exception type
-or a truncated stdout excerpt. This is diagnostic-only — it never changes the
-returned tuple or introduces a raise — and exists so a post-hoc log grep can
-attribute a batch of exec failures to a failure class (e.g. distinguishing a
-timeout storm from an RBAC regression from a genuinely broken probe command)
-instead of every failure looking identical after the fact.
+The (None, False) execution outcome is deliberately undifferentiated at the
+``exec_ok`` level — but the *reason* for a failure is not lost to a log grep.
+Each of the three collapse points (client-import failure, exec-channel
+error/timeout, and wrong/empty stdout) both logs a WARNING line via the
+``honest-bench.ttfe-probe`` logger AND returns a third ``reason`` value
+(``"import-error"`` / ``"exec-channel"`` / ``"bad-stdout"``, or ``None`` on
+success) alongside ``(ttfe_ms, exec_ok)``. A caller that doesn't need the
+class can ignore it (``ttfe_ms, exec_ok, _reason = ...``); one that does
+(e.g. a scenario's per-attempt bookkeeping, or future sla_metrics surfacing)
+can now tell a timeout storm apart from an RBAC regression apart from a
+genuinely broken probe command without grepping pod logs — hb#874.
 """
 
 from __future__ import annotations
@@ -116,12 +117,18 @@ def resolve_probe_result(
     expected_token: str,
     create_monotonic: float,
     result_monotonic: float,
-) -> tuple[float | None, bool]:
+) -> tuple[float | None, bool, str | None]:
     """Combine classification + timing into the scenario-facing result shape.
 
-    Returns ``(ttfe_ms, exec_ok)``:
+    Returns ``(ttfe_ms, exec_ok, reason)``:
       - exec_ok      — whether the first instruction's stdout carried the token.
       - ttfe_ms      — the create->result latency in ms when exec_ok, else None.
+      - reason       — ``"bad-stdout"`` when exec_ok is False (this function's
+                        only failure class — the exec channel already returned
+                        cleanly by the time stdout reaches here; the two other
+                        failure classes, ``import-error``/``exec-channel``, are
+                        raised earlier and only ``probe_first_instruction`` can
+                        report them), else ``None``.
 
     A FAILED execution contributes to exec_success_rate (as a 0) but NOT to the
     TTFE histogram — a sandbox that never ran an instruction has no honest
@@ -137,8 +144,8 @@ def resolve_probe_result(
     ok = classify_exec(stdout, expected_token)
     span_ms = ttfe_ms(create_monotonic, result_monotonic)
     if not ok:
-        return None, False
-    return span_ms, True
+        return None, False, "bad-stdout"
+    return span_ms, True, None
 
 
 def probe_first_instruction(
@@ -150,7 +157,7 @@ def probe_first_instruction(
     container: str | None = None,
     timeout_s: float = 30.0,
 ):
-    """Run the first instruction in ``pod_name`` and report (ttfe_ms, exec_ok).
+    """Run the first instruction in ``pod_name`` and report (ttfe_ms, exec_ok, reason).
 
     The ONE I/O surface. ``core_v1`` is a ``kubernetes.client.CoreV1Api``;
     ``create_monotonic`` is the scenario's t0 (its ``time.monotonic()`` taken
@@ -158,11 +165,18 @@ def probe_first_instruction(
     target when the backing Pod has more than one container; left None the
     cluster picks the default.
 
-    Returns ``(ttfe_ms_or_None, exec_ok)`` — never raises on an exec/cluster
-    error. A timeout, websocket error, RBAC denial, or wrong/empty stdout all
-    collapse to ``(None, False)``: a real, recorded execution failure rather
-    than a scenario crash. The result timestamp t1 is taken the instant the
-    exec call returns its captured stdout.
+    Returns ``(ttfe_ms_or_None, exec_ok, reason)`` — never raises on an
+    exec/cluster error. A timeout, websocket error, RBAC denial, or
+    wrong/empty stdout all collapse to ``exec_ok=False``, but ``reason``
+    distinguishes which of the three failure classes it was:
+    ``"import-error"`` (the kubernetes client itself failed to import),
+    ``"exec-channel"`` (the exec call raised — timeout, websocket error, RBAC
+    denial, etc.), or ``"bad-stdout"`` (the exec channel returned cleanly but
+    stdout didn't carry the expected token). ``reason`` is ``None`` on
+    success. This is a real, recorded execution failure rather than a
+    scenario crash either way — ``reason`` only adds detail, it never changes
+    the True/False shape of ``exec_ok``. The result timestamp t1 is taken the
+    instant the exec call returns its captured stdout.
 
     The ``kubernetes.stream`` import is lazy (inside the function) so importing
     this module never requires the kubernetes client — the offline tests and
@@ -183,7 +197,7 @@ def probe_first_instruction(
             type(e).__name__,
             e,
         )
-        return None, False
+        return None, False, "import-error"
 
     argv, token = first_instruction()
     exec_kwargs = dict(
@@ -213,11 +227,11 @@ def probe_first_instruction(
             type(e).__name__,
             e,
         )
-        return None, False
+        return None, False, "exec-channel"
 
     # t1: the instant the instruction's result is in hand.
     result_monotonic = time.monotonic()
-    ttfe_ms_or_none, exec_ok = resolve_probe_result(
+    ttfe_ms_or_none, exec_ok, reason = resolve_probe_result(
         stdout, token, create_monotonic, result_monotonic
     )
     if not exec_ok:
@@ -231,4 +245,4 @@ def probe_first_instruction(
             namespace,
             excerpt[:200],
         )
-    return ttfe_ms_or_none, exec_ok
+    return ttfe_ms_or_none, exec_ok, reason

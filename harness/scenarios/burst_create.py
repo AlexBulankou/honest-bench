@@ -624,9 +624,11 @@ def _assemble_probe_results(
 
     Pure assembly — no I/O. The probes already ran CONCURRENTLY inside each
     claim's watcher thread (see `_watch_one_claim`), depositing each claim's
-    (ttfe_ms_or_None, exec_ok) into `ttfe_results` at that claim's own bind moment.
-    This walks the fired-claim list in order and flattens those into the two
-    parallel lists the corroboration classifier consumes.
+    (ttfe_ms_or_None, exec_ok, reason) into `ttfe_results` at that claim's own
+    bind moment (the hb#874 `reason` value is not yet threaded into this cell's
+    own corroboration inputs — deferred to a follow-up issue — so it is
+    discarded here). This walks the fired-claim list in order and flattens
+    those into the two parallel lists the corroboration classifier consumes.
 
     One exec_oks entry per claim FIRED (attempt total == len(exec_oks) ==
     len(claim_names)). A claim absent from `ttfe_results` never bound (or bound
@@ -643,7 +645,7 @@ def _assemble_probe_results(
         if result is None:
             exec_oks.append(False)
             continue
-        ttfe_ms_sample, exec_ok = result
+        ttfe_ms_sample, exec_ok, _reason = result
         exec_oks.append(exec_ok)
         if ttfe_ms_sample is not None:
             ttfe_ms_samples.append(ttfe_ms_sample)
