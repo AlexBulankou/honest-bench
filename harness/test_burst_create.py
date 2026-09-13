@@ -7,8 +7,8 @@ or directly:                        python3 harness/test_burst_create.py
 These cover the two PURE functions on the BENCH_TTFE_EXEC path:
 
   _assemble_probe_results — flattens the per-claim concurrent-probe deposits
-    (one (ttfe_ms_or_None, exec_ok) per claim that bound) into the two parallel
-    lists the classifier consumes. One exec_oks entry per claim FIRED; a claim
+    (one (ttfe_ms_or_None, exec_ok, reason_or_None) per claim that bound) into
+    the two parallel lists the classifier consumes. One exec_oks entry per claim FIRED; a claim
     absent from the deposit map (never bound / no pod / probe disabled) drags
     exec_success_rate honestly with exec_ok=False and NO latency sample.
 
@@ -43,7 +43,7 @@ def _check(cond, msg):
 def test_assemble_all_present_and_executed():
     out = bc._assemble_probe_results(
         ["a", "b", "c"],
-        {"a": (420.0, True), "b": (980.0, True), "c": (1500.0, True)},
+        {"a": (420.0, True, None), "b": (980.0, True, None), "c": (1500.0, True, None)},
     )
     ttfe, oks = out
     _check(ttfe == [420.0, 980.0, 1500.0], f"all samples carried in order, got {ttfe!r}")
@@ -54,7 +54,7 @@ def test_assemble_missing_claim_is_attempted_failure_no_sample():
     # 'b' never bound (absent from deposit map) -> exec_ok False, NO latency.
     ttfe, oks = bc._assemble_probe_results(
         ["a", "b", "c"],
-        {"a": (420.0, True), "c": (1500.0, True)},
+        {"a": (420.0, True, None), "c": (1500.0, True, None)},
     )
     _check(ttfe == [420.0, 1500.0], f"absent claim contributes no sample, got {ttfe!r}")
     _check(oks == [True, False, True], f"absent claim drags as False, got {oks!r}")
@@ -64,15 +64,15 @@ def test_assemble_present_failed_exec_no_sample():
     # 'b' bound but its exec failed (ttfe None, ok False) -> ok carried, no sample.
     ttfe, oks = bc._assemble_probe_results(
         ["a", "b"],
-        {"a": (420.0, True), "b": (None, False)},
+        {"a": (420.0, True, None), "b": (None, False, "exec-channel")},
     )
     _check(ttfe == [420.0], f"failed-exec claim contributes no sample, got {ttfe!r}")
     _check(oks == [True, False], f"failed exec carried as False, got {oks!r}")
 
 
 def test_assemble_present_ok_but_no_latency():
-    # Defensive: a present (None, True) deposit carries the ok but no sample.
-    ttfe, oks = bc._assemble_probe_results(["a"], {"a": (None, True)})
+    # Defensive: a present (None, True, None) deposit carries the ok but no sample.
+    ttfe, oks = bc._assemble_probe_results(["a"], {"a": (None, True, None)})
     _check(ttfe == [], f"no latency -> no sample even when ok, got {ttfe!r}")
     _check(oks == [True], f"ok carried, got {oks!r}")
 
@@ -86,7 +86,7 @@ def test_assemble_one_exec_ok_per_claim_fired():
     # The attempt-total invariant: len(exec_oks) == len(claim_names) ALWAYS,
     # regardless of how many bound/executed.
     names = ["a", "b", "c", "d"]
-    _, oks = bc._assemble_probe_results(names, {"a": (1.0, True)})
+    _, oks = bc._assemble_probe_results(names, {"a": (1.0, True, None)})
     _check(len(oks) == len(names), f"one ok per fired claim, got {len(oks)} vs {len(names)}")
 
 
@@ -146,7 +146,7 @@ def test_classify_honors_ceiling_param():
 def test_assemble_then_classify_end_to_end():
     # The two compose: deposits -> lists -> corroboration. 'b' never bound.
     names = ["a", "b", "c"]
-    deposits = {"a": (420.0, True), "c": (1500.0, True)}
+    deposits = {"a": (420.0, True, None), "c": (1500.0, True, None)}
     ttfe, oks = bc._assemble_probe_results(names, deposits)
     out = bc._classify_exec_corroboration(ttfe, oks, ttfi_ceiling_s=1.0)
     _check(out[bc._KEY_EXEC_COUNT] == 1.0, f"only a under 1s, got {out.get(bc._KEY_EXEC_COUNT)!r}")
@@ -172,7 +172,7 @@ def test_marginal_miss_still_gates_on_claim_names_not_count_under():
 
     claim_names = list(ttfis.keys())
     # All 10 claims bound and executed successfully with real latencies.
-    deposits = {name: (900.0 + i * 10, True) for i, name in enumerate(claim_names)}
+    deposits = {name: (900.0 + i * 10, True, None) for i, name in enumerate(claim_names)}
     ttfe_ms_samples, exec_oks = bc._assemble_probe_results(claim_names, deposits)
     corroboration = bc._classify_exec_corroboration(
         ttfe_ms_samples, exec_oks, ttfi_ceiling_s=1.0,

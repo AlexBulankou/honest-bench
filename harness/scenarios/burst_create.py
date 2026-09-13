@@ -512,8 +512,8 @@ def _measure_claim_latencies(
     resolved claim to its monotonic bind time (claims that never bound within
     `timeout_s` are absent), sandbox_names maps each bound claim to its backing
     pod name (the exec target for the TTFE probe), and ttfe_results maps each
-    probed claim to its (ttfe_ms_or_None, exec_ok) tuple. The last two are empty
-    unless `ttfe_enabled` (#3954, additive corroboration — default OFF).
+    probed claim to its (ttfe_ms_or_None, exec_ok, reason_or_None) tuple. The
+    last two are empty unless `ttfe_enabled` (#3954, additive corroboration — default OFF).
 
     When `ttfe_enabled`, each watcher thread runs the first-instruction TTFE probe
     inline the instant its own claim binds (see `_watch_one_claim`), so the probe
