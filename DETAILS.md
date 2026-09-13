@@ -276,7 +276,7 @@ _Per-cluster throughput MEASURED at **40 nodes** — never a per-node × N extra
 
 _SLA ceiling: **not met** at this operating point — the honest saturation limit. Execution success confirms every claim still bound and executed; the FAIL is the throughput collapse against the sizing floor, not a correctness failure._
 
-_Measured 2026-07-02 — whole-cluster saturation ceiling (point-in-time)._
+_Measured 2026-07-02 (72 days stale) — whole-cluster saturation ceiling (point-in-time)._
 
 ## Provisioning Rate Sweep — where warm-pool fill goes reconcile-bound
 
