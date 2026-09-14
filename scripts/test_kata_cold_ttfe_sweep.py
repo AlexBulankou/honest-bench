@@ -100,6 +100,26 @@ def test_assemble_record_shape_and_params():
     _check(prm["warmpool_size"] == 0, "warmpool_size stamped (0 => cold provenance)")
 
 
+def test_concurrent_load_defaults_none_and_threads_through():
+    # hb#880: concurrent_load defaults to None (feature off / degraded) and is
+    # stamped verbatim into params when supplied (freeform provenance ride-along).
+    rec_default = sweep.assemble_record(
+        [_C0, _C1, _C2], _RATES,
+        runtime_class="kata-clh", node_count=3, warmpool_size=0,
+    )
+    _check(rec_default["params"]["concurrent_load"] is None,
+           "concurrent_load defaults to None when the sampler is unconfigured/degraded")
+    cl = {"peak_active_scenario_jobs": 4, "scenario_slugs": ["alpha", "bravo"],
+          "n_samples": 3}
+    rec = sweep.assemble_record(
+        [_C0, _C1, _C2], _RATES,
+        runtime_class="kata-clh", node_count=3, warmpool_size=0,
+        concurrent_load=cl,
+    )
+    _check(rec["params"]["concurrent_load"] == cl,
+           "concurrent_load aggregate stamped verbatim into params")
+
+
 def test_assemble_record_builds_against_cold_series():
     # Two cold rungs measured -> two cold pareto points, p95 == the COLD increment
     # delta (not warm). This is the load-bearing honesty assertion of the sweep.

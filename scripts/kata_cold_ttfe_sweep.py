@@ -36,6 +36,11 @@ os.environ.setdefault("BENCH_NAMESPACE", "default")
 from kubernetes import client as k8s_client  # noqa: E402
 from kubernetes import config as k8s_config  # noqa: E402
 
+from harness.concurrent_load import (  # noqa: E402
+    aggregate_concurrent_load,
+    config_from_env as concurrent_load_config_from_env,
+    sample_concurrent_load,
+)
 from harness.scenarios import warmpool_cold_start as wcs  # noqa: E402
 from harness.ttfe_stamp import build_true_ttfe_stamp, rungs_from_boundary_scrapes  # noqa: E402
 
@@ -109,7 +114,10 @@ def _sample_node_count(core_v1):
         return None
 
 
-def assemble_record(boundary_texts, rates, *, runtime_class, node_count, warmpool_size):
+def assemble_record(
+    boundary_texts, rates, *, runtime_class, node_count, warmpool_size,
+    concurrent_load=None,
+):
     """Pure offline assembly: boundary scrapes + per-rung rates -> the sweep record.
 
     Factored out of the fire path so the honesty-critical decision — that the stamp is
@@ -119,6 +127,11 @@ def assemble_record(boundary_texts, rates, *, runtime_class, node_count, warmpoo
     exactly (``{params, true_ttfe_webhook_stamped_claims, pareto}``) so the shared
     slo_rate read-back guard consumes both identically; only the launch_type the stamp
     is built against and the ``params`` values differ.
+
+    ``concurrent_load`` (hb#880) is the fire-window background-load provenance stamp
+    (or ``None`` when the feature is unconfigured / never sampled) — a freeform
+    ``params`` key that rides along; ``run.py`` reads only ``runtime``/``runtime_class``
+    so the extra key needs no schema change downstream.
     """
     rungs = rungs_from_boundary_scrapes(boundary_texts, rates)
     stamp = build_true_ttfe_stamp(rungs)  # launch_type=cold (default), HEADLINE_METRIC
@@ -127,6 +140,7 @@ def assemble_record(boundary_texts, rates, *, runtime_class, node_count, warmpoo
             "runtime_class": runtime_class,
             "cluster_nodes": node_count,
             "warmpool_size": warmpool_size,
+            "concurrent_load": concurrent_load,
         },
         "true_ttfe_webhook_stamped_claims": stamp["true_ttfe_webhook_stamped_claims"],
         "pareto": stamp["pareto"],
@@ -137,6 +151,17 @@ def main():
     k8s_config.load_kube_config()
     custom = k8s_client.CustomObjectsApi()
     core_v1 = k8s_client.CoreV1Api()
+    batch_v1 = k8s_client.BatchV1Api()
+
+    # Fire-window concurrent-load provenance (hb#880): inert unless the fire path
+    # configures the namespace/label (no internal default lives in this public repo).
+    cl_namespace, cl_label = concurrent_load_config_from_env()
+    concurrent_samples = []
+
+    def sample_load():
+        concurrent_samples.append(
+            sample_concurrent_load(batch_v1, cl_namespace, cl_label)
+        )
 
     suffix = f"katattfe{random.randint(1000, 9999)}"
     template_name = f"tmpl-{suffix}"
@@ -185,6 +210,7 @@ def main():
 
         log("boundary scrape 0 (pre-fire)")
         boundary_texts.append(scrape_metrics())
+        sample_load()
 
         claim_seq = 0
         for rung_idx, n in enumerate(RUNG_SIZES):
@@ -231,6 +257,7 @@ def main():
             time.sleep(5)
             log(f"boundary scrape {rung_idx + 1} (post-rung {rung_idx})")
             boundary_texts.append(scrape_metrics())
+            sample_load()
             rates.append({
                 "offered_rate_per_s": offered_rate,
                 "ready_per_s": ready_per_s,
@@ -239,10 +266,14 @@ def main():
         node_count = _sample_node_count(core_v1)
         log(f"node_count sampled: {node_count}")
 
+        concurrent_load = aggregate_concurrent_load(concurrent_samples)
+        log(f"concurrent_load stamp: {concurrent_load}")
+
         record = assemble_record(
             boundary_texts, rates,
             runtime_class=RUNTIME_CLASS, node_count=node_count,
             warmpool_size=WARMPOOL_SIZE,
+            concurrent_load=concurrent_load,
         )
         log(f"assembled stamp: pareto_points={len(record['pareto'])} "
             f"true_ttfe_webhook_stamped_claims={record['true_ttfe_webhook_stamped_claims']}")
