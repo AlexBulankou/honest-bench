@@ -122,6 +122,18 @@ substitutions:
   # build log) — i.e. a genuine information UPGRADE, not a silent downgrade. Usage:
   #     --substitutions=_ALLOW_CELL_DOWNGRADE=1
   _ALLOW_CELL_DOWNGRADE: ""
+  # hb#880: fire-time concurrent-load provenance. Each sweep brackets its rungs
+  # with a snapshot of the sibling scenario Jobs active on this shared cluster
+  # during the fire window, so cross-fire p95 deltas become attributable rather
+  # than noise. The namespace + label-key that identify those sibling Jobs are
+  # deployment-specific and NOT recorded in this public repo — same reasoning as
+  # _CLUSTER / _MACHINE_TYPE above, intentionally EMPTY-defaulted. Pass both at
+  # fire time via --substitutions; when either is empty the sampler is INERT
+  # (harness/concurrent_load.py returns None, stamped as concurrent_load=null) —
+  # degrade-closed, never fails the fire. No FATAL guard: unlike _CLUSTER this is
+  # an optional provenance enrichment, so an un-passed value is a clean no-op.
+  _CONCURRENT_LOAD_NAMESPACE: ""
+  _CONCURRENT_LOAD_SCENARIO_LABEL: ""
 
 steps:
   # hb#850 / hb#830 precedent (same reasoning as cloudbuild-render-autoheal.yaml
@@ -197,6 +209,14 @@ steps:
       # `python3 -m harness.run` below — same mechanism as the sweep-output env vars
       # above.
       - "BENCH_ALLOW_CELL_DOWNGRADE=${_ALLOW_CELL_DOWNGRADE}"
+      # hb#880: concurrent-load sampler config, read by harness/concurrent_load.py
+      # via config_from_env(). Both empty by default ⇒ sampler INERT (returns None,
+      # stamped concurrent_load=null). Both kata sweep steps (cold + unique-image)
+      # inherit these from this shared shell, so they see the same fire-window
+      # sibling-Job snapshot. Real values supplied at fire time from the private
+      # fire script, never hardcoded here (public-repo safety, #7933).
+      - "CONCURRENT_LOAD_NAMESPACE=${_CONCURRENT_LOAD_NAMESPACE}"
+      - "CONCURRENT_LOAD_SCENARIO_LABEL=${_CONCURRENT_LOAD_SCENARIO_LABEL}"
     args:
       - -c
       - |

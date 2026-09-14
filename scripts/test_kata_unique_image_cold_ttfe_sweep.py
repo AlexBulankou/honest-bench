@@ -72,8 +72,39 @@ def test_plan_rung_pool_indices_covers_all_unique_image_tags():
            f"({len(sweep.UNIQUE_IMAGE_TAGS)})")
 
 
+_EMPTY = "# no webhook metric yet\n"
+_RATES = [
+    {"offered_rate_per_s": 1.0, "ready_per_s": 1.0},
+    {"offered_rate_per_s": 0.8, "ready_per_s": 0.6},
+]
+
+
+def test_concurrent_load_defaults_none_and_threads_through():
+    # hb#880: concurrent_load defaults to None (feature off / degraded) and is
+    # stamped verbatim into params when supplied. Webhook-absent scrapes are fine
+    # here -- the assertion is purely the params ride-along, not the stamp math.
+    rec_default = sweep.assemble_record(
+        [_EMPTY, _EMPTY, _EMPTY], _RATES,
+        runtime_class="kata-clh", node_count=3, images=["busybox:1.35.0"],
+    )
+    _check(rec_default["params"]["concurrent_load"] is None,
+           "concurrent_load defaults to None when the sampler is unconfigured/degraded")
+    _check(rec_default["params"]["cold_start_mode"] == "cold-pull",
+           "cold-pull provenance preserved alongside the new field")
+    cl = {"peak_active_scenario_jobs": 4, "scenario_slugs": ["alpha", "bravo"],
+          "n_samples": 3}
+    rec = sweep.assemble_record(
+        [_EMPTY, _EMPTY, _EMPTY], _RATES,
+        runtime_class="kata-clh", node_count=3, images=["busybox:1.35.0"],
+        concurrent_load=cl,
+    )
+    _check(rec["params"]["concurrent_load"] == cl,
+           "concurrent_load aggregate stamped verbatim into params")
+
+
 if __name__ == "__main__":
     test_plan_rung_pool_indices_matches_module_rung_shape()
     test_plan_rung_pool_indices_all_unique_and_flat()
     test_plan_rung_pool_indices_covers_all_unique_image_tags()
+    test_concurrent_load_defaults_none_and_threads_through()
     print("OK")
