@@ -1158,12 +1158,36 @@ def _fmt_usd(v):
     return f"${round(v, 2):g}"
 
 
-def _exec_cell(rate, n_total, n_succ=None):
+# hb#876: per-attempt ttfe_probe failure-class labels, in the fixed display order below.
+# Keyed by the same MATRIX_METRIC_FIELDS/BURST_CORROBORATION_FIELDS names so a caller can hand
+# _exec_cell a plain sub-dict slice of an already closed-schema-cleaned metrics dict.
+_REASON_LABELS = {
+    "exec_fail_reason_import_error_n": "import-error",
+    "exec_fail_reason_exec_channel_n": "exec-channel",
+    "exec_fail_reason_bad_stdout_n": "bad-stdout",
+}
+
+
+def _extract_reason_counts(metrics):
+    """Pull the hb#876 reason-count keys out of an already-cleaned metrics dict, if any."""
+    if not isinstance(metrics, dict):
+        return {}
+    return {k: metrics[k] for k in _REASON_LABELS if k in metrics}
+
+
+def _exec_cell(rate, n_total, n_succ=None, reason_counts=None):
     """Doc's exec-success ("Honesty Check") cell.
 
     100% renders plain; <100% shows the succeeded/total fraction + a ⚠️ flag (the doc's
     "92.8% (1277/1376) ⚠️"). The numerator is exec_success_n when the harness emits it,
     else derived as round(rate * N) so the fraction always reconciles to the Samples column.
+
+    hb#876: when the harness also emits a per-attempt failure-class breakdown (import-error /
+    exec-channel / bad-stdout counts for the non-executed remainder), append it in parens after
+    the ⚠️ flag — e.g. "92.8% (1277/1376) ⚠️ (exec-channel: 3, bad-stdout: 2)". ADDITIVE and
+    OPTIONAL: reason_counts is None/empty for every pre-hb#876 fire, so this renders nothing and
+    the cell is byte-unchanged until a fire actually emits the breakdown. Only non-zero, known
+    classes render, in the fixed _REASON_LABELS order (never a raw dict-iteration order).
     """
     cell = f"{round(rate * 100, 1):g}%"
     if rate < 1.0:
@@ -1172,6 +1196,14 @@ def _exec_cell(rate, n_total, n_succ=None):
         if n_succ is not None and n_total:
             cell += f" ({n_succ}/{n_total})"
         cell += " ⚠️"
+        if reason_counts:
+            parts = [
+                f"{label}: {int(reason_counts[key])}"
+                for key, label in _REASON_LABELS.items()
+                if reason_counts.get(key)
+            ]
+            if parts:
+                cell += " (" + ", ".join(parts) + ")"
     return cell
 
 
@@ -2425,7 +2457,12 @@ def render_matrix(results, kata_results=None, include_legend=True):
             p50 = ttfe_cell("ttfe_p50_ms")
             p95 = ttfe_cell("ttfe_p95_ms")
             if "exec_success_rate" in m:
-                exec_cell = _exec_cell(m["exec_success_rate"], n_val, m.get("exec_success_n"))
+                exec_cell = _exec_cell(
+                    m["exec_success_rate"],
+                    n_val,
+                    m.get("exec_success_n"),
+                    _extract_reason_counts(m),
+                )
             else:
                 exec_cell = pending_tok
 
@@ -4879,6 +4916,9 @@ def _clean_burst_corroboration(scenarios):
             "n": n,
             "exec_success_rate": clean.get("exec_success_rate"),
             "exec_success_n": clean.get("exec_success_n"),
+            # hb#876: optional per-attempt failure-class breakdown, sliced out of the same
+            # already closed-schema-cleaned `clean` dict — empty when the fire predates hb#876.
+            "reason_counts": _extract_reason_counts(clean),
         }
     return None
 
@@ -4917,7 +4957,12 @@ def render_burst_corroboration(results):
         n_total = corr["n"] or None
         lines.append(
             "| Execution success (Honesty Check) | "
-            + _exec_cell(corr["exec_success_rate"], n_total, corr["exec_success_n"])
+            + _exec_cell(
+                corr["exec_success_rate"],
+                n_total,
+                corr["exec_success_n"],
+                corr.get("reason_counts"),
+            )
             + " |"
         )
     lines.append("")

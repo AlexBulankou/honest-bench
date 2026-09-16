@@ -45,14 +45,14 @@ def test_assemble_all_present_and_executed():
         ["a", "b", "c"],
         {"a": (420.0, True, None), "b": (980.0, True, None), "c": (1500.0, True, None)},
     )
-    ttfe, oks = out
+    ttfe, oks, _reasons = out
     _check(ttfe == [420.0, 980.0, 1500.0], f"all samples carried in order, got {ttfe!r}")
     _check(oks == [True, True, True], f"one ok per fired claim, got {oks!r}")
 
 
 def test_assemble_missing_claim_is_attempted_failure_no_sample():
     # 'b' never bound (absent from deposit map) -> exec_ok False, NO latency.
-    ttfe, oks = bc._assemble_probe_results(
+    ttfe, oks, _reasons = bc._assemble_probe_results(
         ["a", "b", "c"],
         {"a": (420.0, True, None), "c": (1500.0, True, None)},
     )
@@ -62,7 +62,7 @@ def test_assemble_missing_claim_is_attempted_failure_no_sample():
 
 def test_assemble_present_failed_exec_no_sample():
     # 'b' bound but its exec failed (ttfe None, ok False) -> ok carried, no sample.
-    ttfe, oks = bc._assemble_probe_results(
+    ttfe, oks, _reasons = bc._assemble_probe_results(
         ["a", "b"],
         {"a": (420.0, True, None), "b": (None, False, "exec-channel")},
     )
@@ -72,13 +72,13 @@ def test_assemble_present_failed_exec_no_sample():
 
 def test_assemble_present_ok_but_no_latency():
     # Defensive: a present (None, True, None) deposit carries the ok but no sample.
-    ttfe, oks = bc._assemble_probe_results(["a"], {"a": (None, True, None)})
+    ttfe, oks, _reasons = bc._assemble_probe_results(["a"], {"a": (None, True, None)})
     _check(ttfe == [], f"no latency -> no sample even when ok, got {ttfe!r}")
     _check(oks == [True], f"ok carried, got {oks!r}")
 
 
 def test_assemble_no_claims_empty_lists():
-    ttfe, oks = bc._assemble_probe_results([], {})
+    ttfe, oks, _reasons = bc._assemble_probe_results([], {})
     _check(ttfe == [] and oks == [], f"no claims -> two empty lists, got {(ttfe, oks)!r}")
 
 
@@ -86,7 +86,7 @@ def test_assemble_one_exec_ok_per_claim_fired():
     # The attempt-total invariant: len(exec_oks) == len(claim_names) ALWAYS,
     # regardless of how many bound/executed.
     names = ["a", "b", "c", "d"]
-    _, oks = bc._assemble_probe_results(names, {"a": (1.0, True, None)})
+    _, oks, _reasons = bc._assemble_probe_results(names, {"a": (1.0, True, None)})
     _check(len(oks) == len(names), f"one ok per fired claim, got {len(oks)} vs {len(names)}")
 
 
@@ -147,7 +147,7 @@ def test_assemble_then_classify_end_to_end():
     # The two compose: deposits -> lists -> corroboration. 'b' never bound.
     names = ["a", "b", "c"]
     deposits = {"a": (420.0, True, None), "c": (1500.0, True, None)}
-    ttfe, oks = bc._assemble_probe_results(names, deposits)
+    ttfe, oks, _reasons = bc._assemble_probe_results(names, deposits)
     out = bc._classify_exec_corroboration(ttfe, oks, ttfi_ceiling_s=1.0)
     _check(out[bc._KEY_EXEC_COUNT] == 1.0, f"only a under 1s, got {out.get(bc._KEY_EXEC_COUNT)!r}")
     # 3 attempted (a,b,c), 2 ok (a,c) -> 0.6667.
@@ -173,7 +173,7 @@ def test_marginal_miss_still_gates_on_claim_names_not_count_under():
     claim_names = list(ttfis.keys())
     # All 10 claims bound and executed successfully with real latencies.
     deposits = {name: (900.0 + i * 10, True, None) for i, name in enumerate(claim_names)}
-    ttfe_ms_samples, exec_oks = bc._assemble_probe_results(claim_names, deposits)
+    ttfe_ms_samples, exec_oks, _reasons = bc._assemble_probe_results(claim_names, deposits)
     corroboration = bc._classify_exec_corroboration(
         ttfe_ms_samples, exec_oks, ttfi_ceiling_s=1.0,
     )

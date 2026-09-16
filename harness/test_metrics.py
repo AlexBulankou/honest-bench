@@ -648,6 +648,81 @@ def test_suspend_latency_point_survives_results_schema_coerce():
     _check("suspend_p90_ms" in coerced, "suspend_p90_ms survives coerce")
 
 
+# --------------------------------------------- hb#876 exec-failure-class reason breakdown
+
+def test_exec_fail_reason_metrics_counts_recognized_reasons():
+    out = m._exec_fail_reason_metrics(
+        ["import-error", "exec-channel", "exec-channel", "bad-stdout", None]
+    )
+    _check(out == {
+        "exec_fail_reason_import_error_n": 1.0,
+        "exec_fail_reason_exec_channel_n": 2.0,
+        "exec_fail_reason_bad_stdout_n": 1.0,
+    }, "counts each recognized reason into its locked key")
+
+
+def test_exec_fail_reason_metrics_omits_zero_count_keys():
+    out = m._exec_fail_reason_metrics(["import-error", None, None])
+    _check(out == {"exec_fail_reason_import_error_n": 1.0}, "only non-zero keys present")
+    _check("exec_fail_reason_exec_channel_n" not in out, "zero-count key omitted")
+    _check("exec_fail_reason_bad_stdout_n" not in out, "zero-count key omitted")
+
+
+def test_exec_fail_reason_metrics_empty_or_none_input_is_empty():
+    _check(m._exec_fail_reason_metrics([]) == {}, "empty reasons -> {}")
+    _check(m._exec_fail_reason_metrics(None) == {}, "None reasons -> {}")
+    _check(m._exec_fail_reason_metrics([None, None]) == {}, "all-None reasons -> {}")
+
+
+def test_exec_fail_reason_metrics_ignores_unrecognized_values():
+    # an unrecognized string (future ttfe_probe reason not yet in the map) is
+    # silently skipped, never crashes and never fabricates a key.
+    out = m._exec_fail_reason_metrics(["some-future-reason", "import-error"])
+    _check(out == {"exec_fail_reason_import_error_n": 1.0}, "unrecognized value skipped")
+
+
+def test_ttfe_sla_metrics_reasons_default_none_is_byte_identical():
+    baseline = m.ttfe_sla_metrics([600.0] * 3, [True, True, False], 5.0, 1)
+    with_none = m.ttfe_sla_metrics([600.0] * 3, [True, True, False], 5.0, 1, reasons=None)
+    _check(baseline == with_none, "reasons=None default leaves output unchanged")
+    _check(not any(k.startswith("exec_fail_reason_") for k in baseline),
+           "no reason keys when reasons omitted")
+
+
+def test_ttfe_sla_metrics_reasons_adds_failure_class_keys():
+    out = m.ttfe_sla_metrics(
+        [600.0, 600.0], [True, False, False], 5.0, 1,
+        reasons=[None, "exec-channel", "import-error"],
+    )
+    _check(out["exec_fail_reason_exec_channel_n"] == 1.0, "exec-channel counted")
+    _check(out["exec_fail_reason_import_error_n"] == 1.0, "import-error counted")
+    _check("exec_fail_reason_bad_stdout_n" not in out, "zero-count class omitted")
+
+
+def test_ttfe_sla_metrics_reasons_survive_results_schema_coerce():
+    out = m.ttfe_sla_metrics(
+        [600.0] * 5, [True] * 3 + [False, False], 5.0, 1,
+        reasons=[None, None, None, "exec-channel", "bad-stdout"],
+    )
+    coerced = rs._coerce_sla_metrics(out)
+    _check("exec_fail_reason_exec_channel_n" in coerced, "exec_channel key survives coerce")
+    _check("exec_fail_reason_bad_stdout_n" in coerced, "bad_stdout key survives coerce")
+
+
+def test_multi_sample_ttfe_point_reasons_adds_failure_class_keys():
+    out = m.multi_sample_ttfe_point(
+        [3000.0, None, None], [True, False, False],
+        reasons=[None, "import-error", "import-error"],
+    )
+    _check(out["exec_fail_reason_import_error_n"] == 2.0, "counted across both failures")
+
+
+def test_multi_sample_ttfe_point_no_reasons_kwarg_shape_unchanged():
+    baseline = m.multi_sample_ttfe_point([2000.0, 4000.0], [True, True])
+    _check(not any(k.startswith("exec_fail_reason_") for k in baseline),
+           "no reason keys when reasons kwarg omitted entirely")
+
+
 def _run_all():
     tests = [v for k, v in sorted(globals().items())
              if k.startswith("test_") and callable(v)]
