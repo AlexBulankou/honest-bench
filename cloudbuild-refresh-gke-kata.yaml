@@ -341,8 +341,56 @@ steps:
         echo "==> kata pool node count over the measure window (diagnostic recap):"
         cat "$$NODE_SAMPLE_LOG" 2>/dev/null || echo "(no samples captured)"
 
-        echo "==> rendering README/DETAILS from results"
-        python3 -m render.generate
+        # hb#889 (#6669 follow-up): harness.run's build_provenance() only
+        # reads node_count from BENCH_NODE_COUNT (unlike gVisor's #615 fix, this
+        # file never set it), so kata refreshes always shipped the harness's static
+        # "1" default -- root cause of #6669's FAIL misread as "1-node starvation".
+        # gVisor's pre-run env-var pattern can't transfer: this pool is forced to 0
+        # by the cold-honesty guard above, then scales 0->N DURING this same
+        # `harness.run` call, whose build_provenance() only runs at the very end --
+        # so a pre-run env var would report the pre-scale floor (0), which the
+        # harness's own guard rejects, falling back to the same misleading "1". The
+        # sampler above already has the value that matters: the PEAK pool size
+        # reached during the burst. Patch it into the results file post-hoc,
+        # fail-open (never fabricate on a missing/non-numeric peak).
+        KATA_PEAK_NODE_COUNT=$$(awk -F'nodes=' '{print $$2}' "$$NODE_SAMPLE_LOG" 2>/dev/null | sort -n | tail -1 || true)
+        if echo "$$KATA_PEAK_NODE_COUNT" | grep -Eq '^[1-9][0-9]*$$'; then
+          echo "==> patching provenance.node_count -> $$KATA_PEAK_NODE_COUNT (peak observed during measure window, hb#889)"
+          python3 - "$$KATA_PEAK_NODE_COUNT" <<'PYEOF'
+        import json, pathlib, sys
+
+        peak = int(sys.argv[1])
+        path = pathlib.Path("sandbox-kata/results/latest.json")
+        data = json.loads(path.read_text())
+        provenance = data.get("provenance")
+        if isinstance(provenance, dict) and provenance.get("cluster_substrate") == "gke-kata":
+            provenance["node_count"] = peak
+            path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n")
+            print(f"==> provenance.node_count patched to {peak}")
+        else:
+            print("==> WARNING: provenance missing or cluster_substrate != gke-kata -- leaving node_count untouched", file=sys.stderr)
+        PYEOF
+        else
+          echo "==> WARNING: no valid peak node-count sample captured ('$$KATA_PEAK_NODE_COUNT') -- leaving provenance.node_count at harness default (hb#889)" >&2
+        fi
+
+        # hb#6669: fail-closed INFRA-not-test gate (#4420, "reopen loudly").
+        # A prescale timeout (hb#835 lever-2) discloses via sla_metrics
+        # .lever2_prescale_degraded instead of crashing -- unread, a starved
+        # rig still publishes a plausible FAIL (the #6669 node_count=1
+        # misread). On a hit: revert latest.json (harness.run already wrote
+        # it above, so open-pr's diff would otherwise still fire) and FAIL
+        # this build outright -- INFRA, not a substrate signal (#137/#2440),
+        # and a red build in history beats a silent green skip.
+        LEVER2_DEGRADED=$$(python3 -c "import json; d = json.load(open('sandbox-kata/results/latest.json')); print(','.join(s['name'] for s in d.get('scenarios', []) if isinstance(s, dict) and isinstance(s.get('sla_metrics'), dict) and s['sla_metrics'].get('lever2_prescale_degraded')))")
+        if [ -n "$$LEVER2_DEGRADED" ]; then
+          git checkout -- sandbox-kata/results/latest.json
+          echo "==> FATAL: lever2_prescale_degraded set for: $$LEVER2_DEGRADED -- pool never reached prescale target (oversubscribed rig, not a substrate regression). latest.json reverted, no PR will open; re-fire once pool is confirmed at target." >&2
+          exit 1
+        else
+          echo "==> rendering README/DETAILS from results"
+          python3 -m render.generate
+        fi
 
         echo "==> public-safety gate (fail-closed)"
         bash scripts/check-public-safety.sh
