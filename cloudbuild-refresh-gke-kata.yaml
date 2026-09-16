@@ -374,8 +374,23 @@ steps:
           echo "==> WARNING: no valid peak node-count sample captured ('$$KATA_PEAK_NODE_COUNT') -- leaving provenance.node_count at harness default (hb#889)" >&2
         fi
 
-        echo "==> rendering README/DETAILS from results"
-        python3 -m render.generate
+        # hb#6669: fail-closed INFRA-not-test gate (#4420, "reopen loudly").
+        # A prescale timeout (hb#835 lever-2) discloses via sla_metrics
+        # .lever2_prescale_degraded instead of crashing -- unread, a starved
+        # rig still publishes a plausible FAIL (the #6669 node_count=1
+        # misread). On a hit: revert latest.json (harness.run already wrote
+        # it above, so open-pr's diff would otherwise still fire) and FAIL
+        # this build outright -- INFRA, not a substrate signal (#137/#2440),
+        # and a red build in history beats a silent green skip.
+        LEVER2_DEGRADED=$$(python3 -c "import json; d = json.load(open('sandbox-kata/results/latest.json')); print(','.join(s['name'] for s in d.get('scenarios', []) if isinstance(s, dict) and isinstance(s.get('sla_metrics'), dict) and s['sla_metrics'].get('lever2_prescale_degraded')))")
+        if [ -n "$$LEVER2_DEGRADED" ]; then
+          git checkout -- sandbox-kata/results/latest.json
+          echo "==> FATAL: lever2_prescale_degraded set for: $$LEVER2_DEGRADED -- pool never reached prescale target (oversubscribed rig, not a substrate regression). latest.json reverted, no PR will open; re-fire once pool is confirmed at target." >&2
+          exit 1
+        else
+          echo "==> rendering README/DETAILS from results"
+          python3 -m render.generate
+        fi
 
         echo "==> public-safety gate (fail-closed)"
         bash scripts/check-public-safety.sh
