@@ -42,11 +42,13 @@ blocker — diagnosis plus file-ready patches and comments — is hand-maintaine
 | gVisor | Warm-pool hit (Base image) ⚠️ FAIL | 0.228 /node ‡ · 9.336 /cluster ⚠️ | 0 /node · 9.336 /cluster ⚠️ | 8.5329s (count=30) | 12.0621s (count=30) | 100% |
 | gVisor | Unique-image cold (RL reality) | 0 /node · 0 /cluster | 0 /node · 0 /cluster | 4.1223s (count=200) | 5.2054s (count=200) | 100% |
 | gVisor | Resume-from-suspend | 0 /node · 0 /cluster | 0 /node · 0 /cluster | 4.7955s (count=30) | 5.3942s (count=30) | 100% |
-| Kata + microVM | Warm-pool hit (Base image) | 9.159 /node · 0.632 /cluster ⚠️ | 1.696 /node ‡ · [pending (cluster-fire)](WORK_IN_PROGRESS.md#cluster-fire) | 1.5704s (count=30) | 2.7915s (count=30) | 90% (27/30) ⚠️ |
-| Kata + microVM | Unique-image cold (RL reality) | [pending](WORK_IN_PROGRESS.md#not-yet-measured) | 0 /node · 0 /cluster | 3.2997s (count=30) | 3.5065s (count=30) | 100% |
+| Kata + microVM | Warm-pool hit (Base image) ⚠️ FAIL | 7.082 /node · 0.732 /cluster ⚠️ | 0 /node · 0 /cluster | 3.1222s (count=30) | 4.4497s (count=30) | 100% |
+| Kata + microVM | Unique-image cold (RL reality) | [pending](WORK_IN_PROGRESS.md#not-yet-measured) | 0 /node · 0 /cluster | 3.3705s (count=30) | 3.7758s (count=30) | 100% |
 | Kata + microVM | Resume-from-suspend | [N/A](WORK_IN_PROGRESS.md#na-by-construction) | [N/A](WORK_IN_PROGRESS.md#na-by-construction) | [N/A](WORK_IN_PROGRESS.md#na-by-construction) | [N/A](WORK_IN_PROGRESS.md#na-by-construction) | [N/A](WORK_IN_PROGRESS.md#na-by-construction) |
 
-_⚠️ **Scenario FAIL:** **gVisor** Warm-pool hit (Base image) — the row above carries a real measurement whose own scenario outcome is **FAIL** (SLA not met), not a passing warm hit. The numbers are honest data, disclosed as a miss rather than dropped or greened; a later refresh whose scenario returns to PASS clears this._
+_⚠️ **Scenario FAIL:** **gVisor** Warm-pool hit (Base image); **Kata + microVM** Warm-pool hit (Base image) — the row above carries a real measurement whose own scenario outcome is **FAIL** (SLA not met), not a passing warm hit. The numbers are honest data, disclosed as a miss rather than dropped or greened; a later refresh whose scenario returns to PASS clears this._
+
+_ℹ️ **Basis-change note:** the **Kata + microVM** Warm-pool hit p95 in the row above reflects a **true-TTFE basis graduation** (hb#740, confirmed sound by the hb#764 `convert_kata_cold()` fix) off an older ~2.24s proxy-timing baseline — not a controller performance regression. The cell moved off an earlier proxy basis onto a genuine measured TTFE; post-graduation refreshes vary within that new, tighter-truth basis. Don't burn a bisect chasing this shift._
 
 ### Max Density (sandboxes per vCPU)
 
@@ -70,14 +72,14 @@ Density is per-**runtime** — constant across a runtime's activation-mode rows 
 
 Full cell-decoding key — TTFE basis, honest vs. measured zeros, the dual per-node · per-cluster throughput pair, the certification-floor `≥` figures, every `pending` flavor, and the published-with-caveat tag classes — is in [DETAILS.md](DETAILS.md#how-to-read-the-core-metrics-cells).
 
-_Kata + microVM rows are measured in a separate run on the kata node pool: cluster_substrate=gke-kata · machine_type=n2-standard-16 · node_count=1 · generated-at=2026-09-13T16:57:53Z._
+_Kata + microVM rows are measured in a separate run on the kata node pool: cluster_substrate=gke-kata · machine_type=n2-standard-16 · node_count=1 · generated-at=2026-09-16T15:24:29Z._
 
 _build: cluster_substrate=gke-sandbox · controller_digest=sha256:c97570d3c3ba7ac6ead8aef68d11c094859d54348f7e4e8be1a730bf47a10b2d · suite_git_sha=1f95265a4a13a11d60bdce19bd02eee0935f38ef · upstream_ref=76142523294683e5f72defcad99fe6c83e5a9160 · run_id=be645ce286234359b2be764643e55d46 · node_count=2 · machine_type=n2-standard-16_
 _generated-at: 2026-09-15T17:28:14Z_
 
-_**North Star** — warm-pool-hit TTFE p95 < 1s (the spec doc bar): gVisor 12.0621s (count=30) ❌ not met (11.0621s above the bar) ⚠️ **scenario FAIL**; Kata + microVM 2.7915s (count=30) ❌ not met (1.7915s above the bar). An honest ❌ prints the measured gap to the bar (tagged `within sampling noise` when the miss sits inside the sample spread — it stays a ❌, the tag never flips a miss to a pass); `pending` = unmeasured (never a guess); † marks a p95 over fewer than N=30 samples._
+_**North Star** — warm-pool-hit TTFE p95 < 1s (the spec doc bar): gVisor 12.0621s (count=30) ❌ not met (11.0621s above the bar) ⚠️ **scenario FAIL**; Kata + microVM 4.4497s (count=30) ❌ not met (3.4497s above the bar) ⚠️ **scenario FAIL**. An honest ❌ prints the measured gap to the bar (tagged `within sampling noise` when the miss sits inside the sample spread — it stays a ❌, the tag never flips a miss to a pass); `pending` = unmeasured (never a guess); † marks a p95 over fewer than N=30 samples._
 
-_**Stretch bar** — warm-pool-hit TTFE p95 < 0.5s (an aspiration above the North Star, not the North Star itself; the step-up curve grades sustained creation-rate against it — see [DETAILS.md](DETAILS.md)): gVisor 12.0621s (count=30) ❌ not met (11.5621s above the bar) ⚠️ **scenario FAIL**; Kata + microVM 2.7915s (count=30) ❌ not met (2.2915s above the bar)._
+_**Stretch bar** — warm-pool-hit TTFE p95 < 0.5s (an aspiration above the North Star, not the North Star itself; the step-up curve grades sustained creation-rate against it — see [DETAILS.md](DETAILS.md)): gVisor 12.0621s (count=30) ❌ not met (11.5621s above the bar) ⚠️ **scenario FAIL**; Kata + microVM 4.4497s (count=30) ❌ not met (3.9497s above the bar) ⚠️ **scenario FAIL**._
 
 > ⚠️ **Refresh delta:** **gVisor** regressed by 6.5834s (5.4787s → 12.0621s, 2.2x) · controller_digest `sha256:0373582f8de2…` → `sha256:c97570d3c3ba…` · suite_git_sha `356b73f97a3a15d3765f3143a3a56c29df847510`→`1f95265a4a13a11d60bdce19bd02eee0935f38ef`. A swing this large, or a bar-crossing flip, between consecutive published runs is flagged for a second look before trusting it as a substrate signal — check for a machine-class change, a node-count change, a node-image change, a broken measurement, or a real regression/fix. Note: a build-lineage change (controller/suite rebuild) is already disclosed inline above — weigh that rebuild as the leading confound before reading this swing as a substrate regression.
 
