@@ -175,7 +175,7 @@ At **40 nodes** the cluster sustains only **2.558 claims/sec under 5s** (**0/sec
 
 _SLA ceiling: **not met** at this operating point — this row is the honest saturation limit, not a warm-hit guarantee. Every claim still bound and executed; the FAIL is the throughput collapse against the sizing floor, not a correctness failure._
 
-_Measured 2026-07-02 (75 days stale) — whole-cluster saturation ceiling (point-in-time)._
+_Measured 2026-07-02 (76 days stale) — whole-cluster saturation ceiling (point-in-time)._
 
 ### Where it breaks — an over-subscribed pool
 
