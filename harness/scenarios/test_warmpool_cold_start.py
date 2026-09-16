@@ -37,7 +37,7 @@ def test_all_bound_and_ok_every_sample_kept():
         "claim01": (420.5, True, None),
         "claim02": (510.0, True, None),
     }
-    samples, oks = cell._assemble_probe_results(names, results)
+    samples, oks, _reasons = cell._assemble_probe_results(names, results)
     assert oks == [True, True, True]
     assert samples == [300.0, 420.5, 510.0]
     # locked: one exec_ok per claim fired
@@ -51,7 +51,7 @@ def test_never_bound_claim_is_false_with_no_sample():
         "claim00": (300.0, True, None),
         "claim02": (510.0, True, None),
     }
-    samples, oks = cell._assemble_probe_results(names, results)
+    samples, oks, _reasons = cell._assemble_probe_results(names, results)
     assert oks == [True, False, True]
     assert samples == [300.0, 510.0]
     assert len(oks) == len(names)
@@ -65,7 +65,7 @@ def test_failed_exec_drags_rate_but_drops_from_histogram():
         "claim01": (None, False, "exec-channel"),
         "claim02": (510.0, True, None),
     }
-    samples, oks = cell._assemble_probe_results(names, results)
+    samples, oks, _reasons = cell._assemble_probe_results(names, results)
     assert oks == [True, False, True]
     assert samples == [300.0, 510.0]  # the None sample is dropped
     assert len(oks) == len(names)
@@ -79,7 +79,7 @@ def test_order_follows_claim_names_not_dict_insertion():
         "claim00": (1.0, True, None),
         "claim01": (2.0, True, None),
     }
-    samples, oks = cell._assemble_probe_results(names, results)
+    samples, oks, _reasons = cell._assemble_probe_results(names, results)
     assert samples == [1.0, 2.0, 3.0]
     assert oks == [True, True, True]
 
@@ -91,14 +91,14 @@ def test_all_failed_zero_samples_full_false_vector():
         "claim01": (None, False, "exec-channel"),
         # claim02, claim03 never bound
     }
-    samples, oks = cell._assemble_probe_results(names, results)
+    samples, oks, _reasons = cell._assemble_probe_results(names, results)
     assert samples == []
     assert oks == [False, False, False, False]
     assert len(oks) == len(names)
 
 
 def test_empty_claim_list_yields_empty_pair():
-    samples, oks = cell._assemble_probe_results([], {})
+    samples, oks, _reasons = cell._assemble_probe_results([], {})
     assert samples == []
     assert oks == []
 
@@ -108,7 +108,7 @@ def test_zero_latency_sample_is_kept_not_treated_as_falsy():
     # is `is not None`, not truthiness.
     names = _names(1)
     results = {"claim00": (0.0, True, None)}
-    samples, oks = cell._assemble_probe_results(names, results)
+    samples, oks, _reasons = cell._assemble_probe_results(names, results)
     assert samples == [0.0]
     assert oks == [True]
 
@@ -125,7 +125,7 @@ def test_n_equals_claim_count_across_mixed_outcomes():
         "claim09": (180.0, True, None),
         # claim02,04,05,06,08 never bound
     }
-    samples, oks = cell._assemble_probe_results(names, results)
+    samples, oks, _reasons = cell._assemble_probe_results(names, results)
     assert len(oks) == 10
     assert sum(1 for o in oks if o) == 3       # three genuine execs
     assert samples == [100.0, 250.0, 180.0]    # three samples, in claim order
@@ -165,13 +165,13 @@ def test_warm_scope_excludes_cold_overflow_from_histogram():
         "c0": (1799.0, True, None), "c1": (1009.0, True, None), "c2": (1400.0, True, None),
         "c3": (5200.0, True, None), "c4": (9800.0, True, None),   # cold overflow
     }
-    warm_samples, warm_oks = cell._assemble_probe_results(
+    warm_samples, warm_oks, _warm_reasons = cell._assemble_probe_results(
         bd["warm_names"], ttfe_results,
     )
     assert sorted(warm_samples) == [1009.0, 1400.0, 1799.0]  # warm only
     assert len(warm_oks) == 3                                # uniform N=3
     # the all-claims blend WOULD carry the cold overflow (the mislabel we fix).
-    blend_samples, _ = cell._assemble_probe_results(list(latencies), ttfe_results)
+    blend_samples, _, _ = cell._assemble_probe_results(list(latencies), ttfe_results)
     assert 5200.0 in blend_samples and 9800.0 in blend_samples
 
 

@@ -761,6 +761,17 @@ MATRIX_METRIC_FIELDS = {
     and not isinstance(v, bool)
     and 0.0 <= v <= 1.0,
     "exec_success_n": lambda v: isinstance(v, int) and not isinstance(v, bool) and v >= 0,
+    # hb#876: per-attempt ttfe_probe failure-class breakdown for the non-executed remainder
+    # (import-error / exec-channel / bad-stdout). OPTIONAL, additive, non-negative counts.
+    # int-or-float (unlike exec_success_n's int-only predicate above, which is a dead/
+    # never-emitted key): these ARE actively emitted by metrics._exec_fail_reason_metrics
+    # and persisted through results_schema._coerce_sla_metrics, which casts every generic
+    # numeric to float — an int-only predicate would silently drop every real value. Each
+    # key is OMITTED by the harness emitter when its class count is zero, so a pre-hb#876
+    # cell (no reason breakdown) renders byte-unchanged.
+    "exec_fail_reason_import_error_n": _nonneg,
+    "exec_fail_reason_exec_channel_n": _nonneg,
+    "exec_fail_reason_bad_stdout_n": _nonneg,
     "density_per_vcpu": _nonneg,
     # hb#554: the ISO-8601 instant the sweep that produced the per-cluster SLO triple
     # actually ran — render's mirror of results_schema.py's own thpt_slo_measured_at
@@ -789,6 +800,16 @@ BURST_CORROBORATION_FIELDS = {
     and not isinstance(v, bool)
     and 0.0 <= v <= 1.0,
     "exec_success_n": lambda v: isinstance(v, int) and not isinstance(v, bool) and v >= 0,
+    # hb#876: same per-attempt failure-class breakdown as MATRIX_METRIC_FIELDS above, for the
+    # burst-create corroboration block's own exec-failure remainder. int-or-float (unlike
+    # exec_success_n's int-only predicate above, which is a dead/never-emitted key): these ARE
+    # actively emitted by metrics._exec_fail_reason_metrics and persisted through
+    # results_schema._coerce_sla_metrics, which casts every generic numeric to float — an
+    # int-only predicate would silently drop every real value. Each key is OMITTED by the
+    # harness emitter when its class count is zero, so a pre-hb#876 cell renders byte-unchanged.
+    "exec_fail_reason_import_error_n": _nonneg,
+    "exec_fail_reason_exec_channel_n": _nonneg,
+    "exec_fail_reason_bad_stdout_n": _nonneg,
 }
 
 # --- inch #1: warm-pool TTFE decomposition block (warmpool_cold_start sla_metrics) --------

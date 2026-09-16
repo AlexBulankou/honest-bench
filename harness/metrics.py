@@ -14,6 +14,9 @@ The locked emit keys this module produces (the harness/render schema contract):
   thpt_under_1s_per_cluster          -- opt-in MEASURED cluster rate (sb/sec), hb#132
   thpt_cluster_node_count            -- node count X the cluster rate was measured at
   exec_success_rate                  -- fraction of first-instructions that succeeded
+  exec_fail_reason_import_error_n    -- opt-in: count of failed execs, kubernetes-client import broke (hb#876)
+  exec_fail_reason_exec_channel_n    -- opt-in: count of failed execs, exec channel errored/timed out (hb#876)
+  exec_fail_reason_bad_stdout_n      -- opt-in: count of failed execs, wrong/empty stdout (hb#876)
   density_per_vcpu                   -- max concurrent sandboxes / per-node allocatable sandbox vCPU
   density_retention, thpt_retention  -- scale-proof linearity (value@max-nodes / value@1-node)
 
@@ -158,6 +161,35 @@ def exec_success_rate(exec_oks: Sequence[bool]) -> float:
     return round(sum(1 for x in exec_oks if x) / len(exec_oks), 4)
 
 
+# hb#876: the ttfe_probe failure-class `reason` (hb#874) -> emit-key mapping.
+# RBAC-denial-vs-other exec-channel-failure splitting is explicitly deferred
+# (out of scope for hb#876), so "exec-channel" stays one bucket.
+_REASON_KEY_MAP = {
+    "import-error": "exec_fail_reason_import_error_n",
+    "exec-channel": "exec_fail_reason_exec_channel_n",
+    "bad-stdout": "exec_fail_reason_bad_stdout_n",
+}
+
+
+def _exec_fail_reason_metrics(
+    reasons: Optional[Sequence[Optional[str]]],
+) -> dict[str, float]:
+    """Count each failure-class `reason` into its locked emit key.
+
+    Unrecognized/None reasons are silently skipped (a successful attempt's
+    reason is None, and is never counted). A reason with zero occurrences is
+    OMITTED, not emitted as 0 -- keeps the additive contract: a run with no
+    failures of a given class emits no key for it, byte-identical to before
+    this reason-breakdown existed.
+    """
+    counts: dict[str, int] = {}
+    for r in reasons or ():
+        key = _REASON_KEY_MAP.get(r)
+        if key is not None:
+            counts[key] = counts.get(key, 0) + 1
+    return {k: float(v) for k, v in counts.items() if v > 0}
+
+
 def density_per_vcpu(
     max_concurrent_sandboxes: int,
     allocatable_sandbox_vcpu_per_node: float,
@@ -253,6 +285,7 @@ def ttfe_sla_metrics(
     bind_ms_samples: Optional[Sequence[Optional[Real]]] = None,
     exec_ms_samples: Optional[Sequence[Optional[Real]]] = None,
     cluster_node_count: Optional[int] = None,
+    reasons: Optional[Sequence[Optional[str]]] = None,
 ) -> dict[str, float]:
     """Assemble the numeric sla_metrics dict a TTFE scenario emits.
 
@@ -305,6 +338,13 @@ def ttfe_sla_metrics(
     per_cluster without node_count — the render pins X from
     thpt_cluster_node_count), and the default None leaves every existing fire's
     emit byte-identical. NEVER derived as per-node x N.
+
+    reasons (hb#876, opt-in): per-sample ttfe_probe failure-class reason
+    (import-error/exec-channel/bad-stdout/None), same length/order as
+    exec_oks. When supplied, the recognized non-None reasons are counted into
+    exec_fail_reason_{import_error,exec_channel,bad_stdout}_n -- each key
+    OMITTED when its count is zero, so a run with no failures of a class emits
+    nothing new. Default None leaves every existing caller byte-identical.
     """
     present = [float(t) for t in ttfe_ms_samples if t is not None]
     metrics: dict[str, float] = {
@@ -344,6 +384,8 @@ def ttfe_sla_metrics(
             ttfe_ms_samples, THRESHOLD_1S_MS, window_s
         )
         metrics["thpt_cluster_node_count"] = cluster_node_count
+    if reasons is not None:
+        metrics.update(_exec_fail_reason_metrics(reasons))
     return metrics
 
 
@@ -403,6 +445,7 @@ def multi_sample_ttfe_point(
     *,
     bind_ms_samples: Optional[Sequence[Optional[Real]]] = None,
     exec_ms_samples: Optional[Sequence[Optional[Real]]] = None,
+    reasons: Optional[Sequence[Optional[str]]] = None,
 ) -> dict[str, float]:
     """N-sample TTFE metrics for a REPEATED one-shot activation scenario.
 
@@ -433,6 +476,13 @@ def multi_sample_ttfe_point(
     For N=1 this returns output byte-identical to ``single_sample_ttfe_point``
     (with or without the decomposition kwargs), so the default (cycle_count=1 /
     samples=1) emit is unchanged.
+
+    reasons (hb#876, opt-in): per-cycle ttfe_probe failure-class reason
+    (import-error/exec-channel/bad-stdout/None), same length/order as
+    exec_oks. When supplied, the recognized non-None reasons are counted into
+    exec_fail_reason_{import_error,exec_channel,bad_stdout}_n -- each key
+    OMITTED when its count is zero. Default None leaves every existing caller
+    byte-identical.
     """
     if not exec_oks:
         raise ValueError("multi_sample_ttfe_point of empty attempt set")
@@ -454,6 +504,8 @@ def multi_sample_ttfe_point(
         if pe:
             metrics["exec_p50_ms"] = round(percentile(pe, 50), 1)
             metrics["exec_p95_ms"] = round(percentile(pe, 95), 1)
+    if reasons is not None:
+        metrics.update(_exec_fail_reason_metrics(reasons))
     return metrics
 
 

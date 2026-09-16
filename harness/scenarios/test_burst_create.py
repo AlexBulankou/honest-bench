@@ -383,7 +383,7 @@ def test_verify_raises_when_claim_has_no_bound_sandbox():
 def test_assemble_absent_claim_counts_as_failed_attempt_no_sample():
     # a claim that never bound (absent from ttfe_results) drags exec_success_rate
     # as an attempted-never-executed False, and contributes NO latency sample.
-    samples, oks = cell._assemble_probe_results(
+    samples, oks, _reasons = cell._assemble_probe_results(
         ["c0", "c1"], {"c0": (300.0, True, None)},
     )
     assert oks == [True, False]            # c1 absent -> False
@@ -392,7 +392,7 @@ def test_assemble_absent_claim_counts_as_failed_attempt_no_sample():
 
 def test_assemble_present_with_none_latency_is_failed_exec_no_sample():
     # bound but exec failed/blocked: (None, False, "exec-channel") -> exec_ok False, no sample.
-    samples, oks = cell._assemble_probe_results(
+    samples, oks, _reasons = cell._assemble_probe_results(
         ["c0", "c1"], {"c0": (300.0, True, None), "c1": (None, False, "exec-channel")},
     )
     assert oks == [True, False]
@@ -400,7 +400,7 @@ def test_assemble_present_with_none_latency_is_failed_exec_no_sample():
 
 
 def test_assemble_present_with_latency_is_success_plus_sample():
-    samples, oks = cell._assemble_probe_results(
+    samples, oks, _reasons = cell._assemble_probe_results(
         ["c0", "c1"], {"c0": (300.0, True, None), "c1": (700.0, True, None)},
     )
     assert oks == [True, True]
@@ -408,7 +408,7 @@ def test_assemble_present_with_latency_is_success_plus_sample():
 
 
 def test_assemble_empty_claim_list_is_empty():
-    samples, oks = cell._assemble_probe_results([], {})
+    samples, oks, _reasons = cell._assemble_probe_results([], {})
     assert oks == []
     assert samples == []
 

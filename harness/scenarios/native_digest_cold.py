@@ -322,15 +322,15 @@ def _effective_samples(requested: int, mode: str) -> int:
 
 def _one_cold_sample(
     custom, k8s_client
-) -> tuple[str, float, "float | None", "bool | None"]:
+) -> tuple[str, float, "float | None", "bool | None", "str | None"]:
     """One full cold cycle: create -> first Ready=True -> (probe) -> delete.
 
-    Returns (sandbox_name, cold_start_s, ttfe_ms, exec_ok); ttfe_ms/exec_ok are
-    (None, None) when BENCH_TTFE_EXEC is off. The sandbox is ALWAYS deleted
-    before return (per-sample finally), so with N>1 at most one benchmark
-    sandbox exists at a time — samples are serial and independent, and a
-    mid-loop crash leaks at most the in-flight sandbox (same posture as the
-    prior single-sample shape).
+    Returns (sandbox_name, cold_start_s, ttfe_ms, exec_ok, reason); ttfe_ms/
+    exec_ok/reason are (None, None, None) when BENCH_TTFE_EXEC is off. The
+    sandbox is ALWAYS deleted before return (per-sample finally), so with N>1
+    at most one benchmark sandbox exists at a time — samples are serial and
+    independent, and a mid-loop crash leaks at most the in-flight sandbox
+    (same posture as the prior single-sample shape).
     """
     suffix = uuid.uuid4().hex[:8]
     sandbox_name = f"cold-{suffix}"
@@ -376,23 +376,23 @@ def _one_cold_sample(
 
         ttfe_ms: "float | None" = None
         exec_ok: "bool | None" = None
+        reason: "str | None" = None
         if _TTFE_EXEC:
             core_v1 = k8s_client.CoreV1Api()
             # The bare Sandbox's backing pod is named for the CR (pod name ==
             # sandbox_name); t0 = create return, so ttfe is create->first-
             # instruction-result against the same clock as cold_start_s.
-            # hb#874: probe_first_instruction now returns a 3rd `reason` value
+            # hb#874: probe_first_instruction returns a 3rd `reason` value
             # (import-error/exec-channel/bad-stdout/None) distinguishing the
-            # failure class. Not yet threaded into this cell's own return shape
-            # or sla_metrics — deferred to a follow-up issue — so it is
-            # discarded here.
-            ttfe_ms, exec_ok, _reason = ttfe_probe.probe_first_instruction(
+            # failure class; hb#876 threads it into this cell's return shape
+            # and sla_metrics.
+            ttfe_ms, exec_ok, reason = ttfe_probe.probe_first_instruction(
                 core_v1,
                 pod_name=sandbox_name,
                 namespace=_NAMESPACE,
                 create_monotonic=t0,
             )
-        return (sandbox_name, cold_start_s, ttfe_ms, exec_ok)
+        return (sandbox_name, cold_start_s, ttfe_ms, exec_ok, reason)
     finally:
         _cleanup(custom, sandbox_name=sandbox_name)
 
@@ -433,11 +433,12 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
     cold_start_ss: list[float] = []
     ttfe_ms_samples: list["float | None"] = []
     exec_oks: list[bool] = []
+    reasons: list["str | None"] = []
     last_sandbox_name = ""
     for i in range(n_samples):
         if n_samples > 1:
             log.info("cold sample %d/%d", i + 1, n_samples)
-        sandbox_name, cold_start_s, ttfe_ms, exec_ok = _one_cold_sample(
+        sandbox_name, cold_start_s, ttfe_ms, exec_ok, reason = _one_cold_sample(
             custom, k8s_client
         )
         last_sandbox_name = sandbox_name
@@ -445,6 +446,7 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
         if _TTFE_EXEC:
             ttfe_ms_samples.append(ttfe_ms)
             exec_oks.append(bool(exec_ok))
+            reasons.append(reason)
 
     # Emit-key assembly. Two paths, gated by BENCH_TTFE_EXEC:
     #
@@ -470,6 +472,7 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
             ttfe_ms_samples, exec_oks,
             bind_ms_samples=bind_ms_samples,
             exec_ms_samples=exec_ms_samples,
+            reasons=reasons,
         )
         if n_samples == 1:
             bind_ms = bind_ms_samples[0]

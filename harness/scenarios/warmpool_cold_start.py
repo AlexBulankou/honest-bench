@@ -1211,6 +1211,7 @@ def _assemble_ttfe_metrics(
     bind_ms_samples: list[float] | None = None,
     exec_ms_samples: list[float] | None = None,
     cluster_node_count: int | None = None,
+    reasons: list | None = None,
 ) -> dict:
     """Assemble the warmpool TTFE sla_metrics dict (delegates to the pure core).
 
@@ -1227,6 +1228,9 @@ def _assemble_ttfe_metrics(
     exec_p50_ms/exec_p95_ms alongside the TTFE percentiles. exec is measured
     per-claim (NOT p50(ttfe)-p50(bind)). Diagnostic-only — see
     metrics.ttfe_sla_metrics.
+
+    reasons (hb#876, opt-in): forwarded verbatim to metrics.ttfe_sla_metrics —
+    see its own docstring for the emit-key breakdown.
     """
     m = metrics.ttfe_sla_metrics(
         ttfe_ms_samples,
@@ -1238,6 +1242,7 @@ def _assemble_ttfe_metrics(
         bind_ms_samples=bind_ms_samples,
         exec_ms_samples=exec_ms_samples,
         cluster_node_count=cluster_node_count,
+        reasons=reasons,
     )
     m["n"] = len(exec_oks)
     return m
@@ -1246,38 +1251,42 @@ def _assemble_ttfe_metrics(
 def _assemble_probe_results(
     claim_names: list[str],
     ttfe_results: dict[str, tuple],
-) -> tuple[list[float], list[bool]]:
+) -> tuple[list[float], list[bool], list]:
     """Collect the per-claim concurrent-probe results into histogram inputs.
 
     Pure assembly — no I/O. The probes already ran CONCURRENTLY inside each
     claim's watcher thread (see `_watch_one_claim`), depositing each claim's
     (ttfe_ms_or_None, exec_ok, reason) into `ttfe_results` at that claim's own
-    bind moment (the hb#874 `reason` value is not yet threaded into this cell's
-    own histogram inputs — deferred to a follow-up issue — so it is discarded
-    here). This walks the fired-claim list in order and flattens those into the
-    two parallel lists the metrics core consumes.
+    bind moment. This walks the fired-claim list in order and flattens those
+    into the three parallel lists the metrics core consumes — the hb#876
+    `reasons` list is the same length/order as `exec_oks`.
 
-    One exec_oks entry per claim FIRED (the locked contract: attempt total ==
-    len(exec_oks) == n == len(claim_names)). A claim absent from `ttfe_results`
-    never bound (or bound with no pod name / TTFE disabled) — record exec_ok=False
-    with no sample (attempted-never-executed) so it drags exec_success_rate
-    honestly. A present claim contributes its exec_ok, plus its TTFE sample only
-    when the probe returned a latency (a failed exec contributes False to
-    exec_success_rate but NO sample to the histogram — a sandbox that never ran an
-    instruction has no honest first-instruction latency).
+    One exec_oks/reasons entry per claim FIRED (the locked contract: attempt
+    total == len(exec_oks) == n == len(claim_names)). A claim absent from
+    `ttfe_results` never bound (or bound with no pod name / TTFE disabled) —
+    record exec_ok=False, reason=None with no sample (attempted-never-executed,
+    so it drags exec_success_rate honestly but has no ttfe_probe failure class
+    of its own). A present claim contributes its exec_ok and reason, plus its
+    TTFE sample only when the probe returned a latency (a failed exec
+    contributes False to exec_success_rate but NO sample to the histogram — a
+    sandbox that never ran an instruction has no honest first-instruction
+    latency).
     """
     ttfe_ms_samples: list[float] = []
     exec_oks: list[bool] = []
+    reasons: list = []
     for name in claim_names:
         result = ttfe_results.get(name)
         if result is None:
             exec_oks.append(False)
+            reasons.append(None)
             continue
-        ttfe_ms_sample, exec_ok, _reason = result
+        ttfe_ms_sample, exec_ok, reason = result
         exec_oks.append(exec_ok)
+        reasons.append(reason)
         if ttfe_ms_sample is not None:
             ttfe_ms_samples.append(ttfe_ms_sample)
-    return ttfe_ms_samples, exec_oks
+    return ttfe_ms_samples, exec_oks, reasons
 
 
 def _under_delivery_outcome(
@@ -1726,7 +1735,7 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
             else:
                 emit_names = claim_names
                 emit_bound_at = bound_at
-            ttfe_ms_samples, exec_oks = _assemble_probe_results(
+            ttfe_ms_samples, exec_oks, reasons = _assemble_probe_results(
                 emit_names, ttfe_results,
             )
             window_s = _activation_window_s(create_times, emit_bound_at)
@@ -1771,6 +1780,7 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
                 bind_ms_samples=bind_ms_samples,
                 exec_ms_samples=exec_ms_samples,
                 cluster_node_count=_CLUSTER_NODE_COUNT,
+                reasons=reasons,
             )
         else:
             sla_metrics = (

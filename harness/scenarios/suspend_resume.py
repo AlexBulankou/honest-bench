@@ -503,14 +503,16 @@ def _run_suspend_resume_cycle(custom, core_v1, *, sandbox_name, pre_uid):
     Returns (kind, data):
       ("fail", (outcome, excerpt, {}))  -- a real suspend/resume LIFECYCLE
           regression; the caller returns it verbatim.
-      ("ok", (verdict, gap_excerpt, gap_sla, ttfe_ms, exec_ok, new_uid,
+      ("ok", (verdict, gap_excerpt, gap_sla, ttfe_ms, exec_ok, reason, new_uid,
           suspend_latency_ms)) -- the Suspended-clear gap verdict for THIS cycle
-          plus the RAW resume-activation TTFE sample (ttfe_ms/exec_ok are
-          (None, False) when BENCH_TTFE_EXEC is off) plus the RAW administrative-
-          suspend latency for this cycle (ms; the suspend leg runs on EVERY cycle,
-          so this is always measured, never TTFE-gated). The caller accumulates
-          samples across cycles and merges both points itself, so this helper
-          returns the gap excerpt WITHOUT a TTFE or suspend-latency appendix.
+          plus the RAW resume-activation TTFE sample (ttfe_ms/exec_ok/reason are
+          (None, False, None) when BENCH_TTFE_EXEC is off) plus the RAW
+          administrative-suspend latency for this cycle (ms; the suspend leg runs
+          on EVERY cycle, so this is always measured, never TTFE-gated). reason
+          (hb#876) is ttfe_probe's failure-class breakdown (import-error/
+          exec-channel/bad-stdout/None). The caller accumulates samples across
+          cycles and merges both points itself, so this helper returns the gap
+          excerpt WITHOUT a TTFE or suspend-latency appendix.
 
     Does NOT create or delete the Sandbox -- the caller owns its lifecycle.
     pre_uid is the backing Pod uid BEFORE this cycle's suspend; the resume leg
@@ -626,23 +628,21 @@ def _run_suspend_resume_cycle(custom, core_v1, *, sandbox_name, pre_uid):
     # RAW (ttfe_ms, exec_ok) sample; the caller accumulates across cycles and
     # merges the aggregated TTFE point. Reached only after lifecycle_ok, so the
     # resumed Pod exists; its backing Pod is named for the CR (pod == sandbox).
-    ttfe_ms, exec_ok = None, False
+    ttfe_ms, exec_ok, reason = None, False, None
     if _TTFE_EXEC:
-        # hb#874: probe_first_instruction now returns a 3rd `reason` value
+        # hb#874: probe_first_instruction returns a 3rd `reason` value
         # (import-error/exec-channel/bad-stdout/None) distinguishing the
-        # failure class. Not yet threaded into this cell's own per-cycle
-        # bookkeeping/sla_metrics — deferred to a follow-up issue — so it is
-        # discarded here; only the (ttfe_ms, exec_ok) shape this cell already
-        # accumulates across cycles is kept.
-        ttfe_ms, exec_ok, _reason = ttfe_probe.probe_first_instruction(
+        # failure class; hb#876 threads it into this cell's return shape and
+        # the caller's accumulated sla_metrics.
+        ttfe_ms, exec_ok, reason = ttfe_probe.probe_first_instruction(
             core_v1,
             pod_name=sandbox_name,
             namespace=_NAMESPACE,
             create_monotonic=resume_t0,
         )
 
-    return ("ok", (verdict, gap_excerpt, gap_sla, ttfe_ms, exec_ok, new_uid,
-                   suspend_latency_ms))
+    return ("ok", (verdict, gap_excerpt, gap_sla, ttfe_ms, exec_ok, reason,
+                   new_uid, suspend_latency_ms))
 
 
 def run(scenario_name: str) -> tuple[str, str, dict]:
@@ -707,6 +707,7 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
         gap_verdicts: list[tuple[str, str, dict]] = []
         ttfe_samples: list = []
         exec_oks: list[bool] = []
+        reasons: list = []
         # Administrative-suspend latency samples: the suspend leg runs on EVERY
         # cycle (never TTFE-gated), so this accumulates one sample per cycle
         # regardless of _TTFE_EXEC.
@@ -718,12 +719,13 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
                 custom, core_v1, sandbox_name=sandbox_name, pre_uid=pre_uid)
             if kind == "fail":
                 return data
-            (verdict, gap_excerpt, gap_sla, ttfe_ms, exec_ok, new_uid,
+            (verdict, gap_excerpt, gap_sla, ttfe_ms, exec_ok, reason, new_uid,
              suspend_latency_ms) = data
             gap_verdicts.append((verdict, gap_excerpt, gap_sla))
             if _TTFE_EXEC:
                 ttfe_samples.append(ttfe_ms)
                 exec_oks.append(exec_ok)
+                reasons.append(reason)
             suspend_latency_samples.append(suspend_latency_ms)
             pre_uid = new_uid  # next cycle suspends the just-resumed Pod
 
@@ -784,7 +786,9 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
         if _TTFE_EXEC:
             sla_metrics = {
                 **sla_metrics,
-                **metrics.multi_sample_ttfe_point(ttfe_samples, exec_oks),
+                **metrics.multi_sample_ttfe_point(
+                    ttfe_samples, exec_oks, reasons=reasons
+                ),
             }
             n = len(exec_oks)
             if n == 1:

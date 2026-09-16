@@ -2139,6 +2139,35 @@ def test_matrix_exec_success_n_emitted_preferred_over_derived():
     assert "(1277/1376)" not in out
 
 
+def test_matrix_exec_fail_reason_breakdown_renders_after_warning_flag():
+    # hb#876: a real fire emits float-typed reason counts (results_schema coerces every
+    # generic sla_metrics numeric to float) — confirm they survive the closed-schema clean
+    # AND render in the fixed label order after the existing "N/M ⚠️" fraction.
+    scen = _full_gvisor_scenarios()
+    scen[2]["sla_metrics"]["exec_fail_reason_exec_channel_n"] = 60.0
+    scen[2]["sla_metrics"]["exec_fail_reason_import_error_n"] = 39.0
+    out = render.render_matrix(_matrix_results(scen))
+    assert (
+        "92.8% (1277/1376) ⚠️ (import-error: 39, exec-channel: 60)" in _unlink(out)
+    )
+
+
+def test_matrix_exec_fail_reason_breakdown_absent_when_not_emitted():
+    # pre-hb#876 fires carry no reason keys at all -> byte-unchanged cell, no trailing parens.
+    out = render.render_matrix(_matrix_results(_full_gvisor_scenarios()))
+    assert "92.8% (1277/1376) ⚠️" in _unlink(out)
+    assert "import-error" not in out and "exec-channel" not in out and "bad-stdout" not in out
+
+
+def test_matrix_exec_fail_reason_breakdown_zero_count_key_omitted():
+    # a zero-count reason key is never emitted by the harness, but even if a stray 0 landed
+    # in sla_metrics it must not render an empty/zero parenthetical.
+    scen = _full_gvisor_scenarios()
+    scen[2]["sla_metrics"]["exec_fail_reason_bad_stdout_n"] = 0.0
+    out = render.render_matrix(_matrix_results(scen))
+    assert "bad-stdout" not in out
+
+
 def test_matrix_pending_scenario_suppresses_leaked_metrics():
     # A scenario whose OUTCOME is `pending` carries provisional sla_metrics that are NOT a
     # publishable measurement — the upstream-blocked resume probe records its timeout
@@ -2767,6 +2796,39 @@ def test_burst_corroboration_exec_success_100_renders_plain():
     out = render.render_burst_corroboration(_matrix_results(scen))
     assert "| Execution success (Honesty Check) | 100% |" in out
     assert "⚠️" not in out
+
+
+def test_burst_corroboration_exec_fail_reason_breakdown_renders():
+    # hb#876: same additive parenthetical on the burst-corroboration Honesty-Check row.
+    scen = _full_gvisor_scenarios() + [
+        _burst_scenario(
+            {
+                "sandboxes_ready_under_1s": 10,
+                "sandboxes_exec_under_1s": 8,
+                "exec_success_rate": 0.9,
+                "exec_fail_reason_bad_stdout_n": 1.0,
+            },
+            n=10,
+        )
+    ]
+    out = render.render_burst_corroboration(_matrix_results(scen))
+    assert "| Execution success (Honesty Check) | 90% (9/10) ⚠️ (bad-stdout: 1) |" in out
+
+
+def test_burst_corroboration_exec_fail_reason_breakdown_absent_when_not_emitted():
+    scen = _full_gvisor_scenarios() + [
+        _burst_scenario(
+            {
+                "sandboxes_ready_under_1s": 10,
+                "sandboxes_exec_under_1s": 8,
+                "exec_success_rate": 0.9,
+            },
+            n=10,
+        )
+    ]
+    out = render.render_burst_corroboration(_matrix_results(scen))
+    assert "| Execution success (Honesty Check) | 90% (9/10) ⚠️ |" in out
+    assert "import-error" not in out and "exec-channel" not in out and "bad-stdout" not in out
 
 
 def test_burst_corroboration_bad_exec_value_dropped_then_inert():

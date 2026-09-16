@@ -619,37 +619,42 @@ def _classify_burst(
 def _assemble_probe_results(
     claim_names: list[str],
     ttfe_results: dict[str, tuple],
-) -> tuple[list[float], list[bool]]:
-    """Collect the per-claim concurrent-probe results into the two parallel lists.
+) -> tuple[list[float], list[bool], list]:
+    """Collect the per-claim concurrent-probe results into the three parallel lists.
 
     Pure assembly — no I/O. The probes already ran CONCURRENTLY inside each
     claim's watcher thread (see `_watch_one_claim`), depositing each claim's
     (ttfe_ms_or_None, exec_ok, reason) into `ttfe_results` at that claim's own
-    bind moment (the hb#874 `reason` value is not yet threaded into this cell's
-    own corroboration inputs — deferred to a follow-up issue — so it is
-    discarded here). This walks the fired-claim list in order and flattens
-    those into the two parallel lists the corroboration classifier consumes.
+    bind moment. This walks the fired-claim list in order and flattens those
+    into the three parallel lists the corroboration classifier consumes (the
+    hb#876 `reason` list feeds `_classify_exec_corroboration`'s failure-class
+    breakdown; RBAC-denial-vs-other exec-channel-failure splitting stays out
+    of scope).
 
     One exec_oks entry per claim FIRED (attempt total == len(exec_oks) ==
     len(claim_names)). A claim absent from `ttfe_results` never bound (or bound
-    with no pod name / TTFE disabled) — record exec_ok=False with no sample
-    (attempted-never-executed) so it drags exec_success_rate honestly. A present
-    claim contributes its exec_ok, plus its TTFE sample only when the probe
-    returned a latency (a failed exec contributes False to exec_success_rate but
-    NO sample — a sandbox that never ran an instruction has no honest latency).
+    with no pod name / TTFE disabled) — record exec_ok=False, reason=None, with
+    no sample (attempted-never-executed) so it drags exec_success_rate honestly.
+    A present claim contributes its exec_ok and reason, plus its TTFE sample
+    only when the probe returned a latency (a failed exec contributes False to
+    exec_success_rate but NO sample — a sandbox that never ran an instruction
+    has no honest latency).
     """
     ttfe_ms_samples: list[float] = []
     exec_oks: list[bool] = []
+    reasons: list = []
     for name in claim_names:
         result = ttfe_results.get(name)
         if result is None:
             exec_oks.append(False)
+            reasons.append(None)
             continue
-        ttfe_ms_sample, exec_ok, _reason = result
+        ttfe_ms_sample, exec_ok, reason = result
         exec_oks.append(exec_ok)
+        reasons.append(reason)
         if ttfe_ms_sample is not None:
             ttfe_ms_samples.append(ttfe_ms_sample)
-    return ttfe_ms_samples, exec_oks
+    return ttfe_ms_samples, exec_oks, reasons
 
 
 def _classify_exec_corroboration(
@@ -657,6 +662,7 @@ def _classify_exec_corroboration(
     exec_oks: list[bool],
     *,
     ttfi_ceiling_s: float,
+    reasons: list | None = None,
 ) -> dict:
     """Pure literal-TTFE corroboration (#3954). No cluster, no clock — testable.
 
@@ -672,6 +678,13 @@ def _classify_exec_corroboration(
         succeeded (metrics.exec_success_rate) — disambiguates a low exec count
         (slow-but-working vs failed/blocked exec).
 
+    reasons (hb#876, opt-in): per-claim ttfe_probe failure-class reason, same
+    length/order as exec_oks (see `_assemble_probe_results`). When supplied,
+    the recognized non-None reasons are counted into
+    exec_fail_reason_{import_error,exec_channel,bad_stdout}_n via
+    metrics._exec_fail_reason_metrics — each key OMITTED when its count is
+    zero. Default None leaves every existing caller byte-identical.
+
     Returns {} when there were no attempts (`exec_oks` empty) — nothing to
     corroborate, so no fabricated number. When there WAS at least one attempt the
     dict is always returned, even if the exec count is 0 (a real measurement:
@@ -684,10 +697,13 @@ def _classify_exec_corroboration(
         return {}
     ceiling_ms = ttfi_ceiling_s * 1000.0
     count_exec_under = sum(1 for t in ttfe_ms_samples if t < ceiling_ms)
-    return {
+    result = {
         _KEY_EXEC_COUNT: float(count_exec_under),
         _KEY_EXEC_RATE: metrics.exec_success_rate(exec_oks),
     }
+    if reasons is not None:
+        result.update(metrics._exec_fail_reason_metrics(reasons))
+    return result
 
 
 def _bound_sandbox_name(custom, *, claim_name: str) -> str | None:
@@ -944,11 +960,12 @@ def run(scenario_name: str) -> tuple[str, str, dict]:
         # guarantees `len(exec_oks) == len(claim_names)`, so that case is still
         # caught by the callee's own `if not exec_oks: return {}` guard.
         if _TTFE_EXEC and claim_names:
-            ttfe_ms_samples, exec_oks = _assemble_probe_results(
+            ttfe_ms_samples, exec_oks, reasons = _assemble_probe_results(
                 claim_names, ttfe_results,
             )
             corroboration = _classify_exec_corroboration(
                 ttfe_ms_samples, exec_oks, ttfi_ceiling_s=_TTFI_CEILING_S,
+                reasons=reasons,
             )
             sla_metrics.update(corroboration)
             breakdown["exec_corroboration"] = corroboration
