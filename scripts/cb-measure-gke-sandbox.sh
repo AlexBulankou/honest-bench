@@ -570,6 +570,25 @@ kill "$NODE_SAMPLER_PID" 2>/dev/null || true
 echo "==> hb-gvisor-pool node count over the measure window (hb#319 diagnostic, recap — the durable copy is the hb319-sample lines streamed above):"
 cat "$NODE_SAMPLE_LOG" 2>/dev/null || echo "(no samples captured)"
 
+# hb#835/hb#6669: fail-closed INFRA-not-test gate — mirror of the kata pipeline's
+# gate (cloudbuild-refresh-gke-kata.yaml ~line 377), ported here so a gVisor fire
+# can't silently publish a starved rig either. A prescale timeout (hb#835 lever-2)
+# discloses via sla_metrics.lever2_prescale_degraded instead of crashing; unread,
+# an oversubscribed pool still ships a plausible FAIL (the #6669 node_count=1
+# misread class). On a hit: revert latest.json (harness.run already wrote it) and
+# FAIL the build outright — INFRA, not a substrate signal (#137/#2440); a red
+# build in history beats a silent green skip. Placed BEFORE the accrue_history /
+# accrue_warmpool_separation steps below so a starved measurement never enters the
+# build-over-build or separation-ratio trend stores. The EXIT trap still tears the
+# cluster down on this exit 1. Fail-open on absence: a results shape with no
+# lever2_prescale_degraded key (older harness) leaves the gate inert.
+LEVER2_DEGRADED=$(python3 -c "import json; d = json.load(open('sandbox/results/latest.json')); print(','.join(s['name'] for s in d.get('scenarios', []) if isinstance(s, dict) and isinstance(s.get('sla_metrics'), dict) and s['sla_metrics'].get('lever2_prescale_degraded')))")
+if [ -n "$LEVER2_DEGRADED" ]; then
+  git checkout -- sandbox/results/latest.json
+  echo "==> FATAL: lever2_prescale_degraded set for: $LEVER2_DEGRADED — pool never reached prescale target (oversubscribed rig, not a substrate regression). latest.json reverted, no history accrued, no PR will open; re-fire once pool is confirmed at target." >&2
+  exit 1
+fi
+
 # hb#3918/hb#439: upsert this build's burst_create COUNT into the build-over-build
 # history BEFORE rendering, so render_trend has the just-written row available.
 # Sole-writer contract (accrue_history.py), two outcomes on a non-write:
