@@ -125,6 +125,8 @@ Four questions a bigger cluster raises: does throughput stay flat as you add nod
 
 _The density values in this row are the per-node density retained at each node count (a linearity series — does per-node density stay flat as the cluster grows?), not the absolute Max Density per vCPU (reported separately in DETAILS)._
 
+_Throughput above uses the bind-only TTFI (first-instruction accepted) basis, not the headline SLO's TTFE (executed first-instruction) basis — see recipe/REPRODUCE.md for the true-TTFE derivation._
+
 _Per-step density retention: 1→2 ✅ 1 · 2→4 ✅ 1 — holds flat step-to-step._
 
 _Per-step throughput retention: 1→2 ⚠️ 0 · 2→4 pending — sags mid-sweep._
