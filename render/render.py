@@ -5664,6 +5664,18 @@ def render_scale_proof(results, heading="## Scale Proof (Linearity Check)"):
         "absolute Max Density per vCPU (reported separately in DETAILS)._"
     )
     lines.append("")
+    # goal-2.1 display-vs-spec audit (hb#895 thread): the Throughput Holds Flat? column above
+    # is derived from scale_slope.run_sweep's bind-only TTFI samples (Ready+bound latency), a
+    # DIFFERENT and coarser basis than the page's headline SLO, which uses the true-TTFE
+    # webhook-stamped basis (see recipe/REPRODUCE.md). Undisclosed, a reader could mis-read the
+    # throughput retention ratio here as SLO-comparable. Reuses the existing public semantic
+    # vocabulary (_SEMANTIC_LABELS) rather than inventing new wording for the same two bases.
+    lines.append(
+        f"_Throughput above uses the bind-only {_SEMANTIC_LABELS['ttfi']} basis, not the "
+        f"headline SLO's {_SEMANTIC_LABELS['ttfe']} basis — see recipe/REPRODUCE.md for the "
+        "true-TTFE derivation._"
+    )
+    lines.append("")
     for key, noun in (("density", "density"), ("throughput", "throughput")):
         step_line = _per_step_retention_line(sp["points"], key, noun)
         if step_line:
