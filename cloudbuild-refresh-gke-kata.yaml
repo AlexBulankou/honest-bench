@@ -125,6 +125,13 @@ substitutions:
   # triple is verified corroborated (e.g. true_ttfe_webhook_stamped_claims >= 1 in the
   # build log) — i.e. a genuine information UPGRADE, not a silent downgrade. Usage:
   #     --substitutions=_ALLOW_CELL_DOWNGRADE=1
+  # Opt-in true-TTFE warm step-up sweep record for warmpool_cold_start's
+  # cluster-throughput triple (thpt_under_5s/1s_per_cluster, thpt_cluster_node_count).
+  # kata_warm_ttfe_sweep.py fires OFFLINE against a persistent, shared standing
+  # GKE cluster. Mirroring PR #735's gVisor wiring, its record is base64'd
+  # into this substitution and decoded to a workspace file which overrides
+  # BENCH_SLO_SWEEP_WARMPOOL_COLD_START.
+  _WARMPOOL_COLD_START_SWEEP_B64: ""
   _ALLOW_CELL_DOWNGRADE: ""
   # hb#880: fire-time concurrent-load provenance. Each sweep brackets its rungs
   # with a snapshot of the sibling scenario Jobs active on this shared cluster
@@ -212,6 +219,7 @@ steps:
       # and this step's env: already exports straight into the shell that runs
       # `python3 -m harness.run` below — same mechanism as the sweep-output env vars
       # above.
+      - "HB_WARMPOOL_COLD_START_SWEEP_B64=${_WARMPOOL_COLD_START_SWEEP_B64}"
       - "BENCH_ALLOW_CELL_DOWNGRADE=${_ALLOW_CELL_DOWNGRADE}"
       # hb#880: concurrent-load sampler config, read by harness/concurrent_load.py
       # via config_from_env(). Both empty by default ⇒ sampler INERT (returns None,
@@ -330,6 +338,20 @@ steps:
         # cleanup before this starts.
         echo "==> firing honest kata UNIQUE-IMAGE cold true_ttfe sweep"
         PYTHONPATH=/workspace python3 scripts/kata_unique_image_cold_ttfe_sweep.py
+
+        # Optional external warm TTFE sweep passthrough (hb#8751). If provided,
+        # overrides BENCH_SLO_SWEEP_WARMPOOL_COLD_START with the warm sweep.
+        if [ -n "${HB_WARMPOOL_COLD_START_SWEEP_B64:-}" ]; then
+          SLO_SWEEP_OUT=/workspace/kata-warm-ttfe-sweep.json
+          if echo "$HB_WARMPOOL_COLD_START_SWEEP_B64" | base64 -d >"$SLO_SWEEP_OUT" 2>/dev/null \
+              && python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$SLO_SWEEP_OUT" 2>/dev/null; then
+            export BENCH_SLO_SWEEP_WARMPOOL_COLD_START="$SLO_SWEEP_OUT"
+            echo "==> external warm TTFE sweep wired in as BENCH_SLO_SWEEP_WARMPOOL_COLD_START=$SLO_SWEEP_OUT"
+          else
+            echo "==> WARNING: HB_WARMPOOL_COLD_START_SWEEP_B64 set but failed to decode to valid JSON — leaving BENCH_SLO_SWEEP_WARMPOOL_COLD_START pointing at the cold sweep" >&2
+            rm -f "$SLO_SWEEP_OUT"
+          fi
+        fi
 
         # Step 2 — full graduation refresh, merging BOTH sweeps' cold true_ttfe
         # triples (BENCH_SLO_SWEEP_WARMPOOL_COLD_START + _NATIVE_DIGEST_COLD,
