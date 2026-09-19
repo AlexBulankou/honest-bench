@@ -1546,6 +1546,56 @@ def test_matrix_dual_throughput_caption_pending_without_cluster_fire():
     assert "at 40 nodes" not in out  # no fabricated X without a landed node count
 
 
+def test_matrix_dual_throughput_cluster_only_renders_not_dropped():
+    # hb#(cluster-only sweep-merge gap): merge_slo_sweeps' derivation
+    # (harness/slo_rate.slo_sla_metrics_from_stepup) legitimately produces a
+    # cluster-only figure with NO per-node companion for a scenario with no
+    # per-node throughput concept at all (native_digest_cold's unique-image
+    # cluster-wide fire never measures a per-node rate). Before this fix, the
+    # node-absent branch of thpt_dual_cell fell straight through to a bare
+    # `pending`, silently discarding a real, landed, corroborated cluster
+    # figure. This mirrors a real production cell (thpt_under_5s_per_cluster
+    # present, thpt_under_5s_per_node absent, thpt_cluster_node_count present).
+    scen = [
+        {"name": "native_digest_cold", "outcome": "PASS", "n": 30,
+         "sla_metrics": {
+             "ttfe_p50_ms": 3322.6,
+             "ttfe_p95_ms": 3760.0,
+             "thpt_under_5s_per_cluster": 0.622,
+             "thpt_cluster_node_count": 6,
+         }},
+    ]
+    out = render.render_matrix(_matrix_results(scen))
+    cold_line = [l for l in out.splitlines() if "Unique-image cold" in l][0]
+    cells = [_unlink(c.strip()) for c in cold_line.strip("|").split("|")]
+    # cluster half renders the real figure (below the sizing target -> ⚠️); node half
+    # stays honestly `pending` since no per-node measurement concept applies here.
+    assert cells[2] == "pending /node · 0.622 /cluster ⚠️"
+    # the <1s cell has no cluster figure landed at all, but p95 (3.76s) already
+    # misses the 1s bar -> pre-existing derivable-honest-0 branch fires first
+    # (unaffected by this fix, asserted here as a regression check on branch order).
+    assert cells[3] == "0 /node · 0 /cluster"
+
+
+def test_matrix_dual_throughput_cluster_only_still_pends_without_node_count():
+    # same shape as above but WITHOUT thpt_cluster_node_count -- the existing
+    # X-less-per_cluster gate (test_matrix_cluster_half_gated_on_node_count_presence)
+    # must still win: no measurement size to disclose means the whole cell stays
+    # bare `pending`, not a rate under an unpinned caption.
+    scen = [
+        {"name": "native_digest_cold", "outcome": "PASS", "n": 30,
+         "sla_metrics": {
+             "ttfe_p50_ms": 3322.6,
+             "ttfe_p95_ms": 3760.0,
+             "thpt_under_5s_per_cluster": 0.622,
+         }},
+    ]
+    out = render.render_matrix(_matrix_results(scen))
+    cold_line = [l for l in out.splitlines() if "Unique-image cold" in l][0]
+    cells = [_unlink(c.strip()) for c in cold_line.strip("|").split("|")]
+    assert cells[2] == "pending"
+
+
 def test_matrix_cluster_half_gated_on_node_count_presence():
     # hb#132 render gate (defense-in-depth; the emit side couples the triple all-or-nothing):
     # a per_cluster figure WITHOUT thpt_cluster_node_count in the same metrics dict has no X to
