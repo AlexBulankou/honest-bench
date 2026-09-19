@@ -93,7 +93,7 @@
     "measured_at": "2026-06-30",
     "node_count": 20
   },
-  "generated_at": "2026-09-18T01:35:42Z",
+  "generated_at": "2026-09-19T04:30:42Z",
   "kata_activation": {
     "cold_ready": [
       {
@@ -123,20 +123,20 @@
   "provenance": {
     "cluster_substrate": "gke-sandbox",
     "cold_start_mode": "cold-provision",
-    "controller_digest": "sha256:d8ce16ce03b49cad2a1d431f0ca356a5bcb781434f260d2b55309da9fee027d2",
+    "controller_digest": "sha256:5b2ebaf9fc7ab4bf41cb988145cf6a0af482c721adbaf2e3ba6d4867804e30ee",
     "machine_type": "n2-standard-16",
     "node_count": 2,
     "node_image": "v1.36.4-gke.1082000",
-    "prior_controller_digest": "sha256:b007c26d30e7f3e19b7879de9dab60bb154579a9bcc0d42aa270d8589cab5f24",
-    "prior_suite_git_sha": "2dbf9fcb67abc5ad0f7c528ccd7b2089762df078",
-    "prior_warmpool_ttfe_p95_ms": 17080.8,
-    "run_id": "64fcdc53621a442b94af635014b8df8f",
+    "prior_controller_digest": "sha256:d8ce16ce03b49cad2a1d431f0ca356a5bcb781434f260d2b55309da9fee027d2",
+    "prior_suite_git_sha": "4f3b4bb2a1594317b842e32293db22424f637282",
+    "prior_warmpool_ttfe_p95_ms": 11651.3,
+    "run_id": "30cb488d64ea4ba180a853a5337c0331",
     "runsc_version": "directory",
     "runtime": "gvisor",
     "sandbox_cpu_request_m": 10,
     "sandbox_mem_request_mib": 16,
-    "suite_git_sha": "4f3b4bb2a1594317b842e32293db22424f637282",
-    "upstream_ref": "ac186f1d1b7d1d8efe18e2f336f59ee37f4ba8eb"
+    "suite_git_sha": "4b54506400ad0fe4f4a907971f2dd71bea86e687",
+    "upstream_ref": "4b3a922fc7de620b9f24679673928338b7a8d2bf"
   },
   "provisioning_rate_sweep": {
     "ceiling_high_per_s": 150.0,
@@ -199,11 +199,11 @@
       "name": "burst_create",
       "outcome": "FAIL",
       "sla_metrics": {
-        "density_per_vcpu": 0.0875,
+        "density_per_vcpu": 0.046875,
         "exec_success_rate": 1.0,
-        "sandboxes_exec_under_1s": 1.0,
-        "sandboxes_ready_under_1s": 7.0,
-        "total_vcpu": 80.0
+        "sandboxes_exec_under_1s": 0.0,
+        "sandboxes_ready_under_1s": 3.0,
+        "total_vcpu": 64.0
       }
     },
     {
@@ -217,32 +217,31 @@
       "name": "warmpool_cold_start",
       "outcome": "PASS",
       "sla_metrics": {
-        "bind_p50_ms": 5052.4,
-        "bind_p95_ms": 10477.1,
+        "bind_p50_ms": 3773.0,
+        "bind_p95_ms": 6942.9,
         "density_per_vcpu": 6.23,
-        "exec_p50_ms": 959.2,
-        "exec_p95_ms": 1919.7,
+        "exec_p50_ms": 640.4,
+        "exec_p95_ms": 1734.1,
         "exec_success_rate": 1.0,
         "thpt_cluster_node_count": 4.0,
         "thpt_slo_basis": "true_ttfe",
         "thpt_under_1s_per_cluster": 9.336,
         "thpt_under_1s_per_node": 0.0,
         "thpt_under_5s_per_cluster": 9.336,
-        "thpt_under_5s_per_node": 0.514,
-        "ttfe_p50_ms": 6180.0,
-        "ttfe_p95_ms": 11651.3,
-        "warmpool_gate_cold_min_ms": 10804.578719000005,
-        "warmpool_gate_cold_p50_ms": 11814.161490499999,
-        "warmpool_gate_min_ready_during_burst": 30.0,
-        "warmpool_gate_ready_dip_duration_s": 0.0,
-        "warmpool_gate_separation_ratio": 2.3383207375599997,
-        "warmpool_gate_ttfe_at_supply_median_ms": 8139.29298849996,
-        "warmpool_gate_ttfe_at_supply_n": 40.0,
-        "warmpool_gate_ttfe_during_dip_absent_reason": "no_dip_observed",
-        "warmpool_gate_ttfe_during_dip_median_ms": null,
-        "warmpool_gate_ttfe_during_dip_n": null,
-        "warmpool_gate_warm_max_ms": 10778.172927000014,
-        "warmpool_gate_warm_p50_ms": 5052.412742499939
+        "thpt_under_5s_per_node": 0.938,
+        "ttfe_p50_ms": 4290.5,
+        "ttfe_p95_ms": 7680.0,
+        "warmpool_gate_cold_min_ms": 7139.534264999952,
+        "warmpool_gate_cold_p50_ms": 7962.55312400001,
+        "warmpool_gate_min_ready_during_burst": 17.0,
+        "warmpool_gate_ready_dip_duration_s": 9.224696416000029,
+        "warmpool_gate_separation_ratio": 2.110397275338907,
+        "warmpool_gate_ttfe_at_supply_median_ms": 7462.924874499948,
+        "warmpool_gate_ttfe_at_supply_n": 26.0,
+        "warmpool_gate_ttfe_during_dip_median_ms": 3949.4648055000425,
+        "warmpool_gate_ttfe_during_dip_n": 14.0,
+        "warmpool_gate_warm_max_ms": 7064.807137999992,
+        "warmpool_gate_warm_p50_ms": 3773.0114689999823
       }
     },
     {
@@ -254,13 +253,13 @@
       "name": "native_digest_cold",
       "outcome": "PASS",
       "sla_metrics": {
-        "bind_p50_ms": 3110.6,
-        "bind_p95_ms": 4046.0,
-        "exec_p50_ms": 483.6,
-        "exec_p95_ms": 745.3,
+        "bind_p50_ms": 3157.5,
+        "bind_p95_ms": 3772.8,
+        "exec_p50_ms": 484.9,
+        "exec_p95_ms": 651.4,
         "exec_success_rate": 1.0,
-        "ttfe_p50_ms": 3591.8,
-        "ttfe_p95_ms": 4532.9
+        "ttfe_p50_ms": 3649.8,
+        "ttfe_p95_ms": 4260.9
       }
     },
     {
@@ -269,10 +268,10 @@
       "outcome": "PASS",
       "sla_metrics": {
         "exec_success_rate": 1.0,
-        "suspend_latency_ms": 2288.6,
-        "suspend_p90_ms": 2427.6,
-        "ttfe_p50_ms": 4732.5,
-        "ttfe_p95_ms": 4909.6
+        "suspend_latency_ms": 2298.7,
+        "suspend_p90_ms": 2476.6,
+        "ttfe_p50_ms": 4747.0,
+        "ttfe_p95_ms": 5011.7
       }
     },
     {
@@ -280,8 +279,8 @@
       "name": "session_turnover",
       "outcome": "PASS",
       "sla_metrics": {
-        "refill_latency_ms": 1195.5764570000156,
-        "refill_p90_ms": 1472.0413980001013
+        "refill_latency_ms": 1255.2389360000689,
+        "refill_p90_ms": 1685.6947920000493
       }
     },
     {
@@ -320,12 +319,12 @@
     "warmpool_size": 600
   },
   "warm_vs_cold": {
-    "cold_ms": 3591.8,
-    "measured_at": "2026-09-18T01:35:42Z",
+    "cold_ms": 3649.8,
+    "measured_at": "2026-09-19T04:30:42Z",
     "n_warm": 10,
     "runtime_class": "gvisor",
     "semantic": "ttfe",
-    "speedup": 1.63,
-    "warm_p50_ms": 2203.8
+    "speedup": 1.802,
+    "warm_p50_ms": 2025.0
   }
 }
