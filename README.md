@@ -43,7 +43,7 @@ blocker — diagnosis plus file-ready patches and comments — is hand-maintaine
 | gVisor | Unique-image cold (RL reality) | [pending](WORK_IN_PROGRESS.md#not-yet-measured) | 0 /node · 0 /cluster | 3.6498s (count=200) | 4.2609s (count=200) | 100% |
 | gVisor | Resume-from-suspend | 0 /node · 0 /cluster | 0 /node · 0 /cluster | 4.747s (count=30) | 5.0117s (count=30) | 100% |
 | Kata + microVM | Warm-pool hit (Base image) | 10.254 /node · 8.201 /cluster ⚠️ | 0 /node · 8.201 /cluster ⚠️ | 1.7679s (count=30) | 2.724s (count=30) | 100% |
-| Kata + microVM | Unique-image cold (RL reality) | [pending](WORK_IN_PROGRESS.md#not-yet-measured) | 0 /node · 0 /cluster | 3.3226s (count=30) | 3.76s (count=30) | 100% |
+| Kata + microVM | Unique-image cold (RL reality) | [pending](WORK_IN_PROGRESS.md#not-yet-measured) /node · 0.622 /cluster ⚠️ | 0 /node · 0 /cluster | 3.3226s (count=30) | 3.76s (count=30) | 100% |
 | Kata + microVM | Resume-from-suspend | [N/A](WORK_IN_PROGRESS.md#na-by-construction) | [N/A](WORK_IN_PROGRESS.md#na-by-construction) | [N/A](WORK_IN_PROGRESS.md#na-by-construction) | [N/A](WORK_IN_PROGRESS.md#na-by-construction) | [N/A](WORK_IN_PROGRESS.md#na-by-construction) |
 
 ### Max Density (sandboxes per vCPU)

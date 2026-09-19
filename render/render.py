@@ -2343,13 +2343,19 @@ def render_matrix(results, kata_results=None, include_legend=True):
 
             # hb#132 dual cell: `<node> /node · <cluster>`. The per-node half preserves the prior
             # single-figure behavior (absent ⇒ the whole cell is pending, incl. `pending
-            # (<reason>)` for a pending scenario since m is empty). The cluster half pends
-            # `pending (cluster-fire)` until the schema-validated fire carries the per-cluster
-            # field; a landed cluster figure below the sizing target carries ⚠️. The cluster half
-            # additionally requires thpt_cluster_node_count in the SAME metrics dict — a
-            # per_cluster figure with no X has no measurement size to disclose, so it pends
-            # rather than rendering a real rate under a caption that can't pin its X
-            # (defense-in-depth: the emit side already couples the triple all-or-nothing).
+            # (<reason>)` for a pending scenario since m is empty) UNLESS a landed, corroborated
+            # cluster figure is present with no per-node companion — the merge_slo_sweeps path
+            # (slo_rate.slo_sla_metrics_from_stepup) legitimately derives cluster-only, by design,
+            # for scenarios with no per-node throughput concept (e.g. native_digest_cold's
+            # unique-image cluster fire), so the "emit side couples the triple all-or-nothing"
+            # assumption below does NOT hold universally — see the node-absent branch's
+            # cluster-only fallback. The cluster half pends `pending (cluster-fire)` until the
+            # schema-validated fire carries the per-cluster field; a landed cluster figure below
+            # the sizing target carries ⚠️. The cluster half additionally requires
+            # thpt_cluster_node_count in the SAME metrics dict — a per_cluster figure with no X
+            # has no measurement size to disclose, so it pends rather than rendering a real rate
+            # under a caption that can't pin its X (defense-in-depth for the direct-emit path,
+            # where the emit side DOES couple the triple all-or-nothing).
             def thpt_dual_cell(node_key, cluster_key, bar_s):
                 # hb#230 Gap B: the basis governing THIS bar (per-bar stamp wins). A
                 # non-corroborated / bounded / cold basis earns the per-cell *** caveat
@@ -2390,6 +2396,26 @@ def render_matrix(results, kata_results=None, include_legend=True):
                     cell_reason = m.get(node_key.replace("_per_node", "") + "_pend_reason")
                     if cell_reason:
                         return f"{_PENDING} ({cell_reason})" + upstream_cell_refs(cell_reason)
+                    # hb#(cluster-only sweep-merge gap): the "emit side couples the
+                    # triple all-or-nothing" assumption documented on this closure
+                    # does NOT hold for merge_slo_sweeps' derivation
+                    # (slo_rate.slo_sla_metrics_from_stepup) -- that path computes
+                    # ONLY the cluster half + node_count, by design, for scenarios
+                    # with no per-node throughput concept at all (e.g.
+                    # native_digest_cold's unique-image cluster-wide fire). Absent
+                    # this branch, a genuine, corroborated cluster figure was
+                    # silently discarded behind a bare `pending`, even though
+                    # _landed_cluster_x confirms it carries a real measurement
+                    # size. Render the cluster half (same landed-figure logic as
+                    # the node-present path below) with an honest `pending /node`
+                    # companion, rather than dropping the whole cell.
+                    if cluster_key in m and _landed_cluster_x(m) is not None:
+                        floor = bar_basis in _FLOOR_BASES and m[cluster_key] > 0
+                        pfx = "≥" if floor else ""
+                        cluster_half = f"{pfx}{_fmt_num(m[cluster_key])} /cluster"
+                        if m[cluster_key] < CLUSTER_THROUGHPUT_TARGET:
+                            cluster_half += " ⚠️"
+                        return f"{pending_tok} /node · {cluster_half}{star}"
                     return pending_tok
                 node_half = f"{_fmt_num(m[node_key])} /node"
                 # hb#(gap 1, the goal-2.1 display-vs-spec audit): this half prints a REAL
