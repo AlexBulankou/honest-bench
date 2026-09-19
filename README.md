@@ -42,8 +42,8 @@ blocker — diagnosis plus file-ready patches and comments — is hand-maintaine
 | gVisor | Warm-pool hit (Base image) | 0.938 /node ‡ · 9.336 /cluster ⚠️ | 0 /node · 9.336 /cluster ⚠️ | 4.2905s (count=30) | 7.68s (count=30) | 100% |
 | gVisor | Unique-image cold (RL reality) | [pending](WORK_IN_PROGRESS.md#not-yet-measured) | 0 /node · 0 /cluster | 3.6498s (count=200) | 4.2609s (count=200) | 100% |
 | gVisor | Resume-from-suspend | 0 /node · 0 /cluster | 0 /node · 0 /cluster | 4.747s (count=30) | 5.0117s (count=30) | 100% |
-| Kata + microVM | Warm-pool hit (Base image) | 9.366 /node · 0.744 /cluster ⚠️ | 0.937 /node ‡ · [pending (cluster-fire)](WORK_IN_PROGRESS.md#cluster-fire) | 2.2304s (count=30) | 3.2214s (count=30) | 100% |
-| Kata + microVM | Unique-image cold (RL reality) | [pending](WORK_IN_PROGRESS.md#not-yet-measured) | 0 /node · 0 /cluster | 3.3798s (count=30) | 3.8469s (count=30) | 100% |
+| Kata + microVM | Warm-pool hit (Base image) | 10.254 /node · 8.201 /cluster ⚠️ | 0 /node · 8.201 /cluster ⚠️ | 1.7679s (count=30) | 2.724s (count=30) | 100% |
+| Kata + microVM | Unique-image cold (RL reality) | [pending](WORK_IN_PROGRESS.md#not-yet-measured) | 0 /node · 0 /cluster | 3.3226s (count=30) | 3.76s (count=30) | 100% |
 | Kata + microVM | Resume-from-suspend | [N/A](WORK_IN_PROGRESS.md#na-by-construction) | [N/A](WORK_IN_PROGRESS.md#na-by-construction) | [N/A](WORK_IN_PROGRESS.md#na-by-construction) | [N/A](WORK_IN_PROGRESS.md#na-by-construction) | [N/A](WORK_IN_PROGRESS.md#na-by-construction) |
 
 ### Max Density (sandboxes per vCPU)
@@ -68,14 +68,14 @@ Density is per-**runtime** — constant across a runtime's activation-mode rows 
 
 Full cell-decoding key — TTFE basis, honest vs. measured zeros, the dual per-node · per-cluster throughput pair, the certification-floor `≥` figures, every `pending` flavor, and the published-with-caveat tag classes — is in [DETAILS.md](DETAILS.md#how-to-read-the-core-metrics-cells).
 
-_Kata + microVM rows are measured in a separate run on the kata node pool: cluster_substrate=gke-kata · machine_type=n2-standard-16 · node_count=3 · generated-at=2026-09-17T15:34:50Z._
+_Kata + microVM rows are measured in a separate run on the kata node pool: cluster_substrate=gke-kata · machine_type=n2-standard-16 · node_count=3 · generated-at=2026-09-19T07:38:31Z._
 
 _build: cluster_substrate=gke-sandbox · controller_digest=sha256:5b2ebaf9fc7ab4bf41cb988145cf6a0af482c721adbaf2e3ba6d4867804e30ee · suite_git_sha=4b54506400ad0fe4f4a907971f2dd71bea86e687 · upstream_ref=4b3a922fc7de620b9f24679673928338b7a8d2bf · run_id=30cb488d64ea4ba180a853a5337c0331 · node_count=2 · machine_type=n2-standard-16_
 _generated-at: 2026-09-19T04:30:42Z_
 
-_**North Star** — warm-pool-hit TTFE p95 < 1s (the spec doc bar): gVisor 7.68s (count=30) ❌ not met (6.68s above the bar); Kata + microVM 3.2214s (count=30) ❌ not met (2.2214s above the bar). An honest ❌ prints the measured gap to the bar (tagged `within sampling noise` when the miss sits inside the sample spread — it stays a ❌, the tag never flips a miss to a pass); `pending` = unmeasured (never a guess); † marks a p95 over fewer than N=30 samples._
+_**North Star** — warm-pool-hit TTFE p95 < 1s (the spec doc bar): gVisor 7.68s (count=30) ❌ not met (6.68s above the bar); Kata + microVM 2.724s (count=30) ❌ not met (1.724s above the bar). An honest ❌ prints the measured gap to the bar (tagged `within sampling noise` when the miss sits inside the sample spread — it stays a ❌, the tag never flips a miss to a pass); `pending` = unmeasured (never a guess); † marks a p95 over fewer than N=30 samples._
 
-_**Stretch bar** — warm-pool-hit TTFE p95 < 0.5s (an aspiration above the North Star, not the North Star itself; the step-up curve grades sustained creation-rate against it — see [DETAILS.md](DETAILS.md)): gVisor 7.68s (count=30) ❌ not met (7.18s above the bar); Kata + microVM 3.2214s (count=30) ❌ not met (2.7214s above the bar)._
+_**Stretch bar** — warm-pool-hit TTFE p95 < 0.5s (an aspiration above the North Star, not the North Star itself; the step-up curve grades sustained creation-rate against it — see [DETAILS.md](DETAILS.md)): gVisor 7.68s (count=30) ❌ not met (7.18s above the bar); Kata + microVM 2.724s (count=30) ❌ not met (2.224s above the bar)._
 
 > ⚠️ **Cross-runtime comparability:** the North Star gVisor and Kata + microVM p95 figures are drawn from two independent fires and are not directly co-measured — the two figures were measured at different node counts (gVisor at 2, Kata + microVM at 3). Read the cross-runtime p95 gap as provisional until both runtimes republish on a matched rig within one freshness window.
 
