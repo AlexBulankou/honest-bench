@@ -341,15 +341,15 @@ steps:
 
         # Optional external warm TTFE sweep passthrough (hb#8751). If provided,
         # overrides BENCH_SLO_SWEEP_WARMPOOL_COLD_START with the warm sweep.
-        if [ -n "${HB_WARMPOOL_COLD_START_SWEEP_B64:-}" ]; then
+        if [ -n "$${HB_WARMPOOL_COLD_START_SWEEP_B64:-}" ]; then
           SLO_SWEEP_OUT=/workspace/kata-warm-ttfe-sweep.json
-          if echo "$HB_WARMPOOL_COLD_START_SWEEP_B64" | base64 -d >"$SLO_SWEEP_OUT" 2>/dev/null \
-              && python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$SLO_SWEEP_OUT" 2>/dev/null; then
-            export BENCH_SLO_SWEEP_WARMPOOL_COLD_START="$SLO_SWEEP_OUT"
-            echo "==> external warm TTFE sweep wired in as BENCH_SLO_SWEEP_WARMPOOL_COLD_START=$SLO_SWEEP_OUT"
+          if echo "$$HB_WARMPOOL_COLD_START_SWEEP_B64" | base64 -d >"$$SLO_SWEEP_OUT" 2>/dev/null \
+              && python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$$SLO_SWEEP_OUT" 2>/dev/null; then
+            export BENCH_SLO_SWEEP_WARMPOOL_COLD_START="$$SLO_SWEEP_OUT"
+            echo "==> external warm TTFE sweep wired in as BENCH_SLO_SWEEP_WARMPOOL_COLD_START=$$SLO_SWEEP_OUT"
           else
             echo "==> WARNING: HB_WARMPOOL_COLD_START_SWEEP_B64 set but failed to decode to valid JSON — leaving BENCH_SLO_SWEEP_WARMPOOL_COLD_START pointing at the cold sweep" >&2
-            rm -f "$SLO_SWEEP_OUT"
+            rm -f "$$SLO_SWEEP_OUT"
           fi
         fi
 
