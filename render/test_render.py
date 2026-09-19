@@ -1577,6 +1577,65 @@ def test_matrix_dual_throughput_cluster_only_renders_not_dropped():
     assert cells[3] == "0 /node · 0 /cluster"
 
 
+def test_matrix_dual_throughput_cluster_only_sub_n_marked():
+    # hb#8765: the per-cluster half's OWN sample size (true_ttfe_webhook_stamped_claims)
+    # is a distinct count from thpt_cluster_node_count (the fleet size the rate was
+    # measured over) -- _true_ttfe_webhook_corroborated (harness/slo_rate.py) only
+    # requires n>=1 for the figure to land at all, so a landed cluster-only rate can
+    # rest on as few as 1-2 stamped claims and render with no warning next to a
+    # full-N TTFE p95 in the same row. Same shape as
+    # test_matrix_dual_throughput_cluster_only_renders_not_dropped but with a sub-30
+    # claims count -- expect the same `(count=N) †` suffix the TTFE cells already use.
+    scen = [
+        {"name": "native_digest_cold", "outcome": "PASS", "n": 30,
+         "sla_metrics": {
+             "ttfe_p50_ms": 3322.6,
+             "ttfe_p95_ms": 3760.0,
+             "thpt_under_5s_per_cluster": 0.622,
+             "thpt_cluster_node_count": 6,
+             "true_ttfe_webhook_stamped_claims": 3,
+         }},
+    ]
+    out = render.render_matrix(_matrix_results(scen))
+    cold_line = [l for l in out.splitlines() if "Unique-image cold" in l][0]
+    cells = [_unlink(c.strip()) for c in cold_line.strip("|").split("|")]
+    assert cells[2] == f"pending /node · 0.622 /cluster ⚠️ (count=3) {render._LOW_N_MARK}"
+
+
+def test_matrix_dual_throughput_cluster_only_full_n_not_marked():
+    # regression check: a stamped-claims count AT the comparability floor (30) is not
+    # sub-N -- no suffix, and a count absent entirely (unchanged prior behavior) also
+    # renders with no suffix.
+    scen = [
+        {"name": "native_digest_cold", "outcome": "PASS", "n": 30,
+         "sla_metrics": {
+             "ttfe_p50_ms": 3322.6,
+             "ttfe_p95_ms": 3760.0,
+             "thpt_under_5s_per_cluster": 0.622,
+             "thpt_cluster_node_count": 6,
+             "true_ttfe_webhook_stamped_claims": render.TTFE_COMPARABILITY_MIN_N,
+         }},
+    ]
+    out = render.render_matrix(_matrix_results(scen))
+    cold_line = [l for l in out.splitlines() if "Unique-image cold" in l][0]
+    cells = [_unlink(c.strip()) for c in cold_line.strip("|").split("|")]
+    assert cells[2] == "pending /node · 0.622 /cluster ⚠️"
+    assert render._LOW_N_MARK not in cells[2]
+
+
+def test_matrix_dual_throughput_cluster_node_present_sub_n_marked():
+    # hb#8765, node-present branch: the same sub-N disclosure applies when a per-node
+    # figure IS also landed (the normal dual-cell path, not the cluster-only fallback).
+    scen = _full_gvisor_scenarios()
+    scen[0]["sla_metrics"]["thpt_under_5s_per_cluster"] = 350
+    scen[0]["sla_metrics"]["thpt_cluster_node_count"] = 40
+    scen[0]["sla_metrics"]["true_ttfe_webhook_stamped_claims"] = 5
+    out = render.render_matrix(_matrix_results(scen))
+    warm_line = [l for l in out.splitlines() if "Warm-pool hit" in l][0]
+    cells = [_unlink(c.strip()) for c in warm_line.strip("|").split("|")]
+    assert cells[2] == f"4 /node · 350 /cluster (count=5) {render._LOW_N_MARK}"
+
+
 def test_matrix_dual_throughput_cluster_only_still_pends_without_node_count():
     # same shape as above but WITHOUT thpt_cluster_node_count -- the existing
     # X-less-per_cluster gate (test_matrix_cluster_half_gated_on_node_count_presence)

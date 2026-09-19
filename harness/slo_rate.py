@@ -654,6 +654,17 @@ def slo_sla_metrics_from_stepup(flat) -> dict:
         # literal bases. A populated histogram without corroboration is a stale-scrape /
         # partial-deploy artifact, not a trustworthy ms-precision t0.
         out = {}
+    elif out:
+        # hb#8765: propagate the webhook-stamped-claims count that just corroborated
+        # this triple through to the emitted sla_metrics, so render can disclose when a
+        # landed true-TTFE cluster rate rests on a thin claims sample (the same
+        # sub-comparability-floor caveat the TTFE p50/p95 cells already carry via
+        # TTFE_COMPARABILITY_MIN_N). Literal bases never set this key: their
+        # corroboration story is the acq/controller agreement check, not a webhook
+        # claims read-back, so the field would be a non-sequitur on those triples.
+        out["true_ttfe_webhook_stamped_claims"] = _valid_count(
+            flat.get("true_ttfe_webhook_stamped_claims")
+        )
     if not out:
         lt = flat.get("literal_ttfe")
         if isinstance(lt, dict) and lt.get("upper_bound") is True:

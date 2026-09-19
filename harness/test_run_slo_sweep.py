@@ -68,6 +68,10 @@ _TRIPLE = {
     "thpt_under_1s_per_cluster": 9.8,
     "thpt_cluster_node_count": 40,
     "thpt_slo_basis": "true_ttfe",
+    # hb#8765: slo_sla_metrics_from_stepup now propagates the webhook-stamped-claims
+    # count that corroborated this triple (see harness/slo_rate.py) -- matches
+    # _NESTED's true_ttfe_webhook_stamped_claims above.
+    "true_ttfe_webhook_stamped_claims": 40,
 }
 
 _WARM = "warmpool_cold_start"
@@ -192,7 +196,8 @@ def test_partial_fill_merges_landed_bar_only():
     _with_sweep(_WARM, "sandbox", rec, raw)
     _check(raw[0]["sla_metrics"] == {"thpt_under_5s_per_cluster": 28.4,
                                      "thpt_cluster_node_count": 40,
-                                     "thpt_slo_basis": "true_ttfe"},
+                                     "thpt_slo_basis": "true_ttfe",
+                                     "true_ttfe_webhook_stamped_claims": 40},
            f"only the landed bar merges, got {raw[0]['sla_metrics']!r}")
 
 

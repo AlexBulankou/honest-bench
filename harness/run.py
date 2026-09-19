@@ -1353,6 +1353,11 @@ def carry_prior_cluster_triples(raw: list, prior_scenarios) -> None:
     cluster saturation, provisioning rate sweep) — a frozen figure could
     silently ride a carry, refresh after refresh, with no reader-visible
     signal that it was no longer current.
+    hb#8765: `true_ttfe_webhook_stamped_claims` — the webhook-stamped-claims
+    count that corroborated a true-TTFE triple (slo_rate.slo_sla_metrics_from_stepup
+    propagates it, true-TTFE basis only) — rides as a passenger the same way, so
+    a carried true-TTFE triple keeps disclosing whether it rests on a thin claims
+    sample even across a daily refresh that didn't re-run the sweep.
 
     All of the above are passengers, not members: the fresh-wins check and the
     eligibility guard key on the triple keys only, so a prior cell carrying a
@@ -1400,6 +1405,7 @@ def carry_prior_cluster_triples(raw: list, prior_scenarios) -> None:
             "thpt_under_5s_per_node",
             "thpt_under_1s_per_node",
             "thpt_slo_measured_at",
+            "true_ttfe_webhook_stamped_claims",
         ):
             # Fresh wins per-key, not just per-cell: thpt_under_5s_per_node /
             # thpt_under_1s_per_node are NOT atomic with the cluster triple in

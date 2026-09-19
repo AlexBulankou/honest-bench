@@ -1596,6 +1596,35 @@ def _landed_cluster_x(m):
     return None
 
 
+def _cluster_stamped_claims(m):
+    """A metrics dict's true_ttfe_webhook_stamped_claims as int — None if absent/invalid.
+
+    hb#8765: the per-cluster throughput half's own sample size. _true_ttfe_webhook_corroborated
+    (harness/slo_rate.py) only requires n>=1 for a cluster figure to LAND at all; a landed figure
+    resting on n<TTFE_COMPARABILITY_MIN_N is real but not a stable distribution — the same
+    single-observation caveat the TTFE p50/p95 cells already carry via _LOW_N_MARK. Mirrors
+    _landed_cluster_x's validity rule (numeric, non-bool, >= 0) so a 0-claim record reads as a
+    real zero-count sample rather than absent."""
+    n = (m or {}).get("true_ttfe_webhook_stamped_claims")
+    if isinstance(n, (int, float)) and not isinstance(n, bool) and n >= 0:
+        return int(n)
+    return None
+
+
+def _cluster_low_n_suffix(m):
+    """hb#8765: `(count=N) †` suffix for a landed per-cluster throughput half whose own sample
+    size (true_ttfe_webhook_stamped_claims) is below TTFE_COMPARABILITY_MIN_N — the SAME
+    `(count=N)`/dagger notation the TTFE p50/p95 cells already use (see ttfe_cell above and the
+    decoding-key table), so a reader can't rank a low-N cluster rate against a full-N row's p95
+    without the same warning, and the page doesn't grow a second notation for the same concept.
+    "" when the count is absent/invalid (no claim to disclose, unchanged prior behavior) or
+    at/above the floor."""
+    n = _cluster_stamped_claims(m)
+    if n is None or n >= TTFE_COMPARABILITY_MIN_N:
+        return ""
+    return f" (count={n}) {_LOW_N_MARK}"
+
+
 def _resolve_cluster_x(sources):
     """hb#132: the X in the `@X nodes` cluster-throughput caption — the node count the per-cluster
     figures were MEASURED at, resolved PER RUNTIME (first landed thpt_cluster_node_count within
@@ -2415,6 +2444,7 @@ def render_matrix(results, kata_results=None, include_legend=True):
                         cluster_half = f"{pfx}{_fmt_num(m[cluster_key])} /cluster"
                         if m[cluster_key] < CLUSTER_THROUGHPUT_TARGET:
                             cluster_half += " ⚠️"
+                        cluster_half += _cluster_low_n_suffix(m)
                         return f"{pending_tok} /node · {cluster_half}{star}"
                     return pending_tok
                 node_half = f"{_fmt_num(m[node_key])} /node"
@@ -2443,6 +2473,7 @@ def render_matrix(results, kata_results=None, include_legend=True):
                     cluster_half = f"{pfx}{_fmt_num(m[cluster_key])} /cluster"
                     if m[cluster_key] < CLUSTER_THROUGHPUT_TARGET:
                         cluster_half += " ⚠️"
+                    cluster_half += _cluster_low_n_suffix(m)
                 else:
                     # 07-06 SLO-rate fire: a cluster half whose fire RAN but whose derivation
                     # was refused for a carried, closed-enum reason (e.g. `trust-gate` — the

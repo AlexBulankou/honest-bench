@@ -726,6 +726,13 @@ MATRIX_METRIC_FIELDS = {
     "thpt_under_5s_per_cluster": _nonneg,
     "thpt_under_1s_per_cluster": _nonneg,
     "thpt_cluster_node_count": _nonneg,
+    # hb#8765: the per-cluster half's OWN sample size (distinct from thpt_cluster_node_count,
+    # the fleet size the rate was measured over). harness/slo_rate.py's
+    # _true_ttfe_webhook_corroborated only requires n>=1 for a cluster figure to land at all —
+    # a landed rate can rest on as few as 1-2 stamped claims with no comparability warning next
+    # to a full-N TTFE p95 in the same row. render carries this through so the matrix can apply
+    # the same (count=N)/dagger sub-N disclosure the TTFE cells already use.
+    "true_ttfe_webhook_stamped_claims": _nonneg,
     # hb#174: which measured basis produced the per-cluster triple. Closed 3-value enum —
     # the render-side mirror of harness slo_rate.SLO_BASIS_ENUM / results_schema.SLO_BASIS_ENUM
     # (render never imports the harness; a cross-contract test asserts the three copies match).

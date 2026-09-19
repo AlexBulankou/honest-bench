@@ -114,6 +114,7 @@ class TestSloSlaMetricsFromStepup:
             "thpt_under_1s_per_cluster": 9.8,
             "thpt_cluster_node_count": 40,
             "thpt_slo_basis": SLO_BASIS_TRUE_TTFE,
+            "true_ttfe_webhook_stamped_claims": 1,
         }
 
     def test_partial_fill_one_bar_only(self):
@@ -127,6 +128,7 @@ class TestSloSlaMetricsFromStepup:
             "thpt_under_5s_per_cluster": 28.4,
             "thpt_cluster_node_count": 40,
             "thpt_slo_basis": SLO_BASIS_TRUE_TTFE,
+            "true_ttfe_webhook_stamped_claims": 1,
         }
         assert "thpt_under_1s_per_cluster" not in out
 
@@ -216,6 +218,47 @@ class TestSloSlaMetricsFromStepup:
              "measured_at": "2026-07-25T00:00:00Z"}
         )
         assert out["thpt_slo_measured_at"] == "2026-07-25T00:00:00Z"
+        assert _coerce_sla_metrics(out) == out
+
+    def test_stamped_claims_propagated_on_true_ttfe_basis(self):
+        # hb#8765: the webhook-stamped-claims count that corroborated the true-TTFE
+        # triple must ride along into the emitted sla_metrics, so render can disclose
+        # a landed cluster rate resting on a thin claims sample (mirrors the existing
+        # TTFE p50/p95 sub-N disclosure). A sub-30 count is real data, not a reason to
+        # withhold it here -- the comparability judgment is render's job, not the
+        # harness producer's.
+        out = slo_sla_metrics_from_stepup(
+            {"pareto_points": SWEEP, "node_count": 40,
+             "true_ttfe_webhook_stamped_claims": 3}
+        )
+        assert out["true_ttfe_webhook_stamped_claims"] == 3
+
+    def test_stamped_claims_absent_on_literal_basis(self):
+        # The literal bases corroborate via the acq/controller agreement check, not a
+        # webhook claims read-back -- true_ttfe_webhook_stamped_claims must not leak
+        # onto a literal-basis triple even if the raw flat record happens to carry a
+        # (irrelevant, uncorroborating) value for it.
+        pts = [_rung(100, 41.0, 12610.3)]  # kills the true-TTFE leg
+        flat = {
+            "pareto_points": pts,
+            "node_count": 2,
+            "true_ttfe_webhook_stamped_claims": 0,
+            "literal_ttfe": {
+                "upper_bound": True,
+                "pareto_points": [_lit_rung(10, 850.0, ctrl=9.4, acq=9.9)],
+            },
+        }
+        out = slo_sla_metrics_from_stepup(flat)
+        assert out["thpt_slo_basis"] == SLO_BASIS_LITERAL_ACQ
+        assert "true_ttfe_webhook_stamped_claims" not in out
+
+    def test_stamped_claims_survives_scenario_sla_coercion(self):
+        from harness.results_schema import _coerce_sla_metrics
+
+        out = slo_sla_metrics_from_stepup(
+            {"pareto_points": SWEEP, "node_count": 40,
+             "true_ttfe_webhook_stamped_claims": 3}
+        )
         assert _coerce_sla_metrics(out) == out
 
 
